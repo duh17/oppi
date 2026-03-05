@@ -1,13 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  appendFileSync,
-  createReadStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { createReadStream } from "node:fs";
+import { access, appendFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -38,6 +31,9 @@ import {
 import { ts } from "../log-utils.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+
+const LOCAL_SESSION_META_READ_BYTES = 16_384;
+const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function handleListWorkspaceSessions(workspaceId: string, res: ServerResponse): void {
@@ -79,7 +75,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       }
 
       // Read CWD from the JSONL header for alignment check
-      const headerCwd = readSessionCwd(validation.path);
+      const headerCwd = await readSessionCwd(validation.path);
       if (!headerCwd) {
         helpers.error(res, 400, "Cannot read session CWD from file");
         return;
@@ -137,9 +133,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   /** Read the CWD from a pi session JSONL header (first line). */
-  function readSessionCwd(filePath: string): string | null {
+  async function readSessionCwd(filePath: string): Promise<string | null> {
     try {
-      const content = readFileSync(filePath, "utf8");
+      const content = await readFile(filePath, "utf8");
       const firstLine = content.split("\n")[0];
       if (!firstLine) return null;
       const header = JSON.parse(firstLine);
@@ -154,7 +150,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     filePath: string,
   ): Promise<{ name?: string; firstMessage?: string } | null> {
     try {
-      const content = readFileSync(filePath, "utf8").slice(0, 16384);
+      const content = (await readFile(filePath, "utf8")).slice(0, LOCAL_SESSION_META_READ_BYTES);
       const lines = content.split("\n");
       let name: string | undefined;
       let firstMessage: string | undefined;
@@ -410,8 +406,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const logsDir = join(ctx.storage.getDataDir(), "client-logs");
-    if (!existsSync(logsDir)) {
-      mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+    if (!(await pathExists(logsDir))) {
+      await mkdir(logsDir, { recursive: true, mode: 0o700 });
     }
 
     const logPath = join(logsDir, `${sessionId}.jsonl`);
@@ -434,7 +430,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       entries,
     };
 
-    appendFileSync(logPath, `${JSON.stringify(envelope)}\n`, {
+    await appendFile(logPath, `${JSON.stringify(envelope)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -449,11 +445,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
   // ─── Tool Output by ID ───
 
-  function handleGetFullToolOutput(
+  async function handleGetFullToolOutput(
     sessionId: string,
     toolCallId: string,
     res: ServerResponse,
-  ): void {
+  ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
@@ -467,34 +463,25 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     try {
-      const output = readFileSync(fullOutputPath, "utf8");
+      const output = await readFile(fullOutputPath, "utf8");
       helpers.json(res, { toolCallId, output });
     } catch {
       helpers.error(res, 404, "Full tool output not found");
     }
   }
 
-  function handleGetToolOutput(sessionId: string, toolCallId: string, res: ServerResponse): void {
+  async function handleGetToolOutput(
+    sessionId: string,
+    toolCallId: string,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
       return;
     }
 
-    const jsonlPaths: string[] = [];
-
-    if (session.piSessionFiles?.length) {
-      for (const p of session.piSessionFiles) {
-        if (existsSync(p) && !jsonlPaths.includes(p)) jsonlPaths.push(p);
-      }
-    }
-    if (
-      session.piSessionFile &&
-      existsSync(session.piSessionFile) &&
-      !jsonlPaths.includes(session.piSessionFile)
-    ) {
-      jsonlPaths.push(session.piSessionFile);
-    }
+    const jsonlPaths = await collectExistingSessionJsonlPaths(session);
 
     for (const jsonlPath of jsonlPaths) {
       const output = findToolOutput(jsonlPath, toolCallId);
@@ -507,9 +494,30 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.error(res, 404, "Tool output not found");
   }
 
+  async function collectExistingSessionJsonlPaths(session: Session): Promise<string[]> {
+    const candidates = [...(session.piSessionFiles ?? [])];
+    if (session.piSessionFile) {
+      candidates.push(session.piSessionFile);
+    }
+
+    const uniquePaths = Array.from(new Set(candidates));
+    const existing = await Promise.all(
+      uniquePaths.map(async (candidate) => ({
+        candidate,
+        exists: await pathExists(candidate),
+      })),
+    );
+
+    return existing.filter((entry) => entry.exists).map((entry) => entry.candidate);
+  }
+
   // ─── Session File Access ───
 
-  function handleGetSessionFile(sessionId: string, url: URL, res: ServerResponse): void {
+  async function handleGetSessionFile(
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
@@ -522,7 +530,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const workRoot = resolveWorkRoot(session);
+    const workRoot = await resolveWorkRoot(session);
     if (!workRoot) {
       helpers.error(res, 404, "No workspace root for session");
       return;
@@ -531,32 +539,32 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const target = resolve(workRoot, reqPath);
     let resolved: string;
     try {
-      resolved = realpathSync(target);
+      resolved = await realpath(target);
     } catch {
       helpers.error(res, 404, "File not found");
       return;
     }
 
-    const realWorkRoot = realpathSync(workRoot);
-    if (!resolved.startsWith(realWorkRoot + "/") && resolved !== realWorkRoot) {
+    const realWorkRoot = await realpath(workRoot);
+    if (!isPathWithinRoot(resolved, realWorkRoot)) {
       helpers.error(res, 403, "Path outside workspace");
       return;
     }
 
-    let stat: ReturnType<typeof statSync>;
+    let fileStat: Awaited<ReturnType<typeof stat>>;
     try {
-      stat = statSync(resolved);
+      fileStat = await stat(resolved);
     } catch {
       helpers.error(res, 404, "File not found");
       return;
     }
 
-    if (!stat.isFile()) {
+    if (!fileStat.isFile()) {
       helpers.error(res, 400, "Not a file");
       return;
     }
 
-    if (stat.size > 10 * 1024 * 1024) {
+    if (fileStat.size > MAX_SESSION_FILE_BYTES) {
       helpers.error(res, 413, "File too large (max 10MB)");
       return;
     }
@@ -564,13 +572,17 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const mime = guessMime(resolved);
     res.writeHead(200, {
       "Content-Type": mime,
-      "Content-Length": stat.size,
+      "Content-Length": fileStat.size,
       "Cache-Control": "no-cache",
     });
     createReadStream(resolved).pipe(res);
   }
 
-  function handleGetSessionOverallDiff(sessionId: string, url: URL, res: ServerResponse): void {
+  async function handleGetSessionOverallDiff(
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
@@ -596,7 +608,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const currentText = readCurrentFileText(session, reqPath);
+    const currentText = await readCurrentFileText(session, reqPath);
     const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
     const diffLines = computeDiffLines(baselineText, currentText);
     const stats = computeLineDiffStatsFromLines(diffLines);
@@ -613,20 +625,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function readCurrentFileText(session: Session, reqPath: string): string {
-    const workRoot = resolveWorkRoot(session);
+  async function readCurrentFileText(session: Session, reqPath: string): Promise<string> {
+    const workRoot = await resolveWorkRoot(session);
     if (!workRoot) return "";
 
     const target = resolve(workRoot, reqPath);
     try {
-      const resolved = realpathSync(target);
-      const realWorkRoot = realpathSync(workRoot);
-      if (!resolved.startsWith(realWorkRoot + "/") && resolved !== realWorkRoot) {
+      const resolved = await realpath(target);
+      const realWorkRoot = await realpath(workRoot);
+      if (!isPathWithinRoot(resolved, realWorkRoot)) {
         return "";
       }
-      const stat = statSync(resolved);
-      if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return "";
-      return readFileSync(resolved, "utf8");
+      const fileStat = await stat(resolved);
+      if (!fileStat.isFile() || fileStat.size > MAX_SESSION_FILE_BYTES) return "";
+      return await readFile(resolved, "utf8");
     } catch {
       return "";
     }
@@ -663,14 +675,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return trace;
   }
 
-  function resolveWorkRoot(session: Session): string | null {
+  async function resolveWorkRoot(session: Session): Promise<string | null> {
     const workspace = session.workspaceId
       ? ctx.storage.getWorkspace(session.workspaceId)
       : undefined;
 
     if (workspace?.hostMount) {
       const resolved = resolveSdkSessionCwd(workspace);
-      return existsSync(resolved) ? resolved : null;
+      return (await pathExists(resolved)) ? resolved : null;
     }
     return homedir();
   }
@@ -808,7 +820,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)\/full$/,
     );
     if (wsSessionToolOutputFullMatch && method === "GET") {
-      handleGetFullToolOutput(
+      await handleGetFullToolOutput(
         wsSessionToolOutputFullMatch[2],
         wsSessionToolOutputFullMatch[3],
         res,
@@ -820,13 +832,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
     if (wsSessionToolOutputMatch && method === "GET") {
-      handleGetToolOutput(wsSessionToolOutputMatch[2], wsSessionToolOutputMatch[3], res);
+      await handleGetToolOutput(wsSessionToolOutputMatch[2], wsSessionToolOutputMatch[3], res);
       return true;
     }
 
     const wsSessionFilesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/);
     if (wsSessionFilesMatch && method === "GET") {
-      handleGetSessionFile(wsSessionFilesMatch[2], url, res);
+      await handleGetSessionFile(wsSessionFilesMatch[2], url, res);
       return true;
     }
 
@@ -834,7 +846,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
     );
     if (wsSessionOverallDiffMatch && method === "GET") {
-      handleGetSessionOverallDiff(wsSessionOverallDiffMatch[2], url, res);
+      await handleGetSessionOverallDiff(wsSessionOverallDiffMatch[2], url, res);
       return true;
     }
 
@@ -858,6 +870,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     return false;
   };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
 }
 
 /** Minimal MIME type guesser for file serving. */
