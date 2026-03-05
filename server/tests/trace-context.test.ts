@@ -91,6 +91,50 @@ describe("buildSessionContext", () => {
     expect(result!.toolName).toBe("bash");
   });
 
+  it("preserves tool result details for extension rendering parity", () => {
+    const entries = [
+      msg("1", null, "user", "create a todo"),
+      msg("2", "1", "assistant", [
+        { type: "toolCall", id: "tc1", name: "todo", arguments: { action: "create", title: "test" } },
+      ]),
+      msg("3", "2", "toolResult", "Todo created", {
+        toolCallId: "tc1",
+        toolName: "todo",
+        details: {
+          expandedText: "# My Todo\n\nCreated successfully",
+          presentationFormat: "markdown",
+        },
+      }),
+    ];
+
+    const events = buildSessionContext(entries);
+    const result = events.find((e) => e.type === "toolResult");
+    expect(result).toBeDefined();
+    expect(result!.output).toBe("Todo created");
+    expect(result!.details).toEqual({
+      expandedText: "# My Todo\n\nCreated successfully",
+      presentationFormat: "markdown",
+    });
+  });
+
+  it("omits details when toolResult has no details field", () => {
+    const entries = [
+      msg("1", null, "user", "list files"),
+      msg("2", "1", "assistant", [
+        { type: "toolCall", id: "tc1", name: "bash", arguments: { command: "ls" } },
+      ]),
+      msg("3", "2", "toolResult", "file1.txt", {
+        toolCallId: "tc1",
+        toolName: "bash",
+      }),
+    ];
+
+    const events = buildSessionContext(entries);
+    const result = events.find((e) => e.type === "toolResult");
+    expect(result).toBeDefined();
+    expect(result!.details).toBeUndefined();
+  });
+
   it("handles compaction — hides pre-compaction messages", () => {
     const entries = [
       msg("1", null, "user", "old message 1"),
