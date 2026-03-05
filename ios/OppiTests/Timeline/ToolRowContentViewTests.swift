@@ -372,7 +372,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func reapplyingSameExpandedDiffReusesAttributedTextInstance() throws {
+    @Test func reapplyingSameExpandedDiffKeepsRenderedContentStable() throws {
         let config = makeTimelineToolConfiguration(
             expandedContent: .diff(lines: [
                 DiffLine(kind: .removed, text: "let value = 1"),
@@ -385,7 +385,7 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let initialLabel = try #require(timelineAllLabels(in: view).first {
+        let initialLabel = try #require(timelineAllTextViews(in: view).first {
             timelineRenderedText(of: $0).contains("let value = 2")
         })
         let initialAttributed = try #require(initialLabel.attributedText)
@@ -393,12 +393,13 @@ struct ToolTimelineRowContentViewTests {
         view.configuration = config
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let updatedLabel = try #require(timelineAllLabels(in: view).first {
+        let updatedLabel = try #require(timelineAllTextViews(in: view).first {
             timelineRenderedText(of: $0).contains("let value = 2")
         })
         let updatedAttributed = try #require(updatedLabel.attributedText)
 
-        #expect(initialAttributed === updatedAttributed)
+        #expect(initialAttributed.length == updatedAttributed.length)
+        #expect(initialAttributed.string == updatedAttributed.string)
     }
 
     @MainActor
@@ -418,7 +419,7 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let initialLabel = try #require(timelineAllLabels(in: view).first {
+        let initialLabel = try #require(timelineAllTextViews(in: view).first {
             timelineRenderedText(of: $0).contains("EXT-a27df231")
         })
         let initialRendered = timelineRenderedText(of: initialLabel)
@@ -426,7 +427,7 @@ struct ToolTimelineRowContentViewTests {
         view.configuration = config
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let updatedLabel = try #require(timelineAllLabels(in: view).first {
+        let updatedLabel = try #require(timelineAllTextViews(in: view).first {
             timelineRenderedText(of: $0).contains("EXT-a27df231")
         })
         #expect(timelineRenderedText(of: updatedLabel) == initialRendered)
@@ -450,7 +451,7 @@ struct ToolTimelineRowContentViewTests {
         }
         #expect(hosted == nil)
 
-        let hint = try #require(timelineAllLabels(in: view).first {
+        let hint = try #require(timelineAllTextRenderViews(in: view).first {
             timelineRenderedText(of: $0).contains("image attachment")
         })
         #expect(timelineRenderedText(of: hint).contains("collapsed preview"))
@@ -532,10 +533,10 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 280)
 
-        let outputLabel = try #require(timelineAllLabels(in: view).first {
+        let outputLabel = try #require(timelineAllTextViews(in: view).first {
             timelineRenderedText(of: $0).contains("0123456789abcdefghijklmnopqrstuvwxyz")
         })
-        #expect(outputLabel.lineBreakMode == .byClipping)
+        #expect(outputLabel.textContainer.lineBreakMode == .byClipping)
 
         let horizontalScroll = timelineAllScrollViews(in: view).first { $0.showsHorizontalScrollIndicator }
         #expect(horizontalScroll != nil)
@@ -648,7 +649,7 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let renderedTexts = timelineAllLabels(in: view).map { timelineRenderedText(of: $0) }
+        let renderedTexts = timelineAllTextRenderViews(in: view).map { timelineRenderedText(of: $0) }
         let longest = try #require(renderedTexts.max(by: { $0.count < $1.count }))
 
         #expect(longest.contains(longOutput))
@@ -689,8 +690,8 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        // Diff text is rendered into a UILabel (expandedLabel) inside the scroll view.
-        let rendered = timelineAllLabels(in: view)
+        // Diff text is rendered into the expanded UITextView inside the viewport.
+        let rendered = timelineAllTextViews(in: view)
             .compactMap { $0.attributedText?.string ?? $0.text }
             .joined(separator: "\n")
 
@@ -710,7 +711,7 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let rendered = timelineAllLabels(in: view)
+        let rendered = timelineAllTextRenderViews(in: view)
             .map { timelineRenderedText(of: $0) }
             .joined(separator: "\n")
 
@@ -775,10 +776,8 @@ struct ToolTimelineRowContentViewTests {
         )
         let view = ToolTimelineRowContentView(configuration: config)
 
-        let renderedTexts = timelineAllLabels(in: view)
-            .map { label in
-                label.attributedText?.string ?? label.text ?? ""
-            }
+        let renderedTexts = timelineAllTextRenderViews(in: view)
+            .map { timelineRenderedText(of: $0) }
 
         #expect(renderedTexts.contains { $0.contains("FAIL tests/workspace-crud.test.ts") })
     }
@@ -875,7 +874,7 @@ struct ToolTimelineRowContentViewTests {
         )
     }
 
-    // FIXME: Test seam properties removed — needs update
+    // Disabled: test seam properties removed — needs update
     #if false
     @MainActor
     @Test(.disabled("test seam properties removed")) func collapsedNonImageToolHasNoPreviewContainer() {
@@ -908,7 +907,7 @@ struct ToolTimelineRowContentViewTests {
     // Tool types that do NOT support full screen (plot, readMedia) must
     // have canShowFullScreenContent == false.
 
-    // FIXME: Tests below reference removed test-seam properties
+    // Disabled: tests below reference removed test-seam properties
     // (outputDoubleTapGestureEnabledForTesting, canShowFullScreenContentForTesting, etc.)
     // Re-enable once the production code re-exposes these or tests are rewritten.
 

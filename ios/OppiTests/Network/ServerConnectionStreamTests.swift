@@ -451,9 +451,9 @@ struct ServerConnectionStreamTests {
     // MARK: - Pre-track subscription for inbound meta
 
     @MainActor
-    @Test func subscribePreTracksActiveSubscriptionSynchronously() {
+    @Test func subscribePreTracksActiveSubscriptionSynchronously() throws {
         let conn = makeTestConnection()
-        let ws = conn.wsClient!
+        let ws = try #require(conn.wsClient)
 
         // Before pre-track: no subscription
         #expect(ws._activeSubscriptionForTesting("pre-track-session") == nil)
@@ -470,9 +470,9 @@ struct ServerConnectionStreamTests {
     }
 
     @MainActor
-    @Test func subscribePreTrackRolledBackOnFailure() {
+    @Test func subscribePreTrackRolledBackOnFailure() throws {
         let conn = makeTestConnection()
-        let ws = conn.wsClient!
+        let ws = try #require(conn.wsClient)
 
         // Pre-track then rollback (simulates send failure path)
         ws._preTrackSubscriptionForTesting(
@@ -490,9 +490,9 @@ struct ServerConnectionStreamTests {
     }
 
     @MainActor
-    @Test func preTrackIsNoOpForNonSubscribeMessages() {
+    @Test func preTrackIsNoOpForNonSubscribeMessages() throws {
         let conn = makeTestConnection()
-        let ws = conn.wsClient!
+        let ws = try #require(conn.wsClient)
 
         // Pre-track with a non-subscribe message should be a no-op
         ws._preTrackSubscriptionForTesting(

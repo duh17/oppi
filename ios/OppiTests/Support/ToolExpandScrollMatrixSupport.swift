@@ -526,8 +526,12 @@ struct ToolExpandScrollMatrixFixture {
                         "Inner scroll view has bounces=true for \(toolCase.name)")
 
                 let verticalOverflow = inner.contentSize.height - inner.bounds.height
+                // UITextView-backed rows keep a small TextKit residual overflow
+                // (~1 line) even when vertical lock is active. Anything larger
+                // than this indicates a real vertical-scroll ownership bug.
+                let maxResidualOverflow: CGFloat = 32
                 #expect(
-                    verticalOverflow <= 12,
+                    verticalOverflow <= maxResidualOverflow,
                     "Inner scroll view can consume vertical drags (overflow=\(verticalOverflow)) for \(toolCase.name)"
                 )
 
