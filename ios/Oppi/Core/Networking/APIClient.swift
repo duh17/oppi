@@ -706,6 +706,37 @@ actor APIClient {
         _ = try await post("/telemetry/chat-metrics", body: body)
     }
 
+    // MARK: - Applets
+
+    /// List all applets in a workspace.
+    func listApplets(workspaceId: String) async throws -> [Applet] {
+        let data = try await get("/workspaces/\(workspaceId)/applets")
+        return try JSONDecoder().decode(AppletListResponse.self, from: data).applets
+    }
+
+    /// Get applet metadata + latest version HTML.
+    func getApplet(workspaceId: String, appletId: String) async throws -> (Applet, AppletVersionWithHTML?) {
+        let data = try await get("/workspaces/\(workspaceId)/applets/\(appletId)")
+        let response = try JSONDecoder().decode(AppletDetailResponse.self, from: data)
+        return (response.applet, response.latestVersion)
+    }
+
+    /// Delete an applet and all its versions.
+    func deleteApplet(workspaceId: String, appletId: String) async throws {
+        let (data, response) = try await request("DELETE", path: "/workspaces/\(workspaceId)/applets/\(appletId)")
+        try checkStatus(response, data: data)
+    }
+
+    /// Build the authenticated URL for rendering applet HTML in a browser/WKWebView.
+    nonisolated func appletHTMLURL(workspaceId: String, appletId: String, version: Int) -> URL? {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.path += "/workspaces/\(workspaceId)/applets/\(appletId)/versions/\(version)/html"
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        return components.url
+    }
+
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {
