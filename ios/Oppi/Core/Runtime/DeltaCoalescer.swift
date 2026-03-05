@@ -8,6 +8,9 @@ import Foundation
 ///
 /// This prevents per-token/chunk SwiftUI diff thrash while keeping tool starts,
 /// permissions, and errors latency-free.
+///
+/// Call `pause()` when the app enters background to stop the flush timer.
+/// Call `resume()` on foreground return to flush accumulated events in one batch.
 @MainActor
 final class DeltaCoalescer {
     private var buffer: [AgentEvent] = []
@@ -19,8 +22,27 @@ final class DeltaCoalescer {
     private let maxBufferedBytes = 256 * 1024
     private var bufferedBytes = 0
 
+    /// When true, high-frequency events accumulate but don't flush on timer.
+    /// Immediate events (tool start, permissions, etc.) still flush + deliver.
+    private var isPaused = false
+
     /// Called when coalesced events should be delivered.
     var onFlush: (([AgentEvent]) -> Void)?
+
+    /// Pause flush timer (call on app background). Buffer accumulates
+    /// but no timer fires, saving CPU/battery while screen is off.
+    func pause() {
+        isPaused = true
+        flushTask?.cancel()
+        flushTask = nil
+    }
+
+    /// Resume flushing (call on app foreground). Immediately delivers
+    /// any events that accumulated while paused.
+    func resume() {
+        isPaused = false
+        deliverBuffer()
+    }
 
     func receive(_ event: AgentEvent) {
         switch event {
@@ -58,7 +80,7 @@ final class DeltaCoalescer {
     // MARK: - Private
 
     private func scheduleFlushIfNeeded() {
-        guard flushTask == nil else { return }
+        guard flushTask == nil, !isPaused else { return }
         flushTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: self?.flushInterval ?? .milliseconds(33))
             guard !Task.isCancelled else { return }

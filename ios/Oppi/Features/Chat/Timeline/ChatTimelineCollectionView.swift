@@ -465,9 +465,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenCount = configuration.hiddenCount
             previousThemeID = configuration.themeID
 
-            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: nextIDs.count)
-            collectionView.layoutIfNeeded()
-            ChatTimelinePerf.endLayoutPass(layoutToken)
+            // Skip forced layout during streaming — the collection view
+            // layouts naturally before the next display cycle, and the only
+            // consumer (updateScrollState) is gated off when isBusy. Forcing
+            // layout at 30Hz wastes ~1-3ms per tick for no visible effect.
+            if !configuration.isBusy {
+                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: nextIDs.count)
+                collectionView.layoutIfNeeded()
+                ChatTimelinePerf.endLayoutPass(layoutToken)
+            }
             var didScroll = false
             if let scrollCommand = configuration.scrollCommand,
                scrollCommand.nonce != lastHandledScrollCommandNonce,
