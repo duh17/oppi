@@ -123,6 +123,21 @@ final class FullScreenCodeViewController: UIViewController {
             langLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(langLabel)
 
+        case .plainText(_, let filePath):
+            if let path = filePath {
+                let pathLabel = UILabel()
+                pathLabel.text = path.shortenedPath
+                pathLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+                pathLabel.textColor = UIColor(palette.fg)
+                pathLabel.lineBreakMode = .byTruncatingMiddle
+                stack.addArrangedSubview(pathLabel)
+            }
+            let textTypeLabel = UILabel()
+            textTypeLabel.text = String(localized: "text")
+            textTypeLabel.font = .systemFont(ofSize: 11)
+            textTypeLabel.textColor = UIColor(palette.comment)
+            stack.addArrangedSubview(textTypeLabel)
+
         case .diff(_, _, let filePath, _):
             if let path = filePath {
                 let pathLabel = UILabel()
@@ -177,6 +192,8 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .code(let text, let language, _, let startLine):
             return NativeFullScreenCodeBody(content: text, language: language, startLine: startLine, palette: palette)
+        case .plainText(let text, _):
+            return NativeFullScreenSourceBody(content: text, palette: palette)
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
             return NativeFullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath, precomputedLines: precomputedLines, palette: palette)
         case .markdown(let text, _):
@@ -198,6 +215,7 @@ final class FullScreenCodeViewController: UIViewController {
         let text: String
         switch content {
         case .code(let t, _, _, _): text = t
+        case .plainText(let t, _): text = t
         case .diff(_, let newText, _, _): text = newText
         case .markdown(let t, _): text = t
         case .thinking(let t, let stream): text = stream?.snapshot.text ?? t
