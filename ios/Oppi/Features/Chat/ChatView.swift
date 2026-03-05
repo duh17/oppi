@@ -35,6 +35,7 @@ struct ChatView: View {
     @State private var showContextInspector = false
     @State private var suppressNextContextTap = false
     @State private var isKeyboardVisible = false
+    @State private var isZenMode = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
     init(sessionId: String) {
@@ -103,8 +104,8 @@ struct ChatView: View {
             scrollController: scrollController,
             sessionManager: sessionManager,
             onFork: forkFromMessage,
-            topOverlap: headerHeight,
-            bottomOverlap: footerHeight
+            topOverlap: isZenMode ? 0 : headerHeight,
+            bottomOverlap: isZenMode ? 0 : footerHeight
         )
     }
 
@@ -112,18 +113,22 @@ struct ChatView: View {
         chatTimeline
             .ignoresSafeArea(.container, edges: .top)
             .overlay(alignment: .top) {
-                WorkspaceContextBar(
-                    gitStatus: connection.gitStatusStore.gitStatus,
-                    isLoading: connection.gitStatusStore.isLoading
-                )
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                if !isZenMode {
+                    WorkspaceContextBar(
+                        gitStatus: connection.gitStatusStore.gitStatus,
+                        isLoading: connection.gitStatusStore.isLoading
+                    )
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                }
             }
             .overlay(alignment: .bottom) {
-                footerArea
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
+                if !isZenMode {
+                    footerArea
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
-                if scrollController.isJumpToBottomHintVisible {
+                if !isZenMode, scrollController.isJumpToBottomHintVisible {
                     JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
                         scrollController.requestScrollToBottom()
                     }
@@ -136,117 +141,134 @@ struct ChatView: View {
     }
 
     private var chatContent: some View {
-        chatTimelineScaffold
-            .background(Color.themeBg.ignoresSafeArea())
-        .navigationTitle(sessionDisplayName)
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $forkedSessionToOpen) { route in
-            Self(sessionId: route.id)
-        }
-        .toolbar(.hidden, for: .tabBar)
-        .toolbar(.hidden, for: .bottomBar)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                chatPrincipalToolbarItem
+        configuredChatContent
+            .sheet(isPresented: $showOutline) { outlineSheet }
+            .sheet(isPresented: $showModelPicker) { modelPickerSheet }
+            .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
+            .fullScreenCover(isPresented: $showComposer) { composerSheet }
+            .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
+            .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
+                Button("Keep Current", role: .cancel) {
+                    pendingModelSwitch = nil
+                }
+                Button("Switch Anyway") {
+                    applyModelSelection(model)
+                    pendingModelSwitch = nil
+                }
+            } message: { model in
+                Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
             }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                chatTrailingToolbarItem
+            .alert("Compact Context", isPresented: $showCompactConfirmation) {
+                Button("Compact", role: .destructive) {
+                    actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
             }
-        }
-        .sheet(isPresented: $showOutline) { outlineSheet }
-        .sheet(isPresented: $showModelPicker) { modelPickerSheet }
-        .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
-        .fullScreenCover(isPresented: $showComposer) { composerSheet }
-        .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
-        .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
-            Button("Keep Current", role: .cancel) {
-                pendingModelSwitch = nil
-            }
-            Button("Switch Anyway") {
-                applyModelSelection(model)
-                pendingModelSwitch = nil
-            }
-        } message: { model in
-            Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
-        }
-        .alert("Compact Context", isPresented: $showCompactConfirmation) {
-            Button("Compact", role: .destructive) {
-                actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
-        }
-        .task(id: sessionManager.connectionGeneration) {
-            await sessionManager.connect(
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore
-            )
-        }
-        .task {
-            // Pre-warm voice input pipeline in background (model check + transcriber creation)
-            if ReleaseFeatures.voiceInputEnabled {
-                await voiceInputManager.prewarm(source: "chat_view_task")
-            }
-        }
-        .onAppear {
-            sessionManager.markAppeared()
-            if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
-                inputText = draft
-                connection.composerDraft = nil
-            }
-            // Load initial git status for the workspace
-            if let wsId = session?.workspaceId, let api = connection.apiClient {
-                let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
-                connection.gitStatusStore.loadInitial(
-                    workspaceId: wsId,
-                    apiClient: api,
-                    gitStatusEnabled: ws?.gitStatusEnabled ?? true
+            .task(id: sessionManager.connectionGeneration) {
+                await sessionManager.connect(
+                    connection: connection,
+                    reducer: reducer,
+                    sessionStore: sessionStore
                 )
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            isKeyboardVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            isKeyboardVisible = false
-        }
-        .onChange(of: session?.status) { _, newStatus in
-            if newStatus != .stopping {
-                actionHandler.resetStopState()
-                sessionManager.cancelReconciliation()
+            .task {
+                // Pre-warm voice input pipeline in background (model check + transcriber creation)
+                if ReleaseFeatures.voiceInputEnabled {
+                    await voiceInputManager.prewarm(source: "chat_view_task")
+                }
             }
+            .onAppear {
+                sessionManager.markAppeared()
+                voiceInputManager.loadPreferences()
+                if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
+                    inputText = draft
+                    connection.composerDraft = nil
+                }
+                // Load initial git status for the workspace
+                if let wsId = session?.workspaceId, let api = connection.apiClient {
+                    let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
+                    connection.gitStatusStore.loadInitial(
+                        workspaceId: wsId,
+                        apiClient: api,
+                        gitStatusEnabled: ws?.gitStatusEnabled ?? true
+                    )
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                isKeyboardVisible = true
+                if isZenMode {
+                    exitZenMode(animated: false)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                isKeyboardVisible = false
+            }
+            .onChange(of: session?.status) { _, newStatus in
+                if newStatus != .stopping {
+                    actionHandler.resetStopState()
+                    sessionManager.cancelReconciliation()
+                }
 
-            if newStatus == .busy {
-                Task {
-                    try? await connection.requestMessageQueue()
+                if newStatus == .busy {
+                    Task {
+                        try? await connection.requestMessageQueue()
+                    }
                 }
             }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                Task {
-                    await sessionManager.flushSnapshotIfNeeded(connection: connection)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background {
+                    Task {
+                        await sessionManager.flushSnapshotIfNeeded(connection: connection)
+                    }
                 }
             }
-        }
-        .onDisappear {
-            actionHandler.cleanup()
-            sessionManager.cleanup()
-            scrollController.cancel()
-            audioPlayer.stop()
-            let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-            connection.composerDraft = draft.isEmpty ? nil : draft
-            Task {
-                await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
+            .onDisappear {
+                isZenMode = false
+                actionHandler.cleanup()
+                sessionManager.cleanup()
+                scrollController.cancel()
+                audioPlayer.stop()
+                let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                connection.composerDraft = draft.isEmpty ? nil : draft
+                Task {
+                    await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
+                }
+                if connection.activeSessionId == sessionId
+                    || connection.activeSessionId == nil {
+                    connection.disconnectSession()
+                }
             }
-            if connection.activeSessionId == sessionId
-                || connection.activeSessionId == nil {
-                connection.disconnectSession()
+    }
+
+    private var configuredChatContent: some View {
+        chatTimelineScaffold
+            .background(Color.themeBg.ignoresSafeArea())
+            .overlay {
+                if isZenMode {
+                    zenModeOverlayChrome
+                }
             }
-        }
+            .navigationTitle(sessionDisplayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $forkedSessionToOpen) { route in
+                Self(sessionId: route.id)
+            }
+            .toolbar(.hidden, for: .tabBar)
+            .toolbar(.hidden, for: .bottomBar)
+            .toolbar(isZenMode ? .hidden : .visible, for: .navigationBar)
+            .toolbar {
+                if !isZenMode {
+                    ToolbarItem(placement: .principal) {
+                        chatPrincipalToolbarItem
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        chatTrailingToolbarItem
+                    }
+                }
+            }
     }
 
     @ViewBuilder
@@ -371,35 +393,47 @@ struct ChatView: View {
             }
 
             Button {
-                if suppressNextContextTap {
-                    suppressNextContextTap = false
-                    return
-                }
-                triggerToolbarHaptic(style: .soft, intensity: 0.55)
-                showContextInspector = true
+                enterZenMode()
             } label: {
-                ContextUsageRingBadge(
-                    usage: contextUsageSnapshot
-                )
+                Image(systemName: "viewfinder")
+                    .font(.subheadline)
+            }
+            .accessibilityLabel("Enter zen mode")
+
+            contextRingButton
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)
-            }
-            .buttonStyle(.plain)
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.4)
-                    .onEnded { _ in
-                        suppressNextContextTap = true
-                        triggerToolbarHaptic(style: .rigid, intensity: 0.75)
-                        showCompactConfirmation = true
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(0.6))
-                            suppressNextContextTap = false
-                        }
-                    }
-            )
-            .accessibilityLabel("Open context inspector")
-            .accessibilityHint("Long press to compact context")
         }
+    }
+
+    private var contextRingButton: some View {
+        Button {
+            if suppressNextContextTap {
+                suppressNextContextTap = false
+                return
+            }
+            triggerToolbarHaptic(style: .soft, intensity: 0.55)
+            showContextInspector = true
+        } label: {
+            ContextUsageRingBadge(
+                usage: contextUsageSnapshot
+            )
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4)
+                .onEnded { _ in
+                    suppressNextContextTap = true
+                    triggerToolbarHaptic(style: .rigid, intensity: 0.75)
+                    showCompactConfirmation = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.6))
+                        suppressNextContextTap = false
+                    }
+                }
+        )
+        .accessibilityLabel("Open context inspector")
+        .accessibilityHint("Long press to compact context")
     }
 
     private var sessionTitleLabel: some View {
@@ -424,6 +458,51 @@ struct ChatView: View {
         }
     }
 
+    private var zenModeOverlayChrome: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        exitZenMode()
+                    }
+
+                contextRingButton
+                    .padding(.trailing, 16)
+                    .padding(.top, proxy.safeAreaInsets.top + 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+                if isBusy {
+                    ZenStopButton(isStopping: isStopping) {
+                        actionHandler.stop(
+                            connection: connection,
+                            reducer: reducer,
+                            sessionStore: sessionStore,
+                            sessionManager: sessionManager,
+                            sessionId: sessionId
+                        )
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+
+                if showsMessageQueue {
+                    ZenQueueBubble(
+                        steeringCount: messageQueueState.steering.count,
+                        followUpCount: messageQueueState.followUp.count
+                    ) {
+                        exitZenMode()
+                    }
+                    .padding(.leading, 16)
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
     // MARK: - Actions
 
     private func updateFileSuggestions(query: String?) {
@@ -436,6 +515,25 @@ struct ChatView: View {
 
     private func presentComposer() {
         showComposer = true
+    }
+
+    private func enterZenMode() {
+        guard !isZenMode else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isZenMode = true
+        }
+    }
+
+    private func exitZenMode(animated: Bool = true) {
+        guard isZenMode else { return }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isZenMode = false
+            }
+        } else {
+            isZenMode = false
+        }
     }
 
     private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
