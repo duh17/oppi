@@ -90,6 +90,9 @@ No partial protocol updates.
 - No force unwraps in production code
 - Liquid Glass for navigation chrome only. Never for scrollable content.
 
+### Rendering Performance (iOS)
+- See [`docs/golden-principles.md`](docs/golden-principles.md) (Rendering section) for enforced invariants.
+
 ### Testing (iOS)
 - Use Swift Testing (`import Testing`, `@Test`, `#expect`) for all unit tests. No XCTest for unit tests.
 - XCTest is only allowed for UI tests (`XCUIApplication` requires it — Swift Testing has no UI testing support).
@@ -97,6 +100,10 @@ No partial protocol updates.
 - Use `@MainActor` on the struct (not individual tests) when all tests need main actor isolation.
 - Use `Issue.record()` instead of `XCTFail()`. Use `#expect()` instead of `XCTAssert*`.
 - `#filePath` works in Swift Testing for bundle-free fixture resolution — no need for `Bundle(for:)`.
+- **xcodebuild `-only-testing` with Swift Testing**: xcodebuild strips one trailing `()` from identifiers. Add double parentheses `()()` for function-level filters:
+  - Suite: `-only-testing:OppiTests/MySuiteStruct` (use struct name, not `@Suite` display name)
+  - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
+  - Multiple: repeat `-only-testing:` for each test
 
 ## iOS Architecture
 

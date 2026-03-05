@@ -90,8 +90,8 @@ final class FullScreenCodeViewController: UIViewController {
         contentView.translatesAutoresizingMaskIntoConstraints = false
         vc.view.addSubview(contentView)
         NSLayoutConstraint.activate([
-            contentView.leadingAnchor.constraint(equalTo: vc.view.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: vc.view.trailingAnchor),
+            contentView.leadingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.trailingAnchor),
             contentView.topAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.topAnchor),
             contentView.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor),
         ])
@@ -233,8 +233,8 @@ final class FullScreenCodeViewController: UIViewController {
         body.translatesAutoresizingMaskIntoConstraints = false
         vc.view.addSubview(body)
         NSLayoutConstraint.activate([
-            body.leadingAnchor.constraint(equalTo: vc.view.leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: vc.view.trailingAnchor),
+            body.leadingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.trailingAnchor),
             body.topAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.topAnchor),
             body.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor),
         ])
@@ -360,13 +360,15 @@ private final class NativeFullScreenCodeBody: UIView {
 
         let text = content
         highlightTask = Task { [weak self] in
-            let highlighted = await Task.detached(priority: .userInitiated) {
-                SyntaxHighlighter.highlight(text, language: syntaxLang)
+            // AttributedString is Sendable; NSAttributedString is not.
+            // Convert at the boundary — still O(n), much cheaper than the old O(n^2) build.
+            let sendable = await Task.detached(priority: .userInitiated) {
+                AttributedString(SyntaxHighlighter.highlight(text, language: syntaxLang))
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.codeTextView.attributedText = fullScreenAttributedCodeText(
-                    from: NSAttributedString(highlighted)
+                    from: NSAttributedString(sendable)
                 )
             }
         }
@@ -561,7 +563,7 @@ private final class DiffRowView: UIView {
 
         if language != .unknown, line.kind == .context {
             codeLabel.attributedText = fullScreenAttributedCodeText(
-                from: NSAttributedString(SyntaxHighlighter.highlightLine(line.text, language: language))
+                from: SyntaxHighlighter.highlightLine(line.text, language: language)
             )
         } else {
             codeLabel.text = line.text
@@ -854,8 +856,8 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         renderTask = nil
 
         if content.utf8.count <= Self.maxSynchronousANSIBytes {
-            outputView.attributedText = NSAttributedString(
-                ANSIParser.attributedString(from: content, baseForeground: .themeFg)
+            outputView.attributedText = ANSIParser.attributedString(
+                from: content, baseForeground: .themeFg
             )
             return
         }
@@ -869,13 +871,14 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
         let source = content
         renderTask = Task { [weak self] in
-            let attributed = await Task.detached(priority: .userInitiated) {
-                ANSIParser.attributedString(from: source, baseForeground: .themeFg)
+            // AttributedString is Sendable; NSAttributedString is not.
+            let sendable = await Task.detached(priority: .userInitiated) {
+                AttributedString(ANSIParser.attributedString(from: source, baseForeground: .themeFg))
             }.value
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.outputView.attributedText = NSAttributedString(attributed)
+                self?.outputView.attributedText = NSAttributedString(sendable)
                 self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
         }

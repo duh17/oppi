@@ -372,6 +372,7 @@ struct OppiApp: App {
     private func handleMemoryWarning() {
         let footprintBefore = SentryService.currentFootprintMB()
 
+        ToolRowRenderCache.evictAll()
         let cacheStats = MarkdownSegmentCache.shared.snapshot()
         MarkdownSegmentCache.shared.clearAll()
 

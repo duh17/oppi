@@ -114,13 +114,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
     private let commandContainer = UIView()
-    private let commandLabel = UILabel()
+    private let commandLabel = UITextView()
     private let outputContainer = UIView()
     private let outputScrollView = HorizontalPanPassthroughScrollView()
-    private let outputLabel = UILabel()
+    private let outputLabel = UITextView()
     private let expandedContainer = UIView()
     private let expandedScrollView = HorizontalPanPassthroughScrollView()
-    private let expandedLabel = UILabel()
+    private let expandedLabel = UITextView()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
     private let imagePreviewContainer = UIView()
@@ -665,7 +665,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.textColor = outputColor
-        expandedLabel.lineBreakMode = .byCharWrapping
+        expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.isHidden = false
         expandedMarkdownView.isHidden = true
         expandedReadMediaContainer.isHidden = true

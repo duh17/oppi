@@ -118,8 +118,8 @@ struct AssistantTimelineRowContentViewTests {
         )
 
         // The code label must NOT have wrapped — it should be a single line of code.
-        let codeLabel = try #require(timelineAllLabels(in: scrollView).first)
-        let labelLines = codeLabel.text?.components(separatedBy: "\n").count ?? 0
+        let codeTextView = try #require(timelineAllTextViews(in: scrollView).first)
+        let labelLines = codeTextView.text?.components(separatedBy: "\n").count ?? 0
         #expect(labelLines == 1, "Single-line code should render as 1 line, not wrap to \(labelLines) lines")
     }
 

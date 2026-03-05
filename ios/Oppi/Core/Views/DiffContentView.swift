@@ -170,7 +170,7 @@ struct DiffContentView: View {
                 // provide enough add/remove context while token colors keep
                 // the code readable (same approach as GitHub/VS Code diffs).
                 if lang != .unknown {
-                    Text(SyntaxHighlighter.highlightLine(line.text, language: lang))
+                    Text(AttributedString(SyntaxHighlighter.highlightLine(line.text, language: lang)))
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)

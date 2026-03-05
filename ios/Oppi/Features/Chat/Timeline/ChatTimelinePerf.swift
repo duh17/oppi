@@ -420,7 +420,58 @@ enum ChatTimelinePerf {
         )
     }
 
-    private static func outputBytesBucket(_ bytes: Int) -> String {
+    // MARK: - Render Strategy Timing
+
+    private static let slowRenderThresholdMs = 8
+
+    /// Record internal rendering time for a tool row's expanded content.
+    ///
+    /// Measures the highlighting / ANSI parse / diff build cost,
+    /// independent of UIKit layout. Emitted to the telemetry pipeline
+    /// and logged when slow.
+    static func recordRenderStrategy(
+        mode: String,
+        durationMs: Int,
+        inputBytes: Int,
+        language: String? = nil
+    ) {
+        signposter.emitEvent("render.strategy")
+
+        let sid = activeSessionId
+        Task.detached(priority: .utility) {
+            var tags = [
+                "mode": mode,
+                "input_bytes": outputBytesBucket(inputBytes),
+            ]
+            if let language { tags["language"] = language }
+
+            await ChatMetricsService.shared.record(
+                metric: .renderStrategyMs,
+                value: Double(durationMs),
+                unit: .ms,
+                sessionId: sid,
+                tags: tags
+            )
+        }
+
+        guard durationMs >= slowRenderThresholdMs else { return }
+        guard shouldEmitSlowLog() else { return }
+
+        var metadata: [String: String] = [
+            "mode": mode,
+            "durationMs": String(durationMs),
+            "inputBytes": String(inputBytes),
+        ]
+        if let language { metadata["language"] = language }
+
+        ClientLog.error(
+            "ChatPerf",
+            "Slow render strategy",
+            metadata: metadata
+        )
+    }
+
+    nonisolated private static func outputBytesBucket(_ bytes: Int) -> String {
         switch bytes {
         case ..<1_000: return "<1KB"
         case ..<10_000: return "1-10KB"
