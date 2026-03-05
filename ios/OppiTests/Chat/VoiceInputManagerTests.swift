@@ -19,7 +19,7 @@ struct VoiceInputManagerTests {
         #expect(!manager.isRecording)
         #expect(!manager.isProcessing)
         #expect(!manager.isPreparing)
-        #expect(manager.currentTranscript == "")
+        #expect(manager.currentTranscript.isEmpty)
         #expect(manager.audioLevel == 0)
     }
 
@@ -109,9 +109,9 @@ struct VoiceInputManagerTests {
         manager._testState = .recording
 
         await manager.cancelRecording()
-        #expect(manager.finalizedTranscript == "")
-        #expect(manager.volatileTranscript == "")
-        #expect(manager.currentTranscript == "")
+        #expect(manager.finalizedTranscript.isEmpty)
+        #expect(manager.volatileTranscript.isEmpty)
+        #expect(manager.currentTranscript.isEmpty)
     }
 
     @Test func cancelResetsOperationLock() async {
@@ -189,6 +189,18 @@ struct VoiceInputManagerTests {
         // Should no-op (not idle)
         await manager.prewarm()
         #expect(!manager._testModelReady, "Prewarm should not proceed when not idle")
+    }
+
+    @Test func prewarmRemoteModeDoesNotCrash() async {
+        let manager = VoiceInputManager()
+        let endpoint = URL(string: "http://127.0.0.1:1")
+        #expect(endpoint != nil)
+
+        manager.setEngineMode(.remote)
+        manager.setRemoteASREndpoint(endpoint)
+
+        await manager.prewarm(source: "test")
+        #expect(manager.state == .idle)
     }
 
     // MARK: - Rapid Tap Simulation

@@ -139,6 +139,18 @@ struct ChatInputBar<ActionRow: View>: View {
         isBusy || isInputFocused || !pendingImages.isEmpty
     }
 
+    /// While active voice capture is running, keep keyboard-restore-on-tap disabled
+    /// so accidental taps don't pop the keyboard and interrupt dictation flow.
+    private var allowKeyboardRestoreOnTap: Bool {
+        guard let manager = voiceInputManager else { return true }
+        switch manager.state {
+        case .recording, .preparingModel, .processing:
+            return false
+        case .idle, .error:
+            return true
+        }
+    }
+
     /// Text binding for the input field.
     private var textFieldBinding: Binding<String> {
         Binding(
@@ -276,6 +288,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         blurRequestID: 0,
                         dictationRequestID: 0,
                         suppressKeyboard: suppressKeyboard,
+                        allowKeyboardRestoreOnTap: allowKeyboardRestoreOnTap,
                         onKeyboardRestoreRequest: handleKeyboardRestore,
                         accessibilityIdentifier: "chat.input",
                         keyboardLanguage: $keyboardLanguage
@@ -470,6 +483,7 @@ struct ChatInputBar<ActionRow: View>: View {
         let isRecording = manager.isRecording
         let isPreparing = manager.isPreparing
         let isProcessing = manager.isProcessing
+        let engineBadge = micEngineBadge(for: manager)
 
         return Button {
             Task {
@@ -514,6 +528,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 audioLevel: manager.audioLevel,
                 languageLabel: manager.activeLanguageLabel,
                 accentColor: accentColor,
+                engineBadge: engineBadge,
                 diameter: actionVisualDiameter
             )
         }
@@ -521,6 +536,7 @@ struct ChatInputBar<ActionRow: View>: View {
         .disabled(isProcessing)
         .accessibilityIdentifier("chat.voiceInput")
         .accessibilityLabel(accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
+        .accessibilityValue(voiceRouteAccessibilityValue(for: manager))
     }
 
     private var stopActionButton: some View {
@@ -576,6 +592,21 @@ struct ChatInputBar<ActionRow: View>: View {
         isInputFocused = isFocused
     }
 
+    private func micEngineBadge(for manager: VoiceInputManager) -> MicButtonLabel.EngineBadge {
+        switch manager.routeIndicator {
+        case .auto:
+            return .auto
+        case .onDevice:
+            return .onDevice
+        case .remote:
+            return .remote
+        }
+    }
+
+    private func voiceRouteAccessibilityValue(for manager: VoiceInputManager) -> String {
+        manager.routeIndicator.accessibilityLabel
+    }
+
     private func accessibilityLabel(isRecording: Bool, isPreparing: Bool) -> String {
         if isRecording {
             return "Stop recording"
@@ -586,6 +617,18 @@ struct ChatInputBar<ActionRow: View>: View {
         return "Start voice input"
     }
 
+    static func suppressKeyboardAfterSend(
+        voiceState: VoiceInputManager.State,
+        wasSuppressed: Bool
+    ) -> Bool {
+        switch voiceState {
+        case .recording, .preparingModel:
+            return wasSuppressed
+        case .idle, .processing, .error:
+            return wasSuppressed
+        }
+    }
+
     private func handleSend() {
         guard !isSending else { return }
 
@@ -593,7 +636,10 @@ struct ChatInputBar<ActionRow: View>: View {
         // don't repopulate the text field after it's cleared.
         if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
-            suppressKeyboard = false
+            suppressKeyboard = Self.suppressKeyboardAfterSend(
+                voiceState: manager.state,
+                wasSuppressed: suppressKeyboard
+            )
             Task {
                 if manager.isRecording {
                     await manager.stopRecording()

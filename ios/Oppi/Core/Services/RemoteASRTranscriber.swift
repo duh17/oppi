@@ -69,6 +69,18 @@ final class RemoteASRTranscriber: @unchecked Sendable {
 
         /// Response format requested from the server.
         var responseFormat: String = "json"
+
+        /// Optional server-specific profile hint (e.g. `dictation`).
+        /// Omitted when nil to remain OpenAI-compatible.
+        var sttProfile: String?
+
+        /// Optional server-side cleanup toggle for dictation-oriented post-processing.
+        /// Omitted when nil.
+        var dictationCleanup: Bool?
+
+        /// Number of trailing words to send as overlap context on each chunk.
+        /// Set to 0 to disable `overlap_text`/`previous_text` fields.
+        var overlapTextWordCount: Int = 20
     }
 
     let config: Configuration
@@ -82,7 +94,12 @@ final class RemoteASRTranscriber: @unchecked Sendable {
         var overlapSamples: [Float] = []
     }
 
+    private struct RequestContextState: Sendable {
+        var overlapText: String = ""
+    }
+
     private let audioBuffer = OSAllocatedUnfairLock(initialState: AudioBufferState())
+    private let requestContext = OSAllocatedUnfairLock(initialState: RequestContextState())
 
     // MARK: - Async Plumbing
 
@@ -99,6 +116,28 @@ final class RemoteASRTranscriber: @unchecked Sendable {
         /// Server-reported duration of the transcribed audio, if available.
         let duration: Double?
     }
+
+    enum ChunkStatus: String, Sendable {
+        case success
+        case empty
+        case skipped
+        case cancelled
+        case error
+    }
+
+    struct ChunkTelemetry: Sendable {
+        let status: ChunkStatus
+        let isFinal: Bool
+        let sampleCount: Int
+        let audioDurationMs: Int
+        let wavBytes: Int
+        let uploadDurationMs: Int?
+        let textLength: Int?
+        let errorCategory: String?
+    }
+
+    /// Optional observer for per-chunk telemetry (success + failures).
+    var onChunkTelemetry: (@Sendable (ChunkTelemetry) -> Void)?
 
     // MARK: - Init
 
@@ -123,7 +162,7 @@ final class RemoteASRTranscriber: @unchecked Sendable {
             await self?.chunkLoop()
         }
 
-        logger.info("Remote ASR started (endpoint: \(self.config.endpointURL.absoluteString), model: \(self.config.model), chunk: \(self.config.chunkInterval)s, overlap: \(self.config.overlapDuration)s)")
+        logger.info("Remote ASR started (endpoint: \(self.config.endpointURL.absoluteString), model: \(self.config.model), profile: \(self.config.sttProfile ?? "none"), chunk: \(self.config.chunkInterval)s, overlap: \(self.config.overlapDuration)s)")
         return stream
     }
 
@@ -159,6 +198,9 @@ final class RemoteASRTranscriber: @unchecked Sendable {
         audioBuffer.withLock { state in
             state.sampleBuffer.removeAll()
             state.overlapSamples.removeAll()
+        }
+        requestContext.withLock { state in
+            state.overlapText = ""
         }
     }
 
@@ -215,23 +257,40 @@ final class RemoteASRTranscriber: @unchecked Sendable {
 
         // Skip empty or too-short chunks (< 0.1s)
         let minSamples = config.sampleRate / 10
+        let chunkDurationMs = Int(Double(chunkSamples.count) / Double(config.sampleRate) * 1000)
+
         guard chunkSamples.count >= minSamples else {
             if isFinal {
                 logger.info("Final chunk too short (\(chunkSamples.count) samples), skipping")
             }
+            onChunkTelemetry?(
+                ChunkTelemetry(
+                    status: .skipped,
+                    isFinal: isFinal,
+                    sampleCount: chunkSamples.count,
+                    audioDurationMs: chunkDurationMs,
+                    wavBytes: 0,
+                    uploadDurationMs: nil,
+                    textLength: nil,
+                    errorCategory: nil
+                )
+            )
             return
         }
 
-        let chunkDurationMs = Int(Double(chunkSamples.count) / Double(config.sampleRate) * 1000)
         logger.info("Sending chunk: \(chunkSamples.count) samples (\(chunkDurationMs)ms), final=\(isFinal)")
 
         // Encode to WAV
         let wavData = WAVEncoder.encode(samples: chunkSamples, sampleRate: config.sampleRate)
 
+        let overlapText = requestContext.withLock { state in
+            state.overlapText.isEmpty ? nil : state.overlapText
+        }
+
         // POST to endpoint
         let startTime = ContinuousClock.now
         do {
-            let response = try await transcribe(wavData: wavData)
+            let response = try await transcribe(wavData: wavData, overlapText: overlapText)
             let elapsed = ContinuousClock.now - startTime
             let ms = Int(
                 elapsed.components.seconds * 1000
@@ -241,23 +300,119 @@ final class RemoteASRTranscriber: @unchecked Sendable {
             let trimmed = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 logger.info("Chunk returned empty text (\(ms)ms)")
+                onChunkTelemetry?(
+                    ChunkTelemetry(
+                        status: .empty,
+                        isFinal: isFinal,
+                        sampleCount: chunkSamples.count,
+                        audioDurationMs: chunkDurationMs,
+                        wavBytes: wavData.count,
+                        uploadDurationMs: ms,
+                        textLength: 0,
+                        errorCategory: nil
+                    )
+                )
                 return
             }
 
-            logger.error("Chunk transcribed in \(ms)ms: \(trimmed.prefix(80))...")
+            updateOverlapTextContext(with: trimmed)
+
+            logger.info("Chunk transcribed in \(ms)ms: \(trimmed.prefix(80))...")
+            onChunkTelemetry?(
+                ChunkTelemetry(
+                    status: .success,
+                    isFinal: isFinal,
+                    sampleCount: chunkSamples.count,
+                    audioDurationMs: chunkDurationMs,
+                    wavBytes: wavData.count,
+                    uploadDurationMs: ms,
+                    textLength: trimmed.count,
+                    errorCategory: nil
+                )
+            )
             resultsContinuation?.yield(
                 TranscriptionResult(text: trimmed, isFinal: true, duration: response.duration)
             )
         } catch is CancellationError {
             logger.info("Chunk upload cancelled")
+            onChunkTelemetry?(
+                ChunkTelemetry(
+                    status: .cancelled,
+                    isFinal: isFinal,
+                    sampleCount: chunkSamples.count,
+                    audioDurationMs: chunkDurationMs,
+                    wavBytes: wavData.count,
+                    uploadDurationMs: nil,
+                    textLength: nil,
+                    errorCategory: nil
+                )
+            )
         } catch {
             logger.error("Chunk transcription failed: \(error.localizedDescription)")
+            onChunkTelemetry?(
+                ChunkTelemetry(
+                    status: .error,
+                    isFinal: isFinal,
+                    sampleCount: chunkSamples.count,
+                    audioDurationMs: chunkDurationMs,
+                    wavBytes: wavData.count,
+                    uploadDurationMs: nil,
+                    textLength: nil,
+                    errorCategory: Self.errorCategory(for: error)
+                )
+            )
         }
+    }
+
+    private func updateOverlapTextContext(with text: String) {
+        let maxWords = max(0, config.overlapTextWordCount)
+        guard maxWords > 0 else { return }
+
+        let incomingWords = Self.contextWords(from: text)
+        guard !incomingWords.isEmpty else { return }
+
+        requestContext.withLock { state in
+            var combined = Self.contextWords(from: state.overlapText)
+            combined.append(contentsOf: incomingWords)
+            if combined.count > maxWords {
+                combined = Array(combined.suffix(maxWords))
+            }
+            state.overlapText = combined.joined(separator: " ")
+        }
+    }
+
+    private static func contextWords(from text: String) -> [String] {
+        text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    private static func errorCategory(for error: Error) -> String {
+        if let voiceError = error as? VoiceInputError {
+            return voiceError.telemetryCategory
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "timeout"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                return "network"
+            case .cancelled:
+                return "cancelled"
+            default:
+                return "url_error"
+            }
+        }
+
+        if error is DecodingError {
+            return "decode"
+        }
+
+        return "other"
     }
 
     // MARK: - HTTP
 
-    private func transcribe(wavData: Data) async throws -> TranscriptionAPIResponse {
+    private func transcribe(wavData: Data, overlapText: String?) async throws -> TranscriptionAPIResponse {
         guard let session = urlSession else {
             throw VoiceInputError.internalError("URLSession not available")
         }
@@ -306,23 +461,62 @@ final class RemoteASRTranscriber: @unchecked Sendable {
             )
         }
 
+        // Optional: server-specific dictation controls.
+        if let profile = config.sttProfile?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !profile.isEmpty {
+            body.appendMultipartField(boundary: boundary, name: "stt_profile", value: profile)
+        }
+
+        if let dictationCleanup = config.dictationCleanup {
+            body.appendMultipartField(
+                boundary: boundary,
+                name: "dictation_cleanup",
+                value: dictationCleanup ? "true" : "false"
+            )
+        }
+
+        if let overlapText = overlapText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !overlapText.isEmpty {
+            body.appendMultipartField(boundary: boundary, name: "overlap_text", value: overlapText)
+            // Backward-compatible alias accepted by older local server builds.
+            body.appendMultipartField(boundary: boundary, name: "previous_text", value: overlapText)
+        }
+
         // Close boundary
         body.append(Data("--\(boundary)--\r\n".utf8))
         request.httpBody = body
 
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let urlError as URLError {
+            switch urlError.code {
+            case .timedOut:
+                throw VoiceInputError.remoteRequestTimedOut
+            case .cancelled:
+                throw CancellationError()
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                throw VoiceInputError.remoteNetwork(urlError.localizedDescription)
+            default:
+                throw VoiceInputError.remoteNetwork(urlError.localizedDescription)
+            }
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw VoiceInputError.internalError("Invalid response type")
+            throw VoiceInputError.remoteInvalidResponse
         }
         guard httpResponse.statusCode == 200 else {
             let bodyText = String(data: data, encoding: .utf8) ?? "unknown"
-            throw VoiceInputError.internalError(
-                "ASR endpoint returned \(httpResponse.statusCode): \(bodyText.prefix(200))"
-            )
+            logger.error("ASR endpoint returned \(httpResponse.statusCode): \(bodyText.prefix(200))")
+            throw VoiceInputError.remoteBadResponseStatus(httpResponse.statusCode)
         }
 
-        return try JSONDecoder().decode(TranscriptionAPIResponse.self, from: data)
+        do {
+            return try JSONDecoder().decode(TranscriptionAPIResponse.self, from: data)
+        } catch {
+            throw VoiceInputError.remoteDecodeFailed
+        }
     }
 
     /// OpenAI-compatible transcription response.

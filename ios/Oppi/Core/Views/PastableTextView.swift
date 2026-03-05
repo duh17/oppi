@@ -133,6 +133,7 @@ struct PastableTextView: UIViewRepresentable {
     let blurRequestID: Int
     let dictationRequestID: Int
     let suppressKeyboard: Bool
+    let allowKeyboardRestoreOnTap: Bool
     let onKeyboardRestoreRequest: (() -> Void)?
     let accessibilityIdentifier: String?
     /// BCP 47 language code of the text view's active keyboard (e.g. "zh-Hans", "en-US").
@@ -175,6 +176,7 @@ struct PastableTextView: UIViewRepresentable {
         textView.accessibilityIdentifier = accessibilityIdentifier
 
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
         textView.installKeyboardRestoreGesture()
         if suppressKeyboard {
             textView.setKeyboardSuppressed(true)
@@ -210,6 +212,9 @@ struct PastableTextView: UIViewRepresentable {
         // Manage keyboard suppression — must apply before focus request so
         // inputView is set before becomeFirstResponder fires.
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        if textView.allowsKeyboardRestoreOnTap != allowKeyboardRestoreOnTap {
+            textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
+        }
         if textView.isKeyboardSuppressed != suppressKeyboard {
             textView.setKeyboardSuppressed(suppressKeyboard)
         }
@@ -598,6 +603,10 @@ final class PastableUITextView: UITextView {
     /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
     private(set) var isKeyboardSuppressed = false
 
+    /// When false, taps on the text view do not restore the keyboard even if
+    /// suppression is active (used during active voice recording).
+    private(set) var allowsKeyboardRestoreOnTap = true
+
     private var cachedPasteboardChangeCount: Int = -1
     private var cachedPasteboardHasImages = false
 
@@ -698,14 +707,20 @@ final class PastableUITextView: UITextView {
     func setKeyboardSuppressed(_ suppressed: Bool) {
         isKeyboardSuppressed = suppressed
         inputView = suppressed ? UIView() : nil
-        keyboardRestoreTap.isEnabled = suppressed
+        keyboardRestoreTap.isEnabled = suppressed && allowsKeyboardRestoreOnTap
         if window != nil {
             reloadInputViews()
         }
     }
 
+    /// Enable/disable restoring the keyboard via text-view tap while suppressed.
+    func setAllowKeyboardRestoreOnTap(_ allow: Bool) {
+        allowsKeyboardRestoreOnTap = allow
+        keyboardRestoreTap.isEnabled = isKeyboardSuppressed && allow
+    }
+
     @objc private func handleKeyboardRestoreTap() {
-        guard isKeyboardSuppressed else { return }
+        guard isKeyboardSuppressed, allowsKeyboardRestoreOnTap else { return }
         // Immediately restore keyboard for responsiveness
         isKeyboardSuppressed = false
         inputView = nil

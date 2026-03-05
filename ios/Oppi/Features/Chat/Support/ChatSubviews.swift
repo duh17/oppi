@@ -59,6 +59,69 @@ struct JumpToBottomHintButton: View {
     }
 }
 
+// MARK: - Zen Controls
+
+struct ZenStopButton: View {
+    let isStopping: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                if isStopping {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.white)
+                    Text("Stopping…")
+                        .font(.caption.weight(.semibold))
+                } else {
+                    Image(systemName: "stop.fill")
+                        .font(.caption2.weight(.bold))
+                    Text("Stop")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(isStopping ? Color.themeOrange : Color.themeRed, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isStopping)
+        .accessibilityIdentifier("chat.zen.stop")
+        .accessibilityLabel("Stop agent")
+    }
+}
+
+struct ZenQueueBubble: View {
+    let steeringCount: Int
+    let followUpCount: Int
+    let onTap: () -> Void
+
+    private var totalCount: Int {
+        steeringCount + followUpCount
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.caption2.weight(.semibold))
+                Text("\(totalCount)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+            .foregroundStyle(.themeFg)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.zen.queue")
+        .accessibilityLabel("Message queue")
+        .accessibilityHint("\(steeringCount) steering, \(followUpCount) follow-up")
+    }
+}
+
 // MARK: - Session Ended Footer
 
 struct SessionEndedFooter: View {

@@ -250,6 +250,11 @@ struct ChatView: View {
                     zenModeOverlayChrome
                 }
             }
+            .onTapGesture {
+                if isZenMode {
+                    exitZenMode()
+                }
+            }
             .navigationTitle(sessionDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -461,15 +466,9 @@ struct ChatView: View {
     private var zenModeOverlayChrome: some View {
         GeometryReader { proxy in
             ZStack {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        exitZenMode()
-                    }
-
                 contextRingButton
-                    .padding(.trailing, 16)
-                    .padding(.top, proxy.safeAreaInsets.top + 8)
+                    .padding(.trailing, 14)
+                    .padding(.top, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 if isBusy {
@@ -482,9 +481,8 @@ struct ChatView: View {
                             sessionId: sessionId
                         )
                     }
-                    .padding(.trailing, 16)
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.bottom, proxy.safeAreaInsets.bottom + 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
 
                 if showsMessageQueue {
