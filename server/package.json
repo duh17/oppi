@@ -49,6 +49,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "telemetry:review": "node scripts/telemetry-review.mjs",
+    "telemetry:review:gate": "node scripts/telemetry-review.mjs --days 3 --gate",
     "dead-code": "knip",
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
