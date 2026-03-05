@@ -197,7 +197,8 @@ Core/Models
 Core/Networking
   ├─ APIClient (REST)
   ├─ WebSocketClient (/stream transport, reconnect, ping)
-  └─ ServerConnection (+ MessageRouter/Refresh/ModelCommands/Fork)
+  ├─ SessionStreamCoordinator (actor: stream lifecycle + recovery state machine)
+  └─ ServerConnection (+ MessageRouter/Refresh/ModelCommands/Fork; transport + routing)
 
 Core/Runtime
   ├─ DeltaCoalescer (33ms batch for high-frequency deltas)
@@ -210,7 +211,7 @@ Core/Services
   └─ TimelineCache, GitStatusStore, etc.
 
 Features/Chat
-  ├─ ChatSessionManager (connect/reconnect/catch-up/history)
+  ├─ ChatSessionManager (UI/session lifecycle + history orchestration)
   ├─ ChatActionHandler (send/stop/model/thinking/session actions)
   ├─ ChatTimelineView (render window + scroll command wiring)
   └─ ChatTimelineCollectionView + TimelineSnapshotApplier (UIKit render host)
@@ -262,11 +263,19 @@ Examples from code comments:
 - `PermissionStore`: separate from session store so permission polling does not churn session UI.
 - Tool data stores: kept outside `ChatItem` to keep `Equatable` comparisons cheap and snapshot diffs stable.
 
+### Stream lifecycle ownership (post P1 split)
+
+- `SessionStreamCoordinator` is the single owner of stream lifecycle state transitions.
+- `ServerConnection` handles `/stream` socket connectivity, message routing, and command tracking.
+- `ChatSessionManager` owns UI entry state and reconnect scheduling, and delegates stream lifecycle policy to the coordinator through `ServerConnection`.
+- Recovery behavior (full-subscription recovery cooldown/in-flight guard), queue sync retries, and reconnect resubscribe sequencing are centralized in the coordinator actor.
+
 ### Import direction rules (observed)
 
 - `ChatView` composes `ChatSessionManager` + `ChatActionHandler` + `ChatTimelineView`.
-- `ChatSessionManager` depends on `ServerConnection`, `TimelineReducer`, `SessionStore`, `APIClient` catch-up/history APIs.
-- `ServerConnection` owns network clients and runtime pipeline (`DeltaCoalescer`, `TimelineReducer`, stores).
+- `ChatSessionManager` depends on `ServerConnection`, `TimelineReducer`, `SessionStore`, and history APIs; it does not own stream subscribe/resubscribe/recovery mechanics.
+- `SessionStreamCoordinator` owns stream lifecycle policy (subscribe/resubscribe, queue sync, full-subscription recovery, notification-level sync, and seq/catch-up bookkeeping).
+- `ServerConnection` owns network transport + message routing and delegates stream lifecycle transitions to `SessionStreamCoordinator`.
 - `TimelineReducer`/`DeltaCoalescer` stay UI-framework-free (`Foundation` + runtime types).
 - UIKit-specific rendering stays in timeline view host files (`ChatTimelineCollectionView`, `TimelineSnapshotApplier`, cell/content classes).
 
@@ -323,6 +332,6 @@ pi AgentSession event
 
 Catch-up path on reconnect is separate but parallel:
 
-- iOS uses `APIClient.getSessionEvents(...since=lastSeenSeq)`.
+- `SessionStreamCoordinator` tracks per-session `lastSeenSeq` and drives catch-up decisions; iOS fetches `APIClient.getSessionEvents(...since=lastSeenSeq)` when needed.
 - Server serves from `SessionManager.getCatchUp()` (`session-broadcast.ts` + `event-ring.ts`).
 - If `catchUpComplete == false`, iOS triggers full trace reload (`APIClient.getSession(...traceView:.full)`), then reducer rebuild.

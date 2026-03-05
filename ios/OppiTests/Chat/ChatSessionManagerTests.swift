@@ -423,7 +423,9 @@ struct ChatSessionManagerTests {
 
         // Wait for the regression-triggered reload to complete.
         #expect(await tracker.waitForCalls(1), "Seq regression should trigger history reload")
-        #expect(manager.entryState == .streaming)
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
 
         streams.finish(index: 0)
         await connectTask.value
