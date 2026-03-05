@@ -191,6 +191,27 @@ actor TimelineCache {
         )
     }
 
+    // MARK: - Disk Size
+
+    /// Total bytes consumed by all cached files under the cache root.
+    func diskSize() -> Int64 {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true,
+                  let size = values.fileSize
+            else { continue }
+            total += Int64(size)
+        }
+        return total
+    }
+
     // MARK: - Cleanup
 
     /// Remove trace caches for sessions that no longer exist.

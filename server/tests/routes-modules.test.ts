@@ -567,6 +567,43 @@ describe("routes modules", () => {
       expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
     });
 
+    it("returns full tool output from disk", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-full-"));
+      try {
+        const fullOutputPath = join(dataDir, "tc-1.full.txt");
+        writeFileSync(fullOutputPath, "complete tool output", "utf8");
+
+        const ctx = {
+          storage: {
+            getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+          },
+          sessions: {
+            getToolFullOutputPath: vi.fn(() => fullOutputPath),
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+
+        const handled = await dispatch({
+          method: "GET",
+          path: "/workspaces/ws-1/sessions/s1/tool-output/tc-1/full",
+          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/tool-output/tc-1/full"),
+          req: {} as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.body)).toEqual({
+          toolCallId: "tc-1",
+          output: "complete tool output",
+        });
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("validates path param on session file access", async () => {
       const ctx = {
         storage: {
@@ -650,6 +687,70 @@ describe("routes modules", () => {
         } else {
           process.env.OPPI_TELEMETRY_MODE = previousMode;
         }
+      }
+    });
+
+    it("accepts client-log uploads and appends JSONL envelope", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-client-logs-"));
+      const previousMode = process.env.OPPI_TELEMETRY_MODE;
+      process.env.OPPI_TELEMETRY_MODE = "internal";
+
+      try {
+        const dispatch = createSessionRoutes(
+          {
+            storage: {
+              getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
+              getDataDir: vi.fn(() => dataDir),
+              getOwnerName: vi.fn(() => "tester"),
+            },
+          } as unknown as RouteContext,
+          createRouteHelpers(),
+        );
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/workspaces/ws-1/sessions/s1/client-logs",
+          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/client-logs"),
+          req: makeRequest({
+            generatedAt,
+            trigger: "manual",
+            entries: [
+              {
+                timestamp: generatedAt,
+                level: "info",
+                category: "UI",
+                message: "hello world",
+                metadata: { source: "test" },
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.body)).toEqual({ ok: true, accepted: 1 });
+
+        const logPath = join(dataDir, "client-logs", "s1.jsonl");
+        const lines = readFileSync(logPath, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(1);
+        const record = JSON.parse(lines[0]) as {
+          sessionId: string;
+          workspaceId?: string;
+          entries: Array<{ message: string }>;
+        };
+        expect(record.sessionId).toBe("s1");
+        expect(record.workspaceId).toBe("ws-1");
+        expect(record.entries[0]?.message).toBe("hello world");
+      } finally {
+        if (previousMode === undefined) {
+          delete process.env.OPPI_TELEMETRY_MODE;
+        } else {
+          process.env.OPPI_TELEMETRY_MODE = previousMode;
+        }
+        rmSync(dataDir, { recursive: true, force: true });
       }
     });
 

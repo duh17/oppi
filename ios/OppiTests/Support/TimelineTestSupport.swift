@@ -40,6 +40,22 @@ func timelineAllTextViews(in root: UIView) -> [UITextView] {
     return textViews
 }
 
+/// Find all text-rendering views (UILabel + UITextView) in depth-first order.
+@MainActor
+func timelineAllTextRenderViews(in root: UIView) -> [UIView] {
+    var textViews: [UIView] = []
+
+    if root is UILabel || root is UITextView {
+        textViews.append(root)
+    }
+
+    for child in root.subviews {
+        textViews.append(contentsOf: timelineAllTextRenderViews(in: child))
+    }
+
+    return textViews
+}
+
 /// Find the first UITextView anywhere in the view hierarchy.
 @MainActor
 func timelineFirstTextView(in root: UIView) -> UITextView? {
@@ -94,6 +110,22 @@ func timelineAllScrollViews(in root: UIView) -> [UIScrollView] {
 @MainActor
 func timelineRenderedText(of label: UILabel) -> String {
     label.attributedText?.string ?? label.text ?? ""
+}
+
+@MainActor
+func timelineRenderedText(of textView: UITextView) -> String {
+    textView.attributedText?.string ?? textView.text ?? ""
+}
+
+@MainActor
+func timelineRenderedText(of view: UIView) -> String {
+    if let label = view as? UILabel {
+        return timelineRenderedText(of: label)
+    }
+    if let textView = view as? UITextView {
+        return timelineRenderedText(of: textView)
+    }
+    return ""
 }
 
 @MainActor
