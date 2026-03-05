@@ -56,6 +56,42 @@ final class VoiceInputManager {
         }
     }
 
+    enum EngineMode: String, Equatable, Sendable {
+        case auto
+        case onDevice
+        case remote
+
+        var logName: String {
+            switch self {
+            case .auto: return "auto"
+            case .onDevice: return "on_device"
+            case .remote: return "remote"
+            }
+        }
+    }
+
+    enum RouteIndicator: Equatable, Sendable {
+        case auto
+        case onDevice
+        case remote
+
+        var iconName: String {
+            switch self {
+            case .auto: return "arrow.triangle.branch"
+            case .onDevice: return "iphone"
+            case .remote: return "cloud.fill"
+            }
+        }
+
+        var accessibilityLabel: String {
+            switch self {
+            case .auto: return "Automatic routing"
+            case .onDevice: return "On-device transcription"
+            case .remote: return "Remote transcription"
+            }
+        }
+    }
+
     private enum TranscriberModule {
         case speech(SpeechTranscriber)
         case dictation(DictationTranscriber)
@@ -112,6 +148,28 @@ final class VoiceInputManager {
         }
     }
 
+    private struct RemoteProbeCache {
+        let endpoint: URL
+        let reachable: Bool
+        let checkedAt: Date
+    }
+
+    private struct RemoteChunkProfile: Sendable {
+        let chunkInterval: TimeInterval
+        let overlapDuration: TimeInterval
+        let requestTimeout: TimeInterval
+        let profileTag: String
+
+        var metricTags: [String: String] {
+            [
+                "chunk_profile": profileTag,
+                "chunk_interval_ms": String(Int(chunkInterval * 1000)),
+                "chunk_overlap_ms": String(Int(overlapDuration * 1000)),
+                "chunk_timeout_ms": String(Int(requestTimeout * 1000)),
+            ]
+        }
+    }
+
     // MARK: - Published State
 
     private(set) var state: State = .idle
@@ -123,6 +181,10 @@ final class VoiceInputManager {
     /// Set at recording start from the resolved locale. Nil when not recording.
     private(set) var activeLanguageLabel: String?
 
+    /// Effective engine selected for the current voice session.
+    /// Set at start of recording (including preparing) and cleared on teardown.
+    private(set) var activeEngine: TranscriptionEngine?
+
     var currentTranscript: String {
         (finalizedTranscript + volatileTranscript)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,6 +194,29 @@ final class VoiceInputManager {
     var isProcessing: Bool { state == .processing }
     var isPreparing: Bool { state == .preparingModel }
 
+    /// Route indicator for UI badges.
+    /// While recording/preparing, this reflects the resolved engine.
+    /// When idle, this reflects configured engine mode.
+    var routeIndicator: RouteIndicator {
+        if let activeEngine {
+            switch activeEngine {
+            case .remoteASR:
+                return .remote
+            case .modernSpeech, .classicDictation:
+                return .onDevice
+            }
+        }
+
+        switch engineMode {
+        case .auto:
+            return .auto
+        case .onDevice:
+            return .onDevice
+        case .remote:
+            return .remote
+        }
+    }
+
     // MARK: - Private
 
     /// Per-session resources — created fresh, torn down after each session.
@@ -140,6 +225,7 @@ final class VoiceInputManager {
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
     private var audioEngine: AVAudioEngine?
     private var resultsTask: Task<Void, Never>?
+    private var audioLevelTask: Task<Void, Never>?
 
     /// Remote ASR transcriber — used when engine is `.remoteASR`.
     private var remoteTranscriber: RemoteASRTranscriber?
@@ -164,36 +250,101 @@ final class VoiceInputManager {
     // MARK: - Remote ASR Configuration
 
     /// Base URL for the remote ASR server (e.g. `http://mac-studio.local:8321`).
-    /// When set, enables `.remoteASR` engine selection.
+    /// When nil, remote mode is unavailable.
     private(set) var remoteASREndpoint: URL?
 
-    /// Engine preference override. When `.remoteASR`, bypasses locale-based routing.
+    /// User-selected engine routing mode.
+    private(set) var engineMode: EngineMode = .auto
+
+    /// Backward-compatible engine preference surface used by tests.
+    /// `nil` = auto, `.remoteASR` = remote mode, on-device values = on-device mode.
     private(set) var enginePreference: TranscriptionEngine?
+
+    /// Cached remote reachability probe result (HEAD request).
+    private var remoteProbeCache: RemoteProbeCache?
+    private let remoteProbeCacheTTL: TimeInterval = 15
+
+    /// Remote chunk tuning tags applied to per-chunk metrics for the active session.
+    private var remoteChunkMetricTags: [String: String] = [:]
+
+    private static let remoteChunkProfileDefault = RemoteChunkProfile(
+        chunkInterval: 1.8,
+        overlapDuration: 0.5,
+        requestTimeout: 10,
+        profileTag: "default"
+    )
+
+    private static let remoteChunkProfileCJK = RemoteChunkProfile(
+        chunkInterval: 2.0,
+        overlapDuration: 0.5,
+        requestTimeout: 10,
+        profileTag: "cjk"
+    )
+
+    /// Conservative dictation guidance for OpenAI-compatible STT APIs.
+    private static let remoteDictationPrompt =
+        "Transcribe real-time dictation for chat. Keep the original spoken language and script exactly as spoken. Never translate. Remove filler words like uh, um, ah, and oh unless clearly intentional. Keep punctuation light and natural. Do not add acknowledgements like ok/okay unless explicitly spoken."
+
+    private static let remoteDictationSTTProfile = "dictation"
+    private static let remoteDictationCleanupEnabled = true
+    private static let remoteOverlapTextWordCount = 20
+
+    private static let remoteFillerTokens: Set<String> = [
+        "uh", "um", "ah", "oh", "er", "hmm", "mm",
+    ]
+
+    private static let remoteAcknowledgementTokens: Set<String> = [
+        "ok", "okay",
+    ]
 
     // MARK: - Init
 
-    init() {}
+    init() {
+        loadPreferences()
+    }
+
+    /// Reload persisted voice settings.
+    func loadPreferences() {
+        applyEngineMode(from: VoiceInputPreferences.engineMode)
+        applyRemoteEndpoint(VoiceInputPreferences.remoteEndpoint)
+    }
 
     /// Configure the remote ASR endpoint. Pass nil to disable.
     func setRemoteASREndpoint(_ url: URL?) {
-        remoteASREndpoint = url
-        // Invalidate cached model state when endpoint changes
-        if enginePreference == .remoteASR {
-            modelReady = false
-            cachedFormat = nil
-            cachedModelKey = nil
-        }
-        logger.info("Remote ASR endpoint: \(url?.absoluteString ?? "disabled")")
+        applyRemoteEndpoint(url)
     }
 
-    /// Set engine preference override. Pass nil for automatic locale-based selection.
+    /// Set engine mode directly.
+    func setEngineMode(_ mode: EngineMode) {
+        engineMode = mode
+
+        switch mode {
+        case .auto:
+            enginePreference = nil
+        case .onDevice:
+            // Sentinel value for legacy tests — runtime routing still resolves
+            // to locale-based on-device engine selection.
+            enginePreference = .modernSpeech
+        case .remote:
+            enginePreference = .remoteASR
+        }
+
+        activeEngine = nil
+        invalidateModelCache()
+        logger.info("Engine mode: \(mode.logName)")
+    }
+
+    /// Backward-compatible preference API. Prefer `setEngineMode(_:)`.
     func setEnginePreference(_ engine: TranscriptionEngine?) {
-        enginePreference = engine
-        // Invalidate cache when switching engines
-        modelReady = false
-        cachedFormat = nil
-        cachedModelKey = nil
-        logger.info("Engine preference: \(engine?.logName ?? "auto")")
+        switch engine {
+        case nil:
+            setEngineMode(.auto)
+        case .remoteASR?:
+            setEngineMode(.remote)
+        case .modernSpeech?, .classicDictation?:
+            setEngineMode(.onDevice)
+            enginePreference = engine
+        }
     }
 
     // MARK: - Locale Resolution
@@ -223,21 +374,161 @@ final class VoiceInputManager {
         }
     }
 
-    /// Resolve the effective engine, considering user preference and remote availability.
-    private func effectiveEngine(for locale: Locale) -> TranscriptionEngine {
-        if let pref = enginePreference {
-            // If remote is preferred but no endpoint, fall back to locale-based
-            if pref == .remoteASR, remoteASREndpoint == nil {
-                logger.warning("Remote ASR preferred but no endpoint configured, falling back")
-                return Self.preferredEngine(for: locale)
-            }
-            return pref
+    private static func remoteChunkProfile(for locale: Locale) -> RemoteChunkProfile {
+        let langCode = locale.language.languageCode?.identifier ?? "en"
+        switch langCode {
+        case "zh", "ja", "ko":
+            return remoteChunkProfileCJK
+        default:
+            return remoteChunkProfileDefault
         }
-        return Self.preferredEngine(for: locale)
+    }
+
+    private static func remoteLanguageHint(for _: Locale) -> String? {
+        // Let the server auto-detect spoken language for mixed-language dictation.
+        // Forcing keyboard language here can cause unintended translation.
+        nil
+    }
+
+    /// Resolve the effective engine, considering mode + remote reachability.
+    private func effectiveEngine(for locale: Locale, source: String) async -> TranscriptionEngine {
+        let fallback = Self.preferredEngine(for: locale)
+        let localeID = locale.identifier(.bcp47)
+        let fallbackAnnotation = VoiceMetricAnnotation(
+            engine: TranscriptionEngine.remoteASR.logName,
+            locale: localeID,
+            source: source
+        )
+
+        switch engineMode {
+        case .onDevice:
+            return fallback
+
+        case .remote:
+            return .remoteASR
+
+        case .auto:
+            guard let endpoint = remoteASREndpoint else {
+                return fallback
+            }
+
+            let reachable = await probeRemoteReachability(endpoint: endpoint, annotation: fallbackAnnotation)
+            if reachable {
+                return .remoteASR
+            }
+
+            logger.info("Remote ASR unreachable; using on-device engine")
+            return fallback
+        }
     }
 
     private static func modelKey(engine: TranscriptionEngine, localeID: String) -> String {
         "\(engine.rawValue)::\(localeID)"
+    }
+
+    private func applyEngineMode(from preference: VoiceInputPreferences.EngineMode) {
+        switch preference {
+        case .auto:
+            setEngineMode(.auto)
+        case .onDevice:
+            setEngineMode(.onDevice)
+        case .remote:
+            setEngineMode(.remote)
+        }
+    }
+
+    private func applyRemoteEndpoint(_ url: URL?) {
+        remoteASREndpoint = url
+        remoteProbeCache = nil
+        invalidateModelCache()
+        logger.info("Remote ASR endpoint: \(url?.absoluteString ?? "disabled")")
+    }
+
+    private func invalidateModelCache() {
+        modelReady = false
+        cachedFormat = nil
+        cachedModelKey = nil
+    }
+
+    private func probeRemoteReachability(
+        endpoint: URL,
+        forceRefresh: Bool = false,
+        annotation: VoiceMetricAnnotation? = nil
+    ) async -> Bool {
+        if !forceRefresh,
+           let cache = remoteProbeCache,
+           cache.endpoint == endpoint,
+           Date().timeIntervalSince(cache.checkedAt) < remoteProbeCacheTTL {
+            if let annotation {
+                recordVoiceMetric(
+                    .voiceRemoteProbeMs,
+                    valueMs: 0,
+                    annotation: annotation,
+                    status: cache.reachable ? "ok" : "error",
+                    extraTags: [
+                        "cached": "1",
+                        "reachable": cache.reachable ? "1" : "0",
+                        "host": endpoint.host ?? "unknown",
+                    ]
+                )
+            }
+            return cache.reachable
+        }
+
+        let probeStart = ContinuousClock.now
+        let reachable = await Self.remoteEndpointReachable(endpoint)
+        let durationMs = elapsedMs(since: probeStart)
+
+        remoteProbeCache = RemoteProbeCache(
+            endpoint: endpoint,
+            reachable: reachable,
+            checkedAt: Date()
+        )
+
+        if let annotation {
+            recordVoiceMetric(
+                .voiceRemoteProbeMs,
+                valueMs: durationMs,
+                annotation: annotation,
+                status: reachable ? "ok" : "error",
+                extraTags: [
+                    "cached": "0",
+                    "reachable": reachable ? "1" : "0",
+                    "host": endpoint.host ?? "unknown",
+                ]
+            )
+        }
+
+        logger.info(
+            "Remote ASR probe: \(endpoint.absoluteString) => \(reachable ? "reachable" : "unreachable")"
+        )
+        return reachable
+    }
+
+    nonisolated private static func remoteEndpointReachable(_ endpoint: URL) async -> Bool {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 1.5
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1.5
+        config.timeoutIntervalForResource = 2
+        config.waitsForConnectivity = false
+
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return false
+            }
+
+            // Any non-5xx response means the host is reachable.
+            return httpResponse.statusCode < 500
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Pre-warm
@@ -248,16 +539,31 @@ final class VoiceInputManager {
     func prewarm(keyboardLanguage: String? = nil, source: String = "unknown") async {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        let engine = Self.preferredEngine(for: locale)
+        let engine = await effectiveEngine(for: locale, source: source)
         let key = Self.modelKey(engine: engine, localeID: localeID)
         let metricAnnotation = VoiceMetricAnnotation(
             engine: engine.logName,
             locale: localeID,
             source: source
         )
-        let prewarmStart = ContinuousClock.now
 
-        guard !modelReady || cachedModelKey != key else { return }
+        if modelReady, cachedModelKey == nil || cachedModelKey == key {
+            return
+        }
+
+        if engine == .remoteASR {
+            guard let endpoint = remoteASREndpoint else {
+                logger.warning("Skipping remote prewarm: endpoint not configured")
+                return
+            }
+            _ = await probeRemoteReachability(
+                endpoint: endpoint,
+                forceRefresh: true,
+                annotation: metricAnnotation
+            )
+        }
+
+        let prewarmStart = ContinuousClock.now
         guard state == .idle else { return }
 
         if let inflight = prewarmTask {
@@ -432,7 +738,8 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        let engine = effectiveEngine(for: locale)
+        let engine = await effectiveEngine(for: locale, source: source)
+        activeEngine = engine
         let key = Self.modelKey(engine: engine, localeID: localeID)
         let metricAnnotation = VoiceMetricAnnotation(
             engine: engine.logName,
@@ -498,6 +805,7 @@ final class VoiceInputManager {
             return
         } catch {
             let totalMs = elapsedMs(since: startTime)
+            let userFacingMessage = userFacingErrorMessage(for: error)
             recordVoiceMetric(
                 .voiceSetupMs,
                 valueMs: totalMs,
@@ -507,11 +815,12 @@ final class VoiceInputManager {
                 extraTags: [
                     "path": modelPathTag,
                     "error": String(describing: type(of: error)),
+                    "error_kind": Self.metricErrorKind(for: error),
                 ]
             )
-            logger.error("Voice setup failed: \(error.localizedDescription)")
+            logger.error("Voice setup failed: \(userFacingMessage, privacy: .public)")
             await cleanupFailedStart()
-            state = .error(error.localizedDescription)
+            state = .error(userFacingMessage)
             scheduleErrorReset()
             throw error
         }
@@ -610,12 +919,39 @@ final class VoiceInputManager {
         modelPathTag: inout String
     ) async throws {
         guard let endpoint = remoteASREndpoint else {
-            throw VoiceInputError.internalError("Remote ASR endpoint not configured")
+            throw VoiceInputError.remoteEndpointNotConfigured
+        }
+
+        if engineMode == .remote {
+            let reachable = await probeRemoteReachability(
+                endpoint: endpoint,
+                forceRefresh: true,
+                annotation: metricAnnotation
+            )
+            guard reachable else {
+                throw VoiceInputError.remoteEndpointUnreachable(
+                    endpoint.host ?? endpoint.absoluteString
+                )
+            }
         }
 
         modelPathTag = "remote"
         let localeID = locale.identifier(.bcp47)
-        let langCode = locale.language.languageCode?.identifier
+        let languageHint = Self.remoteLanguageHint(for: locale)
+        let chunkProfile = Self.remoteChunkProfile(for: locale)
+        remoteChunkMetricTags = chunkProfile.metricTags.merging(
+            [
+                "stt_profile": Self.remoteDictationSTTProfile,
+                "dictation_cleanup": Self.remoteDictationCleanupEnabled ? "1" : "0",
+                "overlap_text_words": String(Self.remoteOverlapTextWordCount),
+                "language_hint": languageHint ?? "auto",
+            ],
+            uniquingKeysWith: { current, _ in current }
+        )
+        let setupTags = ["path": "remote"].merging(
+            remoteChunkMetricTags,
+            uniquingKeysWith: { current, _ in current }
+        )
 
         // Phase 1: no model to warm — remote handles it
         let modelPhaseMs = elapsedMs(since: startTime)
@@ -625,17 +961,34 @@ final class VoiceInputManager {
             annotation: metricAnnotation,
             phase: .modelReady,
             status: "ok",
-            extraTags: ["path": "remote"]
+            extraTags: setupTags
         )
-        logger.info("Voice setup: remote ASR (endpoint: \(endpoint.absoluteString))")
+        logger.info(
+            "Voice setup: remote ASR (endpoint: \(endpoint.absoluteString), chunk: \(chunkProfile.chunkInterval)s, overlap: \(chunkProfile.overlapDuration)s)"
+        )
 
         // Phase 2: create remote transcriber
         let transcriberStart = ContinuousClock.now
         let config = RemoteASRTranscriber.Configuration(
             endpointURL: endpoint,
-            language: langCode
+            model: "default",
+            language: languageHint,
+            prompt: Self.remoteDictationPrompt,
+            chunkInterval: chunkProfile.chunkInterval,
+            overlapDuration: chunkProfile.overlapDuration,
+            requestTimeout: chunkProfile.requestTimeout,
+            responseFormat: "json",
+            sttProfile: Self.remoteDictationSTTProfile,
+            dictationCleanup: Self.remoteDictationCleanupEnabled,
+            overlapTextWordCount: Self.remoteOverlapTextWordCount
         )
         let newRemote = RemoteASRTranscriber(configuration: config)
+        newRemote.onChunkTelemetry = { [weak self] chunk in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.recordRemoteChunkTelemetry(chunk, annotation: metricAnnotation)
+            }
+        }
         remoteTranscriber = newRemote
         activeLanguageLabel = Self.languageLabel(for: locale)
 
@@ -646,7 +999,7 @@ final class VoiceInputManager {
             annotation: metricAnnotation,
             phase: .transcriberCreate,
             status: "ok",
-            extraTags: ["path": "remote"]
+            extraTags: setupTags
         )
         logger.info("Voice setup: created remote transcriber (locale: \(localeID))")
         try ensureStartRequestActive(requestID)
@@ -662,7 +1015,7 @@ final class VoiceInputManager {
             annotation: metricAnnotation,
             phase: .analyzerStart,
             status: "ok",
-            extraTags: ["path": "remote"]
+            extraTags: setupTags
         )
 
         startRemoteResultsHandler(
@@ -685,65 +1038,19 @@ final class VoiceInputManager {
             annotation: metricAnnotation,
             phase: .audioStart,
             status: "ok",
-            extraTags: ["path": "remote"]
+            extraTags: setupTags
         )
     }
 
     /// Start the audio engine for remote ASR — captures at device rate,
     /// resamples to 16kHz mono, feeds the remote transcriber.
     private func startRemoteAudioEngine(transcriber: RemoteASRTranscriber) throws {
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-
-        // Target: 16kHz mono Float32
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(transcriber.config.sampleRate),
-            channels: 1,
-            interleaved: false
-        ) else {
-            throw VoiceInputError.internalError("Cannot create 16kHz mono format")
-        }
-
-        let converter: AVAudioConverter?
-        if inputFormat != targetFormat {
-            converter = AVAudioConverter(from: inputFormat, to: targetFormat)
-        } else {
-            converter = nil
-        }
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak transcriber] buffer, _ in
-            guard let transcriber else { return }
-
-            // Resample to 16kHz mono if needed
-            let outputBuffer: AVAudioPCMBuffer
-            if let converter, let targetFormat = converter.outputFormat as AVAudioFormat? {
-                let frameCapacity = AVAudioFrameCount(
-                    Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
-                )
-                guard let converted = AVAudioPCMBuffer(
-                    pcmFormat: targetFormat,
-                    frameCapacity: frameCapacity
-                ) else { return }
-
-                var error: NSError?
-                converter.convert(to: converted, error: &error) { _, outStatus in
-                    outStatus.pointee = .haveData
-                    return buffer
-                }
-                if error != nil { return }
-                outputBuffer = converted
-            } else {
-                outputBuffer = buffer
-            }
-
-            transcriber.appendAudio(buffer: outputBuffer)
-        }
-
-        engine.prepare()
-        try engine.start()
+        let (engine, levelStream) = try RemoteAudioEngineHelper.startEngine(
+            transcriber: transcriber,
+            sampleRate: transcriber.config.sampleRate
+        )
         audioEngine = engine
+        bindAudioLevelStream(levelStream)
     }
 
     /// Handle results from the remote ASR transcriber stream.
@@ -773,13 +1080,19 @@ final class VoiceInputManager {
                 }
 
                 // Remote results are always finalized (one chunk = one result).
-                // Add a space separator between chunks for natural text flow.
-                if !finalizedTranscript.isEmpty {
-                    finalizedTranscript += " "
+                // Normalize chunk text and dedupe overlap between adjacent chunks.
+                let normalized = Self.normalizedRemoteChunkText(result.text)
+                guard !normalized.isEmpty else {
+                    logger.debug("Remote chunk dropped after normalization")
+                    continue
                 }
-                finalizedTranscript += result.text
+
+                finalizedTranscript = Self.mergeRemoteChunk(
+                    existing: finalizedTranscript,
+                    incoming: normalized
+                )
                 volatileTranscript = ""
-                logger.debug("Remote finalized: \(result.text)")
+                logger.debug("Remote finalized: \(normalized)")
             }
         }
     }
@@ -923,6 +1236,10 @@ final class VoiceInputManager {
         engine: TranscriptionEngine,
         locale: Locale
     ) async throws -> AVAudioFormat? {
+        if engine == .remoteASR {
+            return nil  // Remote engine has no local model to warm
+        }
+
         let probe = makeTranscriber(engine: engine, locale: locale)
         let localeID = locale.identifier(.bcp47)
 
@@ -935,7 +1252,7 @@ final class VoiceInputManager {
             let installed = await DictationTranscriber.installedLocales
             isInstalled = installed.contains(where: { $0.identifier(.bcp47) == localeID })
         case .remoteASR:
-            return nil  // Remote engine has no local model to warm
+            return nil
         }
 
         if !isInstalled {
@@ -1018,8 +1335,12 @@ final class VoiceInputManager {
             targetFormat: format
         )
         audioEngine = engine
+        bindAudioLevelStream(levelStream)
+    }
 
-        Task {
+    private func bindAudioLevelStream(_ levelStream: AsyncStream<Float>) {
+        audioLevelTask?.cancel()
+        audioLevelTask = Task {
             for await level in levelStream {
                 self.audioLevel = level
             }
@@ -1108,8 +1429,12 @@ final class VoiceInputManager {
         analyzer = nil
         inputBuilder = nil
         remoteTranscriber = nil
+        remoteChunkMetricTags = [:]
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
         audioLevel = 0
         activeLanguageLabel = nil
+        activeEngine = nil
     }
 
     private func cleanupFailedStart() async {
@@ -1145,6 +1470,256 @@ final class VoiceInputManager {
         }
     }
 
+    private static func normalizedRemoteChunkText(_ raw: String) -> String {
+        let collapsed = raw
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !collapsed.isEmpty else { return "" }
+
+        var tokens = collapsed.split(separator: " ").map(String.init)
+
+        while let first = tokens.first {
+            let normalized = normalizedTokenForMerge(first)
+            guard remoteFillerTokens.contains(normalized) else { break }
+            tokens.removeFirst()
+        }
+
+        while let last = tokens.last {
+            let normalized = normalizedTokenForMerge(last)
+            guard remoteFillerTokens.contains(normalized) else { break }
+            tokens.removeLast()
+        }
+
+        tokens = trimAcknowledgementEdges(tokens)
+        guard !tokens.isEmpty else { return "" }
+
+        var text = tokens.joined(separator: " ")
+        text = text.replacingOccurrences(of: #" ([,.;:!?])"#, with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func mergeRemoteChunk(existing: String, incoming: String) -> String {
+        let trimmedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedExisting.isEmpty else {
+            return incoming
+        }
+
+        let existingTokens = trimmedExisting.split(separator: " ").map(String.init)
+        var incomingTokens = incoming.split(separator: " ").map(String.init)
+        guard !existingTokens.isEmpty else { return incoming }
+        guard !incomingTokens.isEmpty else { return trimmedExisting }
+
+        if shouldSuppressAcknowledgementChunk(
+            incomingTokens,
+            existingTokens: existingTokens
+        ) {
+            return trimmedExisting
+        }
+
+        incomingTokens = trimLeadingAcknowledgement(
+            incomingTokens,
+            existingTokens: existingTokens
+        )
+        guard !incomingTokens.isEmpty else { return trimmedExisting }
+
+        let maxOverlap = min(8, min(existingTokens.count, incomingTokens.count))
+        var overlap = maxOverlap
+
+        while overlap > 0 {
+            let existingSuffix = existingTokens.suffix(overlap).map(normalizedTokenForMerge)
+            let incomingPrefix = incomingTokens.prefix(overlap).map(normalizedTokenForMerge)
+            if !existingSuffix.isEmpty, existingSuffix == incomingPrefix {
+                let remainder = incomingTokens.dropFirst(overlap)
+                guard !remainder.isEmpty else {
+                    return trimmedExisting
+                }
+                return trimmedExisting + " " + remainder.joined(separator: " ")
+            }
+            overlap -= 1
+        }
+
+        if normalizedTokenForMerge(existingTokens.last ?? "")
+            == normalizedTokenForMerge(incomingTokens.first ?? ""), incomingTokens.count > 1 {
+            return trimmedExisting + " " + incomingTokens.dropFirst().joined(separator: " ")
+        }
+
+        return trimmedExisting + " " + incomingTokens.joined(separator: " ")
+    }
+
+    private static func trimAcknowledgementEdges(_ tokens: [String]) -> [String] {
+        var trimmed = tokens
+
+        while trimmed.count >= 3,
+              let first = trimmed.first,
+              remoteAcknowledgementTokens.contains(normalizedTokenForMerge(first)) {
+            trimmed.removeFirst()
+        }
+
+        while trimmed.count >= 4,
+              let last = trimmed.last,
+              remoteAcknowledgementTokens.contains(normalizedTokenForMerge(last)) {
+            trimmed.removeLast()
+        }
+
+        return trimmed
+    }
+
+    private static func trimLeadingAcknowledgement(
+        _ incomingTokens: [String],
+        existingTokens: [String]
+    ) -> [String] {
+        guard incomingTokens.count > 1 else { return incomingTokens }
+        guard existingTokens.count >= 4 else { return incomingTokens }
+
+        let lastToken = existingTokens.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let lastChar = lastToken.last, ".!?".contains(lastChar) else {
+            return incomingTokens
+        }
+
+        let firstToken = incomingTokens.first ?? ""
+        guard remoteAcknowledgementTokens.contains(normalizedTokenForMerge(firstToken)) else {
+            return incomingTokens
+        }
+
+        return Array(incomingTokens.dropFirst())
+    }
+
+    private static func shouldSuppressAcknowledgementChunk(
+        _ incomingTokens: [String],
+        existingTokens: [String]
+    ) -> Bool {
+        guard incomingTokens.count <= 2 else { return false }
+        guard existingTokens.count >= 4 else { return false }
+
+        let normalizedIncoming = incomingTokens
+            .map(normalizedTokenForMerge)
+            .filter { !$0.isEmpty }
+        guard !normalizedIncoming.isEmpty else { return false }
+        guard normalizedIncoming.allSatisfy({ remoteAcknowledgementTokens.contains($0) }) else {
+            return false
+        }
+
+        let lastToken = existingTokens.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let lastChar = lastToken.last else { return false }
+        return ".!?".contains(lastChar)
+    }
+
+    private static func normalizedTokenForMerge(_ token: String) -> String {
+        let filteredScalars = token.lowercased().unicodeScalars.filter { scalar in
+            CharacterSet.alphanumerics.contains(scalar)
+        }
+        return String(String.UnicodeScalarView(filteredScalars))
+    }
+
+    private func userFacingErrorMessage(for error: Error) -> String {
+        if let voiceError = error as? VoiceInputError,
+           let description = voiceError.errorDescription,
+           !description.isEmpty {
+            return description
+        }
+
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription,
+           !description.isEmpty {
+            return description
+        }
+
+        return error.localizedDescription
+    }
+
+    private static func metricErrorKind(for error: Error) -> String {
+        if let voiceError = error as? VoiceInputError {
+            return voiceError.telemetryCategory
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "timeout"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                return "network"
+            case .cancelled:
+                return "cancelled"
+            default:
+                return "url_error"
+            }
+        }
+
+        if error is DecodingError {
+            return "decode"
+        }
+
+        return "other"
+    }
+
+    private func recordRemoteChunkTelemetry(
+        _ chunk: RemoteASRTranscriber.ChunkTelemetry,
+        annotation: VoiceMetricAnnotation
+    ) {
+        var tags: [String: String] = [
+            "chunk_status": chunk.status.rawValue,
+            "chunk_final": chunk.isFinal ? "1" : "0",
+        ]
+        for (key, value) in remoteChunkMetricTags {
+            tags[key] = value
+        }
+        if let host = remoteASREndpoint?.host {
+            tags["host"] = host
+        }
+        if let errorCategory = chunk.errorCategory {
+            tags["error_category"] = errorCategory
+        }
+
+        recordVoiceMetric(
+            .voiceRemoteChunkAudioMs,
+            valueMs: chunk.audioDurationMs,
+            annotation: annotation,
+            status: chunk.status.rawValue,
+            extraTags: tags
+        )
+
+        if chunk.wavBytes > 0 {
+            recordVoiceCountMetric(
+                .voiceRemoteChunkBytes,
+                value: chunk.wavBytes,
+                annotation: annotation,
+                status: chunk.status.rawValue,
+                extraTags: tags
+            )
+        }
+
+        if let uploadDurationMs = chunk.uploadDurationMs {
+            recordVoiceMetric(
+                .voiceRemoteChunkUploadMs,
+                valueMs: uploadDurationMs,
+                annotation: annotation,
+                status: chunk.status.rawValue,
+                extraTags: tags
+            )
+        }
+
+        if let textLength = chunk.textLength, textLength > 0 {
+            recordVoiceCountMetric(
+                .voiceRemoteChunkChars,
+                value: textLength,
+                annotation: annotation,
+                status: chunk.status.rawValue,
+                extraTags: tags
+            )
+        }
+
+        if chunk.status == .error {
+            recordVoiceCountMetric(
+                .voiceRemoteChunkError,
+                value: 1,
+                annotation: annotation,
+                status: chunk.status.rawValue,
+                extraTags: tags
+            )
+        }
+    }
+
     private func recordVoiceMetric(
         _ metric: ChatMetricName,
         valueMs: Int,
@@ -1161,6 +1736,26 @@ final class VoiceInputManager {
                 metric: metric,
                 value: Double(clampedValue),
                 unit: .ms,
+                tags: tags
+            )
+        }
+    }
+
+    private func recordVoiceCountMetric(
+        _ metric: ChatMetricName,
+        value: Int,
+        annotation: VoiceMetricAnnotation,
+        status: String? = nil,
+        extraTags: [String: String] = [:]
+    ) {
+        let tags = annotation.tags(status: status, extra: extraTags)
+        let clampedValue = max(0, value)
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: metric,
+                value: Double(clampedValue),
+                unit: .count,
                 tags: tags
             )
         }
@@ -1207,12 +1802,50 @@ extension VoiceInputManager {
 
 enum VoiceInputError: LocalizedError {
     case localeNotSupported(String)
+    case remoteEndpointNotConfigured
+    case remoteEndpointUnreachable(String)
+    case remoteRequestTimedOut
+    case remoteNetwork(String?)
+    case remoteBadResponseStatus(Int)
+    case remoteInvalidResponse
+    case remoteDecodeFailed
     case internalError(String)
+
+    var telemetryCategory: String {
+        switch self {
+        case .remoteRequestTimedOut:
+            "timeout"
+        case .remoteEndpointUnreachable, .remoteNetwork:
+            "network"
+        case .remoteBadResponseStatus:
+            "http_status"
+        case .remoteInvalidResponse, .remoteDecodeFailed:
+            "decode"
+        case .remoteEndpointNotConfigured:
+            "misconfigured"
+        case .localeNotSupported, .internalError:
+            "other"
+        }
+    }
 
     var errorDescription: String? {
         switch self {
         case .localeNotSupported(let locale):
             "Speech recognition not supported for \(locale)"
+        case .remoteEndpointNotConfigured:
+            "Remote ASR endpoint is not configured. Open Settings → Voice Input."
+        case .remoteEndpointUnreachable(let host):
+            "Can’t reach remote ASR endpoint (\(host)). Check your server and network."
+        case .remoteRequestTimedOut:
+            "Remote ASR request timed out. Check server load or network latency."
+        case .remoteNetwork:
+            "Network error while contacting remote ASR."
+        case .remoteBadResponseStatus(let statusCode):
+            "Remote ASR returned HTTP \(statusCode)."
+        case .remoteInvalidResponse:
+            "Remote ASR returned an invalid response."
+        case .remoteDecodeFailed:
+            "Remote ASR response could not be decoded."
         case .internalError(let message):
             message
         }
@@ -1275,6 +1908,74 @@ private enum AudioEngineHelper {
         engine.prepare()
         try engine.start()
 
+        return (engine, levelStream)
+    }
+}
+
+private enum RemoteAudioEngineHelper {
+    static func startEngine(
+        transcriber: RemoteASRTranscriber,
+        sampleRate: Int
+    ) throws -> (AVAudioEngine, AsyncStream<Float>) {
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(sampleRate),
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw VoiceInputError.internalError("Cannot create 16kHz mono format")
+        }
+
+        let converter: AVAudioConverter?
+        if inputFormat != targetFormat {
+            converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        } else {
+            converter = nil
+        }
+
+        let (levelStream, levelContinuation) = AsyncStream<Float>.makeStream()
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak transcriber] buffer, _ in
+            guard let transcriber else { return }
+
+            let outputBuffer: AVAudioPCMBuffer
+            if let converter {
+                let frameCapacity = AVAudioFrameCount(
+                    Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
+                )
+                guard let converted = AVAudioPCMBuffer(
+                    pcmFormat: targetFormat,
+                    frameCapacity: frameCapacity
+                ) else { return }
+
+                var error: NSError?
+                converter.convert(to: converted, error: &error) { _, outStatus in
+                    outStatus.pointee = .haveData
+                    return buffer
+                }
+                if error != nil { return }
+                outputBuffer = converted
+            } else {
+                outputBuffer = buffer
+            }
+
+            if let channelData = outputBuffer.floatChannelData?[0] {
+                let frameLength = UInt(outputBuffer.frameLength)
+                var rms: Float = 0
+                vDSP_rmsqv(channelData, 1, &rms, frameLength)
+                let level = min(1.0, rms * 25.0)
+                levelContinuation.yield(level)
+            }
+
+            transcriber.appendAudio(buffer: outputBuffer)
+        }
+
+        engine.prepare()
+        try engine.start()
         return (engine, levelStream)
     }
 }
