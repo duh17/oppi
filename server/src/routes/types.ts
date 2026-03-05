@@ -7,6 +7,7 @@ import type { SkillRegistry, UserSkillStore } from "../skills.js";
 import type { UserStreamMux } from "../stream.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
+import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -21,6 +22,8 @@ export interface RouteContext {
   isValidMemoryNamespace: (ns: string) => boolean;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
+  getRuntimeUpdateStatus: (options?: { force?: boolean }) => Promise<RuntimeUpdateStatus>;
+  runRuntimeUpdate: () => Promise<RuntimeUpdateResult>;
   serverStartedAt: number;
   serverVersion: string;
   piVersion: string;

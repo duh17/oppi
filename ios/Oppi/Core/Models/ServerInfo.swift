@@ -15,12 +15,29 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let piVersion: String
     let configVersion: Int
     let identity: IdentityInfo?
+    let runtimeUpdate: RuntimeUpdateInfo?
     let stats: ServerStats
 
     struct IdentityInfo: Codable, Sendable, Equatable {
         let fingerprint: String
         let keyId: String
         let algorithm: String
+    }
+
+    struct RuntimeUpdateInfo: Codable, Sendable, Equatable {
+        let packageName: String
+        let currentVersion: String
+        let latestVersion: String?
+        let pendingVersion: String?
+        let updateAvailable: Bool
+        let canUpdate: Bool
+        let checking: Bool
+        let updateInProgress: Bool
+        let restartRequired: Bool
+        let lastCheckedAt: Int?
+        let checkError: String?
+        let lastUpdatedAt: Int?
+        let lastUpdateError: String?
     }
 
     struct ServerStats: Codable, Sendable, Equatable {

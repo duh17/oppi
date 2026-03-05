@@ -42,16 +42,18 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:ios:coverage": "cd ../ios && bash scripts/check-coverage.sh",
     "test:watch": "vitest",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
+    "telemetry:review": "node scripts/telemetry-review.mjs",
     "dead-code": "knip",
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.54.0",
+    "@mariozechner/pi-coding-agent": "^0.56.1",
     "diff-match-patch": "^1.0.5",
     "ws": "^8.18.0"
   },

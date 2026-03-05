@@ -1,6 +1,6 @@
 # Oppi Testing Policy (Canonical)
 
-Last updated: 2026-02-27
+Last updated: 2026-03-05
 
 This is the single source-of-truth document for testing strategy and gate policy.
 
@@ -44,7 +44,11 @@ cd server && npm run test:gate:nightly-deep
 Current policy (`server/testing-policy.json`):
 
 - `pr-fast`: `check -> test:coverage`
-- `nightly-deep`: `check -> test:coverage -> test:ios:ui:full -> test:e2e:linux -> test:e2e:linux:https -> test:e2e:lmstudio:contract`
+- `nightly-deep`: `check -> test:coverage -> test:ios:coverage -> test:ios:ui:full -> test:e2e:linux -> test:e2e:linux:https -> test:e2e:lmstudio:contract`
+
+iOS coverage gate wrapper used by the nightly gate:
+
+- `cd server && npm run test:ios:coverage` (runs `cd ios && bash scripts/check-coverage.sh`)
 
 UI suite wrapper used by the nightly gate:
 
@@ -84,5 +88,6 @@ cd server && npm run check:testing-policy
 
 - `docs/testing/requirements-matrix.md`
 - `docs/testing/bug-bash-playbook.md`
+- `docs/testing/extraction-opportunities.md`
 
 These files are supporting context only. If they conflict with this README or policy file, fix them.

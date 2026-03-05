@@ -79,6 +79,29 @@ actor APIClient {
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
+    struct RuntimeUpdateResult: Decodable, Sendable, Equatable {
+        let ok: Bool
+        let message: String
+        let latestVersion: String?
+        let pendingVersion: String?
+        let restartRequired: Bool
+        let error: String?
+    }
+
+    struct RuntimeUpdateResponse: Decodable, Sendable, Equatable {
+        let ok: Bool
+        let result: RuntimeUpdateResult
+        let status: ServerInfo.RuntimeUpdateInfo
+    }
+
+    /// Trigger a server runtime update (`npm install -g <runtime>@latest`).
+    ///
+    /// Returns operation result plus the latest runtime update status snapshot.
+    func updateRuntime() async throws -> RuntimeUpdateResponse {
+        let data = try await post("/server/runtime/update", body: EmptyBody())
+        return try JSONDecoder().decode(RuntimeUpdateResponse.self, from: data)
+    }
+
     // MARK: - Sessions
 
     /// List all sessions for the authenticated user by aggregating

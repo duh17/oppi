@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createRouteHelpers } from "./http.js";
 import type { RouteContext, RouteDispatcher } from "./types.js";
+import { createAppletRoutes } from "./applets.js";
 import { createIdentityRoutes } from "./identity.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
@@ -25,6 +26,7 @@ export class RouteHandler {
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
+      createAppletRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),
     ];

@@ -28,7 +28,7 @@ enum ChatMetricName: String, Codable, Sendable {
     case catchupRingMiss = "chat.catchup_ring_miss"
     case timelineApplyMs = "chat.timeline_apply_ms"
     case timelineLayoutMs = "chat.timeline_layout_ms"
-    case wsDecodeMs = "chat.ws_decode_ms"
+    // Removed: wsDecodeMs — high-volume noise (32% of samples, almost always 0ms)
     case coalescerFlushEvents = "chat.coalescer_flush_events"
     case coalescerFlushBytes = "chat.coalescer_flush_bytes"
     case inboundQueueDepth = "chat.inbound_queue_depth"

@@ -44,9 +44,9 @@ All chat metrics are emitted from iOS and validated by server allowlists in `ser
 | `chat.ttft_ms` | `ms` | `ios/Oppi/Features/Chat/Session/ChatSessionManager.swift` | `provider`,`model` | Track first-response-token responsiveness drift, segmented by model |
 | `chat.catchup_ms` | `ms` | `ChatSessionManager.swift` | `result` (`no_gap`,`applied`,`ring_miss`,`fetch_failed`,`seq_regression`) | Reconnect/catch-up latency budget |
 | `chat.catchup_ring_miss` | `count` | `ChatSessionManager.swift` | none | Ring-buffer miss rate |
-| `chat.timeline_apply_ms` | `ms` | `ios/Oppi/Features/Chat/Timeline/ChatTimelinePerf.swift` | `items`,`changed` | UI apply jank guardrail |
-| `chat.timeline_layout_ms` | `ms` | `ChatTimelinePerf.swift` | `items` | UI layout jank guardrail |
-| `chat.ws_decode_ms` | `ms` | `ios/Oppi/Core/Networking/WebSocketClient.swift`, `ChatSessionManager.swift` | `type`,`stage`,`transport` | Decode and main-thread handoff lag isolation |
+| `chat.timeline_apply_ms` | `ms` | `ChatTimelinePerf.swift` | `items`,`changed` | UI apply jank (threshold-gated: only emitted when >= 4ms) |
+| `chat.timeline_layout_ms` | `ms` | `ChatTimelinePerf.swift` | `items` | UI layout jank (threshold-gated: only emitted when >= 2ms) |
+| ~~`chat.ws_decode_ms`~~ | — | — | — | **Removed.** High-volume noise (32% of samples, almost always 0ms). |
 | `chat.coalescer_flush_events` | `count` | `ios/Oppi/Core/Runtime/DeltaCoalescer.swift` | none | Burst-shaping observability |
 | `chat.coalescer_flush_bytes` | `count` | `DeltaCoalescer.swift` | none | Burst payload sizing |
 | `chat.inbound_queue_depth` | `count` | `WebSocketClient.swift` | none | Backpressure/high-water visibility |

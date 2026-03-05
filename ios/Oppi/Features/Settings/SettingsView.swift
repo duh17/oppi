@@ -8,6 +8,14 @@ struct SettingsView: View {
         case unreachable
     }
 
+    private enum RuntimeUpdateBadgeState: Equatable {
+        case updateAvailable
+        case restartRequired
+        case upToDate
+        case unavailable
+        case unknown
+    }
+
     private static let remoteVoiceInputSettingsEnabled = false
 
     @Environment(ConnectionCoordinator.self) private var coordinator
@@ -29,6 +37,7 @@ struct SettingsView: View {
     @State private var renameServerId: String?
     @State private var renameServerText = ""
     @State private var showRemoveConfirmation: PairedServer?
+    @State private var runtimeUpdateBadgesByServerId: [String: RuntimeUpdateBadgeState] = [:]
 
     var body: some View {
         List {
@@ -52,7 +61,10 @@ struct SettingsView: View {
 
                             Spacer()
 
-                            serverStatusBadge(for: server)
+                            HStack(spacing: 6) {
+                                runtimeUpdateBadge(for: server)
+                                serverStatusBadge(for: server)
+                            }
                         }
                     }
                     .contextMenu {
@@ -272,6 +284,12 @@ struct SettingsView: View {
         }
         .onAppear {
             enforceVoiceInputAvailability()
+            Task {
+                await refreshRuntimeUpdateBadges()
+            }
+        }
+        .task(id: runtimeBadgeRefreshKey) {
+            await refreshRuntimeUpdateBadges()
         }
         .navigationTitle("Settings")
         .navigationDestination(for: PairedServer.self) { server in
@@ -312,6 +330,10 @@ struct SettingsView: View {
         } message: {
             Text(removeDialogMessage)
         }
+    }
+
+    private var runtimeBadgeRefreshKey: String {
+        serverStore.servers.map(\.id).joined(separator: ",")
     }
 
     private var liveActivityToggle: Binding<Bool> {
@@ -575,6 +597,36 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private func runtimeUpdateBadge(for server: PairedServer) -> some View {
+        switch runtimeUpdateBadgesByServerId[server.id] {
+        case .updateAvailable:
+            Text("Update")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeOrange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule()
+                        .fill(Color.themeOrange.opacity(0.16))
+                )
+
+        case .restartRequired:
+            Text("Restart")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.themeYellow)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule()
+                        .fill(Color.themeYellow.opacity(0.16))
+                )
+
+        case .upToDate, .unavailable, .unknown, .none:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
     private func serverStatusBadge(for server: PairedServer) -> some View {
         let conn = coordinator.connection(for: server.id)
         let wsStatus = conn?.wsClient?.status
@@ -597,6 +649,58 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.themeComment)
         }
+    }
+
+    @MainActor
+    private func refreshRuntimeUpdateBadges() async {
+        let servers = serverStore.servers
+        var next: [String: RuntimeUpdateBadgeState] = [:]
+        next.reserveCapacity(servers.count)
+
+        for server in servers {
+            next[server.id] = await runtimeUpdateBadgeState(for: server)
+        }
+
+        runtimeUpdateBadgesByServerId = next
+    }
+
+    @MainActor
+    private func runtimeUpdateBadgeState(for server: PairedServer) async -> RuntimeUpdateBadgeState {
+        guard let baseURL = server.baseURL else {
+            return .unknown
+        }
+
+        let api = APIClient(
+            baseURL: baseURL,
+            token: server.token,
+            tlsCertFingerprint: server.tlsCertFingerprint
+        )
+
+        do {
+            let info = try await api.serverInfo()
+            return runtimeUpdateBadgeState(from: info.runtimeUpdate)
+        } catch {
+            return .unknown
+        }
+    }
+
+    private func runtimeUpdateBadgeState(
+        from runtimeUpdate: ServerInfo.RuntimeUpdateInfo?
+    ) -> RuntimeUpdateBadgeState {
+        guard let runtimeUpdate else {
+            return .unknown
+        }
+
+        if runtimeUpdate.restartRequired {
+            return .restartRequired
+        }
+        if runtimeUpdate.updateAvailable {
+            return .updateAvailable
+        }
+        if runtimeUpdate.canUpdate {
+            return .upToDate
+        }
+        return .unavailable
     }
 
     private var removingLastServer: Bool {
