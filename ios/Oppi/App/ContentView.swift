@@ -43,6 +43,11 @@ struct ContentView: View {
                             WorkspaceHomeView()
                         }
                     }
+                    SwiftUI.Tab("Applets", systemImage: "doc.richtext", value: AppTab.applets) {
+                        NavigationStack {
+                            AppletsTabView()
+                        }
+                    }
                     SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
                         NavigationStack {
                             SettingsView()

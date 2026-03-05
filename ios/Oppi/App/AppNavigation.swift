@@ -10,5 +10,6 @@ final class AppNavigation {
 
 enum AppTab: Hashable {
     case workspaces
+    case applets
     case settings
 }

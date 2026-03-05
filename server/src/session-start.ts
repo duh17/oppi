@@ -72,6 +72,7 @@ export class SessionStartCoordinator {
           workspaceId: identity.workspaceId,
           permissionGate: useGate,
           skillPaths,
+          storage: this.deps.storage,
         });
 
         const activeSession: SessionStartActiveSession = {

@@ -443,3 +443,14 @@ enum APIError: LocalizedError {
         }
     }
 }
+
+// MARK: - Applet Response Types
+
+struct AppletListResponse: Decodable {
+    let applets: [Applet]
+}
+
+struct AppletDetailResponse: Decodable {
+    let applet: Applet
+    let latestVersion: AppletVersionWithHTML?
+}
