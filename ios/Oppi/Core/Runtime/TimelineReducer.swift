@@ -336,6 +336,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let output = event.output ?? ""
             let matchId = event.toolCallId ?? event.id
             toolOutputStore.append(output, to: matchId)
+            // Store structured details (expandedText, presentationFormat, etc.)
+            // so extension tools render the same way on catch-up as streaming.
+            if let details = event.details {
+                toolDetailsStore.set(details, for: matchId)
+            }
             updateToolCallPreview(id: matchId, isError: event.isError ?? false)
             return nil
 

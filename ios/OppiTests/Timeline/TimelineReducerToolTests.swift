@@ -187,4 +187,70 @@ struct TimelineReducerToolTests {
 
         #expect(reducer.items.isEmpty)
     }
+
+    @MainActor
+    @Test func traceToolResultDetailsPopulatesToolDetailsStore() {
+        let reducer = TimelineReducer()
+        let toolId = "tc-ext-1"
+        let details: JSONValue = .object([
+            "expandedText": .string("# My Todo\n\nCreated successfully"),
+            "presentationFormat": .string("markdown"),
+        ])
+
+        let events: [TraceEvent] = [
+            TraceEvent(
+                id: "u1", type: .user, timestamp: "2026-01-01T00:00:00Z",
+                text: "create a todo", tool: nil, args: nil,
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: toolId, type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                text: nil, tool: "todo",
+                args: ["action": .string("create"), "title": .string("test")],
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: "r1", type: .toolResult, timestamp: "2026-01-01T00:00:02Z",
+                text: nil, tool: nil, args: nil,
+                output: "Todo created", toolCallId: toolId, toolName: "todo",
+                isError: false, details: details, thinking: nil
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        // Details should be stored keyed by toolCallId (matchId)
+        let stored = reducer.toolDetailsStore.details(for: toolId)
+        #expect(stored == details)
+    }
+
+    @MainActor
+    @Test func traceToolResultWithoutDetailsLeavesStoreEmpty() {
+        let reducer = TimelineReducer()
+        let toolId = "tc-bash-1"
+
+        let events: [TraceEvent] = [
+            TraceEvent(
+                id: "u1", type: .user, timestamp: "2026-01-01T00:00:00Z",
+                text: "list files", tool: nil, args: nil,
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: toolId, type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                text: nil, tool: "bash", args: ["command": .string("ls")],
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: "r1", type: .toolResult, timestamp: "2026-01-01T00:00:02Z",
+                text: nil, tool: nil, args: nil,
+                output: "file1.txt", toolCallId: toolId, toolName: "bash",
+                isError: false, thinking: nil
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        let stored = reducer.toolDetailsStore.details(for: toolId)
+        #expect(stored == nil)
+    }
 }

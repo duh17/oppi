@@ -45,6 +45,8 @@ export interface TraceEvent {
   toolName?: string;
   /** For toolResult: was it an error? */
   isError?: boolean;
+  /** For toolResult: structured details (expandedText, presentationFormat, etc.) */
+  details?: unknown;
   /** For thinking: thinking content */
   thinking?: string;
 }
@@ -328,6 +330,13 @@ function emitMessageEvents(entry: SessionEntry, timestamp: string, events: Trace
     }
   } else if (role === "toolResult") {
     const output = extractText(content);
+    // pi's ToolResultMessage carries structured details (expandedText,
+    // presentationFormat, etc.) used by extensions for rich rendering.
+    // The message object is the raw JSONL entry — details lives on msg
+    // as a peer of role/content/toolCallId.
+    const rawMsg = msg as Record<string, unknown>;
+    const details =
+      rawMsg.details !== undefined && rawMsg.details !== null ? rawMsg.details : undefined;
     events.push({
       id: `result-${entry.id}`,
       type: "toolResult",
@@ -336,6 +345,7 @@ function emitMessageEvents(entry: SessionEntry, timestamp: string, events: Trace
       toolName: msg.toolName,
       output: output || "",
       isError: msg.isError === true,
+      ...(details !== undefined ? { details } : {}),
     });
   }
 }
