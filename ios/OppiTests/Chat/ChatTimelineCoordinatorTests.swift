@@ -715,8 +715,10 @@ struct ChatTimelineCoordinatorTests {
         let view = ThinkingTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 338)
 
-        let label = try #require(timelineAllLabels(in: view).first { $0.text?.contains("Reviewing") == true })
-        #expect(label.text == "Reviewing checklist for updates")
+        let textView = try #require(timelineAllTextViews(in: view).first {
+            timelineRenderedText(of: $0).contains("Reviewing")
+        })
+        #expect(timelineRenderedText(of: textView) == "Reviewing checklist for updates")
     }
 
     @MainActor
@@ -734,9 +736,11 @@ struct ChatTimelineCoordinatorTests {
         // Should have nonzero height (spinner header + preview container)
         #expect(fitting.height > 20)
 
-        // Preview text should be rendered in a label
-        let label = try #require(timelineAllLabels(in: view).first { $0.text?.contains("Let me analyze") == true })
-        #expect(label.text?.contains("Let me analyze") == true)
+        // Preview text should be rendered in the thinking text view.
+        let textView = try #require(timelineAllTextViews(in: view).first {
+            timelineRenderedText(of: $0).contains("Let me analyze")
+        })
+        #expect(timelineRenderedText(of: textView).contains("Let me analyze"))
     }
 
     @MainActor
@@ -751,10 +755,13 @@ struct ChatTimelineCoordinatorTests {
         let view = ThinkingTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 338)
 
-        // No content labels should have thinking text
-        let labels = timelineAllLabels(in: view)
-        let thinkingLabels = labels.filter { !($0.text ?? "").isEmpty && $0.text != "Thinking…" }
-        #expect(thinkingLabels.isEmpty)
+        // No rendered text views should contain thinking text beyond the header.
+        let textViews = timelineAllTextRenderViews(in: view)
+        let rendered = textViews
+            .map { timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { $0 != "Thinking…" }
+        #expect(rendered.isEmpty)
     }
 
     @MainActor

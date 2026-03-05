@@ -324,7 +324,7 @@ struct ToolTimelineRowModeDispatchTests {
 
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(rendered.contains("extension result line 1"))
         #expect(rendered.contains("extension result line 3"))
@@ -341,7 +341,7 @@ struct ToolTimelineRowModeDispatchTests {
 
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(rendered.contains("EXT-1"))
 
@@ -422,8 +422,8 @@ struct ToolTimelineRowModeDispatchTests {
         view.configuration = diffConfig
         _ = fittedSize(for: view, width: 360)
 
-        // The diff label must have attributed text
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        // The diff text view must have attributed text.
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let attributedText = try #require(expandedLabel.attributedText)
         #expect(attributedText.length > 0)
         #expect(attributedText.string.contains("let new = true"))
@@ -470,7 +470,7 @@ struct ToolTimelineRowModeDispatchTests {
         view.configuration = codeConfig
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let attributedText = try #require(expandedLabel.attributedText)
         #expect(attributedText.string.contains("struct App"))
 
@@ -1064,7 +1064,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("struct App"))
         // No line number gutter during streaming (cheap path)
@@ -1085,7 +1085,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("struct App"))
         // Line number gutter present when done (full quality path)
@@ -1112,7 +1112,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let streamingRendered = label.attributedText?.string ?? label.text ?? ""
         #expect(!streamingRendered.contains("│"), "Streaming should not have line numbers")
 
@@ -1143,7 +1143,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("- let old = false"), "Streaming diff should show - prefix")
         #expect(rendered.contains("+ let old = true"), "Streaming diff should show + prefix")
@@ -1167,7 +1167,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("let old = false"))
         #expect(rendered.contains("let old = true"))
@@ -1198,7 +1198,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let streamingRendered = label.attributedText?.string ?? label.text ?? ""
         #expect(!streamingRendered.contains("▎"), "Streaming diff should not have gutter markers")
 

@@ -222,7 +222,7 @@ struct ClientMessageTests {
         let msg = ClientMessage.getFileSuggestions(query: "")
         let json = try decode(msg)
         #expect(json["type"] as? String == "get_file_suggestions")
-        #expect(json["query"] as? String == "")
+        #expect((json["query"] as? String)?.isEmpty == true)
     }
 
     // MARK: - Helpers

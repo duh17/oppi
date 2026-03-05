@@ -8,7 +8,7 @@ struct HostDirectoryTests {
     // MARK: - JSON Decoding
 
     @Test func decodesFullPayload() throws {
-        let json = """
+        let json = Data("""
         {
             "path": "~/workspace/oppi",
             "name": "oppi",
@@ -18,7 +18,7 @@ struct HostDirectoryTests {
             "projectType": "node",
             "language": "TypeScript"
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         let dir = try JSONDecoder().decode(HostDirectory.self, from: json)
         #expect(dir.path == "~/workspace/oppi")
@@ -31,14 +31,14 @@ struct HostDirectoryTests {
     }
 
     @Test func decodesMinimalPayload() throws {
-        let json = """
+        let json = Data("""
         {
             "path": "~/src/experiment",
             "name": "experiment",
             "isGitRepo": false,
             "hasAgentsMd": false
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         let dir = try JSONDecoder().decode(HostDirectory.self, from: json)
         #expect(dir.path == "~/src/experiment")
@@ -51,7 +51,7 @@ struct HostDirectoryTests {
     }
 
     @Test func decodesDirectoriesArrayResponse() throws {
-        let json = """
+        let json = Data("""
         {
             "directories": [
                 {
@@ -72,7 +72,7 @@ struct HostDirectoryTests {
                 }
             ]
         }
-        """.data(using: .utf8)!
+        """.utf8)
 
         struct Response: Decodable { let directories: [HostDirectory] }
         let response = try JSONDecoder().decode(Response.self, from: json)
@@ -121,7 +121,7 @@ struct HostDirectoryTests {
         )
 
         let data = try JSONEncoder().encode(request)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         #expect(json["name"] as? String == "oppi")
         #expect(json["hostMount"] as? String == "~/workspace/oppi")
@@ -137,7 +137,7 @@ struct HostDirectoryTests {
         )
 
         let data = try JSONEncoder().encode(request)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         #expect(json["name"] as? String == "blank")
         #expect(json["hostMount"] == nil)
