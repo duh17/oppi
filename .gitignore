@@ -12,7 +12,9 @@ ios/.env.testflight.local
 # Scripts (private build/ops tooling)
 ios/scripts/
 scripts/
-server/scripts/
+!server/scripts/
+server/scripts/*
+!server/scripts/telemetry-review.mjs
 !ios/scripts/
 ios/scripts/*
 !ios/scripts/check-coverage.sh
