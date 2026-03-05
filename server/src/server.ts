@@ -53,6 +53,7 @@ import {
 } from "./bonjour-advertiser.js";
 import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
+import { RuntimeUpdateManager } from "./runtime-update.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -237,6 +238,7 @@ export class Server {
   private bonjourAdvertiser: BonjourAdvertiser | null = null;
   private modelRegistry: ModelRegistry;
   private models: ModelCatalog;
+  private runtimeUpdates: RuntimeUpdateManager;
 
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
@@ -260,6 +262,11 @@ export class Server {
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     this.modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
     this.models = new ModelCatalog(this.modelRegistry, this.storage);
+    this.runtimeUpdates = new RuntimeUpdateManager({
+      packageName: process.env.OPPI_RUNTIME_PACKAGE || "oppi-server",
+      currentVersion: Server.VERSION,
+      npmExecutable: process.env.OPPI_RUNTIME_NPM_BIN || "npm",
+    });
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
@@ -349,6 +356,8 @@ export class Server {
         return Promise.resolve();
       },
       getModelCatalog: () => this.models.getAll(),
+      getRuntimeUpdateStatus: (options) => this.runtimeUpdates.getStatus(options),
+      runRuntimeUpdate: () => this.runtimeUpdates.updateRuntime(),
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),

@@ -183,6 +183,7 @@ describe("GET /server/info", () => {
     expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
+    expect(body.runtimeUpdate).toBeTypeOf("object");
   });
 });
 

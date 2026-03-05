@@ -425,16 +425,13 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.timeline_apply_ms": {
     unit: "ms",
-    description: "Reducer apply latency for timeline state updates.",
+    description: "Reducer apply latency (threshold-gated, only emitted when >= 4ms).",
   },
   "chat.timeline_layout_ms": {
     unit: "ms",
-    description: "Timeline layout/render latency after state application.",
+    description: "Timeline layout latency (threshold-gated, only emitted when >= 2ms).",
   },
-  "chat.ws_decode_ms": {
-    unit: "ms",
-    description: "WebSocket message decode latency.",
-  },
+  // Removed: chat.ws_decode_ms — high-volume noise (32% of samples, almost always 0ms)
   "chat.coalescer_flush_events": {
     unit: "count",
     description: "Event count flushed per coalescer batch.",
@@ -907,6 +904,48 @@ export type ServerMessage = // ── Connection ──
      */
     streamSeq?: number;
   };
+
+// ─── Applets ───
+
+export interface Applet {
+  id: string;
+  workspaceId: string;
+  title: string;
+  description?: string;
+  currentVersion: number; // latest version (1-indexed)
+  tags?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AppletVersion {
+  version: number; // 1, 2, 3...
+  appletId: string;
+  sessionId?: string; // provenance: which session created this
+  toolCallId?: string; // provenance: which tool call
+  size: number; // byte count of HTML
+  changeNote?: string;
+  createdAt: number;
+}
+
+export interface CreateAppletRequest {
+  title: string;
+  html: string;
+  description?: string;
+  tags?: string[];
+  sessionId?: string;
+  toolCallId?: string;
+}
+
+export interface UpdateAppletRequest {
+  html: string;
+  title?: string;
+  description?: string;
+  tags?: string[];
+  changeNote?: string;
+  sessionId?: string;
+  toolCallId?: string;
+}
 
 // ─── Push ───
 

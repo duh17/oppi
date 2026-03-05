@@ -13,6 +13,9 @@ ios/.env.testflight.local
 ios/scripts/
 scripts/
 server/scripts/
+!ios/scripts/
+ios/scripts/*
+!ios/scripts/check-coverage.sh
 !server/docker/entrypoint.sh
 !server/skills/agent-sessions/scripts/
 
@@ -49,5 +52,6 @@ docs/research/
 docs/review/
 
 docs/**/*.md
+!docs/testing/extraction-opportunities.md
 
 server/extensions/
