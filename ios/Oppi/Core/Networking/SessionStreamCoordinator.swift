@@ -56,8 +56,10 @@ actor SessionStreamCoordinator {
         .awaitingSubscribeAck: [.subscribeAck, .disconnected],
         .queueSync: [.queueSyncStarted, .queueSyncFinished, .disconnected],
         .streaming: [.beginSession, .streamConnected, .recoveryStarted, .disconnected],
-        .resubscribing: [.queueSyncFinished, .recoveryStarted, .disconnected],
-        .recoveringFullSubscription: [.recoveryFinished, .disconnected],
+        // streamConnected: WS can drop again mid-resubscribe; the new
+        // handleStreamReconnected() will restart resubscription.
+        .resubscribing: [.queueSyncFinished, .recoveryStarted, .streamConnected, .disconnected],
+        .recoveringFullSubscription: [.recoveryFinished, .streamConnected, .disconnected],
     ]
 
     private static let eagerResolveCommands: Set<String> = ["subscribe", "unsubscribe", "get_queue"]
@@ -227,6 +229,12 @@ actor SessionStreamCoordinator {
         let hasClient = await MainActor.run { connection.wsClient != nil }
         guard hasClient else { return }
 
+        // Cancel any in-flight queue sync from the previous WS connection.
+        // The deferred task would send get_queue on the new WS before
+        // resubscription completes, hitting an empty subscription map
+        // and triggering "not subscribed at level=full" errors.
+        await cancelDeferredQueueSync(connection: connection)
+
         if let activeSessionId = await MainActor.run(body: { connection.activeSessionId }) {
             transition(to: .resubscribing(sessionId: activeSessionId), event: .streamConnected)
         }
@@ -363,7 +371,13 @@ actor SessionStreamCoordinator {
                     .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
                 }
 
-                try? await connection.requestState()
+                Task { @MainActor [weak connection] in
+                    guard let connection else { return }
+                    try? await connection.requestState()
+                    try? await connection.requestMessageQueue(
+                        timeout: ServerConnection.deferredQueueSyncTimeout
+                    )
+                }
                 ClientLog.info(
                     "WebSocket",
                     "Recovered full subscription",
@@ -547,6 +561,7 @@ actor SessionStreamCoordinator {
         let hasClient = await MainActor.run { connection.wsClient != nil }
         guard hasClient else { return }
 
+        var activeResubscribed = false
         if let activeSessionId = await MainActor.run(body: { connection.activeSessionId }) {
             let ok = await resubscribeWithRetry(
                 connection: connection,
@@ -554,7 +569,9 @@ actor SessionStreamCoordinator {
                 level: .full,
                 maxAttempts: ServerConnection.resubscribeMaxAttempts
             )
-            if !ok {
+            if ok {
+                activeResubscribed = true
+            } else {
                 streamCoordinatorLogger.error(
                     "Resubscription failed for active session \(activeSessionId, privacy: .public)"
                 )
@@ -582,6 +599,18 @@ actor SessionStreamCoordinator {
 
         if let activeSessionId {
             transition(to: .streaming(sessionId: activeSessionId), event: .queueSyncFinished)
+
+            // Re-sync message queue after successful resubscription.
+            // The old deferred queue sync was cancelled in handleStreamReconnected()
+            // to prevent it from racing ahead of resubscription on the new WS.
+            if activeResubscribed {
+                let transport = await MainActor.run { connection.transportPath.rawValue }
+                await scheduleQueueSync(
+                    connection: connection,
+                    sessionId: activeSessionId,
+                    transport: transport
+                )
+            }
         }
     }
 
@@ -629,16 +658,18 @@ actor SessionStreamCoordinator {
         }
     }
 
+    /// Apply a state transition, logging unexpected ones.
+    ///
+    /// The transition table is advisory — unexpected transitions are logged
+    /// but still applied. Hard rejection would risk leaving the coordinator
+    /// stuck in a stale state after edge-case races.
     private func transition(to newState: StreamState, event: Event) {
         let currentKind = kind(of: state)
-        if Self.transitionTable[currentKind, default: []].contains(event) {
-            state = newState
-            return
+        if !Self.transitionTable[currentKind, default: []].contains(event) {
+            streamCoordinatorLogger.warning(
+                "Unexpected stream transition \(currentKind.rawValue, privacy: .public) --\(event.rawValue, privacy: .public)--> \(self.kind(of: newState).rawValue, privacy: .public)"
+            )
         }
-
-        streamCoordinatorLogger.debug(
-            "Ignoring invalid stream transition \(currentKind.rawValue, privacy: .public) --\(event.rawValue, privacy: .public)--> \(self.kind(of: newState).rawValue, privacy: .public)"
-        )
         state = newState
     }
 
