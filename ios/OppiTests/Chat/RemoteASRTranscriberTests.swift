@@ -139,9 +139,9 @@ struct RemoteASRTranscriberTests {
     @Test @MainActor func enginePreferenceRemoteASR() {
         let manager = VoiceInputManager()
 
-        // Default: locale-based
+        // Default: classic dictation for all locales
         #expect(
-            VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .modernSpeech
+            VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .classicDictation
         )
 
         // Set remote preference + endpoint

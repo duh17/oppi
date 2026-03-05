@@ -372,15 +372,12 @@ struct VoiceInputManagerTests {
         #expect(locale.language.languageCode?.identifier == "ko")
     }
 
-    @Test func preferredEngineUsesModernForEnglish() {
-        let engine = VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US"))
-        #expect(engine == .modernSpeech)
-    }
-
-    @Test func preferredEngineUsesClassicForCJK() {
+    @Test func preferredEngineUsesClassicForAllLocales() {
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .classicDictation)
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")) == .classicDictation)
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")) == .classicDictation)
         #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")) == .classicDictation)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "fr-FR")) == .classicDictation)
     }
 
     // MARK: - Language Label
