@@ -22,6 +22,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let toolName: String?
     let isError: Bool?
 
+    // Tool result details (expandedText, presentationFormat, etc.)
+    var details: JSONValue? = nil
+
     // Thinking
     let thinking: String?
 }
