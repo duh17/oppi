@@ -135,9 +135,9 @@ extension ServerConnection {
             silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
 
-        case .toolOutput(let output, let isError, let toolCallId):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
             silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes))
 
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             silenceWatchdog.recordEvent()

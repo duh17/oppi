@@ -72,6 +72,46 @@ final class ToolOutputStore {
         return true
     }
 
+    /// Replace stored output entirely (for `mode=replace` tail preview updates).
+    ///
+    /// Unlike `append`, this discards any previously accumulated output
+    /// and stores the provided text as the complete preview.
+    @discardableResult
+    func replace(_ output: String, for itemID: String) -> Bool {
+        let existingBytes = chunks[itemID]?.utf8.count ?? 0
+
+        // Track insertion order for FIFO eviction
+        if chunks[itemID] == nil {
+            insertionOrder.append(itemID)
+        }
+
+        // Per-item cap check on the replacement text
+        let outputBytes = output.utf8.count
+        if outputBytes > Self.perItemCap {
+            // Truncate replacement to fit
+            var truncated = ""
+            var bytesSoFar = 0
+            for char in output {
+                let charBytes = String(char).utf8.count
+                if bytesSoFar + charBytes > Self.perItemCap { break }
+                truncated.append(char)
+                bytesSoFar += charBytes
+            }
+            let truncatedOutput = truncated + Self.truncationMarker
+
+            totalBytes -= existingBytes
+            chunks[itemID] = truncatedOutput
+            totalBytes += truncatedOutput.utf8.count
+        } else {
+            totalBytes -= existingBytes
+            chunks[itemID] = output
+            totalBytes += outputBytes
+        }
+
+        evictIfNeeded()
+        return true
+    }
+
     func fullOutput(for itemID: String) -> String {
         chunks[itemID, default: ""]
     }

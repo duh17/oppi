@@ -24,7 +24,7 @@ enum ServerMessage: Sendable, Equatable {
 
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
-    case toolOutput(output: String, isError: Bool, toolCallId: String?)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
     // Message queue
@@ -62,6 +62,14 @@ enum ServerMessage: Sendable, Equatable {
 
     // Unknown server message types are skipped, not fatal.
     case unknown(type: String)
+}
+
+// MARK: - Tool Output Mode
+
+/// Transport mode for tool output: append (default delta) or replace (bounded tail preview).
+enum ToolOutputMode: String, Codable, Sendable {
+    case append
+    case replace
 }
 
 // MARK: - Extension UI Request
@@ -114,7 +122,7 @@ extension ServerMessage: Decodable {
         // tool_start / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
-        case output, isError
+        case output, isError, mode, truncated, totalBytes
         // turn_ack
         case stage, clientTurnId, duplicate
         // error
@@ -207,7 +215,10 @@ extension ServerMessage: Decodable {
             let output = try c.decode(String.self, forKey: .output)
             let isErr = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
-            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId)
+            let mode = try c.decodeIfPresent(ToolOutputMode.self, forKey: .mode) ?? .append
+            let truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+            let totalBytes = try c.decodeIfPresent(Int.self, forKey: .totalBytes)
+            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes)
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)

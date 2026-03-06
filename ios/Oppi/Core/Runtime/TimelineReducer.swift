@@ -479,6 +479,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         var pendingToolOutputChunksByID: [String: [String]] = [:]
         var pendingToolOutputIsError: [String: Bool] = [:]
         var pendingToolOutputOrder: [String] = []
+        /// Tracks whether the last output for a tool was a replace (tail preview).
+        var pendingToolOutputIsReplace: [String: Bool] = [:]
 
         func flushPendingUpserts() {
             if hasPendingThinkingUpsert {
@@ -502,9 +504,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
                 for toolEventId in pendingToolOutputOrder {
                     let outputDidChange: Bool
+                    let isReplace = pendingToolOutputIsReplace[toolEventId] ?? false
                     if let chunks = pendingToolOutputChunksByID[toolEventId], !chunks.isEmpty {
-                        let mergedOutput = chunks.count == 1 ? chunks[0] : chunks.joined()
-                        outputDidChange = toolOutputStore.append(mergedOutput, to: toolEventId)
+                        if isReplace, let lastChunk = chunks.last {
+                            // Replace mode: use the LAST chunk as the complete preview.
+                            outputDidChange = toolOutputStore.replace(lastChunk, for: toolEventId)
+                        } else {
+                            let mergedOutput = chunks.count == 1 ? chunks[0] : chunks.joined()
+                            outputDidChange = toolOutputStore.append(mergedOutput, to: toolEventId)
+                        }
                     } else {
                         outputDidChange = false
                     }
@@ -521,6 +529,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 pendingToolOutputChunksByID.removeAll(keepingCapacity: true)
                 pendingToolOutputIsError.removeAll(keepingCapacity: true)
                 pendingToolOutputOrder.removeAll(keepingCapacity: true)
+                pendingToolOutputIsReplace.removeAll(keepingCapacity: true)
                 if didMutateToolOutputs {
                     didMutate = true
                 }
@@ -541,12 +550,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     hasPendingThinkingUpsert = true
                 }
 
-            case .toolOutput(_, let toolEventId, let output, let isError):
+            case .toolOutput(_, let toolEventId, let output, let isError, let mode, _, _):
                 if pendingToolOutputChunksByID[toolEventId] == nil {
                     pendingToolOutputOrder.append(toolEventId)
                 }
                 pendingToolOutputChunksByID[toolEventId, default: []].append(output)
                 pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || isError
+                // If any event in the batch is replace, the flush uses replace.
+                if mode == .replace {
+                    pendingToolOutputIsReplace[toolEventId] = true
+                }
 
             default:
                 flushPendingUpserts()
@@ -684,8 +697,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 toolArgsStore.args(for: toolEventId) != previousArgs ||
                 toolSegmentStore.callSegments(for: toolEventId) != previousCallSegments
 
-        case .toolOutput(_, let toolEventId, let output, let isError):
-            let outputDidChange = toolOutputStore.append(output, to: toolEventId)
+        case .toolOutput(_, let toolEventId, let output, let isError, let mode, _, _):
+            let outputDidChange: Bool
+            if mode == .replace {
+                outputDidChange = toolOutputStore.replace(output, for: toolEventId)
+            } else {
+                outputDidChange = toolOutputStore.append(output, to: toolEventId)
+            }
             let previewDidChange = updateToolCallPreview(id: toolEventId, isError: isError)
             return outputDidChange || previewDidChange
 
