@@ -141,6 +141,53 @@ struct ToolOutputFetchTests {
     }
 
     @MainActor
+    @Test func previewOnlyShellOutputStillFetchesFullOutputOnExpand() async {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let toolID = "tool-shell-preview"
+
+        harness.toolOutputStore.replace("line79\nline80\n", for: toolID, previewOnly: true, totalBytes: 50_000)
+
+        let shellConfig = makeTimelineConfiguration(
+            items: [
+                .toolCall(
+                    id: toolID,
+                    tool: "bash",
+                    argsSummary: "command: find /",
+                    outputPreview: "line79\nline80\n",
+                    outputByteCount: 50_000,
+                    isError: false,
+                    isDone: true
+                ),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: shellConfig, to: harness.collectionView)
+
+        harness.coordinator._fetchToolOutputForTesting = { _, _ in
+            "line1\nline2\nline3\n"
+        }
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didSelectItemAt: IndexPath(item: 0, section: 0)
+        )
+
+        #expect(harness.reducer.expandedItemIDs.contains(toolID))
+        #expect(await waitForTimelineCondition(timeoutMs: 600) {
+            await MainActor.run {
+                harness.toolOutputStore.fullOutput(for: toolID) == "line1\nline2\nline3\n"
+                    && harness.toolOutputStore.hasCompleteOutput(for: toolID)
+            }
+        })
+    }
+
+    @MainActor
     @Test func readToolWithUnknownByteCountStillFetchesFullOutputOnExpand() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let toolID = "tool-read-unknown-bytes"

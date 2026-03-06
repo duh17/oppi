@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowTextRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .text
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .text = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowTextRenderStrategy {
     static func render(
         text: String,
         language: SyntaxLanguage?,

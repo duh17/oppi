@@ -2,19 +2,13 @@ import SwiftUI
 import UIKit
 
 @MainActor
-struct ToolRowCodeRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .code
-
-    /// Threshold in lines above which the first render is deferred to a background task.
-    /// Below this, synchronous highlighting is fast enough (<16ms on A18).
-    static let deferredHighlightLineThreshold = 100
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .code = input.expandedContent {
-            return true
-        }
-        return false
-    }
+struct ToolRowCodeRenderStrategy {
+    /// Thresholds for switching inline code rows to the cheap first paint path.
+    /// We defer sooner than before because `read` output often contains medium-
+    /// sized files that are still expensive to syntax highlight inline.
+    static let deferredHighlightLineThreshold = 80
+    static let deferredHighlightByteThreshold = 4 * 1024
+    static let deferredHighlightLongLineByteThreshold = 160
 
     /// Result of a render call. `deferredHighlight` is non-nil when the strategy
     /// showed plain text and needs the caller to schedule async highlighting.
@@ -28,6 +22,12 @@ struct ToolRowCodeRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
         let language: SyntaxLanguage
         let startLine: Int
         let signature: Int
+    }
+
+    private struct HighlightProfile {
+        let byteCount: Int
+        let lineCount: Int
+        let maxLineByteCount: Int
     }
 
     static func render(
@@ -64,29 +64,20 @@ struct ToolRowCodeRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
             if isStreaming {
-                expandedLabel.attributedText = nil
-                expandedLabel.text = displayText
-                expandedLabel.textColor = UIColor(.themeFg)
-                expandedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                applyPlainText(displayText, to: expandedLabel)
             } else if let cached = ToolRowRenderCache.get(signature: signature) {
                 expandedLabel.text = nil
                 expandedLabel.attributedText = cached
             } else {
-                let lineCount = displayText.split(separator: "\n", omittingEmptySubsequences: false).count
-                if let language, language != .unknown,
-                   lineCount >= deferredHighlightLineThreshold {
-                    // Large uncached file: show plain text with line numbers immediately,
-                    // schedule async highlight to swap in later.
-                    let plainText = ToolRowTextRenderer.makeCodeAttributedText(
-                        text: displayText,
-                        language: nil,
-                        startLine: resolvedStartLine
-                    )
-                    expandedLabel.text = nil
-                    expandedLabel.attributedText = plainText
+                let highlightProfile = highlightProfile(for: displayText)
+                if shouldDeferHighlight(language: language, profile: highlightProfile) {
+                    // Large uncached file: show the cheapest possible first paint
+                    // (plain monospace text, no line-number gutter), then upgrade
+                    // to highlighted + numbered code asynchronously.
+                    applyPlainText(displayText, to: expandedLabel)
                     deferred = DeferredHighlight(
                         text: displayText,
-                        language: language,
+                        language: language ?? .unknown,
                         startLine: resolvedStartLine,
                         signature: signature
                     )
@@ -127,6 +118,54 @@ struct ToolRowCodeRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
                 showOutputContainer: false
             ),
             deferredHighlight: deferred
+        )
+    }
+
+    private static func applyPlainText(_ text: String, to label: UITextView) {
+        label.attributedText = nil
+        label.text = text
+        label.textColor = UIColor(.themeFg)
+        label.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    }
+
+    private static func shouldDeferHighlight(
+        language: SyntaxLanguage?,
+        profile: HighlightProfile
+    ) -> Bool {
+        guard let language else { return false }
+        if language == .unknown {
+            return profile.byteCount >= deferredHighlightByteThreshold * 2
+                || profile.lineCount >= deferredHighlightLineThreshold * 2
+                || profile.maxLineByteCount >= deferredHighlightLongLineByteThreshold * 2
+        }
+
+        return profile.lineCount >= deferredHighlightLineThreshold
+            || profile.byteCount >= deferredHighlightByteThreshold
+            || profile.maxLineByteCount >= deferredHighlightLongLineByteThreshold
+    }
+
+    private static func highlightProfile(for text: String) -> HighlightProfile {
+        var byteCount = 0
+        var lineCount = 1
+        var currentLineByteCount = 0
+        var maxLineByteCount = 0
+
+        for byte in text.utf8 {
+            byteCount += 1
+            if byte == 0x0A {
+                maxLineByteCount = max(maxLineByteCount, currentLineByteCount)
+                currentLineByteCount = 0
+                lineCount += 1
+            } else {
+                currentLineByteCount += 1
+            }
+        }
+
+        maxLineByteCount = max(maxLineByteCount, currentLineByteCount)
+        return HighlightProfile(
+            byteCount: byteCount,
+            lineCount: lineCount,
+            maxLineByteCount: maxLineByteCount
         )
     }
 }

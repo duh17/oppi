@@ -10,6 +10,26 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let canFork: Bool
     let onFork: (() -> Void)?
     let themeID: ThemeID
+    let selectedTextPiRouter: SelectedTextPiActionRouter?
+    let selectedTextSourceContext: SelectedTextSourceContext?
+
+    init(
+        text: String,
+        isStreaming: Bool,
+        canFork: Bool,
+        onFork: (() -> Void)?,
+        themeID: ThemeID,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextSourceContext: SelectedTextSourceContext? = nil
+    ) {
+        self.text = text
+        self.isStreaming = isStreaming
+        self.canFork = canFork
+        self.onFork = onFork
+        self.themeID = themeID
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
+    }
 
     func makeContentView() -> any UIView & UIContentView {
         AssistantTimelineRowContentView(configuration: self)
@@ -137,7 +157,9 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         markdownView.apply(configuration: .init(
             content: trimmedText,
             isStreaming: configuration.isStreaming,
-            themeID: configuration.themeID
+            themeID: configuration.themeID,
+            selectedTextPiRouter: configuration.selectedTextPiRouter,
+            selectedTextSourceContext: configuration.selectedTextSourceContext
         ))
     }
 

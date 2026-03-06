@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowReadMediaRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .readMedia
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .readMedia = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowReadMediaRenderStrategy {
     static func render(
         output: String,
         filePath: String?,

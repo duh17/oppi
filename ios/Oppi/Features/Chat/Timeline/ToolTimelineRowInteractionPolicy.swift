@@ -45,7 +45,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case .markdown:
             return Self(
                 mode: mode,
-                enablesTapCopyGesture: false,
+                enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
                 supportsFullScreenPreview: supportsFullScreenPreview,
                 allowsHorizontalScroll: false
