@@ -40,6 +40,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let audioPlayer: AudioPlayerService
         let theme: AppTheme
         let themeID: ThemeID
+        let selectedTextPiRouter: SelectedTextPiActionRouter?
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
 
@@ -65,6 +66,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             audioPlayer: AudioPlayerService,
             theme: AppTheme,
             themeID: ThemeID,
+            selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             topOverlap: CGFloat = 0,
             bottomOverlap: CGFloat = 0
         ) {
@@ -89,6 +91,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.audioPlayer = audioPlayer
             self.theme = theme
             self.themeID = themeID
+            self.selectedTextPiRouter = selectedTextPiRouter
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
         }
@@ -147,27 +150,83 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
+        private let context = ChatTimelineControllerContext()
+
         var hiddenCount = 0
         var renderWindowStep = 0
         var streamingAssistantID: String?
-        var sessionId = ""
-        var workspaceId: String?
-        var onFork: ((String) -> Void)?
-        private var onOpenFile: ((FileToOpen) -> Void)?
-        var onShowEarlier: (() -> Void)?
-
-        weak var scrollController: ChatScrollController?
-
-        var reducer: TimelineReducer?
-        var toolOutputStore: ToolOutputStore?
-        var toolArgsStore: ToolArgsStore?
-        var toolSegmentStore: ToolSegmentStore?
-        var toolDetailsStore: ToolDetailsStore?
-        var connection: ServerConnection?
         var audioPlayer: AudioPlayerService?
         weak var collectionView: UICollectionView?
-        var theme: AppTheme = .dark
-        var currentThemeID: ThemeID = .dark
+
+        var sessionId: String {
+            get { context.sessionId }
+            set { context.sessionId = newValue }
+        }
+
+        var workspaceId: String? {
+            get { context.workspaceId }
+            set { context.workspaceId = newValue }
+        }
+
+        var onFork: ((String) -> Void)? {
+            get { context.onFork }
+            set { context.onFork = newValue }
+        }
+
+        var onShowEarlier: (() -> Void)? {
+            get { context.onShowEarlier }
+            set { context.onShowEarlier = newValue }
+        }
+
+        private var onOpenFile: ((FileToOpen) -> Void)? {
+            get { context.onOpenFile }
+            set { context.onOpenFile = newValue }
+        }
+
+        var scrollController: ChatScrollController? {
+            get { context.scrollController }
+            set { context.scrollController = newValue }
+        }
+
+        var reducer: TimelineReducer? {
+            get { context.reducer }
+            set { context.reducer = newValue }
+        }
+
+        var toolOutputStore: ToolOutputStore? {
+            get { context.toolOutputStore }
+            set { context.toolOutputStore = newValue }
+        }
+
+        var toolArgsStore: ToolArgsStore? {
+            get { context.toolArgsStore }
+            set { context.toolArgsStore = newValue }
+        }
+
+        var toolSegmentStore: ToolSegmentStore? {
+            get { context.toolSegmentStore }
+            set { context.toolSegmentStore = newValue }
+        }
+
+        var toolDetailsStore: ToolDetailsStore? {
+            get { context.toolDetailsStore }
+            set { context.toolDetailsStore = newValue }
+        }
+
+        var connection: ServerConnection? {
+            get { context.connection }
+            set { context.connection = newValue }
+        }
+
+        var currentThemeID: ThemeID {
+            get { context.currentThemeID }
+            set { context.currentThemeID = newValue }
+        }
+
+        var selectedTextPiRouter: SelectedTextPiActionRouter? {
+            get { context.selectedTextPiRouter }
+            set { context.selectedTextPiRouter = newValue }
+        }
 
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
         /// streaming text grows the tail between throttled auto-scroll pulses.
@@ -381,7 +440,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             streamingAssistantID = configuration.streamingAssistantID
             isTimelineBusy = configuration.isBusy
 
-            if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
+            if context.didChangeSessionScope(for: configuration) {
                 cancelAllToolOutputLoadTasks()
                 lastObservedContentOffsetY = nil
                 lastObservedContentHeight = nil
@@ -391,23 +450,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 configuration.scrollController.setDetachedStreamingHintVisible(false)
                 configuration.scrollController.setJumpToBottomHintVisible(false)
             }
-            sessionId = configuration.sessionId
-            workspaceId = configuration.workspaceId
 
-            onFork = configuration.onFork
-            onOpenFile = configuration.onOpenFile
-            onShowEarlier = configuration.onShowEarlier
-            scrollController = configuration.scrollController
-            reducer = configuration.reducer
-            toolOutputStore = configuration.toolOutputStore
-            toolArgsStore = configuration.toolArgsStore
-            toolSegmentStore = configuration.toolSegmentStore
-            toolDetailsStore = configuration.toolDetailsStore
-            connection = configuration.connection
+            context.apply(configuration: configuration)
             self.collectionView = collectionView
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
-            theme = configuration.theme
-            currentThemeID = configuration.themeID
 
             collectionView.backgroundColor = UIColor(Color.themeBg)
 
@@ -418,39 +464,24 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 collectionView.contentInset.bottom = configuration.bottomOverlap
             }
 
-            var nextItemByID: [String: ChatItem] = [:]
-            nextItemByID.reserveCapacity(configuration.items.count)
+            let applyPlan = ChatTimelineApplyPlan.build(
+                items: configuration.items,
+                hiddenCount: configuration.hiddenCount,
+                isBusy: configuration.isBusy,
+                streamingAssistantID: configuration.streamingAssistantID
+            ).withRemovedIDs(from: currentIDs)
 
-            var nextIDs: [String] = []
-            nextIDs.reserveCapacity(configuration.items.count + 2)
-
-            if configuration.hiddenCount > 0 {
-                nextIDs.append(ChatTimelineCollectionHost.loadMoreID)
+            if !applyPlan.removedIDs.isEmpty {
+                cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
             }
 
-            // Diffable data sources require globally unique item identifiers.
-            // Keep only the last occurrence for duplicate IDs so reconnect/
-            // replay races cannot crash UICollectionView snapshot application.
-            let dedupedItems = Self.uniqueItemsKeepingLast(configuration.items)
-            nextIDs.append(contentsOf: dedupedItems.orderedIDs)
-            nextItemByID = dedupedItems.itemByID
-
-            if configuration.isBusy, configuration.streamingAssistantID == nil {
-                nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
-            }
-
-            let removedIDs = Set(currentIDs).subtracting(nextIDs)
-            if !removedIDs.isEmpty {
-                cancelToolOutputLoadTasks(for: removedIDs)
-            }
-
-            currentIDs = nextIDs
-            currentItemByID = nextItemByID
+            currentIDs = applyPlan.nextIDs
+            currentItemByID = applyPlan.nextItemByID
 
             TimelineSnapshotApplier.applySnapshot(
                 dataSource: dataSource,
-                nextIDs: nextIDs,
-                nextItemByID: nextItemByID,
+                nextIDs: applyPlan.nextIDs,
+                nextItemByID: applyPlan.nextItemByID,
                 previousItemByID: previousItemByID,
                 hiddenCount: configuration.hiddenCount,
                 previousHiddenCount: previousHiddenCount,
@@ -460,7 +491,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousThemeID: previousThemeID
             )
 
-            previousItemByID = nextItemByID
+            previousItemByID = applyPlan.nextItemByID
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
             previousThemeID = configuration.themeID
@@ -470,7 +501,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // consumer (updateScrollState) is gated off when isBusy. Forcing
             // layout at 30Hz wastes ~1-3ms per tick for no visible effect.
             if !configuration.isBusy {
-                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: nextIDs.count)
+                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
             }
@@ -688,7 +719,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 outputByteCount: outputByteCount,
                 attempt: attempt,
                 hasExistingOutput: {
-                    !toolOutputStore.fullOutput(for: itemID).isEmpty
+                    toolOutputStore.hasCompleteOutput(for: itemID)
                 },
                 activeSessionID: sessionId,
                 currentSessionID: { [weak self] in
@@ -702,7 +733,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 },
                 fetchToolOutput: fetchToolOutput,
                 applyOutput: { output in
-                    toolOutputStore.append(output, to: itemID)
+                    toolOutputStore.replace(output, for: itemID)
                 },
                 reconfigureItem: { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }

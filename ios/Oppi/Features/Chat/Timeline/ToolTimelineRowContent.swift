@@ -32,6 +32,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let segmentAttributedTitle: NSAttributedString?
     /// Pre-rendered attributed trailing from server result segments.
     let segmentAttributedTrailing: NSAttributedString?
+    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
+    var selectedTextSessionId: String? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -39,6 +41,32 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
     func updated(for state: any UIConfigurationState) -> Self {
         self
+    }
+
+    func withSelectedTextPi(router: SelectedTextPiActionRouter?, sessionId: String?) -> Self {
+        Self(
+            title: title,
+            preview: preview,
+            expandedContent: expandedContent,
+            copyCommandText: copyCommandText,
+            copyOutputText: copyOutputText,
+            languageBadge: languageBadge,
+            trailing: trailing,
+            titleLineBreakMode: titleLineBreakMode,
+            toolNamePrefix: toolNamePrefix,
+            toolNameColor: toolNameColor,
+            editAdded: editAdded,
+            editRemoved: editRemoved,
+            collapsedImageBase64: collapsedImageBase64,
+            collapsedImageMimeType: collapsedImageMimeType,
+            isExpanded: isExpanded,
+            isDone: isDone,
+            isError: isError,
+            segmentAttributedTitle: segmentAttributedTitle,
+            segmentAttributedTrailing: segmentAttributedTrailing,
+            selectedTextPiRouter: router,
+            selectedTextSessionId: sessionId
+        )
     }
 }
 
@@ -51,10 +79,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let collapsedImagePreviewHeight: CGFloat = 136
-    private static let fullScreenOverflowThreshold: CGFloat = 2
 
     @MainActor
-    private enum ExpandedViewportMode {
+    enum ExpandedViewportMode {
         case none
         case diff
         case code
@@ -62,7 +89,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     @MainActor
-    private enum ViewportMode {
+    enum ViewportMode {
         case output
         case expandedDiff
         case expandedCode
@@ -115,12 +142,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let previewLabel = UILabel()
     private let commandContainer = UIView()
     private let commandLabel = UITextView()
-    private let outputContainer = UIView()
+    let outputContainer = UIView()
     private let outputScrollView = HorizontalPanPassthroughScrollView()
     private let outputLabel = UITextView()
-    private let expandedContainer = UIView()
-    private let expandedScrollView = HorizontalPanPassthroughScrollView()
-    private let expandedLabel = UITextView()
+    let expandedContainer = UIView()
+    let expandedScrollView = HorizontalPanPassthroughScrollView()
+    private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
+    let expandedLabel = UITextView()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
     private let imagePreviewContainer = UIView()
@@ -144,28 +172,34 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
     private var outputShouldAutoFollow = true
-    private var expandedShouldAutoFollow = true
+    var expandedShouldAutoFollow = true
     private var outputUsesViewport = false
     private var outputUsesUnwrappedLayout = false
-    private var outputRenderedText: String?
+    var outputRenderedText: String? {
+        didSet { outputWidthEstimateCache.invalidate(); outputViewportHeightCache.invalidate() }
+    }
     private var commandRenderSignature: Int?
-    private var outputRenderSignature: Int?
-    private var expandedRenderSignature: Int?
+    var outputRenderSignature: Int?
+    var expandedRenderSignature: Int?
     private var expandedUsesViewport = false
-    private var expandedUsesMarkdownLayout = false
-    private var expandedUsesReadMediaLayout = false
+    var expandedUsesMarkdownLayout = false
+    var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: UIView?
     /// Tracks which base64 image is currently being decoded / displayed.
     private var imagePreviewDecodedKey: String?
     private var imagePreviewDecodeTask: Task<Void, Never>?
-    private var expandedViewportMode: ExpandedViewportMode = .none
-    private var expandedRenderedText: String?
-    private var expandedMarkdownHeightCacheSignature: Int?
-    private var expandedMarkdownHeightCacheWidth: Int?
-    private var expandedMarkdownHeightCacheValue: CGFloat?
+    var expandedCodeDeferredHighlightSignature: Int?
+    var expandedCodeDeferredHighlightTask: Task<Void, Never>?
+    var expandedViewportMode: ExpandedViewportMode = .none
+    var expandedRenderedText: String? {
+        didSet { expandedWidthEstimateCache.invalidate(); expandedViewportHeightCache.invalidate() }
+    }
+    private var outputWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
+    private var expandedWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
+    private var outputViewportHeightCache = ToolTimelineRowViewportHeightCache()
+    private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
     private let fullScreenTerminalStream: TerminalTraceStream
-    private let expandFloatingButton = UIButton(type: .system)
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCommandDoubleTap))
@@ -235,12 +269,25 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         nil
     }
 
+    deinit {
+        imagePreviewDecodeTask?.cancel()
+        expandedCodeDeferredHighlightTask?.cancel()
+    }
+
     var configuration: UIContentConfiguration {
         get { currentConfiguration }
         set {
             guard let config = newValue as? ToolTimelineRowConfiguration else { return }
             apply(configuration: config)
         }
+    }
+
+    private var selectedTextPiRouter: SelectedTextPiActionRouter? {
+        currentConfiguration.selectedTextPiRouter
+    }
+
+    private var selectedTextSessionId: String? {
+        currentConfiguration.selectedTextSessionId
     }
 
     override func systemLayoutSizeFitting(
@@ -263,7 +310,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateExpandedMarkdownWidthIfNeeded()
         updateExpandedReadMediaWidthIfNeeded()
         updateViewportHeightsIfNeeded()
-        updateExpandFloatingButtonVisibility()
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
     }
@@ -271,54 +317,42 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateViewportHeightsIfNeeded() {
         if outputUsesViewport,
            let outputViewportHeightConstraint {
-            outputViewportHeightConstraint.constant = preferredViewportHeight(
-                for: outputLabel,
-                in: outputContainer,
-                mode: .output
-            )
+            let mode: ViewportMode = .output
+            outputViewportHeightConstraint.constant = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
+                cache: &outputViewportHeightCache,
+                signature: outputRenderSignature,
+                widthBucket: Int(outputContainer.bounds.width.rounded()),
+                mode: mode,
+                inputBytes: outputRenderedText?.utf8.count ?? 0,
+                profile: currentOutputViewportProfile,
+                availableHeight: availableViewportHeight(for: mode)
+            ) {
+                preferredViewportHeight(for: outputLabel, in: outputContainer, mode: mode)
+            }
         }
 
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
-            let mode: ViewportMode
-            switch expandedViewportMode {
-            case .diff:
-                mode = .expandedDiff
-            case .code:
-                mode = .expandedCode
-            case .text, .none:
-                mode = .expandedText
+            let mode: ViewportMode = switch expandedViewportMode {
+            case .diff: .expandedDiff
+            case .code: .expandedCode
+            case .text, .none: .expandedText
             }
-
-            let expandedContentView: UIView
-            if expandedUsesReadMediaLayout {
-                expandedContentView = expandedReadMediaContainer
-            } else if expandedUsesMarkdownLayout {
-                expandedContentView = expandedMarkdownView
-            } else {
-                expandedContentView = expandedLabel
-            }
-
+            let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
+                : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
             let widthBucket = Int(expandedContainer.bounds.width.rounded())
             let signature = expandedRenderSignature
 
-            let preferredHeight: CGFloat
-            if expandedUsesMarkdownLayout,
-               signature == expandedMarkdownHeightCacheSignature,
-               widthBucket == expandedMarkdownHeightCacheWidth,
-               let cachedHeight = expandedMarkdownHeightCacheValue {
-                preferredHeight = cachedHeight
-            } else {
-                preferredHeight = preferredViewportHeight(
-                    for: expandedContentView,
-                    in: expandedContainer,
-                    mode: mode
-                )
-                if expandedUsesMarkdownLayout {
-                    expandedMarkdownHeightCacheSignature = signature
-                    expandedMarkdownHeightCacheWidth = widthBucket
-                    expandedMarkdownHeightCacheValue = preferredHeight
-                }
+            let preferredHeight = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
+                cache: &expandedViewportHeightCache,
+                signature: signature,
+                widthBucket: widthBucket,
+                mode: mode,
+                inputBytes: expandedRenderedText?.utf8.count ?? 0,
+                profile: currentExpandedViewportProfile,
+                availableHeight: availableViewportHeight(for: mode)
+            ) {
+                preferredViewportHeight(for: expandedContentView, in: expandedContainer, mode: mode)
             }
 
             expandedViewportHeightConstraint.constant = preferredHeight
@@ -342,14 +376,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func outputLabelWidthConstant(for renderedText: String) -> CGFloat {
-        let frameWidth = max(1, outputScrollView.bounds.width)
-        let minimumContentWidth = max(1, frameWidth - 12)
-        let estimatedContentWidth = ToolTimelineRowRenderMetrics.estimatedMonospaceLineWidth(renderedText)
-        let contentWidth = max(minimumContentWidth, estimatedContentWidth)
-        return contentWidth - frameWidth
+        ToolTimelineRowLayoutPerformance.monospaceWidthConstant(
+            frameWidth: max(1, outputScrollView.bounds.width),
+            renderedText: renderedText,
+            cache: &outputWidthEstimateCache,
+            metricMode: "output"
+        )
     }
 
-    private func updateExpandedLabelWidthIfNeeded() {
+    func updateExpandedLabelWidthIfNeeded() {
         guard let expandedLabelWidthConstraint else { return }
 
         switch expandedViewportMode {
@@ -368,11 +403,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func expandedLabelWidthConstant(for renderedText: String) -> CGFloat {
-        let frameWidth = max(1, expandedScrollView.bounds.width)
-        let minimumContentWidth = max(1, frameWidth - 12)
-        let estimatedContentWidth = ToolTimelineRowRenderMetrics.estimatedMonospaceLineWidth(renderedText)
-        let contentWidth = max(minimumContentWidth, estimatedContentWidth)
-        return contentWidth - frameWidth
+        let metricMode: String = switch expandedViewportMode {
+        case .code: "expanded.code"
+        case .diff: "expanded.diff"
+        case .text, .none: "expanded.text"
+        }
+        return ToolTimelineRowLayoutPerformance.monospaceWidthConstant(
+            frameWidth: max(1, expandedScrollView.bounds.width),
+            renderedText: renderedText,
+            cache: &expandedWidthEstimateCache,
+            metricMode: metricMode
+        )
     }
 
     private func updateExpandedMarkdownWidthIfNeeded() {
@@ -389,8 +430,43 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputLabelHeightLockConstraint?.isActive = enabled
     }
 
-    private func setExpandedVerticalLockEnabled(_ enabled: Bool) {
+    func setExpandedVerticalLockEnabled(_ enabled: Bool) {
         expandedLabelHeightLockConstraint?.isActive = enabled
+    }
+
+    private var currentOutputViewportProfile: ToolTimelineRowViewportProfile? {
+        guard outputUsesViewport else { return nil }
+        return ToolTimelineRowViewportProfile(kind: .bashOutput, text: outputRenderedText)
+    }
+
+    private var currentExpandedViewportProfile: ToolTimelineRowViewportProfile? {
+        guard expandedUsesViewport else { return nil }
+
+        let kind: ToolTimelineRowViewportKind
+        if expandedUsesMarkdownLayout {
+            kind = .markdown
+        } else if expandedUsesReadMediaLayout {
+            kind = expandedReadMediaContentView is NativeExpandedPlotView ? .plot : .readMedia
+        } else {
+            kind = switch expandedViewportMode {
+            case .diff: .diff
+            case .code: .code
+            case .text, .none: .text
+            }
+        }
+
+        return ToolTimelineRowViewportProfile(kind: kind, text: expandedRenderedText)
+    }
+
+    private func availableViewportHeight(for mode: ViewportMode) -> CGFloat {
+        let windowHeight = window?.bounds.height
+            ?? superview?.bounds.height
+            ?? max(bounds.height, 600)
+        let safeInsets = window?.safeAreaInsets ?? .zero
+        return max(
+            mode.minHeight,
+            windowHeight - safeInsets.top - safeInsets.bottom - mode.closeSafeAreaReserve
+        )
     }
 
     private func preferredViewportHeight(
@@ -599,7 +675,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     // MARK: - Expanded Content Helpers
 
     /// Prepare for label-based expanded content (diff, code, plain text).
-    private func showExpandedLabel() {
+    func showExpandedLabel() {
+        expandedSurfaceHostView.activateSurfaceView(expandedLabel)
         expandedMarkdownView.isHidden = true
         expandedLabel.isHidden = false
         expandedReadMediaContainer.isHidden = true
@@ -616,6 +693,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Prepare for markdown expanded content.
     private func showExpandedMarkdown() {
+        expandedSurfaceHostView.activateSurfaceView(expandedMarkdownView)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
@@ -635,6 +713,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Prepare for embedded expanded content (UIKit-first, optional SwiftUI fallback).
     private func showExpandedHostedView() {
+        expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.isHidden = true
@@ -652,21 +731,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     /// Activate the expanded viewport height constraint.
-    private func showExpandedViewport() {
+    func showExpandedViewport() {
         expandedViewportHeightConstraint?.isActive = true
         expandedUsesViewport = true
     }
 
     /// Reset expanded container to hidden/default state.
     private func hideExpandedContainer(outputColor: UIColor) {
-        expandedMarkdownHeightCacheSignature = nil
-        expandedMarkdownHeightCacheWidth = nil
-        expandedMarkdownHeightCacheValue = nil
+        cancelDeferredCodeHighlight()
+        expandedSurfaceHostView.clearActiveSurface()
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.textColor = outputColor
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
-        expandedLabel.isHidden = false
+        expandedLabel.isHidden = true
         expandedMarkdownView.isHidden = true
         expandedReadMediaContainer.isHidden = true
         expandedUsesMarkdownLayout = false
@@ -723,6 +801,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             delegate: self
         )
 
+        commandLabel.delegate = self
+        outputLabel.delegate = self
+        expandedLabel.delegate = self
+
         ToolTimelineRowViewStyler.styleImagePreview(
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView
@@ -732,9 +814,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
         imagePreviewContainer.addInteraction(UIContextMenuInteraction(delegate: self))
         imagePreviewContainer.addSubview(imagePreviewImageView)
-
-        ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
-        expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
@@ -753,10 +832,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputContainer.addSubview(outputScrollView)
         outputScrollView.addSubview(outputLabel)
         expandedContainer.addSubview(expandedScrollView)
-        expandedScrollView.addSubview(expandedLabel)
-        expandedScrollView.addSubview(expandedMarkdownView)
-        expandedScrollView.addSubview(expandedReadMediaContainer)
-        expandedContainer.addSubview(expandFloatingButton)
+        expandedScrollView.addSubview(expandedSurfaceHostView)
+        expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
+        expandedSurfaceHostView.prepareSurfaceView(expandedMarkdownView)
+        expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(commandContainer)
@@ -801,12 +880,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputLabel: outputLabel,
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
+            expandedSurfaceHostView: expandedSurfaceHostView,
             expandedLabel: expandedLabel,
             expandedMarkdownView: expandedMarkdownView,
             expandedReadMediaContainer: expandedReadMediaContainer,
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView,
-            expandFloatingButton: expandFloatingButton,
             minOutputViewportHeight: Self.minOutputViewportHeight,
             minDiffViewportHeight: Self.minDiffViewportHeight,
             collapsedImagePreviewHeight: Self.collapsedImagePreviewHeight
@@ -886,23 +965,23 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         applyImagePreview(configuration: configuration)
 
         let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
+        let renderPlan = ToolRowPlanBuilder.build(configuration: configuration)
         let wasExpandedVisible = !expandedContainer.isHidden
         let wasCommandVisible = !commandContainer.isHidden
         let wasOutputVisible = !outputContainer.isHidden
 
         // Reset gesture interception (specific cases disable it below)
         setExpandedContainerGestureInterceptionEnabled(true)
-        currentInteractionPolicy = nil
+        currentInteractionPolicy = renderPlan.interactionPolicy
 
         var showExpandedContainer = false
         var showCommandContainer = false
         var showOutputContainer = false
+        var activeExpandedContent: ToolPresentationBuilder.ToolExpandedContent?
 
         if configuration.isExpanded, let rawExpandedContent = configuration.expandedContent {
             let expandedContent = normalizedExpandedContentForHotPath(rawExpandedContent)
-            currentInteractionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-                expandedContent
-            )
+            activeExpandedContent = expandedContent
             let visibility = ToolTimelineRowExpandedModeRouter.route(
                 expandedContent: expandedContent,
                 renderBash: { command, output, unwrapped in
@@ -935,7 +1014,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                         text: text,
                         isStreaming: !configuration.isDone,
                         wasExpandedVisible: wasExpandedVisible,
-                        isDone: configuration.isDone
+                        isDone: configuration.isDone,
+                        markdownSelectionEnabled: renderPlan.interactionSpec.markdownSelectionEnabled
                     )
                 },
                 renderPlot: { spec, fallbackText in
@@ -1031,27 +1111,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if let policy = currentInteractionPolicy,
            showExpandedContainer || showOutputContainer {
-            applyInteractionPolicy(policy, showOutputContainer: showOutputContainer)
+            applyInteractionPolicy(
+                policy,
+                spec: renderPlan.interactionSpec,
+                showOutputContainer: showOutputContainer
+            )
         } else {
             setExpandedContainerGestureInterceptionEnabled(true)
             expandedScrollView.isScrollEnabled = false
             outputScrollView.isScrollEnabled = false
         }
 
+        updateSelectedTextIntegration(
+            plan: renderPlan,
+            showCommandContainer: showCommandContainer,
+            showOutputContainer: showOutputContainer,
+            showExpandedContainer: showExpandedContainer,
+            expandedContent: activeExpandedContent
+        )
+
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
-        updateExpandFloatingButtonVisibility()
 
-        if isExpandingTransition {
-            // Reuse path: an expanded code/diff row can leave stack-view layout
-            // caches with stale large fitting heights until the next layout pass.
-            // Force one synchronous layout on expand so first self-sizing uses
-            // current constraints/content instead of stale cached geometry.
-            setNeedsLayout()
-            layoutIfNeeded()
+        if isExpandingTransition, showExpandedContainer || showOutputContainer {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            }
         }
 
         ToolTimelineRowDisplayState.applyStatusAppearance(
@@ -1070,6 +1159,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputColor: UIColor,
         wasOutputVisible: Bool
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         var localCommandRenderSignature = commandRenderSignature
         var localOutputRenderSignature = outputRenderSignature
         var localOutputRenderedText = outputRenderedText
@@ -1126,6 +1217,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         path: String?,
         isStreaming: Bool
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1158,51 +1251,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return visibility
     }
 
-    private func renderExpandedCodeMode(
-        text: String,
-        language: SyntaxLanguage?,
-        startLine: Int?,
-        isStreaming: Bool
-    ) -> ExpandedRenderVisibility {
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
-
-        let visibility = ToolTimelineRowExpandedRenderer.renderCodeMode(
-            text: text,
-            language: language,
-            startLine: startLine,
-            isStreaming: isStreaming,
-            expandedLabel: expandedLabel,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            isCurrentModeCode: expandedViewportMode == .code,
-            showExpandedLabel: showExpandedLabel,
-            setModeCode: { self.expandedViewportMode = .code },
-            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport
-        )
-
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-
-        if visibility.showExpandedContainer {
-            setExpandedVerticalLockEnabled(true)
-            updateExpandedLabelWidthIfNeeded()
-        }
-
-        return visibility
-    }
-
     private func renderExpandedMarkdownMode(
         text: String,
         isStreaming: Bool,
         wasExpandedVisible: Bool,
-        isDone: Bool
+        isDone: Bool,
+        markdownSelectionEnabled: Bool
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         let previousExpandedRenderSignature = expandedRenderSignature
         let wasUsingMarkdownLayout = expandedUsesMarkdownLayout
 
@@ -1221,6 +1278,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             wasExpandedVisible: wasExpandedVisible,
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
             shouldAutoFollowOnFirstRender: !isDone,
+            selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
+            selectedTextSourceContext: markdownSelectionEnabled
+                ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
+                : nil,
             showExpandedMarkdown: showExpandedMarkdown,
             setModeText: { self.expandedViewportMode = .text },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
@@ -1257,6 +1318,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         spec: PlotChartSpec,
         fallbackText: String?
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1290,6 +1353,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         startLine: Int,
         isError: Bool
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1326,6 +1391,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputColor: UIColor,
         wasExpandedVisible: Bool
     ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1361,64 +1428,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return visibility
     }
 
-    private func updateExpandFloatingButtonVisibility() {
-        let shouldShow = !expandedContainer.isHidden
-            && fullScreenContent != nil
-            && expandedContentOverflowsViewport()
-        expandFloatingButton.isHidden = !shouldShow
-    }
-
-    private func expandedContentOverflowsViewport() -> Bool {
-        let inset = expandedScrollView.adjustedContentInset
-        let scrollViewportHeight = max(0, expandedScrollView.bounds.height - inset.top - inset.bottom)
-
-        let constraintViewportHeight: CGFloat
-        if let expandedViewportHeightConstraint, expandedViewportHeightConstraint.isActive {
-            constraintViewportHeight = max(0, expandedViewportHeightConstraint.constant)
-        } else {
-            constraintViewportHeight = 0
-        }
-
-        let viewportHeight = constraintViewportHeight > 1
-            ? constraintViewportHeight
-            : scrollViewportHeight
-
-        guard viewportHeight > 1 else {
-            return false
-        }
-        if !expandedUsesMarkdownLayout && !expandedUsesReadMediaLayout {
-            return expandedLabelOverflowsViewport(viewportHeight)
-        }
-        let resolvedContentHeight: CGFloat
-        if expandedUsesMarkdownLayout,
-           expandedScrollView.contentSize.height <= 1 {
-            let cellWidth = bounds.width > 10 ? bounds.width : (window?.bounds.width ?? 375)
-            let containerWidth = max(expandedContainer.bounds.width, max(100, cellWidth - 16))
-            resolvedContentHeight = measuredExpandedContentHeight(for: expandedMarkdownView, width: max(1, containerWidth - 12))
-        } else {
-            resolvedContentHeight = expandedScrollView.contentSize.height
-        }
-        return resolvedContentHeight - viewportHeight > Self.fullScreenOverflowThreshold
-    }
-    private func expandedLabelOverflowsViewport(_ viewportHeight: CGFloat) -> Bool {
-        let cellWidth = bounds.width > 10 ? bounds.width : (window?.bounds.width ?? 375)
-        let measuredContainerWidth = max(expandedContainer.bounds.width, max(100, cellWidth - 16))
-        let width: CGFloat
-        if expandedViewportMode == .diff || expandedViewportMode == .code,
-           let widthConstraint = expandedLabelWidthConstraint,
-           widthConstraint.constant > 1 {
-            let frameWidth = expandedScrollView.bounds.width > 10
-                ? expandedScrollView.bounds.width
-                : measuredContainerWidth
-            width = max(1, frameWidth + widthConstraint.constant)
-        } else {
-            width = max(1, measuredContainerWidth - 12)
-        }
-        let contentHeight = measuredExpandedContentHeight(for: expandedLabel, width: width)
-        let overflowY = contentHeight - viewportHeight
-        return overflowY > Self.fullScreenOverflowThreshold
-    }
-
     private func normalizedExpandedContentForHotPath(
         _ content: ToolPresentationBuilder.ToolExpandedContent
     ) -> ToolPresentationBuilder.ToolExpandedContent {
@@ -1427,20 +1436,145 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         content
     }
 
+    private func updateSelectedTextIntegration(
+        plan: ToolRowRenderPlan,
+        showCommandContainer: Bool,
+        showOutputContainer: Bool,
+        showExpandedContainer: Bool,
+        expandedContent: ToolPresentationBuilder.ToolExpandedContent?
+    ) {
+        let commandSelectionEnabled = showCommandContainer
+            && plan.interactionSpec.commandSelectionEnabled
+            && selectedTextSourceContext(for: commandLabel, expandedContent: expandedContent) != nil
+        commandLabel.isSelectable = commandSelectionEnabled
+        commandDoubleTapGesture.isEnabled = !commandSelectionEnabled
+        commandSingleTapBlocker.isEnabled = !commandSelectionEnabled
+
+        let outputSelectionEnabled = showOutputContainer
+            && plan.interactionSpec.outputSelectionEnabled
+            && selectedTextSourceContext(for: outputLabel, expandedContent: expandedContent) != nil
+        outputLabel.isSelectable = outputSelectionEnabled
+        outputDoubleTapGesture.isEnabled = !outputSelectionEnabled
+        outputSingleTapBlocker.isEnabled = !outputSelectionEnabled
+
+        let expandedSelectionEnabled = showExpandedContainer
+            && !expandedUsesReadMediaLayout
+            && plan.interactionSpec.expandedLabelSelectionEnabled
+            && selectedTextSourceContext(for: expandedLabel, expandedContent: expandedContent) != nil
+        expandedLabel.isSelectable = expandedSelectionEnabled
+
+        let markdownSelectionEnabled = showExpandedContainer
+            && expandedUsesMarkdownLayout
+            && plan.interactionSpec.markdownSelectionEnabled
+            && selectedTextPiRouter != nil
+            && selectedTextSessionId != nil
+
+        if markdownSelectionEnabled || expandedSelectionEnabled {
+            setExpandedContainerTapCopyGestureEnabled(false)
+            expandedPinchGesture.isEnabled = false
+        }
+    }
+
+    private func selectedTextSourceContext(
+        for textView: UITextView,
+        expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil
+    ) -> SelectedTextSourceContext? {
+        guard selectedTextPiRouter != nil,
+              let sessionId = selectedTextSessionId else {
+            return nil
+        }
+
+        if textView === commandLabel {
+            return SelectedTextSourceContext(
+                sessionId: sessionId,
+                surface: .toolCommand,
+                sourceLabel: currentConfiguration.title
+            )
+        }
+
+        if textView === outputLabel {
+            return SelectedTextSourceContext(
+                sessionId: sessionId,
+                surface: .toolOutput,
+                sourceLabel: currentConfiguration.title
+            )
+        }
+
+        guard textView === expandedLabel,
+              let expandedContent else {
+            return nil
+        }
+
+        switch expandedContent {
+        case .code(_, let language, let startLine, let filePath):
+            let lineRange: ClosedRange<Int>?
+            if let startLine {
+                let lineCount = max(1, (expandedLabel.text ?? expandedLabel.attributedText?.string ?? "").components(separatedBy: "\n").count)
+                lineRange = startLine...(startLine + lineCount - 1)
+            } else {
+                lineRange = nil
+            }
+            return SelectedTextSourceContext(
+                sessionId: sessionId,
+                surface: .toolExpandedText,
+                sourceLabel: currentConfiguration.title,
+                filePath: filePath,
+                lineRange: lineRange,
+                languageHint: language?.displayName
+            )
+
+        case .diff(_, let path):
+            return SelectedTextSourceContext(
+                sessionId: sessionId,
+                surface: .toolExpandedText,
+                sourceLabel: currentConfiguration.title,
+                filePath: path
+            )
+
+        case .text(_, let language):
+            return SelectedTextSourceContext(
+                sessionId: sessionId,
+                surface: .toolExpandedText,
+                sourceLabel: currentConfiguration.title,
+                languageHint: language?.displayName
+            )
+
+        case .bash, .markdown, .plot, .readMedia:
+            return nil
+        }
+    }
+
+    private func expandedMarkdownSelectedTextSourceContext(
+        for content: ToolPresentationBuilder.ToolExpandedContent
+    ) -> SelectedTextSourceContext? {
+        guard selectedTextPiRouter != nil,
+              let sessionId = selectedTextSessionId else {
+            return nil
+        }
+
+        guard case .markdown = content else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .toolExpandedText,
+            sourceLabel: currentConfiguration.title
+        )
+    }
+
     private func applyInteractionPolicy(
         _ policy: ToolTimelineRowInteractionPolicy,
+        spec: TimelineInteractionSpec,
         showOutputContainer: Bool
     ) {
-        setExpandedContainerTapCopyGestureEnabled(policy.enablesTapCopyGesture)
-        expandedPinchGesture.isEnabled = policy.enablesPinchGesture
+        setExpandedContainerTapCopyGestureEnabled(spec.enablesTapCopyGesture)
+        expandedPinchGesture.isEnabled = spec.enablesPinchGesture
 
         expandedScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
         expandedScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
         expandedScrollView.isScrollEnabled = policy.allowsHorizontalScroll
 
         if showOutputContainer, case .bash(let unwrapped) = policy.mode {
-            outputScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
-            outputScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
+            outputScrollView.alwaysBounceHorizontal = spec.allowsHorizontalScroll
+            outputScrollView.showsHorizontalScrollIndicator = spec.allowsHorizontalScroll
             outputScrollView.isScrollEnabled = unwrapped
             setOutputVerticalLockEnabled(unwrapped)
         } else {
@@ -1460,9 +1594,30 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     #if DEBUG
+    enum ActiveExpandedSurfaceKindForTesting: String {
+        case none
+        case label
+        case markdown
+        case hosted
+    }
+
     // periphery:ignore - used by ToolRowContentViewTests via @testable import
     var expandedTapCopyGestureEnabledForTesting: Bool {
         expandedDoubleTapGesture.isEnabled && expandedSingleTapBlocker.isEnabled
+    }
+
+    // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
+    var activeExpandedSurfaceKindForTesting: ActiveExpandedSurfaceKindForTesting {
+        switch expandedSurfaceHostView.activeView {
+        case expandedLabel:
+            .label
+        case expandedMarkdownView:
+            .markdown
+        case expandedReadMediaContainer:
+            .hosted
+        default:
+            .none
+        }
     }
     #endif
 
@@ -1474,25 +1629,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     @objc private func handleCommandDoubleTap() {
         guard let text = commandCopyText else { return }
         copy(text: text, feedbackView: commandContainer)
-    }
-
-    @objc private func handleOutputDoubleTap() {
-        guard let text = outputCopyText else { return }
-        copy(text: text, feedbackView: outputContainer)
-    }
-
-    @objc private func handleExpandedDoubleTap() {
-        if canShowFullScreenContent {
-            showFullScreenContent()
-            return
-        }
-
-        guard let text = outputCopyText else { return }
-        copy(text: text, feedbackView: expandedContainer)
-    }
-
-    @objc private func handleExpandFloatingButtonTap() {
-        showFullScreenContent()
     }
 
     @objc private func handleImagePreviewTap() {
@@ -1555,7 +1691,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return nil
     }
 
-    private var outputCopyText: String? {
+    var outputCopyText: String? {
         if let explicit = currentConfiguration.copyOutputText,
            !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return explicit
@@ -1572,16 +1708,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private var canShowFullScreenContent: Bool {
+    var canShowFullScreenContent: Bool {
         fullScreenContent != nil
     }
 
-    private func showFullScreenContent() {
+    func showFullScreenContent() {
         guard let content = fullScreenContent else {
             return
         }
 
-        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            content,
+            from: self,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSessionId: selectedTextSessionId,
+            selectedTextSourceLabel: currentConfiguration.title
+        )
     }
 
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {
@@ -1634,7 +1776,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func copy(text: String, feedbackView: UIView) {
+    func copy(text: String, feedbackView: UIView) {
         TimelineCopyFeedback.copy(text, feedbackView: feedbackView)
     }
 
@@ -1705,6 +1847,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         titleLeadingToToolConstraint?.isActive = true
     }
 
+}
+
+extension ToolTimelineRowContentView: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext(for: textView, expandedContent: currentConfiguration.expandedContent)
+        )
+    }
 }
 
 extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {
