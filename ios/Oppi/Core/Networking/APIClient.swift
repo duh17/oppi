@@ -737,6 +737,34 @@ actor APIClient {
         return components.url
     }
 
+    // MARK: - Bridge (for applet JS→native calls)
+
+    /// Raw GET returning Data — used by applet bridge to proxy any server endpoint.
+    func bridgeGet(_ path: String) async throws -> Data {
+        try await get(path)
+    }
+
+    /// Raw POST with pre-encoded body — used by applet bridge.
+    func bridgePost(_ path: String, body: Data) async throws -> Data {
+        let (data, response) = try await requestRaw("POST", path: path, body: body)
+        try checkStatus(response, data: data)
+        return data
+    }
+
+    /// Raw PUT with pre-encoded body — used by applet bridge.
+    func bridgePut(_ path: String, body: Data) async throws -> Data {
+        let (data, response) = try await requestRaw("PUT", path: path, body: body)
+        try checkStatus(response, data: data)
+        return data
+    }
+
+    /// Raw DELETE returning Data — used by applet bridge.
+    func bridgeDelete(_ path: String) async throws -> Data {
+        let (data, response) = try await request("DELETE", path: path)
+        try checkStatus(response, data: data)
+        return data
+    }
+
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {
@@ -772,6 +800,17 @@ actor APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path)")
+        return try await session.data(for: req)
+    }
+
+    /// Raw body variant for bridge calls with pre-serialized JSON.
+    private func requestRaw(_ method: String, path: String, body: Data) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: try makeURL(path: path))
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        logger.debug("\(method) \(path) [bridge]")
         return try await session.data(for: req)
     }
 
