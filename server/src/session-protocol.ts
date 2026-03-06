@@ -16,6 +16,69 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 
+// ─── Shell Preview Constants ───
+
+/** Tools that produce shell-like streaming output eligible for tail preview. */
+const SHELL_LIKE_TOOLS = new Set(["bash"]);
+
+/** Accumulated output threshold (bytes) before switching to replace mode. */
+const SHELL_PREVIEW_THRESHOLD = 8 * 1024; // 8KB
+
+/** Maximum lines in a tail preview snapshot. */
+const SHELL_PREVIEW_MAX_LINES = 80;
+
+/** Maximum bytes in a tail preview snapshot. */
+const SHELL_PREVIEW_MAX_BYTES = 16 * 1024; // 16KB
+
+/** Minimum interval between replace snapshots for the same tool call. */
+const SHELL_PREVIEW_MIN_INTERVAL_MS = 150;
+
+function isShellLikeTool(toolName: string): boolean {
+  return SHELL_LIKE_TOOLS.has(toolName.toLowerCase());
+}
+
+/**
+ * Extract a bounded tail preview from text.
+ *
+ * Takes the last N lines (up to maxLines) and caps total size at maxBytes.
+ * Returns the original text if it fits within both limits.
+ */
+function extractTailPreview(
+  text: string,
+  maxLines = SHELL_PREVIEW_MAX_LINES,
+  maxBytes = SHELL_PREVIEW_MAX_BYTES,
+): string {
+  if (text.length <= maxBytes) {
+    const lineCount = countNewlines(text) + 1;
+    if (lineCount <= maxLines) return text;
+  }
+
+  // Split and take last N lines
+  const lines = text.split("\n");
+  const tailLines = lines.length <= maxLines ? lines : lines.slice(-maxLines);
+  let preview = tailLines.join("\n");
+
+  // Cap by bytes (take tail substring)
+  if (preview.length > maxBytes) {
+    preview = preview.slice(-maxBytes);
+    // Clean break at first newline to avoid partial lines
+    const firstNewline = preview.indexOf("\n");
+    if (firstNewline > 0 && firstNewline < preview.length - 1) {
+      preview = preview.slice(firstNewline + 1);
+    }
+  }
+
+  return preview;
+}
+
+function countNewlines(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) count++;
+  }
+  return count;
+}
+
 // ─── Text Helpers ───
 
 /**
@@ -141,6 +204,10 @@ export interface TranslationContext {
   hasStreamedThinking: boolean;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
   mobileRenderers?: MobileRendererRegistry;
+  /** Tool names per toolCallId — tracked for shell preview logic. */
+  toolNames: Map<string, string>;
+  /** Last time a shell preview snapshot was sent per toolCallId (ms). */
+  shellPreviewLastSent: Map<string, number>;
 }
 
 /**
@@ -324,6 +391,10 @@ export function translatePiEvent(
     case "tool_execution_start": {
       const toolCallId = resolveToolCallId();
       const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
+      // Track tool name for shell preview decisions in subsequent updates.
+      if (toolCallId) {
+        ctx.toolNames.set(toolCallId, event.toolName);
+      }
       return [
         {
           type: "tool_start",
@@ -341,6 +412,9 @@ export function translatePiEvent(
 
       const toolCallId = resolveToolCallId();
       const messages: ServerMessage[] = [];
+      const key = toolCallId ?? "";
+      const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
+      const shellTool = isShellLikeTool(toolName);
 
       for (const block of contents) {
         const record = asRecord(block);
@@ -355,13 +429,34 @@ export function translatePiEvent(
           // Compute delta from last partialResult to avoid duplication.
           // partialResult is accumulated (replace semantics) — we convert
           // to delta so the client can append without duplicating output.
-          const key = toolCallId ?? "";
           const lastText = ctx.partialResults.get(key) ?? "";
           ctx.partialResults.set(key, fullText);
-          const delta = computeToolDelta(lastText, fullText);
 
-          if (delta) {
-            messages.push({ type: "tool_output", output: delta, toolCallId });
+          if (shellTool && fullText.length > SHELL_PREVIEW_THRESHOLD) {
+            // Shell tool above threshold: send bounded tail preview with replace mode.
+            // Throttle to avoid spamming the client with large snapshots.
+            const now = Date.now();
+            const lastSent = ctx.shellPreviewLastSent.get(key) ?? 0;
+            if (now - lastSent < SHELL_PREVIEW_MIN_INTERVAL_MS) {
+              continue; // Skip this update — next one or tool_end will catch up.
+            }
+            ctx.shellPreviewLastSent.set(key, now);
+
+            const preview = extractTailPreview(fullText);
+            messages.push({
+              type: "tool_output",
+              output: preview,
+              toolCallId,
+              mode: "replace",
+              truncated: true,
+              totalBytes: fullText.length,
+            });
+          } else {
+            // Normal append delta behavior.
+            const delta = computeToolDelta(lastText, fullText);
+            if (delta) {
+              messages.push({ type: "tool_output", output: delta, toolCallId });
+            }
           }
         }
       }
@@ -374,6 +469,8 @@ export function translatePiEvent(
       const toolCallId = resolveToolCallId();
       const key = toolCallId ?? "";
       const lastText = ctx.partialResults.get(key) ?? "";
+      const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
+      const shellTool = isShellLikeTool(toolName);
 
       // Extract final text/media from result — some tools only include output
       // at end (no partial updates), so emit missing delta here.
@@ -394,15 +491,30 @@ export function translatePiEvent(
           })
           .join("");
 
-        const delta = computeToolDelta(lastText, finalText);
-        if (delta.length > 0) {
-          messages.push({ type: "tool_output", output: delta, toolCallId });
+        if (shellTool && finalText.length > SHELL_PREVIEW_THRESHOLD) {
+          // Shell tool final output: always send the tail preview (no throttle).
+          const preview = extractTailPreview(finalText);
+          messages.push({
+            type: "tool_output",
+            output: preview,
+            toolCallId,
+            mode: "replace",
+            truncated: true,
+            totalBytes: finalText.length,
+          });
+        } else {
+          const delta = computeToolDelta(lastText, finalText);
+          if (delta.length > 0) {
+            messages.push({ type: "tool_output", output: delta, toolCallId });
+          }
         }
 
         messages.push(...extractMediaOutputs(resultContents, toolCallId));
       }
 
       ctx.partialResults.delete(key);
+      ctx.toolNames.delete(key);
+      ctx.shellPreviewLastSent.delete(key);
 
       // Forward structured details and error status from pi tool results.
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})

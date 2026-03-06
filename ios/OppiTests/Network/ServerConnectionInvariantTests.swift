@@ -111,7 +111,7 @@ private func deterministicForeignSessionMessages() -> [ServerMessage] {
         .agentStart,
         .textDelta(delta: "ignored"),
         .toolStart(tool: "bash", args: ["command": .string("pwd")], toolCallId: "t-1", callSegments: nil),
-        .toolOutput(output: "x", isError: false, toolCallId: "t-1"),
+        .toolOutput(output: "x", isError: false, toolCallId: "t-1", mode: .append, truncated: false, totalBytes: nil),
         .toolEnd(tool: "bash", toolCallId: "t-1", details: nil, isError: false, resultSegments: nil),
         .permissionRequest(perm),
         .sessionEnded(reason: "done"),

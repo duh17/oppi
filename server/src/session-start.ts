@@ -19,6 +19,8 @@ export interface SessionStartActiveSession {
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
+  toolNames: Map<string, string>;
+  shellPreviewLastSent: Map<string, number>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue?: SessionMessageQueueStore;
   turnCache: TurnDedupeCache;
@@ -84,6 +86,8 @@ export class SessionStartCoordinator {
           partialResults: new Map(),
           streamedAssistantText: "",
           hasStreamedThinking: false,
+          toolNames: new Map(),
+          shellPreviewLastSent: new Map(),
           toolFullOutputPaths: new Map(),
           messageQueue: {
             version: 0,

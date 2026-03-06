@@ -224,6 +224,58 @@ struct TimelineReducerToolTests {
         #expect(stored == details)
     }
 
+    // MARK: - Replace mode (shell preview)
+
+    @MainActor
+    @Test func toolOutputReplaceModeOverwritesStore() {
+        let reducer = TimelineReducer()
+        let toolId = "tool-shell"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "find /"]))
+        // Normal append
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "line1\nline2\n", isError: false))
+        #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "line1\nline2\n")
+
+        // Replace mode (server switched to tail preview)
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "line99\nline100\n", isError: false, mode: .replace, truncated: true, totalBytes: 50000))
+        #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "line99\nline100\n")
+
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let toolItems = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
+        }
+        #expect(toolItems.count == 1)
+
+        guard case .toolCall(_, let tool, _, let preview, _, _, let isDone) = toolItems[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(preview.contains("line99") || preview.contains("line100"))
+        #expect(isDone)
+    }
+
+    @MainActor
+    @Test func toolOutputReplaceModeInBatch() {
+        let reducer = TimelineReducer()
+        let toolId = "tool-batch"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: [:]))
+
+        // Batch with mixed append and replace — replace should win
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolId, output: "early\n", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: toolId, output: "tail preview\n", isError: false, mode: .replace, truncated: true, totalBytes: 10000),
+        ])
+
+        #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "tail preview\n")
+    }
+
     @MainActor
     @Test func traceToolResultWithoutDetailsLeavesStoreEmpty() {
         let reducer = TimelineReducer()

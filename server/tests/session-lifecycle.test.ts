@@ -70,6 +70,8 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    toolNames: new Map(),
+    shellPreviewLastSent: new Map(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     seq: 0,
