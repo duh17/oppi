@@ -1,33 +1,23 @@
 import SwiftUI
 
-/// Grid view of applets for the active server's workspaces.
-struct AppletsTabView: View {
+/// Applet grid for a single workspace — pushed from WorkspaceDetailView.
+struct WorkspaceAppletsView: View {
+    let workspace: Workspace
+
     @Environment(ServerConnection.self) private var connection
     @Environment(AppletStore.self) private var appletStore
 
-    @State private var selectedWorkspaceId: String?
+    @State private var selectedApplet: Applet?
 
-    private var workspaces: [Workspace] {
-        connection.workspaceStore.workspaces
-    }
-
-    private var activeWorkspaceId: String? {
-        selectedWorkspaceId ?? workspaces.first?.id
+    private var displayedApplets: [Applet] {
+        appletStore.applets(for: workspace.id)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if workspaces.count > 1 {
-                workspacePicker
-            }
-
-            if appletStore.isLoading && appletStore.applets.isEmpty {
-                ContentUnavailableView {
-                    ProgressView()
-                } description: {
-                    Text("Loading applets...")
-                }
-            } else if appletStore.applets.isEmpty {
+        Group {
+            if appletStore.isLoading && displayedApplets.isEmpty {
+                ProgressView("Loading applets...")
+            } else if displayedApplets.isEmpty {
                 ContentUnavailableView(
                     "No Applets",
                     systemImage: "doc.richtext",
@@ -38,47 +28,21 @@ struct AppletsTabView: View {
             }
         }
         .navigationTitle("Applets")
-        .task(id: activeWorkspaceId) {
-            if let wid = activeWorkspaceId, let api = connection.apiClient {
-                await appletStore.load(workspaceId: wid, api: api)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $selectedApplet) { applet in
+            AppletViewerView(applet: applet)
+        }
+        .task {
+            if let api = connection.apiClient {
+                await appletStore.refreshIfNeeded(workspaceId: workspace.id, api: api)
             }
         }
         .refreshable {
-            if let wid = activeWorkspaceId, let api = connection.apiClient {
-                await appletStore.load(workspaceId: wid, api: api)
+            if let api = connection.apiClient {
+                await appletStore.load(workspaceId: workspace.id, api: api)
             }
         }
     }
-
-    // MARK: - Workspace Picker
-
-    private var workspacePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(workspaces) { ws in
-                    Button {
-                        selectedWorkspaceId = ws.id
-                    } label: {
-                        Text(ws.name)
-                            .font(.subheadline.weight(activeWorkspaceId == ws.id ? .semibold : .regular))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                activeWorkspaceId == ws.id
-                                    ? Color.accentColor.opacity(0.15)
-                                    : Color.clear,
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-        }
-    }
-
-    // MARK: - Grid
 
     private var appletGrid: some View {
         ScrollView {
@@ -89,8 +53,10 @@ struct AppletsTabView: View {
                 ],
                 spacing: 12
             ) {
-                ForEach(appletStore.applets) { applet in
-                    NavigationLink(value: applet) {
+                ForEach(displayedApplets) { applet in
+                    Button {
+                        selectedApplet = applet
+                    } label: {
                         AppletCard(applet: applet)
                     }
                     .buttonStyle(.plain)
@@ -98,15 +64,12 @@ struct AppletsTabView: View {
             }
             .padding()
         }
-        .navigationDestination(for: Applet.self) { applet in
-            AppletViewerView(applet: applet)
-        }
     }
 }
 
 // MARK: - Card
 
-private struct AppletCard: View {
+struct AppletCard: View {
     let applet: Applet
 
     var body: some View {
