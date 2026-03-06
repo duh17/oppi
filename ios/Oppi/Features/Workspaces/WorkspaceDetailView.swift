@@ -19,6 +19,7 @@ struct WorkspaceDetailView: View {
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var showEditWorkspace = false
     @State private var showWorkspacePolicy = false
+    @State private var showApplets = false
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
@@ -252,19 +253,29 @@ struct WorkspaceDetailView: View {
                             .frame(width: 24, height: 24)
                         Text("\(currentWorkspace.skills.count) skills")
                             .font(.caption2)
-                            .foregroundStyle(.themeComment)
                         if let model = currentWorkspace.defaultModel {
                             Text(model.split(separator: "/").last.map(String.init) ?? model)
                                 .font(.caption2)
-                                .foregroundStyle(.themeComment)
                                 .lineLimit(1)
                         }
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeComment)
                     }
+                    .foregroundStyle(.themeComment)
                 }
                 Spacer()
+                Button { showApplets = true } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.richtext")
+                            .font(.caption)
+                        let count = connection.appletStore.loadedWorkspaceId == currentWorkspace.id
+                            ? connection.appletStore.applets.count
+                            : 0
+                        if count > 0 {
+                            Text("\(count)")
+                                .font(.caption2)
+                        }
+                    }
+                    .foregroundStyle(.themeComment)
+                }
                 Button { showWorkspacePolicy = true } label: {
                     Image(systemName: policyFallbackIconName)
                         .foregroundStyle(policyFallbackColor)
@@ -286,6 +297,7 @@ struct WorkspaceDetailView: View {
                     apiClient: api,
                     gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
                 )
+                await connection.appletStore.refreshIfNeeded(workspaceId: workspace.id, api: api)
             }
         }
         .onAppear {
@@ -313,6 +325,10 @@ struct WorkspaceDetailView: View {
         .navigationDestination(isPresented: $showEditWorkspace) {
             WorkspaceEditView(workspace: currentWorkspace)
         }
+        .navigationDestination(isPresented: $showApplets) {
+            WorkspaceAppletsView(workspace: currentWorkspace)
+        }
+
         .navigationDestination(isPresented: $showWorkspacePolicy) {
             WorkspacePolicyView(workspace: currentWorkspace) { fallback in
                 policyFallback = fallback
