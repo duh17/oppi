@@ -12,12 +12,16 @@ import UIKit
 /// Long-form/full-screen policy:
 /// - No floating expand icon in thinking bubbles.
 /// - Context menu exposes "Open Full Screen" and "Copy" when overflowed.
-/// - Pinch-out, double-tap, or single-tap opens full screen.
+/// - Double-tap or pinch-out opens full screen.
+/// - Inline text selection only activates when π actions are enabled and the
+///   bubble does not have a full-screen overflow affordance.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
     let fullText: String?
     let themeID: ThemeID
+    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
+    var selectedTextSourceContext: SelectedTextSourceContext? = nil
 
     /// Best available text for display.
     var displayText: String {
@@ -53,7 +57,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private let scrollView = UIScrollView()
     private let textLabel = UITextView()
     private let fadeMask = CAGradientLayer()
-    private let expandFloatingButton = UIButton(type: .system)
     private var bubbleHeightConstraint: NSLayoutConstraint?
     private var textLeadingConstraint: NSLayoutConstraint?
     private var pinchDidTriggerFullScreen = false
@@ -72,14 +75,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTap))
         recognizer.numberOfTapsRequired = 2
         recognizer.cancelsTouchesInView = true
-        return recognizer
-    }()
-
-    private lazy var bubbleSingleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleSingleTap))
-        recognizer.numberOfTapsRequired = 1
-        recognizer.cancelsTouchesInView = false
-        recognizer.require(toFail: bubbleDoubleTapGesture)
         return recognizer
     }()
 
@@ -110,6 +105,18 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             guard let config = newValue as? ThinkingTimelineRowConfiguration else { return }
             apply(configuration: config)
         }
+    }
+
+    private var isSelectedTextPiEnabled: Bool {
+        currentConfiguration.selectedTextPiRouter != nil
+            && currentConfiguration.selectedTextSourceContext != nil
+    }
+
+    private var currentInteractionSpec: TimelineExpandableTextInteractionSpec {
+        TimelineExpandableTextInteractionSpec.build(
+            hasSelectedTextContext: isSelectedTextPiEnabled,
+            supportsFullScreenPreview: canShowFullScreen
+        )
     }
 
     // MARK: - Layout
@@ -165,12 +172,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         bubbleView.layer.cornerRadius = 10
         bubbleView.clipsToBounds = true
         bubbleView.addGestureRecognizer(bubbleDoubleTapGesture)
-        bubbleView.addGestureRecognizer(bubbleSingleTapGesture)
         bubbleView.addGestureRecognizer(bubblePinchGesture)
         bubbleView.addInteraction(UIContextMenuInteraction(delegate: self))
 
         // Inner scroll view is for layout/content-size bookkeeping only.
-        // Keep it non-interactive so timeline stays the sole vertical owner.
+        // Keep scrolling disabled so the timeline stays the sole vertical owner.
+        // Selection-enabled rows temporarily re-enable subview interaction.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
@@ -187,15 +194,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         textLabel.isEditable = false
         textLabel.isScrollEnabled = false
         textLabel.isSelectable = false
+        textLabel.delegate = self
         textLabel.textContainerInset = .zero
         textLabel.textContainer.lineFragmentPadding = 0
         textLabel.textContainer.lineBreakMode = .byWordWrapping
         textLabel.adjustsFontForContentSizeCategory = true
         textLabel.backgroundColor = .clear
-
-        ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
-        expandFloatingButton.accessibilityIdentifier = "thinking.expand-full-screen"
-        expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
 
         // Fade mask — applied to bubbleView.layer.mask when done + truncated.
         fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
@@ -215,7 +219,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         stack.alignment = .fill
         stack.spacing = 4
         addSubview(stack)
-        addSubview(expandFloatingButton)
 
         let bubbleHeight = bubbleView.heightAnchor.constraint(equalToConstant: 0)
         bubbleHeightConstraint = bubbleHeight
@@ -265,9 +268,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             ),
 
             bubbleHeight,
-
-            expandFloatingButton.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -8),
-            expandFloatingButton.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8),
         ])
     }
 
@@ -307,7 +307,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
-                updateFullScreenAffordances()
+                updateSelectedTextInteractionPolicy()
                 return
             }
 
@@ -356,7 +356,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             }
         }
 
-        updateFullScreenAffordances()
+        updateSelectedTextInteractionPolicy()
+    }
+
+    private func updateSelectedTextInteractionPolicy() {
+        let interaction = currentInteractionSpec
+        textLabel.isSelectable = interaction.inlineSelectionEnabled
+        scrollView.isUserInteractionEnabled = interaction.inlineSelectionEnabled
+        bubbleDoubleTapGesture.isEnabled = interaction.enablesTapActivation
+        bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
     }
 
     /// Cheap render signature to skip redundant text updates.
@@ -415,7 +423,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             contentIsTruncated = false
             removeFadeMask()
             configureScrollBehavior()
-            updateFullScreenAffordances()
+            updateSelectedTextInteractionPolicy()
             return
         }
 
@@ -447,7 +455,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         }
 
         configureScrollBehavior()
-        updateFullScreenAffordances()
+        updateSelectedTextInteractionPolicy()
     }
 
     // MARK: - Scroll Behavior
@@ -455,7 +463,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private func configureScrollBehavior() {
         // Single-vertical-owner policy: inner thinking bubble never scrolls.
         scrollView.isScrollEnabled = false
-        scrollView.isUserInteractionEnabled = false
+        scrollView.isUserInteractionEnabled = currentInteractionSpec.inlineSelectionEnabled
         scrollView.showsVerticalScrollIndicator = false
     }
 
@@ -490,20 +498,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         let overflowY = scrollView.contentSize.height - viewportHeight
         return overflowY > Self.fullScreenOverflowThreshold
-    }
-
-    private func updateFullScreenAffordances() {
-        // Thinking rows intentionally avoid the floating expand affordance.
-        // Bubble tap/pinch and context menu remain the entry points.
-        expandFloatingButton.isHidden = true
-    }
-
-    @objc private func handleExpandFloatingButtonTap() {
-        showFullScreen()
-    }
-
-    @objc private func handleBubbleSingleTap() {
-        showFullScreen()
     }
 
     @objc private func handleBubbleDoubleTap() {
@@ -541,7 +535,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             content: trimmedDisplayText,
             stream: fullScreenThinkingStream
         )
-        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            content,
+            from: self,
+            selectedTextPiRouter: currentConfiguration.selectedTextPiRouter,
+            selectedTextSessionId: currentConfiguration.selectedTextSourceContext?.sessionId,
+            selectedTextSourceLabel: currentConfiguration.selectedTextSourceContext?.sourceLabel
+        )
     }
 
     private func copyDisplayText() {
@@ -550,7 +550,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     }
 
     private func contextMenu() -> UIMenu? {
-        guard canShowFullScreen else { return nil }
+        guard currentInteractionSpec.supportsFullScreenPreview else { return nil }
 
         return UIMenu(title: "", children: [
             UIAction(
@@ -601,6 +601,22 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         CATransaction.setDisableActions(true)
         fadeMask.frame = CGRect(x: 0, y: 0, width: w, height: h)
         CATransaction.commit()
+    }
+}
+
+extension ThinkingTimelineRowContentView: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: currentConfiguration.selectedTextPiRouter,
+            sourceContext: currentConfiguration.selectedTextSourceContext
+        )
     }
 }
 

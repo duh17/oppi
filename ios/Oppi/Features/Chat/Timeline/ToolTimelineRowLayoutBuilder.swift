@@ -43,12 +43,12 @@ enum ToolTimelineRowLayoutBuilder {
         outputLabel: UITextView,
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
+        expandedSurfaceHostView: UIView,
         expandedLabel: UITextView,
         expandedMarkdownView: UIView,
         expandedReadMediaContainer: UIView,
         imagePreviewContainer: UIView,
         imagePreviewImageView: UIImageView,
-        expandFloatingButton: UIButton,
         minOutputViewportHeight: CGFloat,
         minDiffViewportHeight: CGFloat,
         collapsedImagePreviewHeight: CGFloat
@@ -88,9 +88,6 @@ enum ToolTimelineRowLayoutBuilder {
 
         let outputViewportHeight = outputContainer.heightAnchor.constraint(equalToConstant: minOutputViewportHeight)
         let expandedViewportHeight = expandedContainer.heightAnchor.constraint(equalToConstant: minDiffViewportHeight)
-
-        let expandButtonInset: CGFloat = 10
-        let expandButtonSize: CGFloat = 36
 
         let all: [NSLayoutConstraint] = [
             borderView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -141,22 +138,13 @@ enum ToolTimelineRowLayoutBuilder {
             expandedScrollView.topAnchor.constraint(equalTo: expandedContainer.topAnchor),
             expandedScrollView.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor),
 
-            expandedLabel.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedLabel.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedLabel.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedLabel.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
+            expandedSurfaceHostView.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor),
+            expandedSurfaceHostView.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor),
+            expandedSurfaceHostView.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor),
+            expandedSurfaceHostView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor),
+
             expandedLabelWidth,
-
-            expandedMarkdownView.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedMarkdownView.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedMarkdownView.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedMarkdownView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
             expandedMarkdownWidth,
-
-            expandedReadMediaContainer.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedReadMediaContainer.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedReadMediaContainer.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedReadMediaContainer.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
             expandedReadMediaWidth,
 
             imagePreviewImageView.leadingAnchor.constraint(equalTo: imagePreviewContainer.leadingAnchor, constant: 6),
@@ -165,11 +153,6 @@ enum ToolTimelineRowLayoutBuilder {
             imagePreviewImageView.bottomAnchor.constraint(equalTo: imagePreviewContainer.bottomAnchor, constant: -6),
             imagePreviewHeight,
             imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
-
-            expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -expandButtonInset),
-            expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -expandButtonInset),
-            expandFloatingButton.widthAnchor.constraint(equalToConstant: expandButtonSize),
-            expandFloatingButton.heightAnchor.constraint(equalToConstant: expandButtonSize),
         ]
 
         return Constraints(
