@@ -435,6 +435,18 @@ extension ServerConnection {
             if success, let queue = decodeQueueStateFromCommandData(data) {
                 messageQueueStore.apply(queue, for: sessionId)
             }
+            // Resolve the pending command waiter (set_queue isn't eagerly
+            // resolved, so the waiter may still be waiting).
+            if let requestId {
+                _ = commands.resolveCommandResult(
+                    command: command, requestId: requestId,
+                    success: success, data: data, error: error
+                )
+            }
+            // Queue sync is internal plumbing — never surface in the timeline.
+            // Failures are already handled by the stream_not_subscribed_full
+            // recovery path (triggerFullSubscriptionRecovery).
+            return
         }
 
         if command == "get_commands" {
