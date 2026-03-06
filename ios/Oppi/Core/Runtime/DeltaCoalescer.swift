@@ -128,7 +128,7 @@ final class DeltaCoalescer {
             return delta.utf8.count
         case .thinkingDelta(_, let delta):
             return delta.utf8.count
-        case .toolOutput(_, _, let output, _):
+        case .toolOutput(_, _, let output, _, _, _, _):
             return output.utf8.count
         default:
             return 0

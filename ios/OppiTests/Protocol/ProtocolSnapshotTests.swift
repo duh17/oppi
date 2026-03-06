@@ -184,12 +184,23 @@ struct ProtocolSnapshotTests {
 
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
-        guard case .toolOutput(let output, let isError, _) = outputMsg else {
+        guard case .toolOutput(let output, let isError, _, _, _, _) = outputMsg else {
             Issue.record("Expected .toolOutput")
             return
         }
         #expect(output == "All 42 tests passed")
         #expect(isError == false)
+
+        // tool_output_preview (replace mode)
+        let previewMsg = try decodeMessage("tool_output_preview")
+        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes) = previewMsg else {
+            Issue.record("Expected .toolOutput (preview)")
+            return
+        }
+        #expect(previewOutput.contains("file-180"))
+        #expect(mode == .replace)
+        #expect(truncated)
+        #expect(totalBytes == 32768)
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")

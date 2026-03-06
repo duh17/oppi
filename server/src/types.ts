@@ -798,7 +798,18 @@ export type ServerMessage = // ── Connection ──
         toolCallId?: string;
         callSegments?: StyledSegment[];
       }
-    | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
+    | {
+        type: "tool_output";
+        output: string;
+        isError?: boolean;
+        toolCallId?: string;
+        /** "append" (default) or "replace" — replace means output is a bounded tail preview. */
+        mode?: "append" | "replace";
+        /** True when the server truncated output to a tail preview. */
+        truncated?: boolean;
+        /** Total bytes of full output on the server (hint for UI). */
+        totalBytes?: number;
+      }
     | {
         type: "tool_end";
         tool: string;

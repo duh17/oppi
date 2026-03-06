@@ -131,6 +131,15 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       isError: false,
       toolCallId: "tc-001",
     },
+    tool_output_preview: {
+      type: "tool_output",
+      output: "/path/to/file-180\n/path/to/file-181\n/path/to/file-182",
+      isError: false,
+      toolCallId: "tc-preview-001",
+      mode: "replace",
+      truncated: true,
+      totalBytes: 32768,
+    },
     tool_end: {
       type: "tool_end",
       tool: "bash",

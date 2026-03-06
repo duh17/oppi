@@ -21,7 +21,7 @@ struct ToolCallCorrelatorTests {
         #expect(!startId.isEmpty)
 
         let outputEvent = mapper.output(sessionId: "s1", output: "file.txt", isError: false)
-        guard case .toolOutput(_, let outputId, let output, let isError) = outputEvent else {
+        guard case .toolOutput(_, let outputId, let output, let isError, _, _, _) = outputEvent else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -67,7 +67,7 @@ struct ToolCallCorrelatorTests {
 
         // No start called — output should still produce a valid event
         let event = mapper.output(sessionId: "s1", output: "orphan", isError: true)
-        guard case .toolOutput(_, let id, let output, let isError) = event else {
+        guard case .toolOutput(_, let id, let output, let isError, _, _, _) = event else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -105,7 +105,7 @@ struct ToolCallCorrelatorTests {
 
         // After end, output should get a new (different) ID
         let orphanOutput = mapper.output(sessionId: "s1", output: "stray", isError: false)
-        guard case .toolOutput(_, let orphanId, _, _) = orphanOutput else {
+        guard case .toolOutput(_, let orphanId, _, _, _, _, _) = orphanOutput else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -128,7 +128,7 @@ struct ToolCallCorrelatorTests {
 
         // After reset, output should get a new ID (not the start's ID)
         let output = mapper.output(sessionId: "s1", output: "after-reset", isError: false)
-        guard case .toolOutput(_, let outputId, _, _) = output else {
+        guard case .toolOutput(_, let outputId, _, _, _, _, _) = output else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -149,7 +149,7 @@ struct ToolCallCorrelatorTests {
         #expect(sid == "session-42")
 
         let output = mapper.output(sessionId: "session-42", output: "data", isError: false)
-        guard case .toolOutput(let sid2, _, _, _) = output else {
+        guard case .toolOutput(let sid2, _, _, _, _, _, _) = output else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -190,7 +190,7 @@ struct ToolCallCorrelatorTests {
         _ = mapper.start(sessionId: "s1", tool: "bash", args: [:])
 
         let event = mapper.output(sessionId: "s1", output: "stderr stuff", isError: true)
-        guard case .toolOutput(_, _, _, let isError) = event else {
+        guard case .toolOutput(_, _, _, let isError, _, _, _) = event else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -211,7 +211,7 @@ struct ToolCallCorrelatorTests {
         #expect(startId == "server-tc-1", "Should use server-provided toolCallId")
 
         let outputEvent = mapper.output(sessionId: "s1", output: "data", isError: false, toolCallId: "server-tc-1")
-        guard case .toolOutput(_, let outputId, _, _) = outputEvent else {
+        guard case .toolOutput(_, let outputId, _, _, _, _, _) = outputEvent else {
             Issue.record("Expected toolOutput")
             return
         }
@@ -234,7 +234,7 @@ struct ToolCallCorrelatorTests {
 
         // Output without server-provided ID falls back to current tool's ID
         let outputEvent = mapper.output(sessionId: "s1", output: "data", isError: false)
-        guard case .toolOutput(_, let outputId, _, _) = outputEvent else {
+        guard case .toolOutput(_, let outputId, _, _, _, _, _) = outputEvent else {
             Issue.record("Expected toolOutput")
             return
         }

@@ -448,6 +448,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   async function handleGetFullToolOutput(
     sessionId: string,
     toolCallId: string,
+    req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
@@ -464,7 +465,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     try {
       const output = await readFile(fullOutputPath, "utf8");
-      helpers.json(res, { toolCallId, output });
+      helpers.compressedJson(req, res, { toolCallId, output });
     } catch {
       helpers.error(res, 404, "Full tool output not found");
     }
@@ -473,6 +474,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   async function handleGetToolOutput(
     sessionId: string,
     toolCallId: string,
+    req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const session = ctx.storage.getSession(sessionId);
@@ -486,7 +488,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     for (const jsonlPath of jsonlPaths) {
       const output = findToolOutput(jsonlPath, toolCallId);
       if (output !== null) {
-        helpers.json(res, { toolCallId, output: output.text, isError: output.isError });
+        helpers.compressedJson(req, res, {
+          toolCallId,
+          output: output.text,
+          isError: output.isError,
+        });
         return;
       }
     }
@@ -823,6 +829,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       await handleGetFullToolOutput(
         wsSessionToolOutputFullMatch[2],
         wsSessionToolOutputFullMatch[3],
+        req,
         res,
       );
       return true;
@@ -832,7 +839,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
     if (wsSessionToolOutputMatch && method === "GET") {
-      await handleGetToolOutput(wsSessionToolOutputMatch[2], wsSessionToolOutputMatch[3], res);
+      await handleGetToolOutput(wsSessionToolOutputMatch[2], wsSessionToolOutputMatch[3], req, res);
       return true;
     }
 

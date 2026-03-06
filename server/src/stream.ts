@@ -294,7 +294,7 @@ export class UserStreamMux {
       }
 
       msgSent++;
-      ws.send(JSON.stringify(msg), { compress: false });
+      ws.send(JSON.stringify(msg));
     };
 
     const sendForSession = (sessionId: string, msg: ServerMessage): void => {

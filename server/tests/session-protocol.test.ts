@@ -30,6 +30,8 @@ function makeCtx(): TranslationContext {
     partialResults: new Map(),
     streamedAssistantText: "",
     hasStreamedThinking: false,
+    toolNames: new Map(),
+    shellPreviewLastSent: new Map(),
   };
 }
 
@@ -446,6 +448,204 @@ describe("session-protocol state mutation helpers", () => {
     });
 
     expect(session.messageCount).toBe(0);
+  });
+});
+
+describe("session-protocol shell preview", () => {
+  it("sends append deltas for small bash output", () => {
+    const ctx = makeCtx();
+
+    // Register tool name
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-bash",
+        toolName: "bash",
+        args: { command: "echo hello" },
+      },
+      ctx,
+    );
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-bash",
+        toolName: "bash",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: "hello\n" }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toEqual([{ type: "tool_output", output: "hello\n", toolCallId: "tc-bash" }]);
+    // No mode field means append (default)
+    expect(messages[0]).not.toHaveProperty("mode");
+  });
+
+  it("sends replace preview for large bash output", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-big",
+        toolName: "bash",
+        args: { command: "find /" },
+      },
+      ctx,
+    );
+
+    // Generate output above the 8KB threshold
+    const largeOutput = Array.from({ length: 500 }, (_, i) => `/path/to/some/deeply/nested/directory/file-${i}.txt`).join("\n");
+    expect(largeOutput.length).toBeGreaterThan(8 * 1024);
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-big",
+        toolName: "bash",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: largeOutput }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: "tool_output",
+      toolCallId: "tc-big",
+      mode: "replace",
+      truncated: true,
+    });
+    expect(messages[0]).toHaveProperty("totalBytes", largeOutput.length);
+    // Preview should be bounded
+    expect((messages[0] as { output: string }).output.length).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it("does not use replace mode for non-shell tools", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-read",
+        toolName: "read",
+        args: { path: "big-file.txt" },
+      },
+      ctx,
+    );
+
+    const largeOutput = "x".repeat(10 * 1024);
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-read",
+        toolName: "read",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: largeOutput }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).not.toHaveProperty("mode");
+  });
+
+  it("sends final replace preview on tool_execution_end for large bash output", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-end",
+        toolName: "bash",
+        args: { command: "find /" },
+      },
+      ctx,
+    );
+
+    const largeOutput = Array.from({ length: 500 }, (_, i) => `/final/path/to/some/deeply/nested/directory/file-${i}.txt`).join("\n");
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolCallId: "tc-end",
+        toolName: "bash",
+        result: {
+          content: [{ type: "text", text: largeOutput }],
+        },
+        isError: false,
+      },
+      ctx,
+    );
+
+    // Should have tool_output (replace) + tool_end
+    expect(messages.length).toBe(2);
+    expect(messages[0]).toMatchObject({
+      type: "tool_output",
+      mode: "replace",
+      truncated: true,
+      totalBytes: largeOutput.length,
+    });
+    expect(messages[1]).toMatchObject({
+      type: "tool_end",
+      tool: "bash",
+    });
+  });
+
+  it("throttles replace snapshots within interval", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-throttle",
+        toolName: "bash",
+        args: { command: "yes" },
+      },
+      ctx,
+    );
+
+    const largeOutput1 = "x".repeat(9 * 1024);
+    const largeOutput2 = largeOutput1 + "y".repeat(1024);
+
+    // First update: should produce a replace snapshot
+    const first = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-throttle",
+        toolName: "bash",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: largeOutput1 }],
+        },
+      },
+      ctx,
+    );
+    expect(first).toHaveLength(1);
+    expect(first[0]).toHaveProperty("mode", "replace");
+
+    // Second update immediately: should be throttled (empty)
+    const second = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-throttle",
+        toolName: "bash",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: largeOutput2 }],
+        },
+      },
+      ctx,
+    );
+    expect(second).toHaveLength(0);
   });
 });
 
