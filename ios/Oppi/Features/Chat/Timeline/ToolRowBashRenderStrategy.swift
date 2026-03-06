@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowBashRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .bash
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .bash = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowBashRenderStrategy {
     static func render(
         command: String?,
         output: String?,

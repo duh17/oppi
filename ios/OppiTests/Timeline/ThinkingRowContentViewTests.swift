@@ -22,34 +22,28 @@ struct ThinkingRowContentViewTests {
         #expect(scrollView.contentOffset.y > 0, "Streaming overflow should tail-follow inside capped bubble")
     }
 
-    @Test func overflowDoesNotShowFloatingFullScreenButton() throws {
-        let config = ThinkingTimelineRowConfiguration(
+    @Test func thinkingRowDoesNotInstallFloatingFullScreenButton() {
+        let overflowConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
             fullText: Array(repeating: "reasoning", count: 320).joined(separator: "\n"),
             themeID: .dark
         )
-
-        let view = ThinkingTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 360)
-
-        let button = try #require(fullScreenButton(in: view))
-        #expect(button.isHidden)
-    }
-
-    @Test func shortThinkingHidesFloatingFullScreenButton() throws {
-        let config = ThinkingTimelineRowConfiguration(
+        let shortConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Short thought",
             fullText: nil,
             themeID: .dark
         )
 
-        let view = ThinkingTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 360)
+        let overflowView = ThinkingTimelineRowContentView(configuration: overflowConfig)
+        _ = fittedTimelineSize(for: overflowView, width: 360)
 
-        let button = try #require(fullScreenButton(in: view))
-        #expect(button.isHidden)
+        let shortView = ThinkingTimelineRowContentView(configuration: shortConfig)
+        _ = fittedTimelineSize(for: shortView, width: 360)
+
+        #expect(fullScreenButton(in: overflowView) == nil)
+        #expect(fullScreenButton(in: shortView) == nil)
     }
 
     @Test func overflowContextMenuIncludesOpenFullScreenAndCopy() throws {
@@ -69,7 +63,7 @@ struct ThinkingRowContentViewTests {
         #expect(timelineActionTitles(in: menu) == ["Open Full Screen", "Copy"])
     }
 
-    @Test func overflowRegistersPinchAndSingleTapGestures() {
+    @Test func overflowRegistersPinchAndDoubleTapGesturesButNoSingleTapActivation() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
@@ -80,16 +74,112 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 360)
 
-        let recognizers = timelineAllGestureRecognizers(in: view)
+        let bubbleView = try #require(privateBubbleView(in: view))
+        let recognizers = bubbleView.gestureRecognizers ?? []
         let hasPinch = recognizers.contains { $0 is UIPinchGestureRecognizer }
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
         let hasSingleTap = recognizers.contains {
             guard let tap = $0 as? UITapGestureRecognizer else { return false }
             return tap.numberOfTapsRequired == 1
         }
 
         #expect(hasPinch)
-        #expect(hasSingleTap)
+        #expect(hasDoubleTap)
+        #expect(!hasSingleTap)
     }
+
+    @Test func selectedTextEditMenuPrependsPiSubmenu() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: "Alpha beta gamma",
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        let copyAction = UIAction(title: "Copy") { _ in }
+        let menu = try #require(view.textView(
+            label,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [copyAction]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt"])
+        let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
+        #expect(copyMenuAction.title == "Copy")
+    }
+
+    @Test func selectedTextModeKeepsOverflowFullScreenGesturesAndDisablesInlineSelection() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: Array(repeating: "line", count: 320).joined(separator: "\n"),
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let recognizers = timelineAllGestureRecognizers(in: view)
+        let pinchGesture = try #require(recognizers.first { $0 is UIPinchGestureRecognizer })
+        let doubleTapGesture = try #require(recognizers.first {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        })
+
+        #expect(pinchGesture.isEnabled)
+        #expect(doubleTapGesture.isEnabled)
+
+        let scrollView = try #require(privateScrollView(in: view))
+        #expect(!scrollView.isUserInteractionEnabled)
+
+        let label = try #require(privateTextLabel(in: view))
+        #expect(!label.isSelectable)
+        #expect(fullScreenButton(in: view) == nil)
+    }
+
+    @Test func selectedTextModeAllowsInlineSelectionWhenThinkingFitsBubble() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "Short thought",
+            fullText: nil,
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        #expect(label.isSelectable)
+
+        let recognizers = timelineAllGestureRecognizers(in: view)
+        let pinchGesture = try #require(recognizers.first { $0 is UIPinchGestureRecognizer })
+        let doubleTapGesture = try #require(recognizers.first {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        })
+
+        #expect(!pinchGesture.isEnabled)
+        #expect(!doubleTapGesture.isEnabled)
+    }
+
     // MARK: - Streaming plain text optimization
 
     @Test func streamingPreservesRawMarkdownSyntax() throws {

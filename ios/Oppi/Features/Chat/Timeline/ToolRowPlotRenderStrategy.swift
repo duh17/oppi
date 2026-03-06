@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowPlotRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .plot
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .plot = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowPlotRenderStrategy {
     static func render(
         spec: PlotChartSpec,
         fallbackText: String?,

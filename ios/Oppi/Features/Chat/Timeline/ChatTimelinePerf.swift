@@ -429,6 +429,7 @@ enum ChatTimelinePerf {
     // MARK: - Render Strategy Timing
 
     private static let slowRenderThresholdMs = 8
+    private static let slowMeasurementThresholdMs = 4
 
     /// Record internal rendering time for a tool row's expanded content.
     ///
@@ -474,6 +475,43 @@ enum ChatTimelinePerf {
             "ChatPerf",
             "Slow render strategy",
             metadata: metadata
+        )
+    }
+
+    static func recordToolRowMeasurement(
+        name: String,
+        durationMs: Int,
+        inputBytes: Int
+    ) {
+        signposter.emitEvent("toolrow.measure")
+
+        guard durationMs > 0 else { return }
+
+        let sid = activeSessionId
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .renderStrategyMs,
+                value: Double(durationMs),
+                unit: .ms,
+                sessionId: sid,
+                tags: [
+                    "mode": "measurement.\(name)",
+                    "input_bytes": outputBytesBucket(inputBytes),
+                ]
+            )
+        }
+
+        guard durationMs >= slowMeasurementThresholdMs else { return }
+        guard shouldEmitSlowLog() else { return }
+
+        ClientLog.error(
+            "ChatPerf",
+            "Slow tool row measurement",
+            metadata: [
+                "name": name,
+                "durationMs": String(durationMs),
+                "inputBytes": String(inputBytes),
+            ]
         )
     }
 

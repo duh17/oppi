@@ -16,7 +16,12 @@ extension ChatTimelineCollectionHost.Controller {
             isStreaming: isStreaming,
             canFork: false,
             onFork: nil,
-            themeID: currentThemeID
+            themeID: currentThemeID,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: .init(
+                sessionId: sessionId,
+                surface: .assistantProse
+            )
         )
     }
 
@@ -39,7 +44,12 @@ extension ChatTimelineCollectionHost.Controller {
             images: images,
             canFork: canFork,
             onFork: forkAction,
-            themeID: currentThemeID
+            themeID: currentThemeID,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: .init(
+                sessionId: sessionId,
+                surface: .userMessage
+            )
         )
     }
 
@@ -50,7 +60,13 @@ extension ChatTimelineCollectionHost.Controller {
             isDone: isDone,
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
-            themeID: currentThemeID
+            themeID: currentThemeID,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: .init(
+                sessionId: sessionId,
+                surface: .thinking,
+                sourceLabel: "Thinking"
+            )
         )
     }
 
@@ -145,7 +161,7 @@ extension ChatTimelineCollectionHost.Controller {
             isError: isError,
             isDone: isDone,
             context: context
-        )
+        ).withSelectedTextPi(router: selectedTextPiRouter, sessionId: sessionId)
     }
 }
 

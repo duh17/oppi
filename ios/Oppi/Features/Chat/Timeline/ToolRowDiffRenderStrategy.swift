@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowDiffRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .diff
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .diff = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowDiffRenderStrategy {
     static func render(
         lines: [DiffLine],
         path: String?,

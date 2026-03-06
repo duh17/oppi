@@ -133,7 +133,7 @@ struct ToolTimelineRowModeDispatchTests {
         let markdownPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .markdown(text: "# Header")
         )
-        #expect(!markdownPolicy.enablesTapCopyGesture)
+        #expect(markdownPolicy.enablesTapCopyGesture)
         #expect(markdownPolicy.enablesPinchGesture)
         #expect(!markdownPolicy.allowsHorizontalScroll)
         #expect(markdownPolicy.supportsFullScreenPreview)
@@ -807,9 +807,8 @@ struct ToolTimelineRowModeDispatchTests {
         }
     }
 
-    @Test func cellReuseMarkdownGestureInterceptionDisabledForTextSelection() throws {
-        // Extension markdown mode should disable gesture interception so users
-        // can select text via standard UITextView interactions.
+    @Test func cellReuseMarkdownKeepsGestureInterceptionForFullScreenActivation() throws {
+        // Inline expanded markdown should keep double-tap full-screen activation.
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
             expandedContent: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"),
@@ -819,10 +818,8 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        // Code mode should have gesture interception enabled.
         #expect(view.expandedTapCopyGestureEnabledForTesting)
 
-        // Reuse for extension markdown (needs text selection).
         let mdConfig = makeToolConfiguration(
             toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "# Note\n\nSome text to select"),
@@ -832,8 +829,8 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
 
         #expect(
-            !view.expandedTapCopyGestureEnabledForTesting,
-            "Markdown mode should disable tap-copy gesture for text selection"
+            view.expandedTapCopyGestureEnabledForTesting,
+            "Markdown mode should keep tap interception for full-screen activation"
         )
     }
 
@@ -1032,10 +1029,9 @@ struct ToolTimelineRowModeDispatchTests {
             "Remember expanded viewport should be compact after reuse; got \(viewportConstraint.constant)"
         )
 
-        let expandButton = try #require(privateView(named: "expandFloatingButton", in: view) as? UIButton)
         #expect(
-            expandButton.isHidden,
-            "Remember expanded row should not show floating full-screen button for short text"
+            privateView(named: "expandFloatingButton", in: view) == nil,
+            "Remember expanded row should not install a floating full-screen button"
         )
 
         let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 360)

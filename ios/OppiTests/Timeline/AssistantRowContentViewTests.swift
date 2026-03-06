@@ -330,6 +330,104 @@ struct AssistantTimelineRowContentViewTests {
         #expect(action == .systemDefault)
     }
 
+    @MainActor
+    @Test func selectedTextEditMenuPrependsPiSubmenu() throws {
+        let markdownView = AssistantMarkdownContentView()
+        let router = SelectedTextPiActionRouter { _ in }
+        markdownView.apply(configuration: .init(
+            content: "Alpha beta gamma",
+            isStreaming: false,
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+        ))
+
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let copyAction = UIAction(title: "Copy") { _ in }
+        let menu = try #require(markdownView.textView(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [copyAction]
+        ))
+
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt"])
+        let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
+        #expect(copyMenuAction.title == "Copy")
+    }
+
+    @MainActor
+    @Test func selectedAssistantCodeBlockEditMenuPrependsPiSubmenu() throws {
+        let markdownView = AssistantMarkdownContentView()
+        let router = SelectedTextPiActionRouter { _ in }
+        markdownView.apply(configuration: .init(
+            content: "```swift\nlet answer = 42\n```",
+            isStreaming: false,
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+        ))
+        _ = fittedTimelineSize(for: markdownView, width: 320)
+
+        let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdownView))
+        let textView = try #require(timelineAllTextViews(in: codeBlockView).first)
+        let menu = try #require((textView.delegate)?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 3),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+    }
+
+    @MainActor
+    @Test func selectedAssistantTableEditMenuPrependsPiSubmenu() throws {
+        let markdownView = AssistantMarkdownContentView()
+        let router = SelectedTextPiActionRouter { _ in }
+        markdownView.apply(configuration: .init(
+            content: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+            isStreaming: false,
+            themeID: .dark,
+            selectedTextPiRouter: router,
+            selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
+        ))
+        _ = fittedTimelineSize(for: markdownView, width: 320)
+
+        let tableView = try #require(timelineFirstView(ofType: NativeTableBlockView.self, in: markdownView))
+        let textView = try #require(timelineAllTextViews(in: tableView).first)
+        let menu = try #require((textView.delegate)?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 1),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+    }
+
+    @MainActor
+    @Test func selectedTextEditMenuFallsBackToSystemMenuWithoutRouter() throws {
+        let markdownView = AssistantMarkdownContentView()
+        markdownView.apply(configuration: .init(
+            content: "Alpha beta gamma",
+            isStreaming: false,
+            themeID: .dark
+        ))
+
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let copyAction = UIAction(title: "Copy") { _ in }
+        let menu = markdownView.textView(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [copyAction]
+        )
+
+        #expect(menu == nil)
+    }
+
     // MARK: - Helpers
 
     @MainActor

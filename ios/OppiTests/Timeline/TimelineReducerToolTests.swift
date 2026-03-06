@@ -250,12 +250,14 @@ struct TimelineReducerToolTests {
         }
         #expect(toolItems.count == 1)
 
-        guard case .toolCall(_, let tool, _, let preview, _, _, let isDone) = toolItems[0] else {
+        guard case .toolCall(_, let tool, _, let preview, let outputByteCount, _, let isDone) = toolItems[0] else {
             Issue.record("Expected toolCall")
             return
         }
         #expect(tool == "bash")
         #expect(preview.contains("line99") || preview.contains("line100"))
+        #expect(outputByteCount == 50000)
+        #expect(reducer.toolOutputStore.hasPreviewOnlyOutput(for: toolId))
         #expect(isDone)
     }
 
@@ -274,6 +276,8 @@ struct TimelineReducerToolTests {
         ])
 
         #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "tail preview\n")
+        #expect(reducer.toolOutputStore.outputByteCount(for: toolId) == 10000)
+        #expect(reducer.toolOutputStore.hasPreviewOnlyOutput(for: toolId))
     }
 
     @MainActor

@@ -1,16 +1,7 @@
 import UIKit
 
 @MainActor
-struct ToolRowMarkdownRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
-    static let mode: ToolTimelineRowExpandedRenderMode = .markdown
-
-    static func isApplicable(to input: ToolTimelineRowExpandedRenderInput) -> Bool {
-        if case .markdown = input.expandedContent {
-            return true
-        }
-        return false
-    }
-
+struct ToolRowMarkdownRenderStrategy {
     static func render(
         text: String,
         isStreaming: Bool,
@@ -22,6 +13,8 @@ struct ToolRowMarkdownRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
         wasExpandedVisible: Bool,
         isUsingMarkdownLayout: Bool,
         shouldAutoFollowOnFirstRender: Bool,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?,
         showExpandedMarkdown: () -> Void,
         setModeText: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
@@ -37,12 +30,14 @@ struct ToolRowMarkdownRenderStrategy: ToolTimelineRowExpandedRenderStrategy {
 
         expandedRenderedText = text
         updateExpandedLabelWidthIfNeeded()
+        expandedMarkdownView.apply(configuration: .init(
+            content: text,
+            isStreaming: isStreaming,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: selectedTextSourceContext
+        ))
         if shouldRerender {
-            expandedMarkdownView.apply(configuration: .init(
-                content: text,
-                isStreaming: isStreaming,
-                themeID: ThemeRuntimeState.currentThemeID()
-            ))
             expandedRenderSignature = signature
         }
 
