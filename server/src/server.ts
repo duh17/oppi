@@ -220,6 +220,24 @@ export class Server {
     }
   }
 
+  /** Read installed @mariozechner/pi-coding-agent version from its package.json. */
+  static detectPiAgentVersion(): string {
+    try {
+      const pkgPath = join(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "node_modules",
+        "@mariozechner",
+        "pi-coding-agent",
+        "package.json",
+      );
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+      return pkg.version || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
   private storage: Storage;
   private sessions: SessionManager;
   private policy: PolicyEngine;
@@ -263,9 +281,10 @@ export class Server {
     this.modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
     this.models = new ModelCatalog(this.modelRegistry, this.storage);
     this.runtimeUpdates = new RuntimeUpdateManager({
-      packageName: process.env.OPPI_RUNTIME_PACKAGE || "oppi-server",
-      currentVersion: Server.VERSION,
+      packageName: process.env.OPPI_RUNTIME_PACKAGE || "@mariozechner/pi-coding-agent",
+      currentVersion: Server.detectPiAgentVersion(),
       npmExecutable: process.env.OPPI_RUNTIME_NPM_BIN || "npm",
+      cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
     });
 
     const dataDir = storage.getDataDir();
@@ -368,7 +387,13 @@ export class Server {
     this.transportScheme = transport.scheme;
     this.transportCertPath = transport.certPath;
 
-    this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+    this.wss = new WebSocketServer({
+      noServer: true,
+      perMessageDeflate: {
+        zlibDeflateOptions: { level: 1 }, // fast compression (speed > ratio)
+        threshold: 1024, // only compress messages >= 1KB
+      },
+    });
 
     this.httpServer.on("upgrade", (req, socket, head) => {
       this.handleUpgrade(req, socket, head);
@@ -614,7 +639,7 @@ export class Server {
     if (hasOpen) {
       const json = JSON.stringify(outbound);
       for (const ws of conns) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(json, { compress: false });
+        if (ws.readyState === WebSocket.OPEN) ws.send(json);
       }
     } else {
       // No WebSocket connected — fall back to push notification

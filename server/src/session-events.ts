@@ -47,6 +47,10 @@ export interface EventProcessorSessionState {
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
   pendingStop?: PendingStop;
+  /** Tool names per toolCallId — tracked for shell preview decisions. */
+  toolNames: Map<string, string>;
+  /** Last time a shell preview snapshot was sent per toolCallId (ms). */
+  shellPreviewLastSent: Map<string, number>;
 }
 
 export interface SessionEventProcessorDeps {
@@ -74,6 +78,8 @@ export class SessionEventProcessor {
       streamedAssistantText: active.streamedAssistantText,
       hasStreamedThinking: active.hasStreamedThinking,
       mobileRenderers: this.deps.mobileRenderers,
+      toolNames: active.toolNames,
+      shellPreviewLastSent: active.shellPreviewLastSent,
     };
   }
 

@@ -90,4 +90,55 @@ struct ToolOutputStoreTests {
         #expect(store.totalBytes == 0)
         #expect(store.fullOutput(for: "t1").isEmpty)
     }
+
+    // MARK: - Replace
+
+    @Test func replaceOverwritesPreviousOutput() {
+        let store = ToolOutputStore()
+        store.append("initial data line 1\n", to: "t1")
+        store.append("initial data line 2\n", to: "t1")
+        #expect(store.fullOutput(for: "t1") == "initial data line 1\ninitial data line 2\n")
+
+        store.replace("tail preview only", for: "t1")
+        #expect(store.fullOutput(for: "t1") == "tail preview only")
+        #expect(store.totalBytes == "tail preview only".utf8.count)
+    }
+
+    @Test func replaceCreatesNewEntryIfMissing() {
+        let store = ToolOutputStore()
+        store.replace("new preview", for: "t1")
+        #expect(store.fullOutput(for: "t1") == "new preview")
+        #expect(store.totalBytes == "new preview".utf8.count)
+    }
+
+    @Test func replaceUpdatesTotalBytesCorrectly() {
+        let store = ToolOutputStore()
+        store.append("short", to: "t1")
+        let bytesAfterAppend = store.totalBytes
+
+        store.replace("much longer replacement text", for: "t1")
+        #expect(store.totalBytes == "much longer replacement text".utf8.count)
+        #expect(store.totalBytes != bytesAfterAppend)
+    }
+
+    @Test func replaceAfterAppendTransition() {
+        let store = ToolOutputStore()
+        // Simulate append → replace transition (shell tool crosses threshold)
+        store.append("line1\n", to: "t1")
+        store.append("line2\n", to: "t1")
+        store.append("line3\n", to: "t1")
+        #expect(store.fullOutput(for: "t1") == "line1\nline2\nline3\n")
+
+        // Server switches to replace mode
+        store.replace("line98\nline99\nline100\n", for: "t1")
+        #expect(store.fullOutput(for: "t1") == "line98\nline99\nline100\n")
+    }
+
+    @Test func replaceRespectsPerItemCap() {
+        let store = ToolOutputStore()
+        let oversized = String(repeating: "x", count: ToolOutputStore.perItemCap + 1000)
+        store.replace(oversized, for: "t1")
+        let output = store.fullOutput(for: "t1")
+        #expect(output.hasSuffix(ToolOutputStore.truncationMarker))
+    }
 }
