@@ -180,6 +180,52 @@ struct ServerConnectionRoutingTests {
     }
 
     @MainActor
+    @Test func routeGetQueueFailureDoesNotProduceTimelineError() {
+        let conn = makeTestConnection()
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "get_queue",
+                requestId: "req-fail",
+                success: false,
+                data: nil,
+                error: "Session s1 is not subscribed at level=full"
+            ),
+            sessionId: "s1"
+        )
+
+        conn.flushAndSuspend()
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.isEmpty, "Failed get_queue command_result should not leak to timeline")
+    }
+
+    @MainActor
+    @Test func routeSetQueueFailureDoesNotProduceTimelineError() {
+        let conn = makeTestConnection()
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "set_queue",
+                requestId: "req-fail",
+                success: false,
+                data: nil,
+                error: "version conflict"
+            ),
+            sessionId: "s1"
+        )
+
+        conn.flushAndSuspend()
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.isEmpty, "Failed set_queue command_result should not leak to timeline")
+    }
+
+    @MainActor
     @Test func routeStopRequestedMarksStopping() {
         let scenario = EventFlowServerConnectionScenario()
 
