@@ -16,6 +16,7 @@ struct ChatTimelineView: View {
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let onFork: (String) -> Void
+    let selectedTextPiRouter: SelectedTextPiActionRouter?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
 
@@ -74,6 +75,7 @@ struct ChatTimelineView: View {
                 audioPlayer: audioPlayer,
                 theme: theme,
                 themeID: ThemeRuntimeState.currentThemeID(),
+                selectedTextPiRouter: selectedTextPiRouter,
                 topOverlap: topOverlap,
                 bottomOverlap: bottomOverlap
             )

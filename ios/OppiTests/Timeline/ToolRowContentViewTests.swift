@@ -122,7 +122,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedReadMarkdownDisablesRowTapCopyToAllowTextSelection() {
+    @Test func expandedReadMarkdownKeepsRowDoubleTapForFullScreen() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Notes\n\n- item"),
             toolNamePrefix: "read",
@@ -132,7 +132,7 @@ struct ToolTimelineRowContentViewTests {
 
         _ = fittedTimelineSize(for: view, width: 370)
 
-        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
     }
 
     @MainActor
@@ -155,7 +155,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedWriteMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
+    @Test func expandedWriteMarkdownKeepsRowDoubleTapForFullScreen() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Notes\n\n- write markdown"),
             toolNamePrefix: "write",
@@ -165,11 +165,11 @@ struct ToolTimelineRowContentViewTests {
 
         _ = fittedTimelineSize(for: view, width: 370)
 
-        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
     }
 
     @MainActor
-    @Test func expandedExtensionMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
+    @Test func expandedExtensionMarkdownKeepsRowDoubleTapForFullScreen() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "extension note"),
             toolNamePrefix: "extensions.notes",
@@ -179,7 +179,7 @@ struct ToolTimelineRowContentViewTests {
 
         _ = fittedTimelineSize(for: view, width: 370)
 
-        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
     }
 
     @MainActor
@@ -198,6 +198,62 @@ struct ToolTimelineRowContentViewTests {
 
         _ = fittedTimelineSize(for: view, width: 370)
 
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func selectedTextCommandEditMenuPrependsPiSubmenuAndDisablesTapCopy() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
+            copyCommandText: "echo hi",
+            copyOutputText: "hi",
+            isExpanded: true,
+            selectedTextPiRouter: router,
+            selectedTextSessionId: "session-1"
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let commandLabel = try #require(timelineAllTextViews(in: view).first { timelineRenderedText(of: $0) == "echo hi" })
+        let menu = try #require(view.textView(
+            commandLabel,
+            editMenuForTextIn: NSRange(location: 0, length: 4),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt"])
+        let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
+        #expect(copyMenuAction.title == "Copy")
+        #expect(commandLabel.isSelectable)
+    }
+
+    @MainActor
+    @Test func selectedTextExpandedMarkdownKeepsInlineFullScreenActivation() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "Alpha beta gamma"),
+            toolNamePrefix: "read",
+            isExpanded: true,
+            selectedTextPiRouter: router,
+            selectedTextSessionId: "session-1"
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let markdownView = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
+        let textView = try #require(timelineFirstTextView(in: markdownView))
+        let menu = markdownView.textView(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 5),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        )
+
+        #expect(menu == nil)
         #expect(view.expandedTapCopyGestureEnabledForTesting)
     }
 
@@ -275,61 +331,33 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func shortExpandedReadMarkdownHidesFullScreenFloatingButton() throws {
-        let config = makeTimelineToolConfiguration(
+    @Test func expandedToolRowsDoNotInstallFloatingFullScreenButton() {
+        let shortConfig = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Notes\n\n- item"),
             toolNamePrefix: "read",
             isExpanded: true
         )
-        let view = ToolTimelineRowContentView(configuration: config)
-
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        let expandButton = try #require(timelineAllViews(in: view)
-            .compactMap { $0 as? UIButton }
-            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
-
-        #expect(expandButton.isHidden)
-    }
-
-    @MainActor
-    @Test func shortExpandedExtensionTextHidesFullScreenFloatingButton() throws {
-        for width in [280.0, 320.0, 370.0] {
-            let config = makeTimelineToolConfiguration(
-                expandedContent: .text(text: "Saved to journal: 2026-02-28-mac-studio.md", language: nil),
-                toolNamePrefix: "remember",
-                isExpanded: true,
-                isDone: true
-            )
-            let view = ToolTimelineRowContentView(configuration: config)
-
-            _ = fittedTimelineSize(for: view, width: width)
-
-            let expandButton = try #require(timelineAllViews(in: view)
-                .compactMap { $0 as? UIButton }
-                .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
-
-            #expect(expandButton.isHidden, "Expected hidden full-screen button at width \(width)")
-        }
-    }
-
-    @MainActor
-    @Test func overflowingExpandedReadMarkdownShowsFullScreenFloatingButton() throws {
-        let markdown = "# Notes\n\n" + Array(repeating: "- item", count: 900).joined(separator: "\n")
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: markdown),
+        let overflowingConfig = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\n" + Array(repeating: "- item", count: 900).joined(separator: "\n")),
             toolNamePrefix: "read",
             isExpanded: true
         )
-        let view = ToolTimelineRowContentView(configuration: config)
 
-        _ = fittedTimelineSize(for: view, width: 370)
+        let shortView = ToolTimelineRowContentView(configuration: shortConfig)
+        _ = fittedTimelineSize(for: shortView, width: 370)
 
-        let expandButton = try #require(timelineAllViews(in: view)
+        let overflowingView = ToolTimelineRowContentView(configuration: overflowingConfig)
+        _ = fittedTimelineSize(for: overflowingView, width: 370)
+
+        let buttonInShortView = timelineAllViews(in: shortView)
             .compactMap { $0 as? UIButton }
-            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
+            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" }
+        let buttonInOverflowingView = timelineAllViews(in: overflowingView)
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" }
 
-        #expect(!expandButton.isHidden)
+        #expect(buttonInShortView == nil)
+        #expect(buttonInOverflowingView == nil)
     }
 
     @MainActor

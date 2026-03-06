@@ -1,6 +1,10 @@
 import UIKit
 
 enum ToolTimelineRowRenderMetrics {
+    private static func combineActiveTheme(into hasher: inout Hasher) {
+        hasher.combine(ThemeRuntimeState.currentThemeID())
+    }
+
     static func estimatedMonospaceLineWidth(_ text: String) -> CGFloat {
         guard !text.isEmpty else { return 1 }
 
@@ -27,6 +31,7 @@ enum ToolTimelineRowRenderMetrics {
     static func commandSignature(displayCommand: String) -> Int {
         var hasher = Hasher()
         hasher.combine("command")
+        combineActiveTheme(into: &hasher)
         hasher.combine(displayCommand)
         hasher.combine(displayCommand.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes)
         return hasher.finalize()
@@ -35,6 +40,7 @@ enum ToolTimelineRowRenderMetrics {
     static func outputSignature(displayOutput: String, isError: Bool, unwrapped: Bool, isStreaming: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine("bash-output")
+        combineActiveTheme(into: &hasher)
         hasher.combine(displayOutput)
         hasher.combine(isError)
         hasher.combine(unwrapped)
@@ -45,6 +51,7 @@ enum ToolTimelineRowRenderMetrics {
     static func diffSignature(lines: [DiffLine], path: String?, isStreaming: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine("diff")
+        combineActiveTheme(into: &hasher)
         hasher.combine(path ?? "")
         hasher.combine(isStreaming)
         hasher.combine(lines.count)
@@ -70,6 +77,7 @@ enum ToolTimelineRowRenderMetrics {
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("code")
+        combineActiveTheme(into: &hasher)
         hasher.combine(displayText)
         hasher.combine(language)
         hasher.combine(startLine)
@@ -80,6 +88,7 @@ enum ToolTimelineRowRenderMetrics {
     static func markdownSignature(_ text: String) -> Int {
         var hasher = Hasher()
         hasher.combine("markdown")
+        combineActiveTheme(into: &hasher)
         hasher.combine(text)
         return hasher.finalize()
     }
@@ -92,6 +101,7 @@ enum ToolTimelineRowRenderMetrics {
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("read-media")
+        combineActiveTheme(into: &hasher)
         hasher.combine(output)
         hasher.combine(filePath ?? "")
         hasher.combine(startLine)
@@ -102,6 +112,7 @@ enum ToolTimelineRowRenderMetrics {
     static func plotSignature(spec: PlotChartSpec, fallbackText: String?) -> Int {
         var hasher = Hasher()
         hasher.combine("plot")
+        combineActiveTheme(into: &hasher)
         hasher.combine(spec)
         hasher.combine(fallbackText)
         return hasher.finalize()
@@ -115,6 +126,7 @@ enum ToolTimelineRowRenderMetrics {
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("text")
+        combineActiveTheme(into: &hasher)
         hasher.combine(displayText)
         hasher.combine(language)
         hasher.combine(isError)

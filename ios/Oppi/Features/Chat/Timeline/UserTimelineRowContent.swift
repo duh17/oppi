@@ -7,6 +7,8 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let canFork: Bool
     let onFork: (() -> Void)?
     let themeID: ThemeID
+    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
+    var selectedTextSourceContext: SelectedTextSourceContext? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -22,7 +24,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let bubbleContainer = UIView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
-    private let messageLabel = UILabel()
+    private let messageTextView = UITextView()
     private let imageStrip = UIScrollView()
     private let imageStack = UIStackView()
 
@@ -44,6 +46,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         recognizer.cancelsTouchesInView = false
         return recognizer
     }()
+
+    private var isSelectedTextPiEnabled: Bool {
+        currentConfiguration.selectedTextPiRouter != nil
+            && currentConfiguration.selectedTextSourceContext != nil
+    }
 
     init(configuration: UserTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -110,12 +117,20 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.numberOfLines = 0
-        messageLabel.font = .preferredFont(forTextStyle: .body)
+        messageTextView.translatesAutoresizingMaskIntoConstraints = false
+        messageTextView.isEditable = false
+        messageTextView.isScrollEnabled = false
+        messageTextView.isSelectable = false
+        messageTextView.delegate = self
+        messageTextView.backgroundColor = .clear
+        messageTextView.textContainerInset = .zero
+        messageTextView.textContainer.lineFragmentPadding = 0
+        messageTextView.textContainer.lineBreakMode = .byWordWrapping
+        messageTextView.adjustsFontForContentSizeCategory = true
+        messageTextView.font = .preferredFont(forTextStyle: .body)
 
         textRow.addArrangedSubview(iconLabel)
-        textRow.addArrangedSubview(messageLabel)
+        textRow.addArrangedSubview(messageTextView)
 
         bubbleContainer.addSubview(textRow)
         NSLayoutConstraint.activate([
@@ -148,15 +163,15 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.blue)
-        messageLabel.textColor = UIColor(palette.fg)
+        messageTextView.textColor = UIColor(palette.fg)
 
         // Subtle blue-tinted background — distinct from bgDark/bgHighlight
         // used by thinking traces and tool rows.
         bubbleContainer.backgroundColor = UIColor(palette.blue).withAlphaComponent(0.08)
 
         let displayText = Self.displayText(for: configuration.text)
-        messageLabel.text = displayText.text
-        messageLabel.isHidden = displayText.text.isEmpty
+        messageTextView.text = displayText.text
+        messageTextView.isHidden = displayText.text.isEmpty
         bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
         iconLabel.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
         textRow.isHidden = false
@@ -165,6 +180,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         if displayText.text.isEmpty && !configuration.images.isEmpty {
             iconLabel.isHidden = false
         }
+
+        updateSelectedTextInteractionPolicy()
 
         let imagesChanged = previousConfiguration.images != configuration.images
         let paletteChanged = previousConfiguration.themeID != configuration.themeID
@@ -246,6 +263,12 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         images.reduce(into: 0) { partialResult, image in
             partialResult += image.data.count
         }
+    }
+
+    private func updateSelectedTextInteractionPolicy() {
+        let selectionEnabled = isSelectedTextPiEnabled && !messageTextView.isHidden
+        messageTextView.isSelectable = selectionEnabled
+        bubbleDoubleTapGesture.isEnabled = !selectionEnabled
     }
 
     // MARK: - Image strip
@@ -380,11 +403,34 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
 // MARK: - Context Menu
 
+extension UserTimelineRowContentView: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: currentConfiguration.selectedTextPiRouter,
+            sourceContext: currentConfiguration.selectedTextSourceContext
+        )
+    }
+}
+
 extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
     func contextMenuInteraction(
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
+        if messageTextView.isSelectable {
+            let pointInMessageText = messageTextView.convert(location, from: self)
+            if messageTextView.bounds.contains(pointInMessageText) {
+                return nil
+            }
+        }
+
         guard contextMenu() != nil else {
             return nil
         }

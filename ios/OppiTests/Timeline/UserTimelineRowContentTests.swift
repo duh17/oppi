@@ -168,17 +168,48 @@ struct UserTimelineRowContentTests {
         view.setNeedsLayout()
         view.layoutIfNeeded()
 
-        let labels = allSubviews(ofType: UILabel.self, in: view)
-        let renderedLabel = try #require(
-            labels.first(where: { $0.text?.contains("message truncated for display") == true })
-        )
-        let renderedText = try #require(renderedLabel.text)
+        let renderedTextView = try #require(userMessageTextView(in: view))
+        let renderedText = try #require(renderedTextView.text)
 
         #expect(renderedText.contains("message truncated for display"))
         #expect(renderedText.count < longText.count)
 
         let menu = try #require(view.contextMenu())
         #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test("user row selected text edit menu prepends π submenu")
+    func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
+        let router = SelectedTextPiActionRouter { _ in }
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Need help with this prompt",
+                images: [],
+                canFork: false,
+                onFork: nil,
+                themeID: .dark,
+                selectedTextPiRouter: router,
+                selectedTextSourceContext: .init(sessionId: "session-1", surface: .userMessage)
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let textView = try #require(userMessageTextView(in: view))
+        #expect(textView.isSelectable)
+
+        let menu = try #require(view.textView(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 4),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt"])
     }
 
     @MainActor
@@ -222,6 +253,11 @@ struct UserTimelineRowContentTests {
             context.fill(CGRect(origin: .zero, size: size))
         }
     }
+}
+
+@MainActor
+private func userMessageTextView(in view: UserTimelineRowContentView) -> UITextView? {
+    Mirror(reflecting: view).children.first { $0.label == "messageTextView" }?.value as? UITextView
 }
 
 @MainActor
