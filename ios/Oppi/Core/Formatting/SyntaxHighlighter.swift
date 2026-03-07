@@ -286,8 +286,8 @@ enum SyntaxHighlighter {
         let function: [NSAttributedString.Key: Any]
         let `operator`: [NSAttributedString.Key: Any]
 
-        static func current() -> TokenAttrs {
-            TokenAttrs(
+        static func current() -> Self {
+            Self(
                 comment: [.foregroundColor: UIColor(Color.themeSyntaxComment)],
                 keyword: [.foregroundColor: UIColor(Color.themeSyntaxKeyword)],
                 string: [.foregroundColor: UIColor(Color.themeSyntaxString)],

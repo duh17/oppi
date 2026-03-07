@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct MessageQueueContainer: View {
+    private struct StatusBannerModel {
+        let title: String
+        let message: String
+        let color: Color
+    }
+
     let queue: MessageQueueState
     @Binding var busyStreamingBehavior: StreamingBehavior
     let onApply: (_ baseVersion: Int, _ steering: [MessageQueueDraftItem], _ followUp: [MessageQueueDraftItem]) async throws -> Void
@@ -33,22 +39,26 @@ struct MessageQueueContainer: View {
         isApplying || isRefreshing
     }
 
-    private var statusBannerModel: (title: String, message: String, color: Color)? {
+    private var statusBannerModel: StatusBannerModel? {
         if let conflict = editorState.conflict {
-            return (conflict.title, conflict.message, .themeOrange)
+            return StatusBannerModel(
+                title: conflict.title,
+                message: conflict.message,
+                color: .themeOrange
+            )
         }
         if editorState.isDraftMode {
-            return (
-                "Unsaved text edits",
-                "Save to replace the current queue with your updated draft.",
-                .themeComment
+            return StatusBannerModel(
+                title: "Unsaved text edits",
+                message: "Save to replace the current queue with your updated draft.",
+                color: .themeComment
             )
         }
         if editorState.hasStashedDraft {
-            return (
-                "Reviewing latest queue",
-                "Your earlier draft is still available if you want to restore it.",
-                .themeComment
+            return StatusBannerModel(
+                title: "Reviewing latest queue",
+                message: "Your earlier draft is still available if you want to restore it.",
+                color: .themeComment
             )
         }
         return nil

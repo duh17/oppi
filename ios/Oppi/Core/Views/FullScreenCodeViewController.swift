@@ -6,9 +6,6 @@ import UIKit
 /// Supports code (with syntax highlighting), diff, and markdown modes.
 /// Presented via ``FullScreenCodeView`` (UIViewControllerRepresentable wrapper)
 /// from SwiftUI callers, and directly from UIKit timeline cells.
-enum FullScreenCodeTypography {
-    static let codeFont = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-}
 
 final class FullScreenCodeViewController: UIViewController {
     private struct Presentation {
