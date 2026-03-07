@@ -21,11 +21,3 @@ enum ToolRowExpansionAnimation {
     static let swiftUICollapse: Animation = .linear(duration: collapseDuration)
 }
 
-/// Identifies a file to open in a sheet.
-struct FileToOpen: Identifiable {
-    let workspaceId: String
-    let sessionId: String
-    let path: String
-
-    var id: String { "\(workspaceId)/\(sessionId)/\(path)" }
-}

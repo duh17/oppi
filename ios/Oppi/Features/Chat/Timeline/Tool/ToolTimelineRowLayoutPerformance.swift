@@ -81,37 +81,6 @@ enum ToolTimelineRowViewportKind {
     case markdown
     case readMedia
     case plot
-
-    fileprivate var wrapsText: Bool {
-        switch self {
-        case .text, .markdown, .readMedia:
-            true
-        case .bashOutput, .code, .diff, .plot:
-            false
-        }
-    }
-
-    fileprivate var lineHeightEstimate: CGFloat {
-        switch self {
-        case .markdown, .readMedia:
-            17
-        case .plot:
-            15
-        case .bashOutput, .code, .diff, .text:
-            14
-        }
-    }
-
-    fileprivate var basePadding: CGFloat {
-        switch self {
-        case .plot:
-            24
-        case .markdown, .readMedia:
-            20
-        case .bashOutput, .code, .diff, .text:
-            16
-        }
-    }
 }
 
 struct ToolTimelineRowViewportProfile {
@@ -130,6 +99,7 @@ struct ToolTimelineRowViewportProfile {
         }
     }
 
+    // periphery:ignore - used by ToolTimelineRowViewportPolicyTests via @testable import
     init(kind: ToolTimelineRowViewportKind, inputBytes: Int, lineCount: Int) {
         self.kind = kind
         self.inputBytes = max(0, inputBytes)
@@ -173,8 +143,6 @@ extension ToolTimelineRowContentView.ViewportMode {
 
 @MainActor
 enum ToolTimelineRowLayoutPerformance {
-    private static let overflowThreshold: CGFloat = 2
-
     static func monospaceWidthConstant(
         frameWidth: CGFloat,
         renderedText: String,
@@ -213,14 +181,6 @@ enum ToolTimelineRowLayoutPerformance {
             inputBytes: inputBytes,
             measure: measure
         )
-    }
-
-    static func likelyOverflows(
-        profile: ToolTimelineRowViewportProfile,
-        viewportHeight: CGFloat
-    ) -> Bool {
-        let estimatedHeight = estimatedContentHeight(for: profile)
-        return estimatedHeight - viewportHeight > overflowThreshold
     }
 
     private static func bucketedViewportHeight(
@@ -279,16 +239,5 @@ enum ToolTimelineRowLayoutPerformance {
             return height
         }
         return fallback
-    }
-
-    private static func estimatedContentHeight(for profile: ToolTimelineRowViewportProfile) -> CGFloat {
-        if profile.kind == .plot {
-            return preferredHeight(for: profile)
-        }
-
-        return ceil(
-            CGFloat(profile.effectiveLineCount) * profile.kind.lineHeightEstimate
-            + profile.kind.basePadding
-        )
     }
 }

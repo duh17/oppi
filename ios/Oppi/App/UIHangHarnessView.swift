@@ -714,7 +714,6 @@ struct UIHangHarnessView: View {
                     sessionId: "harness-\(selectedSession.rawValue)",
                     workspaceId: "harness-workspace",
                     onFork: { _ in },
-                    onOpenFile: { _ in },
                     onShowEarlier: {
                         renderWindow = min(currentItems.count, renderWindow + Self.renderWindowStep)
                     },
@@ -727,7 +726,6 @@ struct UIHangHarnessView: View {
                     toolDetailsStore: connection.reducer.toolDetailsStore,
                     connection: connection,
                     audioPlayer: connection.audioPlayer,
-                    theme: themeID.appTheme,
                     themeID: themeID
                 )
             )

@@ -27,7 +27,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let sessionId: String
         let workspaceId: String?
         let onFork: (String) -> Void
-        let onOpenFile: (FileToOpen) -> Void
         let onShowEarlier: () -> Void
         let scrollCommand: ChatTimelineScrollCommand?
         let scrollController: ChatScrollController
@@ -38,7 +37,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let toolDetailsStore: ToolDetailsStore
         let connection: ServerConnection
         let audioPlayer: AudioPlayerService
-        let theme: AppTheme
         let themeID: ThemeID
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let topOverlap: CGFloat
@@ -53,7 +51,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             sessionId: String,
             workspaceId: String?,
             onFork: @escaping (String) -> Void,
-            onOpenFile: @escaping (FileToOpen) -> Void,
             onShowEarlier: @escaping () -> Void,
             scrollCommand: ChatTimelineScrollCommand?,
             scrollController: ChatScrollController,
@@ -64,7 +61,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolDetailsStore: ToolDetailsStore? = nil,
             connection: ServerConnection,
             audioPlayer: AudioPlayerService,
-            theme: AppTheme,
             themeID: ThemeID,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             topOverlap: CGFloat = 0,
@@ -78,7 +74,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.sessionId = sessionId
             self.workspaceId = workspaceId
             self.onFork = onFork
-            self.onOpenFile = onOpenFile
             self.onShowEarlier = onShowEarlier
             self.scrollCommand = scrollCommand
             self.scrollController = scrollController
@@ -89,7 +84,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
             self.connection = connection
             self.audioPlayer = audioPlayer
-            self.theme = theme
             self.themeID = themeID
             self.selectedTextPiRouter = selectedTextPiRouter
             self.topOverlap = topOverlap
@@ -176,11 +170,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onShowEarlier: (() -> Void)? {
             get { context.onShowEarlier }
             set { context.onShowEarlier = newValue }
-        }
-
-        private var onOpenFile: ((FileToOpen) -> Void)? {
-            get { context.onOpenFile }
-            set { context.onOpenFile = newValue }
         }
 
         var scrollController: ChatScrollController? {

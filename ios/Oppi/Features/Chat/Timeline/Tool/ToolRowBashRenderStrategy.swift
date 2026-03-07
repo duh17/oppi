@@ -23,7 +23,7 @@ struct ToolRowBashRenderStrategy {
         outputDidTextChange: inout Bool,
         outputViewportHeightConstraint: NSLayoutConstraint?,
         hideExpandedContainer: () -> Void
-    ) -> ToolTimelineRowExpandedRenderer.Visibility {
+    ) -> ToolRowRenderVisibility {
         var showCommandContainer = false
         var showOutputContainer = false
         outputDidTextChange = false
@@ -128,7 +128,7 @@ struct ToolRowBashRenderStrategy {
 
         hideExpandedContainer()
 
-        return ToolTimelineRowExpandedRenderer.Visibility(
+        return ToolRowRenderVisibility(
             showExpandedContainer: false,
             showCommandContainer: showCommandContainer,
             showOutputContainer: showOutputContainer

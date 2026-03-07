@@ -19,10 +19,4 @@ struct TimelineExpandableTextInteractionSpec: Equatable {
         )
     }
 
-    static let collapsed = Self(
-        supportsFullScreenPreview: false,
-        inlineSelectionEnabled: false,
-        enablesTapActivation: false,
-        enablesPinchActivation: false
-    )
 }

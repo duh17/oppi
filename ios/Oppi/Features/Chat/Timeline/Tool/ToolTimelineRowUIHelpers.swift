@@ -116,22 +116,4 @@ enum ToolTimelineRowUIHelpers {
 
         return UIImage(systemName: genericLanguageBadgeSymbolName)
     }
-
-    /// Legacy convenience — returns an SF Symbol name only (for tests).
-    static func languageBadgeSymbolName(for badge: String?) -> String? {
-        guard let badge, !badge.isEmpty else {
-            return nil
-        }
-
-        let normalized = badge.lowercased()
-        if normalized.contains("⚠︎media") || normalized.contains("media") {
-            return "exclamationmark.triangle"
-        }
-
-        if normalized.contains("swift"), UIImage(systemName: "swift") != nil {
-            return "swift"
-        }
-
-        return genericLanguageBadgeSymbolName
-    }
 }

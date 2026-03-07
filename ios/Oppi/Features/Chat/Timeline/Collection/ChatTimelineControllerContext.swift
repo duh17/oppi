@@ -5,7 +5,6 @@ final class ChatTimelineControllerContext {
     var sessionId = ""
     var workspaceId: String?
     var onFork: ((String) -> Void)?
-    var onOpenFile: ((FileToOpen) -> Void)?
     var onShowEarlier: (() -> Void)?
     weak var scrollController: ChatScrollController?
     var reducer: TimelineReducer?
@@ -25,7 +24,6 @@ final class ChatTimelineControllerContext {
         sessionId = configuration.sessionId
         workspaceId = configuration.workspaceId
         onFork = configuration.onFork
-        onOpenFile = configuration.onOpenFile
         onShowEarlier = configuration.onShowEarlier
         scrollController = configuration.scrollController
         reducer = configuration.reducer

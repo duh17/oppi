@@ -79,7 +79,6 @@ enum TimelineSnapshotApplier {
         ChatTimelinePerf.endLayoutPass(layoutToken)
     }
 
-    // periphery:ignore - used by OppiTests via @testable import
     static func reconfigureItemIDs(
         nextIDs: [String],
         nextIDSet: Set<String>,

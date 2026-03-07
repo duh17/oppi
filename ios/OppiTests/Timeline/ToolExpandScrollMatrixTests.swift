@@ -130,7 +130,8 @@ struct ToolExpandScrollMatrixTests {
             configuration: config,
             outputCopyText: config.copyOutputText,
             interactionPolicy: policy,
-            terminalStream: nil
+            terminalStream: nil,
+            sourceStream: nil
         )
         #expect((fullScreenContent != nil) == toolCase.expectedSupportsFullScreenPreview)
     }

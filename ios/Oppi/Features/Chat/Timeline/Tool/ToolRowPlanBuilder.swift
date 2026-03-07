@@ -3,28 +3,11 @@ import Foundation
 @MainActor
 enum ToolRowPlanBuilder {
     static func build(configuration: ToolTimelineRowConfiguration) -> ToolRowRenderPlan {
-        let collapsedPreviewPresent = {
-            let preview = configuration.preview?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !configuration.isExpanded && !(preview?.isEmpty ?? true)
-        }()
-        let collapsedImagePreviewPresent = {
-            guard !configuration.isExpanded,
-                  let base64 = configuration.collapsedImageBase64 else {
-                return false
-            }
-            return !base64.isEmpty
-        }()
-
         guard configuration.isExpanded,
               let expandedContent = configuration.expandedContent else {
             return ToolRowRenderPlan(
-                expandedMode: .none,
                 interactionPolicy: nil,
-                interactionSpec: .collapsed,
-                commandTextPresent: false,
-                outputTextPresent: false,
-                collapsedPreviewPresent: collapsedPreviewPresent,
-                collapsedImagePreviewPresent: collapsedImagePreviewPresent
+                interactionSpec: .collapsed
             )
         }
 
@@ -41,7 +24,7 @@ enum ToolRowPlanBuilder {
             supportsFullScreenPreview: supportsFullScreen
         )
 
-        let expandedMode = expandedMode(for: expandedContent)
+        let isBashMode = if case .bash = expandedContent { true } else { false }
         let commandTextPresent = commandTextPresent(for: expandedContent)
         let outputTextPresent = outputTextPresent(for: expandedContent)
         let expandedLabelSelectionEligible = switch expandedContent {
@@ -54,7 +37,7 @@ enum ToolRowPlanBuilder {
 
         let commandSelectionEnabled = hasSelectedTextContext && commandTextPresent
         let outputSelectionEnabled = hasSelectedTextContext
-            && expandedMode == .bash
+            && isBashMode
             && expandedSurfaceInteraction.inlineSelectionEnabled
             && outputTextPresent
         let expandedLabelSelectionEnabled = expandedSurfaceInteraction.inlineSelectionEnabled
@@ -63,11 +46,9 @@ enum ToolRowPlanBuilder {
             && markdownSelectionEligible
 
         let interactionSpec = TimelineInteractionSpec(
-            expandedSurfaceInteraction: expandedSurfaceInteraction,
             enablesTapCopyGesture: interactionPolicy.enablesTapCopyGesture && expandedSurfaceInteraction.enablesTapActivation,
             enablesPinchGesture: interactionPolicy.enablesPinchGesture && expandedSurfaceInteraction.enablesPinchActivation,
             allowsHorizontalScroll: interactionPolicy.allowsHorizontalScroll,
-            supportsFullScreenPreview: expandedSurfaceInteraction.supportsFullScreenPreview,
             commandSelectionEnabled: commandSelectionEnabled,
             outputSelectionEnabled: outputSelectionEnabled,
             expandedLabelSelectionEnabled: expandedLabelSelectionEnabled,
@@ -75,35 +56,9 @@ enum ToolRowPlanBuilder {
         )
 
         return ToolRowRenderPlan(
-            expandedMode: expandedMode,
             interactionPolicy: interactionPolicy,
-            interactionSpec: interactionSpec,
-            commandTextPresent: commandTextPresent,
-            outputTextPresent: outputTextPresent,
-            collapsedPreviewPresent: collapsedPreviewPresent,
-            collapsedImagePreviewPresent: collapsedImagePreviewPresent
+            interactionSpec: interactionSpec
         )
-    }
-
-    private static func expandedMode(
-        for content: ToolPresentationBuilder.ToolExpandedContent
-    ) -> ToolRowRenderPlan.ExpandedMode {
-        switch content {
-        case .bash:
-            .bash
-        case .diff:
-            .diff
-        case .code:
-            .code
-        case .markdown:
-            .markdown
-        case .plot:
-            .plot
-        case .readMedia:
-            .readMedia
-        case .text:
-            .text
-        }
     }
 
     private static func commandTextPresent(

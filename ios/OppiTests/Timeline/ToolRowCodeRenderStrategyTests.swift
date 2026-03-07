@@ -75,10 +75,12 @@ struct ToolRowCodeRenderStrategyTests {
             expandedRenderedText: &renderedText,
             expandedShouldAutoFollow: &autoFollow,
             isCurrentModeCode: false,
+            wasExpandedVisible: false,
             showExpandedLabel: {},
             setModeCode: {},
             updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {}
+            showExpandedViewport: {},
+            scheduleExpandedAutoScrollToBottomIfNeeded: {}
         )
 
         return (result.deferredHighlight, label)

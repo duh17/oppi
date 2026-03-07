@@ -449,7 +449,6 @@ func makeTimelineConfiguration(
         sessionId: sessionId,
         workspaceId: "ws-test",
         onFork: { _ in },
-        onOpenFile: { _ in },
         onShowEarlier: onShowEarlier,
         scrollCommand: scrollCommand,
         scrollController: scrollController,
@@ -459,7 +458,6 @@ func makeTimelineConfiguration(
         toolSegmentStore: toolSegmentStore,
         connection: connection,
         audioPlayer: audioPlayer,
-        theme: .dark,
         themeID: .dark
     )
 }
@@ -559,7 +557,9 @@ func makeTimelineToolConfiguration(
     collapsedImageMimeType: String? = nil,
     isExpanded: Bool,
     isDone: Bool = true,
-    isError: Bool = false
+    isError: Bool = false,
+    selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+    selectedTextSessionId: String? = nil
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
         title: title,
@@ -580,7 +580,9 @@ func makeTimelineToolConfiguration(
         isDone: isDone,
         isError: isError,
         segmentAttributedTitle: nil,
-        segmentAttributedTrailing: nil
+        segmentAttributedTrailing: nil,
+        selectedTextPiRouter: selectedTextPiRouter,
+        selectedTextSessionId: selectedTextSessionId
     )
 }
 
