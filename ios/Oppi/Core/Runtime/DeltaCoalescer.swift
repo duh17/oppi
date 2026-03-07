@@ -187,8 +187,8 @@ final class DeltaCoalescer {
                 partial += entry.key.utf8.count
                 partial += estimatedPayloadBytes(entry.value)
             }
-        case .toolOutput(_, _, let output, _, _, _, _):
-            return output.utf8.count
+        case .toolOutput(let payload):
+            return payload.output.utf8.count
         default:
             return 0
         }

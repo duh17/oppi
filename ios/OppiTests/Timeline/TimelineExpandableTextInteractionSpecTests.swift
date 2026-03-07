@@ -2,7 +2,7 @@ import Testing
 @testable import Oppi
 
 @Suite("Timeline expandable text interaction spec")
-struct TimelineExpandableTextInteractionSpecTests {
+struct ExpandableTextInteractionSpecTests {
     @Test func noSelectedTextAndNoFullScreenDisablesEverything() {
         let spec = TimelineExpandableTextInteractionSpec.build(
             hasSelectedTextContext: false,
