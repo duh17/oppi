@@ -76,10 +76,37 @@ enum TelemetrySettings {
     }
 
     static var allowsRemoteDiagnosticsUpload: Bool {
-        mode.allowsRemoteDiagnosticsUpload
+        allowsRemoteDiagnosticsUpload(
+            mode: mode,
+            environment: ProcessInfo.processInfo.environment
+        )
     }
 
     static var sentryEnvironmentName: String {
         mode.sentryEnvironmentName
+    }
+
+    static func allowsRemoteDiagnosticsUpload(
+        mode: TelemetryMode,
+        environment: [String: String]
+    ) -> Bool {
+        guard mode.allowsRemoteDiagnosticsUpload else {
+            return false
+        }
+        return !isRunningAutomatedTests(environment: environment)
+    }
+
+    private static func isRunningAutomatedTests(environment: [String: String]) -> Bool {
+        if let xctestConfigurationPath = environment["XCTestConfigurationFilePath"],
+           !xctestConfigurationPath.isEmpty {
+            return true
+        }
+
+        if let injectedBundlePath = environment["XCTestBundlePath"],
+           !injectedBundlePath.isEmpty {
+            return true
+        }
+
+        return false
     }
 }
