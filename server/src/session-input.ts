@@ -45,6 +45,7 @@ export class SessionInputCoordinator {
       clientTurnId?: string;
       requestId?: string;
       timestamp?: number;
+      preamble?: string;
     },
   ): Promise<void> {
     const active = this.deps.getActiveSession(key);
@@ -75,9 +76,11 @@ export class SessionInputCoordinator {
       timestamp: opts?.timestamp ?? Date.now(),
     });
 
+    const outboundMessage = buildOutboundPrompt(opts?.preamble, message, opts?.images);
+
     const cmd: Record<string, unknown> = {
       type: "prompt",
-      message,
+      message: outboundMessage,
     };
 
     // SDK image format: {type:"image", data:"base64...", mimeType:"image/png"}
@@ -191,4 +194,26 @@ export class SessionInputCoordinator {
     this.deps.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
     this.deps.enqueueQueuedMessage?.(key, "follow_up", message, opts?.images, turn.clientTurnId);
   }
+}
+
+function buildOutboundPrompt(
+  preamble: string | undefined,
+  message: string,
+  images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
+): string {
+  const trimmedPreamble = preamble?.trim() ?? "";
+  if (!trimmedPreamble) {
+    return message;
+  }
+
+  const trimmedMessage = message.trim();
+  if (trimmedMessage.length > 0) {
+    return `${trimmedPreamble}\n\nUser request:\n${message}`;
+  }
+
+  if (images && images.length > 0) {
+    return `${trimmedPreamble}\n\nUser request: see attached images.`;
+  }
+
+  return trimmedPreamble;
 }

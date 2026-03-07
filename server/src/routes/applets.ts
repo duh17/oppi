@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { buildAppletEditPrompt, loadAppletEditContext } from "../applet-edit.js";
 import { AppletError } from "../storage/applet-store.js";
 import type { CreateAppletRequest, UpdateAppletRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -103,6 +104,81 @@ export function createAppletRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     helpers.json(res, { ok: true });
   }
 
+  async function handleCreateEditSession(
+    workspaceId: string,
+    appletId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const applet = ctx.storage.getApplet(workspaceId, appletId);
+    if (!applet) {
+      helpers.error(res, 404, "Applet not found");
+      return;
+    }
+
+    const body = await helpers.parseBody<{ version?: number }>(req);
+    const requestedVersion = Number.isFinite(body.version)
+      ? Math.trunc(body.version as number)
+      : applet.currentVersion;
+    const version = ctx.storage.getAppletVersion(workspaceId, appletId, requestedVersion);
+    if (!version) {
+      helpers.error(res, 404, "Version not found");
+      return;
+    }
+
+    if (version.sessionId && ctx.storage.getSession(version.sessionId)) {
+      await ctx.sessions.refreshSessionState(version.sessionId).catch(() => null);
+    }
+
+    const refreshedContext = loadAppletEditContext(
+      ctx.storage,
+      version.sessionId,
+      version.toolCallId,
+    );
+    const prompt = buildAppletEditPrompt({ applet, version, context: refreshedContext });
+
+    const editSession = ctx.storage.createSession(
+      `Edit: ${applet.title}`.slice(0, 160),
+      workspace.lastUsedModel || workspace.defaultModel,
+    );
+
+    editSession.workspaceId = workspace.id;
+    editSession.workspaceName = workspace.name;
+    ctx.storage.saveSession(editSession);
+
+    try {
+      await ctx.sessions.startSession(editSession.id, workspace);
+      ctx.sessions.setPendingPromptPreamble(editSession.id, prompt);
+    } catch (err) {
+      await ctx.sessions.stopSession(editSession.id).catch(() => {});
+      ctx.storage.deleteSession(editSession.id);
+      const message = err instanceof Error ? err.message : "Failed to create edit session";
+      helpers.error(res, 500, message);
+      return;
+    }
+
+    const created = ctx.storage.getSession(editSession.id) || editSession;
+    helpers.json(
+      res,
+      {
+        session: ctx.ensureSessionContextWindow(created),
+        provenance: {
+          available: refreshedContext !== null,
+          sourceSessionId: refreshedContext?.sourceSessionId,
+          sourceToolCallId: refreshedContext?.sourceToolCallId,
+          sourceSessionName: refreshedContext?.sourceSessionName,
+        },
+      },
+      201,
+    );
+  }
+
   function handleListVersions(workspaceId: string, appletId: string, res: ServerResponse): void {
     const applet = ctx.storage.getApplet(workspaceId, appletId);
     if (!applet) {
@@ -190,6 +266,13 @@ export function createAppletRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     const versionsMatch = path.match(/^\/workspaces\/([^/]+)\/applets\/([^/]+)\/versions$/);
     if (versionsMatch && method === "GET") {
       handleListVersions(versionsMatch[1], versionsMatch[2], res);
+      return true;
+    }
+
+    // /workspaces/:wid/applets/:aid/edit-session
+    const editSessionMatch = path.match(/^\/workspaces\/([^/]+)\/applets\/([^/]+)\/edit-session$/);
+    if (editSessionMatch && method === "POST") {
+      await handleCreateEditSession(editSessionMatch[1], editSessionMatch[2], req, res);
       return true;
     }
 
