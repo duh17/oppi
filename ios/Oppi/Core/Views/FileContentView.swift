@@ -104,12 +104,16 @@ private struct CodeFileView: View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let isTruncated = lines.count > FileContentView.maxDisplayLines
+        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
 
         let codeBody = codeArea(
             highlighted: highlighted ?? AttributedString(displayContent),
             lineCount: lineCount,
             startLine: startLine,
-            maxHeight: presentation.viewportMaxHeight
+            maxHeight: presentation.viewportMaxHeight,
+            inlineSelectionEnabled: ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
+                hasFullScreenAffordance: hasFullScreenAffordance
+            )
         )
 
         Group {
@@ -120,7 +124,7 @@ private struct CodeFileView: View {
                         lineCount: lines.count,
                         copyContent: content,
                         showCopy: false,
-                        onExpand: (presentation.allowsExpansionAffordance && allowsFullScreenExpansion) ? { showFullScreen = true } : nil
+                        onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
                     )
 
                     codeBody
@@ -183,14 +187,19 @@ private struct MarkdownFileView: View {
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenMarkdownView(content: content, filePath: filePath, showSource: showRaw)
+            FullScreenCodeView(content: .markdown(content: content, filePath: filePath))
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
     }
 
     private var inlineBody: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
+        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
+            hasFullScreenAffordance: hasFullScreenAffordance
+        )
+
+        return VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: "doc.richtext")
@@ -214,7 +223,7 @@ private struct MarkdownFileView: View {
                 }
                 .buttonStyle(.plain)
 
-                if allowsFullScreenExpansion {
+                if hasFullScreenAffordance {
                     Button {
                         showFullScreen = true
                     } label: {
@@ -242,7 +251,7 @@ private struct MarkdownFileView: View {
                         MarkdownText(content)
                     }
                 }
-                .textSelection(.enabled)
+                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -250,7 +259,7 @@ private struct MarkdownFileView: View {
         }
         .codeBlockChrome()
         .contextMenu {
-            if allowsFullScreenExpansion {
+            if hasFullScreenAffordance {
                 Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                     showFullScreen = true
                 }
@@ -377,6 +386,10 @@ private struct JSONFileView: View {
     var body: some View {
         let info = prepared ?? JSONPrepared.placeholder(from: content)
         let isTruncated = info.totalLines > FileContentView.maxDisplayLines
+        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
+        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
+            hasFullScreenAffordance: hasFullScreenAffordance
+        )
 
         Group {
             if presentation.usesInlineChrome {
@@ -385,14 +398,15 @@ private struct JSONFileView: View {
                         label: "JSON",
                         lineCount: info.totalLines,
                         copyContent: content,
-                        onExpand: (presentation.allowsExpansionAffordance && allowsFullScreenExpansion) ? { showFullScreen = true } : nil
+                        onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
                     )
 
                     codeArea(
                         highlighted: info.highlighted ?? AttributedString(info.displayText),
                         lineCount: info.displayLineCount,
                         startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight
+                        maxHeight: presentation.viewportMaxHeight,
+                        inlineSelectionEnabled: inlineSelectionEnabled
                     )
 
                     if isTruncated {
@@ -411,7 +425,8 @@ private struct JSONFileView: View {
                         highlighted: info.highlighted ?? AttributedString(info.displayText),
                         lineCount: info.displayLineCount,
                         startLine: startLine,
-                        maxHeight: nil
+                        maxHeight: nil,
+                        inlineSelectionEnabled: true
                     )
 
                     if isTruncated {
@@ -488,6 +503,10 @@ private struct PlainTextView: View {
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let displayText = lines.prefix(lineCount).joined(separator: "\n")
         let isTruncated = lines.count > FileContentView.maxDisplayLines
+        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
+        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
+            hasFullScreenAffordance: hasFullScreenAffordance
+        )
 
         Group {
             if presentation.usesInlineChrome {
@@ -496,7 +515,8 @@ private struct PlainTextView: View {
                         text: displayText,
                         lineCount: lineCount,
                         startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight
+                        maxHeight: presentation.viewportMaxHeight,
+                        inlineSelectionEnabled: inlineSelectionEnabled
                     )
 
                     if isTruncated {
@@ -505,7 +525,7 @@ private struct PlainTextView: View {
                 }
                 .codeBlockChrome()
                 .contextMenu {
-                    if allowsFullScreenExpansion {
+                    if hasFullScreenAffordance {
                         Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                             showFullScreen = true
                         }
@@ -520,7 +540,8 @@ private struct PlainTextView: View {
                         text: displayText,
                         lineCount: lineCount,
                         startLine: startLine,
-                        maxHeight: nil
+                        maxHeight: nil,
+                        inlineSelectionEnabled: true
                     )
 
                     if isTruncated {
@@ -762,7 +783,8 @@ private func codeArea(
     highlighted: AttributedString,
     lineCount: Int,
     startLine: Int,
-    maxHeight: CGFloat?
+    maxHeight: CGFloat?,
+    inlineSelectionEnabled: Bool
 ) -> some View {
     let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
     CodeArea(
@@ -772,7 +794,7 @@ private func codeArea(
             Text(highlighted)
                 .font(.system(size: 11, design: .monospaced))
                 .fixedSize(horizontal: true, vertical: false)
-                .textSelection(.enabled)
+                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
         ),
         maxHeight: maxHeight
     )
@@ -784,7 +806,8 @@ private func codeArea(
     text: String,
     lineCount: Int,
     startLine: Int,
-    maxHeight: CGFloat?
+    maxHeight: CGFloat?,
+    inlineSelectionEnabled: Bool
 ) -> some View {
     let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
     CodeArea(
@@ -795,7 +818,7 @@ private func codeArea(
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.themeFg)
                 .fixedSize(horizontal: true, vertical: false)
-                .textSelection(.enabled)
+                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
         ),
         maxHeight: maxHeight
     )

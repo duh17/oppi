@@ -129,3 +129,20 @@ enum FileContentPresentation {
         usesInlineChrome
     }
 }
+
+enum ExpandableInlineTextSelectionPolicy {
+    static func allowsInlineSelection(hasFullScreenAffordance: Bool) -> Bool {
+        !hasFullScreenAffordance
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func applyInlineTextSelectionPolicy(_ enabled: Bool) -> some View {
+        if enabled {
+            textSelection(.enabled)
+        } else {
+            textSelection(.disabled)
+        }
+    }
+}

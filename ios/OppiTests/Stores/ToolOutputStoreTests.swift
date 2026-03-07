@@ -102,6 +102,8 @@ struct ToolOutputStoreTests {
         store.replace("tail preview only", for: "t1")
         #expect(store.fullOutput(for: "t1") == "tail preview only")
         #expect(store.totalBytes == "tail preview only".utf8.count)
+        #expect(store.hasCompleteOutput(for: "t1"))
+        #expect(!store.hasPreviewOnlyOutput(for: "t1"))
     }
 
     @Test func replaceCreatesNewEntryIfMissing() {
@@ -130,8 +132,11 @@ struct ToolOutputStoreTests {
         #expect(store.fullOutput(for: "t1") == "line1\nline2\nline3\n")
 
         // Server switches to replace mode
-        store.replace("line98\nline99\nline100\n", for: "t1")
+        store.replace("line98\nline99\nline100\n", for: "t1", previewOnly: true, totalBytes: 50_000)
         #expect(store.fullOutput(for: "t1") == "line98\nline99\nline100\n")
+        #expect(store.hasPreviewOnlyOutput(for: "t1"))
+        #expect(!store.hasCompleteOutput(for: "t1"))
+        #expect(store.outputByteCount(for: "t1") == 50_000)
     }
 
     @Test func replaceRespectsPerItemCap() {
@@ -140,5 +145,15 @@ struct ToolOutputStoreTests {
         store.replace(oversized, for: "t1")
         let output = store.fullOutput(for: "t1")
         #expect(output.hasSuffix(ToolOutputStore.truncationMarker))
+    }
+
+    @Test func replacePreviewTracksReportedByteCountSeparatelyFromStoredBytes() {
+        let store = ToolOutputStore()
+        store.replace("tail preview", for: "t1", previewOnly: true, totalBytes: 32_768)
+
+        #expect(store.byteCount(for: "t1") == "tail preview".utf8.count)
+        #expect(store.outputByteCount(for: "t1") == 32_768)
+        #expect(store.hasPreviewOnlyOutput(for: "t1"))
+        #expect(!store.hasCompleteOutput(for: "t1"))
     }
 }
