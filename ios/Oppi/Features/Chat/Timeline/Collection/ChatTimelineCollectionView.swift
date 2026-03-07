@@ -303,12 +303,37 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         // MARK: - Diffing
 
+        /// Build ordered unique items, keeping the last occurrence of each ID.
+        ///
+        /// Single-pass fast path when no duplicates exist (the common case).
+        /// Falls back to a two-pass dedup only when a collision is detected.
         static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
             var itemByID: [String: ChatItem] = [:]
             itemByID.reserveCapacity(items.count)
 
             var orderedIDs: [String] = []
             orderedIDs.reserveCapacity(items.count)
+
+            var hasDuplicates = false
+
+            for item in items {
+                if itemByID[item.id] != nil {
+                    hasDuplicates = true
+                    break
+                }
+                itemByID[item.id] = item
+                orderedIDs.append(item.id)
+            }
+
+            // Common case: no duplicates — single pass is complete.
+            if !hasDuplicates {
+                return (orderedIDs: orderedIDs, itemByID: itemByID)
+            }
+
+            // Rare case: duplicates found — fall back to two-pass dedup
+            // that keeps the last occurrence of each ID.
+            itemByID.removeAll(keepingCapacity: true)
+            orderedIDs.removeAll(keepingCapacity: true)
 
             var lastIndexByID: [String: Int] = [:]
             lastIndexByID.reserveCapacity(items.count)
