@@ -320,6 +320,25 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!plotDoubleTap.isEnabled)
     }
 
+    @Test func expandedMarkdownDisablesInlineTextSelectionWhenFullScreenIsPreferred() throws {
+        let markdownConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Header\n\nBody with [link](https://example.com)"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: markdownConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
+        let innerTextViews = timelineAllTextViews(in: markdownView)
+        #expect(!innerTextViews.isEmpty, "Expected markdown text views")
+
+        for textView in innerTextViews {
+            #expect(!textView.isSelectable)
+        }
+    }
+
     @Test func horizontalPanPassthroughRejectsVerticalIntent() {
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 180, y: 20)))
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 70, y: 55)))

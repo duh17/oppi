@@ -13,6 +13,7 @@ final class AssistantMarkdownContentView: UIView {
         let content: String
         let isStreaming: Bool
         let themeID: ThemeID
+        let textSelectionEnabled: Bool
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let selectedTextSourceContext: SelectedTextSourceContext?
 
@@ -20,12 +21,14 @@ final class AssistantMarkdownContentView: UIView {
             content: String,
             isStreaming: Bool,
             themeID: ThemeID,
+            textSelectionEnabled: Bool = true,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil
         ) {
             self.content = content
             self.isStreaming = isStreaming
             self.themeID = themeID
+            self.textSelectionEnabled = textSelectionEnabled
             self.selectedTextPiRouter = selectedTextPiRouter
             self.selectedTextSourceContext = selectedTextSourceContext
         }
@@ -34,6 +37,7 @@ final class AssistantMarkdownContentView: UIView {
             lhs.content == rhs.content
                 && lhs.isStreaming == rhs.isStreaming
                 && lhs.themeID == rhs.themeID
+                && lhs.textSelectionEnabled == rhs.textSelectionEnabled
                 && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
         }
