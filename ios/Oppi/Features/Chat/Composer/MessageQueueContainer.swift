@@ -29,6 +29,35 @@ struct MessageQueueContainer: View {
         editorState.displayedQueue
     }
 
+    private var controlsDisabled: Bool {
+        isApplying || isRefreshing
+    }
+
+    private var statusBannerModel: (title: String, message: String, color: Color)? {
+        if let conflict = editorState.conflict {
+            return (conflict.title, conflict.message, .themeOrange)
+        }
+        if editorState.isDraftMode {
+            return (
+                "Unsaved text edits",
+                "Save to replace the current queue with your updated draft.",
+                .themeComment
+            )
+        }
+        if editorState.hasStashedDraft {
+            return (
+                "Reviewing latest queue",
+                "Your earlier draft is still available if you want to restore it.",
+                .themeComment
+            )
+        }
+        return nil
+    }
+
+    private var isQueueEmpty: Bool {
+        displayedQueue.steering.isEmpty && displayedQueue.followUp.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
@@ -36,19 +65,15 @@ struct MessageQueueContainer: View {
             if isExpanded {
                 busyModePicker
 
-                if let conflict = editorState.conflict {
-                    statusBanner(title: conflict.title, message: conflict.message, color: .themeOrange)
-                } else if editorState.isDraftMode {
-                    statusBanner(title: "Unsaved text edits", message: "Save to replace the current queue with your updated draft.", color: .themeComment)
-                } else if editorState.hasStashedDraft {
-                    statusBanner(title: "Reviewing latest queue", message: "Your earlier draft is still available if you want to restore it.", color: .themeComment)
+                if let banner = statusBannerModel {
+                    statusBanner(title: banner.title, message: banner.message, color: banner.color)
                 }
 
                 if let errorText, !errorText.isEmpty {
                     statusBanner(title: "Queue update failed", message: errorText, color: .themeRed)
                 }
 
-                if displayedQueue.steering.isEmpty && displayedQueue.followUp.isEmpty {
+                if isQueueEmpty {
                     Text("Queue is empty")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
@@ -192,46 +217,24 @@ struct MessageQueueContainer: View {
     }
 
     private func rowActions(kind: MessageQueueKind, index: Int) -> some View {
-        let controlsDisabled = isApplying || isRefreshing
-
-        return HStack(spacing: 4) {
+        HStack(spacing: 4) {
             IconActionButton(systemName: "arrow.up") {
-                let request = editorState.moveItem(kind: kind, from: index, direction: -1)
-                if let request {
-                    applyMutation(request, revertOnFailure: true)
-                } else {
-                    errorText = nil
-                }
+                handleRowMutation(editorState.moveItem(kind: kind, from: index, direction: -1))
             }
             .disabled(controlsDisabled || !canMove(kind: kind, index: index, direction: -1))
 
             IconActionButton(systemName: "arrow.down") {
-                let request = editorState.moveItem(kind: kind, from: index, direction: 1)
-                if let request {
-                    applyMutation(request, revertOnFailure: true)
-                } else {
-                    errorText = nil
-                }
+                handleRowMutation(editorState.moveItem(kind: kind, from: index, direction: 1))
             }
             .disabled(controlsDisabled || !canMove(kind: kind, index: index, direction: 1))
 
-            IconActionButton(systemName: kind == .steer ? "arrow.down.right" : "arrow.up.left") {
-                let request = editorState.moveBetweenQueues(kind: kind, index: index)
-                if let request {
-                    applyMutation(request, revertOnFailure: true)
-                } else {
-                    errorText = nil
-                }
+            IconActionButton(systemName: moveBetweenQueuesSystemImage(for: kind)) {
+                handleRowMutation(editorState.moveBetweenQueues(kind: kind, index: index))
             }
             .disabled(controlsDisabled)
 
             IconActionButton(systemName: "trash") {
-                let request = editorState.deleteItem(kind: kind, index: index)
-                if let request {
-                    applyMutation(request, revertOnFailure: true)
-                } else {
-                    errorText = nil
-                }
+                handleRowMutation(editorState.deleteItem(kind: kind, index: index))
             }
             .disabled(controlsDisabled)
         }
@@ -239,7 +242,7 @@ struct MessageQueueContainer: View {
 
     private var footerActions: some View {
         HStack(spacing: 8) {
-            if isRefreshing || isApplying {
+            if controlsDisabled {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -248,7 +251,7 @@ struct MessageQueueContainer: View {
                 refreshQueue()
             }
             .font(.caption)
-            .disabled(isRefreshing || isApplying)
+            .disabled(controlsDisabled)
             .accessibilityIdentifier("chat.messageQueue.refresh")
 
             Spacer()
@@ -259,45 +262,47 @@ struct MessageQueueContainer: View {
                     errorText = nil
                 }
                 .font(.caption)
-                .disabled(isApplying || isRefreshing)
+                .disabled(controlsDisabled)
             }
 
             if editorState.isDraftMode {
-                if let conflict = editorState.conflict {
-                    Button(conflict.reviewActionTitle) {
-                        editorState.reviewLatest()
-                        errorText = nil
-                    }
-                    .font(.caption)
-                    .disabled(isApplying || isRefreshing)
-
-                    Button {
-                        saveDraft()
-                    } label: {
-                        labelText(conflict.applyActionTitle)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.themeBlue)
-                    .disabled(isApplying || isRefreshing)
-                } else {
-                    Button("Discard") {
-                        editorState.discardDraft()
-                        errorText = nil
-                    }
-                    .font(.caption)
-                    .disabled(isApplying || isRefreshing)
-
-                    Button {
-                        saveDraft()
-                    } label: {
-                        labelText("Save")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.themeBlue)
-                    .disabled(isApplying || isRefreshing)
-                }
+                draftActions
             }
         }
+    }
+
+    @ViewBuilder
+    private var draftActions: some View {
+        if let conflict = editorState.conflict {
+            Button(conflict.reviewActionTitle) {
+                editorState.reviewLatest()
+                errorText = nil
+            }
+            .font(.caption)
+            .disabled(controlsDisabled)
+
+            saveButton(title: conflict.applyActionTitle)
+        } else {
+            Button("Discard") {
+                editorState.discardDraft()
+                errorText = nil
+            }
+            .font(.caption)
+            .disabled(controlsDisabled)
+
+            saveButton(title: "Save")
+        }
+    }
+
+    private func saveButton(title: String) -> some View {
+        Button {
+            saveDraft()
+        } label: {
+            labelText(title)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.themeBlue)
+        .disabled(controlsDisabled)
     }
 
     @ViewBuilder
@@ -340,8 +345,26 @@ struct MessageQueueContainer: View {
         return items.indices.contains(index) && items.indices.contains(target)
     }
 
+    private func moveBetweenQueuesSystemImage(for kind: MessageQueueKind) -> String {
+        switch kind {
+        case .steer:
+            return "arrow.down.right"
+        case .followUp:
+            return "arrow.up.left"
+        }
+    }
+
+    private func handleRowMutation(_ request: MessageQueueMutationRequest?) {
+        guard let request else {
+            errorText = nil
+            return
+        }
+
+        applyMutation(request, revertOnFailure: true)
+    }
+
     private func refreshQueue() {
-        guard !isRefreshing, !isApplying else { return }
+        guard !controlsDisabled else { return }
         isRefreshing = true
         errorText = nil
 
@@ -352,12 +375,12 @@ struct MessageQueueContainer: View {
     }
 
     private func saveDraft() {
-        guard let request = editorState.draftRequest(), !isApplying, !isRefreshing else { return }
+        guard !controlsDisabled, let request = editorState.draftRequest() else { return }
         applyMutation(request, revertOnFailure: false)
     }
 
     private func applyMutation(_ request: MessageQueueMutationRequest, revertOnFailure: Bool) {
-        guard !isApplying, !isRefreshing else { return }
+        guard !controlsDisabled else { return }
         isApplying = true
         errorText = nil
 
