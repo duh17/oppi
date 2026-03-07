@@ -15,6 +15,7 @@ struct ToolRowMarkdownRenderStrategy {
         shouldAutoFollowOnFirstRender: Bool,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
+        textSelectionEnabled: Bool,
         showExpandedMarkdown: () -> Void,
         setModeText: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
@@ -34,6 +35,7 @@ struct ToolRowMarkdownRenderStrategy {
             content: text,
             isStreaming: isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
+            textSelectionEnabled: textSelectionEnabled,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext
         ))

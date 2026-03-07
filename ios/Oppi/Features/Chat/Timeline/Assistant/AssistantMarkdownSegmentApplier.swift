@@ -62,6 +62,7 @@ final class AssistantMarkdownSegmentApplier {
             switch segment {
             case .text(let attributed):
                 let textView = makeTextView(palette: palette)
+                textView.isSelectable = config.textSelectionEnabled
                 textView.attributedText = Self.normalizedAttributedText(
                     from: attributed,
                     palette: palette
@@ -113,6 +114,7 @@ final class AssistantMarkdownSegmentApplier {
             switch segment {
             case .text(let attributed):
                 if let textView = textViews[index] {
+                    textView.isSelectable = config.textSelectionEnabled
                     textView.attributedText = Self.normalizedAttributedText(
                         from: attributed,
                         palette: palette
