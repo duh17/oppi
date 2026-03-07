@@ -38,6 +38,16 @@ struct DiffContentView: View {
         return ext.isEmpty ? .unknown : SyntaxLanguage.detect(ext)
     }
 
+    private var hasFullScreenAffordance: Bool {
+        allowsFullScreenExpansion
+    }
+
+    private var inlineSelectionEnabled: Bool {
+        ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
+            hasFullScreenAffordance: hasFullScreenAffordance
+        )
+    }
+
     var body: some View {
         let lines = diffLines
         let numberedLines = makeNumberedLines(lines)
@@ -63,7 +73,7 @@ struct DiffContentView: View {
                 .stroke(theme.text.tertiary.opacity(0.35), lineWidth: 1)
         )
         .contextMenu {
-            if allowsFullScreenExpansion {
+            if hasFullScreenAffordance {
                 Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                     showFullScreen = true
                 }
@@ -120,7 +130,7 @@ struct DiffContentView: View {
                     .foregroundStyle(theme.diff.removedAccent)
             }
 
-            if allowsFullScreenExpansion {
+            if hasFullScreenAffordance {
                 Button { showFullScreen = true } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.caption2)
@@ -172,13 +182,13 @@ struct DiffContentView: View {
                 if lang != .unknown {
                     Text(AttributedString(SyntaxHighlighter.highlightLine(line.text, language: lang)))
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
-                        .textSelection(.enabled)
+                        .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                         .fixedSize(horizontal: true, vertical: false)
                 } else {
                     Text(line.text)
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
                         .foregroundStyle(textColor(for: line.kind))
-                        .textSelection(.enabled)
+                        .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                         .fixedSize(horizontal: true, vertical: false)
                 }
             }

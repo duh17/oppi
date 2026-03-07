@@ -254,6 +254,38 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
+    @Test func expandedStreamingEditUsesCheapFileSurfaceUntilDone() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("edit-streaming")
+        harness.toolArgsStore.set([
+            "oldText": .string("let value = 1\n"),
+            "newText": .string("let value = 2\nlet added = true\n"),
+            "path": .string("src/main.swift"),
+        ], for: "edit-streaming")
+
+        let item = ChatItem.toolCall(
+            id: "edit-streaming",
+            tool: "edit",
+            argsSummary: "path: src/main.swift",
+            outputPreview: "",
+            outputByteCount: 0,
+            isError: false,
+            isDone: false
+        )
+
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        guard case .code(let text, let language, let startLine, let filePath) = config.expandedContent else {
+            Issue.record("Expected streaming edit to stay on cheap .code surface")
+            return
+        }
+        #expect(text == "let value = 2\nlet added = true\n")
+        #expect(language == .swift)
+        #expect(startLine == 1)
+        #expect(filePath == "src/main.swift")
+        #expect(config.copyOutputText == "let value = 2\nlet added = true\n")
+    }
+
+    @MainActor
     @Test func expandedEditToolFallbackOutputKeepsSyntaxLanguageFromPath() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("edit-fallback")
@@ -276,6 +308,34 @@ struct ToolPresentationConfigTests {
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for error edit fallback"); return }
         #expect(language == .typescript)
         #expect(filePath == "src/feature.ts")
+    }
+
+    @MainActor
+    @Test func expandedEditFallbackKeepsCodeRendererForMarkdownPaths() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("edit-md-fallback")
+        harness.toolArgsStore.set([
+            "path": .string("docs/README.md"),
+        ], for: "edit-md-fallback")
+
+        let item = ChatItem.toolCall(
+            id: "edit-md-fallback",
+            tool: "edit",
+            argsSummary: "path: docs/README.md",
+            outputPreview: "# Title",
+            outputByteCount: 7,
+            isError: true,
+            isDone: true
+        )
+
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        guard case .code(let text, let language, _, let filePath) = config.expandedContent else {
+            Issue.record("Expected .code for edit markdown fallback")
+            return
+        }
+        #expect(text == "# Title")
+        #expect(language == nil)
+        #expect(filePath == "docs/README.md")
     }
 
     @MainActor
@@ -397,6 +457,60 @@ struct ToolPresentationConfigTests {
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for write fallback"); return }
         #expect(language == .swift)
         #expect(filePath == "Sources/Generated.swift")
+    }
+
+    @MainActor
+    @Test func expandedWriteMarkdownUsesMarkdownRendererLikeRead() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("write-md")
+        harness.toolArgsStore.set([
+            "path": .string("docs/README.md"),
+            "content": .string("# Title\n\nBody"),
+        ], for: "write-md")
+
+        let item = ChatItem.toolCall(
+            id: "write-md",
+            tool: "write",
+            argsSummary: "path: docs/README.md",
+            outputPreview: "",
+            outputByteCount: 14,
+            isError: false,
+            isDone: true
+        )
+
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        guard case .markdown(let text) = config.expandedContent else { Issue.record("Expected .markdown for write file content"); return }
+        #expect(text == "# Title\n\nBody")
+        #expect(config.languageBadge == "Markdown")
+    }
+
+    @MainActor
+    @Test func expandedStreamingWriteMarkdownStaysOnCheapTextSurface() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("write-md-streaming")
+        harness.toolArgsStore.set([
+            "path": .string("docs/README.md"),
+            "content": .string("# Title\n\nBody"),
+        ], for: "write-md-streaming")
+
+        let item = ChatItem.toolCall(
+            id: "write-md-streaming",
+            tool: "write",
+            argsSummary: "path: docs/README.md",
+            outputPreview: "",
+            outputByteCount: 14,
+            isError: false,
+            isDone: false
+        )
+
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected streaming markdown write to stay on cheap .text surface")
+            return
+        }
+        #expect(text == "# Title\n\nBody")
+        #expect(language == nil)
+        #expect(config.languageBadge == "Markdown")
     }
 
     @MainActor
