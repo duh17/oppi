@@ -647,6 +647,46 @@ describe("session-protocol shell preview", () => {
     );
     expect(second).toHaveLength(0);
   });
+
+  it("counts UTF-8 bytes for shell preview thresholds and metadata", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tc-utf8",
+        toolName: "bash",
+        args: { command: "printf" },
+      },
+      ctx,
+    );
+
+    const largeOutput = "🙂".repeat(3_000);
+    expect(largeOutput.length).toBeLessThan(8 * 1024);
+    expect(Buffer.byteLength(largeOutput, "utf8")).toBeGreaterThan(8 * 1024);
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-utf8",
+        toolName: "bash",
+        args: {},
+        partialResult: {
+          content: [{ type: "text", text: largeOutput }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: "tool_output",
+      toolCallId: "tc-utf8",
+      mode: "replace",
+      truncated: true,
+      totalBytes: Buffer.byteLength(largeOutput, "utf8"),
+    });
+  });
 });
 
 describe("composeModelId", () => {

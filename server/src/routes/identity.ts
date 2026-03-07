@@ -134,6 +134,15 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const result = await ctx.runRuntimeUpdate();
     const status = await ctx.getRuntimeUpdateStatus({ force: true });
     helpers.json(res, { ok: result.ok, result, status });
+
+    // Auto-restart after successful update so the new runtime loads.
+    // launchd (KeepAlive) will bring the server back up immediately.
+    if (result.ok) {
+      setTimeout(() => {
+        console.log("[runtime-update] Update installed, exiting for launchd restart...");
+        process.exit(0);
+      }, 1_000);
+    }
   }
 
   async function handleRegisterDeviceToken(
