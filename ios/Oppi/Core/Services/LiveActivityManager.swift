@@ -243,6 +243,8 @@ final class LiveActivityManager {
             )
         }
 
+        var didChange = true
+
         switch event {
         case .agentStart(let sessionId):
             var entry = upsertSession(sessionId)
@@ -305,7 +307,8 @@ final class LiveActivityManager {
             snapshot.sessionsById[sessionId] = entry
 
         case .error(let sessionId, let message):
-            if message.hasPrefix("Retrying (") {
+            guard !message.hasPrefix("Retrying (") else {
+                didChange = false
                 break
             }
             var entry = upsertSession(sessionId)
@@ -316,8 +319,21 @@ final class LiveActivityManager {
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
 
-        default:
-            break
+        case .textDelta,
+             .thinkingDelta,
+             .messageEnd,
+             .toolOutput,
+             .compactionStart,
+             .compactionEnd,
+             .retryStart,
+             .retryEnd,
+             .commandResult,
+             .permissionExpired:
+            didChange = false
+        }
+
+        guard didChange else {
+            return
         }
 
         connectionSnapshots[connectionId] = snapshot

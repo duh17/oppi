@@ -501,9 +501,61 @@ extension ServerConnection {
 
     // MARK: - Live Activity Sync
 
+    func handleLiveActivityFlush(_ events: [AgentEvent]) {
+        guard ReleaseFeatures.liveActivitiesEnabled else {
+            return
+        }
+
+        let relevantEvents = liveActivityRelevantEvents(from: events)
+        guard !relevantEvents.isEmpty else {
+            return
+        }
+
+        for event in relevantEvents {
+            LiveActivityManager.shared.recordEvent(
+                connectionId: liveActivityConnectionId,
+                event: event
+            )
+        }
+
+        syncLiveActivityState()
+    }
+
+    func liveActivityRelevantEvents(from events: [AgentEvent]) -> [AgentEvent] {
+        events.filter(isLiveActivityRelevant)
+    }
+
+    func isLiveActivityRelevant(_ event: AgentEvent) -> Bool {
+        switch event {
+        case .agentStart,
+             .agentEnd,
+             .toolStart,
+             .toolEnd,
+             .permissionRequest,
+             .sessionEnded:
+            return true
+        case .error(_, let message):
+            return !message.hasPrefix("Retrying (")
+        case .textDelta,
+             .thinkingDelta,
+             .messageEnd,
+             .toolOutput,
+             .compactionStart,
+             .compactionEnd,
+             .retryStart,
+             .retryEnd,
+             .commandResult,
+             .permissionExpired:
+            return false
+        }
+    }
+
     func syncLiveActivityPermissions() {
         syncNotificationSubscriptions()
+        syncLiveActivityState()
+    }
 
+    func syncLiveActivityState() {
         guard ReleaseFeatures.liveActivitiesEnabled else {
             return
         }
