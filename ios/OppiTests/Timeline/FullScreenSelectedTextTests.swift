@@ -145,6 +145,32 @@ struct FullScreenSelectedTextTests {
         #expect(piMenu.title == "π")
     }
 
+    @Test func liveSourceChunkUpdateKeepsNavigationChromeWhenMetadataIsUnchanged() throws {
+        let stream = SourceTraceStream(
+            text: "streaming source",
+            filePath: "Draft.swift",
+            isDone: false,
+            finalContent: nil
+        )
+        let controller = makeController(
+            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+        )
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigationController.topViewController)
+        let titleView = try #require(contentController.navigationItem.titleView)
+        let copyButton = try #require(contentController.navigationItem.rightBarButtonItems?.first)
+
+        stream.update(
+            text: "streaming source\nnext chunk",
+            filePath: "Draft.swift",
+            isDone: false,
+            finalContent: nil
+        )
+
+        #expect(contentController.navigationItem.titleView === titleView)
+        #expect(contentController.navigationItem.rightBarButtonItems?.first === copyButton)
+    }
+
     @Test func nonChatFullScreenCodeStillAllowsSystemTextSelection() throws {
         let controller = FullScreenCodeViewController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)

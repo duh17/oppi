@@ -41,6 +41,52 @@ struct ServerConnectionInvariantTests {
         #expect(scenario.connection.reducer.renderVersion == beforeRenderVersion)
         #expect(scenario.connection.permissionStore.pending.count == beforePermissionCount)
     }
+
+    @MainActor
+    @Test func liveActivityFilterSkipsDeltaOnlyFlushes() {
+        let connection = ServerConnection()
+        let events: [AgentEvent] = [
+            .textDelta(sessionId: "s1", delta: "a"),
+            .thinkingDelta(sessionId: "s1", delta: "b"),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "chunk", isError: false),
+            .messageEnd(sessionId: "s1", content: "done"),
+        ]
+
+        #expect(connection.liveActivityRelevantEvents(from: events).isEmpty)
+    }
+
+    @MainActor
+    @Test func liveActivityFilterKeepsLifecycleEventsOnly() {
+        let connection = ServerConnection()
+        let permission = PermissionRequest(
+            id: "p1",
+            sessionId: "s1",
+            tool: "bash",
+            input: [:],
+            displaySummary: "bash: pwd",
+            reason: "Need permission",
+            timeoutAt: Date().addingTimeInterval(60)
+        )
+        let events: [AgentEvent] = [
+            .textDelta(sessionId: "s1", delta: "ignore"),
+            .agentStart(sessionId: "s1"),
+            .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "chunk", isError: false),
+            .permissionRequest(permission),
+            .error(sessionId: "s1", message: "Retrying (attempt 1/3)"),
+            .error(sessionId: "s1", message: "boom"),
+            .sessionEnded(sessionId: "s1", reason: "done"),
+        ]
+
+        let relevant = connection.liveActivityRelevantEvents(from: events)
+        #expect(relevant.map(\.typeLabel) == [
+            "agentStart",
+            "toolStart",
+            "permissionRequest",
+            "error",
+            "sessionEnded",
+        ])
+    }
 }
 
 private enum StopLifecycleEvent: CaseIterable {

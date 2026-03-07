@@ -16,6 +16,18 @@ final class FullScreenCodeViewController: UIViewController {
         let sourceToggleTitle: String?
     }
 
+    private struct NavigationPresentation: Equatable {
+        let titlePath: String?
+        let titleSubtitle: String
+        let sourceToggleTitle: String?
+
+        init(_ presentation: Presentation) {
+            titlePath = presentation.titlePath
+            titleSubtitle = presentation.titleSubtitle
+            sourceToggleTitle = presentation.sourceToggleTitle
+        }
+    }
+
     private let content: FullScreenCodeContent
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSessionId: String?
@@ -27,6 +39,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var liveSourceBodyView: NativeFullScreenSourceBody?
     private var liveSourceObserverID: UUID?
     private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
+    private var lastNavigationPresentation: NavigationPresentation?
 
     init(
         content: FullScreenCodeContent,
@@ -132,6 +145,12 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
         let presentation = makePresentation()
+        let navigationPresentation = NavigationPresentation(presentation)
+        guard navigationPresentation != lastNavigationPresentation else {
+            return
+        }
+
+        lastNavigationPresentation = navigationPresentation
         viewController.navigationItem.titleView = makeTitleView(
             path: presentation.titlePath,
             subtitle: presentation.titleSubtitle,
