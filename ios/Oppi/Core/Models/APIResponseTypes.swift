@@ -454,3 +454,15 @@ struct AppletDetailResponse: Decodable {
     let applet: Applet
     let latestVersion: AppletVersionWithHTML?
 }
+
+struct AppletEditSessionResponse: Decodable {
+    struct Provenance: Decodable {
+        let available: Bool
+        let sourceSessionId: String?
+        let sourceToolCallId: String?
+        let sourceSessionName: String?
+    }
+
+    let session: Session
+    let provenance: Provenance?
+}

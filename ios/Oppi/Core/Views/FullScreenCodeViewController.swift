@@ -12,18 +12,43 @@ private enum FullScreenCodeTypography {
 
 final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSessionId: String?
+    private let selectedTextSourceLabel: String?
     private var showSource = false
     private var copied = false
     private var copyButton: UIBarButtonItem?
     private var sourceToggleButton: UIBarButtonItem?
+    private weak var contentHostController: UIViewController?
+    private var installedBodyView: UIView?
+    private var liveSourceBodyView: NativeFullScreenStreamingSourceBody?
+    private var liveSourceObserverID: UUID?
+    private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
 
-    init(content: FullScreenCodeContent) {
+    init(
+        content: FullScreenCodeContent,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextSessionId: String? = nil,
+        selectedTextSourceLabel: String? = nil
+    ) {
         self.content = content
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSessionId = selectedTextSessionId
+        self.selectedTextSourceLabel = selectedTextSourceLabel
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let liveSourceObserverID,
+           case .liveSource(_, let stream) = content {
+            Task { @MainActor in
+                stream.removeObserver(liveSourceObserverID)
+            }
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -59,24 +84,7 @@ final class FullScreenCodeViewController: UIViewController {
         doneButton.tintColor = UIColor(palette.cyan)
         vc.navigationItem.leftBarButtonItem = doneButton
 
-        vc.navigationItem.titleView = makeTitleView(palette: palette)
-
-        var rightItems: [UIBarButtonItem] = []
-        let copy = UIBarButtonItem(image: UIImage(systemName: "doc.on.doc"), style: .plain, target: self, action: #selector(copyTapped))
-        copy.tintColor = UIColor(palette.fgDim)
-        copyButton = copy
-        rightItems.append(copy)
-
-        switch content {
-        case .markdown:
-            let toggle = UIBarButtonItem(title: String(localized: "Source"), style: .plain, target: self, action: #selector(toggleSource))
-            toggle.tintColor = UIColor(palette.blue)
-            sourceToggleButton = toggle
-            rightItems.append(toggle)
-        default:
-            break
-        }
-        vc.navigationItem.rightBarButtonItems = rightItems
+        contentHostController = vc
 
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
@@ -85,23 +93,76 @@ final class FullScreenCodeViewController: UIViewController {
         vc.navigationItem.standardAppearance = appearance
         vc.navigationItem.scrollEdgeAppearance = appearance
 
-        // Content
-        let contentView = makeBodyView(palette: palette)
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        vc.view.addSubview(contentView)
-        NSLayoutConstraint.activate([
-            contentView.leadingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.trailingAnchor),
-            contentView.topAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.topAnchor),
-            contentView.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor),
-        ])
+        installInitialBody(on: vc, palette: palette)
+        configureNavigation(on: vc, palette: palette)
 
         return vc
     }
 
+    private func installInitialBody(on viewController: UIViewController, palette: ThemePalette) {
+        switch content {
+        case .liveSource(let snapshot, let stream):
+            liveSourceCurrentSnapshot = snapshot
+            let body = makeLiveSourceBody(snapshot: snapshot, palette: palette)
+            installBodyView(body, on: viewController)
+            liveSourceObserverID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
+                self?.handleLiveSourceUpdate(snapshot)
+            }
+
+        default:
+            installBodyView(makeBodyView(for: currentBodyContent(), palette: palette), on: viewController)
+        }
+    }
+
+    private func installBodyView(_ bodyView: UIView, on viewController: UIViewController) {
+        installedBodyView?.removeFromSuperview()
+        installedBodyView = bodyView
+        bodyView.translatesAutoresizingMaskIntoConstraints = false
+        viewController.view.addSubview(bodyView)
+        NSLayoutConstraint.activate([
+            bodyView.leadingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.leadingAnchor),
+            bodyView.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor),
+            bodyView.topAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.topAnchor),
+            bodyView.bottomAnchor.constraint(equalTo: viewController.view.bottomAnchor),
+        ])
+    }
+
+    private func configureNavigation(on viewController: UIViewController, palette: ThemePalette) {
+        let semanticContent = currentSemanticContent()
+        viewController.navigationItem.titleView = makeTitleView(for: semanticContent, palette: palette)
+
+        var rightItems: [UIBarButtonItem] = []
+        let copy = UIBarButtonItem(
+            image: UIImage(systemName: "doc.on.doc"),
+            style: .plain,
+            target: self,
+            action: #selector(copyTapped)
+        )
+        copy.tintColor = UIColor(palette.fgDim)
+        copyButton = copy
+        rightItems.append(copy)
+
+        if markdownPayloadForSourceToggle() != nil {
+            let toggleTitle = showSource ? String(localized: "Reader") : String(localized: "Source")
+            let toggle = UIBarButtonItem(
+                title: toggleTitle,
+                style: .plain,
+                target: self,
+                action: #selector(toggleSource)
+            )
+            toggle.tintColor = UIColor(palette.blue)
+            sourceToggleButton = toggle
+            rightItems.append(toggle)
+        } else {
+            sourceToggleButton = nil
+        }
+
+        viewController.navigationItem.rightBarButtonItems = rightItems
+    }
+
     // MARK: - Title
 
-    private func makeTitleView(palette: ThemePalette) -> UIView {
+    private func makeTitleView(for content: FullScreenCodeContent, palette: ThemePalette) -> UIView {
         let stack = UIStackView()
         stack.axis = .vertical
         stack.alignment = .center
@@ -181,6 +242,9 @@ final class FullScreenCodeViewController: UIViewController {
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
+
+        case .liveSource(let snapshot, _):
+            return makeTitleView(for: semanticContent(for: snapshot), palette: palette)
         }
 
         return stack
@@ -188,20 +252,141 @@ final class FullScreenCodeViewController: UIViewController {
 
     // MARK: - Body
 
-    private func makeBodyView(palette: ThemePalette) -> UIView {
+    private func makeBodyView(for content: FullScreenCodeContent, palette: ThemePalette) -> UIView {
         switch content {
-        case .code(let text, let language, _, let startLine):
-            return NativeFullScreenCodeBody(content: text, language: language, startLine: startLine, palette: palette)
-        case .plainText(let text, _):
-            return NativeFullScreenSourceBody(content: text, palette: palette)
+        case .code(let text, let language, let filePath, let startLine):
+            return NativeFullScreenCodeBody(
+                content: text,
+                language: language,
+                filePath: filePath,
+                startLine: startLine,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenCodeSourceContext(language: language, filePath: filePath)
+            )
+        case .plainText(let text, let filePath):
+            return NativeFullScreenSourceBody(
+                content: text,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenSourceContext(filePath: filePath)
+            )
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
-            return NativeFullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath, precomputedLines: precomputedLines, palette: palette)
-        case .markdown(let text, _):
-            return NativeFullScreenMarkdownBody(content: text, palette: palette)
+            return NativeFullScreenDiffBody(
+                oldText: oldText,
+                newText: newText,
+                filePath: filePath,
+                precomputedLines: precomputedLines,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenDiffSourceContext(filePath: filePath)
+            )
+        case .markdown(let text, let filePath):
+            return NativeFullScreenMarkdownBody(
+                content: text,
+                filePath: filePath,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenMarkdownSourceContext(filePath: filePath)
+            )
         case .thinking(let text, let stream):
-            return NativeFullScreenThinkingBody(initialContent: text, stream: stream, palette: palette)
+            return NativeFullScreenThinkingBody(
+                initialContent: text,
+                stream: stream,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenThinkingSourceContext()
+            )
         case .terminal(let text, let command, let stream):
-            return NativeFullScreenTerminalBody(content: text, command: command, stream: stream, palette: palette)
+            return NativeFullScreenTerminalBody(
+                content: text,
+                command: command,
+                stream: stream,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeFullScreenTerminalSourceContext(command: command)
+            )
+        case .liveSource(let snapshot, _):
+            return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
+        }
+    }
+
+    private func makeLiveSourceBody(
+        snapshot: SourceTraceStream.Snapshot,
+        palette: ThemePalette
+    ) -> NativeFullScreenStreamingSourceBody {
+        let body = NativeFullScreenStreamingSourceBody(
+            content: snapshot.text,
+            isStreaming: !snapshot.isDone,
+            palette: palette,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: makeFullScreenSourceContext(filePath: snapshot.filePath)
+        )
+        liveSourceBodyView = body
+        return body
+    }
+
+    private func handleLiveSourceUpdate(_ snapshot: SourceTraceStream.Snapshot) {
+        liveSourceCurrentSnapshot = snapshot
+        guard let viewController = contentHostController else { return }
+
+        let palette = ThemeRuntimeState.currentThemeID().palette
+        if snapshot.isDone {
+            liveSourceBodyView = nil
+            installBodyView(makeBodyView(for: bodyContent(for: snapshot), palette: palette), on: viewController)
+        } else if let liveSourceBodyView {
+            liveSourceBodyView.update(content: snapshot.text, isStreaming: true)
+        } else {
+            installBodyView(makeLiveSourceBody(snapshot: snapshot, palette: palette), on: viewController)
+        }
+
+        configureNavigation(on: viewController, palette: palette)
+    }
+
+    private func currentSemanticContent() -> FullScreenCodeContent {
+        switch content {
+        case .liveSource(let snapshot, _):
+            return semanticContent(for: liveSourceCurrentSnapshot ?? snapshot)
+        default:
+            return content
+        }
+    }
+
+    private func currentBodyContent() -> FullScreenCodeContent {
+        switch content {
+        case .liveSource(let snapshot, _):
+            return bodyContent(for: liveSourceCurrentSnapshot ?? snapshot)
+        default:
+            return bodyContent(for: content)
+        }
+    }
+
+    private func semanticContent(for snapshot: SourceTraceStream.Snapshot) -> FullScreenCodeContent {
+        if snapshot.isDone,
+           let finalContent = snapshot.finalContent {
+            return finalContent
+        }
+        return .plainText(content: snapshot.text, filePath: snapshot.filePath)
+    }
+
+    private func bodyContent(for snapshot: SourceTraceStream.Snapshot) -> FullScreenCodeContent {
+        bodyContent(for: semanticContent(for: snapshot))
+    }
+
+    private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
+        if showSource,
+           case .markdown(let text, let filePath) = content {
+            return .plainText(content: text, filePath: filePath)
+        }
+        return content
+    }
+
+    private func markdownPayloadForSourceToggle() -> (text: String, filePath: String?)? {
+        switch currentSemanticContent() {
+        case .markdown(let text, let filePath):
+            return (text: text, filePath: filePath)
+        default:
+            return nil
         }
     }
 
@@ -212,16 +397,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     @objc private func copyTapped() {
-        let text: String
-        switch content {
-        case .code(let t, _, _, _): text = t
-        case .plainText(let t, _): text = t
-        case .diff(_, let newText, _, _): text = newText
-        case .markdown(let t, _): text = t
-        case .thinking(let t, let stream): text = stream?.snapshot.text ?? t
-        case .terminal(let t, _, let stream): text = stream?.snapshot.output ?? t
-        }
-        UIPasteboard.general.string = text
+        UIPasteboard.general.string = copyText(for: currentSemanticContent())
         copyButton?.image = UIImage(systemName: "checkmark")
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -230,32 +406,97 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    private func copyText(for content: FullScreenCodeContent) -> String {
+        switch content {
+        case .code(let text, _, _, _):
+            return text
+        case .plainText(let text, _):
+            return text
+        case .diff(_, let newText, _, _):
+            return newText
+        case .markdown(let text, _):
+            return text
+        case .thinking(let text, let stream):
+            return stream?.snapshot.text ?? text
+        case .terminal(let text, _, let stream):
+            return stream?.snapshot.output ?? text
+        case .liveSource(let snapshot, _):
+            return copyText(for: semanticContent(for: snapshot))
+        }
+    }
+
+    private func makeFullScreenCodeSourceContext(
+        language: String?,
+        filePath: String?
+    ) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenCode,
+            sourceLabel: selectedTextSourceLabel,
+            filePath: filePath,
+            languageHint: language
+        )
+    }
+
+    private func makeFullScreenDiffSourceContext(filePath: String?) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenDiff,
+            sourceLabel: selectedTextSourceLabel,
+            filePath: filePath
+        )
+    }
+
+    private func makeFullScreenSourceContext(filePath: String?) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenSource,
+            sourceLabel: selectedTextSourceLabel,
+            filePath: filePath
+        )
+    }
+
+    private func makeFullScreenMarkdownSourceContext(filePath: String?) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenMarkdown,
+            sourceLabel: selectedTextSourceLabel,
+            filePath: filePath
+        )
+    }
+
+    private func makeFullScreenThinkingSourceContext() -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenThinking,
+            sourceLabel: selectedTextSourceLabel ?? String(localized: "Thinking")
+        )
+    }
+
+    private func makeFullScreenTerminalSourceContext(command: String?) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId else { return nil }
+        return SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: .fullScreenTerminal,
+            sourceLabel: selectedTextSourceLabel ?? command
+        )
+    }
+
     @objc private func toggleSource() {
-        guard case .markdown(let text, _) = content,
-              let nav = children.first as? UINavigationController,
-              let vc = nav.viewControllers.first else { return }
+        guard markdownPayloadForSourceToggle() != nil,
+              let viewController = contentHostController else {
+            return
+        }
 
         showSource.toggle()
         let palette = ThemeRuntimeState.currentThemeID().palette
-        sourceToggleButton?.title = showSource ? String(localized: "Reader") : String(localized: "Source")
-
-        // Remove old content
-        vc.view.subviews.filter { $0 is NativeFullScreenMarkdownBody || $0 is NativeFullScreenSourceBody }.forEach { $0.removeFromSuperview() }
-
-        let body: UIView
-        if showSource {
-            body = NativeFullScreenSourceBody(content: text, palette: palette)
-        } else {
-            body = NativeFullScreenMarkdownBody(content: text, palette: palette)
-        }
-        body.translatesAutoresizingMaskIntoConstraints = false
-        vc.view.addSubview(body)
-        NSLayoutConstraint.activate([
-            body.leadingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.trailingAnchor),
-            body.topAnchor.constraint(equalTo: vc.view.safeAreaLayoutGuide.topAnchor),
-            body.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor),
-        ])
+        installBodyView(makeBodyView(for: currentBodyContent(), palette: palette), on: viewController)
+        configureNavigation(on: viewController, palette: palette)
     }
 }
 
@@ -277,13 +518,25 @@ private final class NativeFullScreenCodeBody: UIView {
     private let language: String?
     private let startLine: Int
     private let palette: ThemePalette
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
     private var highlightTask: Task<Void, Never>?
 
-    init(content: String, language: String?, startLine: Int, palette: ThemePalette) {
+    init(
+        content: String,
+        language: String?,
+        filePath: String?,
+        startLine: Int,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
         self.content = content
         self.language = language
         self.startLine = startLine
         self.palette = palette
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
         super.init(frame: .zero)
         setup()
         loadHighlighting()
@@ -331,6 +584,7 @@ private final class NativeFullScreenCodeBody: UIView {
         codeTextView.textColor = UIColor(palette.fg)
         codeTextView.backgroundColor = .clear
         codeTextView.isEditable = false
+        codeTextView.isSelectable = true
         codeTextView.isScrollEnabled = false
         codeTextView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 8)
         codeTextView.textContainer.lineFragmentPadding = 0
@@ -338,6 +592,7 @@ private final class NativeFullScreenCodeBody: UIView {
         codeTextView.textContainer.widthTracksTextView = false
         codeTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         codeTextView.text = content
+        codeTextView.delegate = self
         contentContainer.addSubview(codeTextView)
 
         NSLayoutConstraint.activate([
@@ -393,26 +648,47 @@ private final class NativeFullScreenCodeBody: UIView {
     }
 }
 
+extension NativeFullScreenCodeBody: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext
+        )
+    }
+}
+
 // MARK: - Diff Body
 
 private final class NativeFullScreenDiffBody: UIView {
     private let statsBar = UIView()
     private let scrollView = UIScrollView()
-    private let contentStack = UIStackView()
+    private let diffTextView = UITextView()
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
 
-    init(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?, palette: ThemePalette) {
+    init(
+        oldText: String,
+        newText: String,
+        filePath: String?,
+        precomputedLines: [DiffLine]?,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
         let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
         let stats = DiffEngine.stats(lines)
-        let language: SyntaxLanguage
-        if let path = filePath {
-            let ext = (path as NSString).pathExtension
-            language = ext.isEmpty ? .unknown : SyntaxLanguage.detect(ext)
-        } else {
-            language = .unknown
-        }
 
         // Stats bar
         let statsStack = UIStackView()
@@ -445,18 +721,36 @@ private final class NativeFullScreenDiffBody: UIView {
         statsBar.backgroundColor = UIColor(palette.bgHighlight)
         statsBar.addSubview(statsStack)
 
-        // Scroll view with diff rows
+        // Scroll view with selectable diff text.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.alwaysBounceHorizontal = true
         scrollView.backgroundColor = UIColor(palette.bgDark)
 
-        contentStack.axis = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 0
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(contentStack)
+        diffTextView.translatesAutoresizingMaskIntoConstraints = false
+        diffTextView.font = FullScreenCodeTypography.codeFont
+        diffTextView.textColor = UIColor(palette.fg)
+        diffTextView.backgroundColor = .clear
+        diffTextView.isEditable = false
+        diffTextView.isSelectable = true
+        diffTextView.isScrollEnabled = false
+        diffTextView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 14, right: 12)
+        diffTextView.textContainer.lineFragmentPadding = 0
+        diffTextView.textContainer.lineBreakMode = .byClipping
+        diffTextView.textContainer.widthTracksTextView = false
+        diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        diffTextView.delegate = self
+        let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: filePath)
+        diffTextView.attributedText = diffText
 
+        let measured = diffText.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: ceil(measured.width) + 24)
+
+        scrollView.addSubview(diffTextView)
         addSubview(statsBar)
         addSubview(scrollView)
 
@@ -475,51 +769,32 @@ private final class NativeFullScreenDiffBody: UIView {
             scrollView.topAnchor.constraint(equalTo: statsBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            diffTextView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            diffTextView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            diffTextView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            diffTextView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            widthConstraint,
+            diffTextView.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor),
         ])
-
-        buildDiffRows(lines: lines, language: language, palette: palette)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+}
 
-    private func buildDiffRows(lines: [DiffLine], language: SyntaxLanguage, palette: ThemePalette) {
-        var oldNumber = 1
-        var newNumber = 1
-
-        let themeID = ThemeRuntimeState.currentThemeID()
-
-        for line in lines {
-            let oldNum: Int?
-            let newNum: Int?
-
-            switch line.kind {
-            case .context:
-                oldNum = oldNumber; newNum = newNumber
-                oldNumber += 1; newNumber += 1
-            case .removed:
-                oldNum = oldNumber; newNum = nil
-                oldNumber += 1
-            case .added:
-                oldNum = nil; newNum = newNumber
-                newNumber += 1
-            }
-
-            let row = DiffRowView(
-                line: line,
-                oldLineNumber: oldNum,
-                newLineNumber: newNum,
-                language: language,
-                palette: palette,
-                themeID: themeID
-            )
-            row.translatesAutoresizingMaskIntoConstraints = false
-            contentStack.addArrangedSubview(row)
-        }
+extension NativeFullScreenDiffBody: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext
+        )
     }
 }
 
@@ -741,6 +1016,8 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private let outputView = UITextView()
     private let palette: ThemePalette
     private let stream: TerminalTraceStream?
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
     private var renderedSnapshot: TerminalTraceStream.Snapshot?
@@ -756,9 +1033,18 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private var renderTask: Task<Void, Never>?
     private var streamObserverID: UUID?
 
-    init(content: String, command: String?, stream: TerminalTraceStream?, palette: ThemePalette) {
+    init(
+        content: String,
+        command: String?,
+        stream: TerminalTraceStream?,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
         self.palette = palette
         self.stream = stream
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
 
         let initialSnapshot = stream?.snapshot
             ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
@@ -807,20 +1093,24 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
         commandView.translatesAutoresizingMaskIntoConstraints = false
         commandView.isEditable = false
+        commandView.isSelectable = true
         commandView.isScrollEnabled = false
         commandView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         commandView.textContainer.lineFragmentPadding = 0
         commandView.backgroundColor = UIColor(palette.bgHighlight)
         commandView.layer.cornerRadius = 8
+        commandView.delegate = self
 
         outputView.translatesAutoresizingMaskIntoConstraints = false
         outputView.isEditable = false
+        outputView.isSelectable = true
         outputView.isScrollEnabled = false
         outputView.backgroundColor = .clear
         outputView.textContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
         outputView.textContainer.lineFragmentPadding = 0
         outputView.font = FullScreenCodeTypography.codeFont
         outputView.textColor = UIColor(palette.fg)
+        outputView.delegate = self
 
         addSubview(scrollView)
         scrollView.addSubview(stack)
@@ -925,10 +1215,28 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     }
 }
 
+extension NativeFullScreenTerminalBody: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext
+        )
+    }
+}
+
 private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let markdownView = AssistantMarkdownContentView()
     private let markdownWidthConstraint: NSLayoutConstraint
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
 
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
@@ -941,7 +1249,15 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
         }
     )
 
-    init(initialContent: String, stream: ThinkingTraceStream?, palette: ThemePalette) {
+    init(
+        initialContent: String,
+        stream: ThinkingTraceStream?,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: initialContent, isDone: true)
         latestSnapshot = initialSnapshot
@@ -1011,7 +1327,9 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
         markdownView.apply(configuration: .init(
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
-            themeID: ThemeRuntimeState.currentThemeID()
+            themeID: ThemeRuntimeState.currentThemeID(),
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: selectedTextSourceContext
         ))
 
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
@@ -1047,7 +1365,13 @@ private final class NativeFullScreenMarkdownBody: UIView {
     private let markdownView = AssistantMarkdownContentView()
     private let markdownWidthConstraint: NSLayoutConstraint
 
-    init(content: String, palette: ThemePalette) {
+    init(
+        content: String,
+        filePath: String?,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
         markdownWidthConstraint = markdownView.widthAnchor.constraint(
             equalTo: scrollView.frameLayoutGuide.widthAnchor,
             constant: -24
@@ -1084,7 +1408,9 @@ private final class NativeFullScreenMarkdownBody: UIView {
         markdownView.apply(configuration: .init(
             content: content,
             isStreaming: false,
-            themeID: ThemeRuntimeState.currentThemeID()
+            themeID: ThemeRuntimeState.currentThemeID(),
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: selectedTextSourceContext
         ))
     }
 
@@ -1095,20 +1421,101 @@ private final class NativeFullScreenMarkdownBody: UIView {
 // MARK: - Source Body
 
 private final class NativeFullScreenSourceBody: UIView {
-    init(content: String, palette: ThemePalette) {
+    private let textView = UITextView()
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
+
+    init(
+        content: String,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
         super.init(frame: .zero)
 
         backgroundColor = UIColor(palette.bgDark)
 
-        let textView = UITextView()
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.font = FullScreenCodeTypography.codeFont
         textView.textColor = UIColor(palette.fg)
         textView.backgroundColor = .clear
         textView.isEditable = false
+        textView.isSelectable = true
         textView.isScrollEnabled = true
         textView.alwaysBounceVertical = true
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        textView.text = content
+        textView.delegate = self
+        addSubview(textView)
+
+        NSLayoutConstraint.activate([
+            textView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textView.topAnchor.constraint(equalTo: topAnchor),
+            textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+}
+
+extension NativeFullScreenSourceBody: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext
+        )
+    }
+}
+
+private final class NativeFullScreenStreamingSourceBody: UIView, UITextViewDelegate {
+    private let textView = UITextView()
+    private let selectedTextPiRouter: SelectedTextPiActionRouter?
+    private let selectedTextSourceContext: SelectedTextSourceContext?
+    private var isStreaming: Bool
+
+    private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
+        scrollView: textView,
+        shouldAutoFollowTail: isStreaming,
+        performLayout: { [weak self] in
+            self?.layoutIfNeeded()
+        }
+    )
+
+    init(
+        content: String,
+        isStreaming: Bool,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
+        self.isStreaming = isStreaming
+        super.init(frame: .zero)
+
+        backgroundColor = UIColor(palette.bgDark)
+
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.font = FullScreenCodeTypography.codeFont
+        textView.textColor = UIColor(palette.fg)
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.alwaysBounceVertical = true
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        textView.delegate = self
         textView.text = content
         addSubview(textView)
 
@@ -1122,4 +1529,62 @@ private final class NativeFullScreenSourceBody: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        tailFollowCoordinator.onLayoutPass()
+    }
+
+    func update(content: String, isStreaming: Bool) {
+        let textDidChange = textView.text != content
+        let streamingDidChange = self.isStreaming != isStreaming
+
+        guard textDidChange || streamingDidChange else {
+            tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
+            return
+        }
+
+        self.isStreaming = isStreaming
+        textView.text = content
+        if !isStreaming {
+            tailFollowCoordinator.shouldAutoFollowTail = false
+        }
+        tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        tailFollowCoordinator.handleWillBeginDragging()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        tailFollowCoordinator.handleDidScroll(
+            isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
+            isStreaming: isStreaming
+        )
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        tailFollowCoordinator.handleDidEndDragging(
+            willDecelerate: decelerate,
+            isStreaming: isStreaming
+        )
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        tailFollowCoordinator.handleDidEndDecelerating(isStreaming: isStreaming)
+    }
+
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        SelectedTextPiEditMenuSupport.buildMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: selectedTextPiRouter,
+            sourceContext: selectedTextSourceContext
+        )
+    }
 }

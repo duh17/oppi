@@ -26,17 +26,21 @@ cd server && npm test
 cd server && npm run check    # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 
-# iOS
+# iOS — use sim-pool.sh for simulator commands (avoids collisions between agents)
 cd ios && xcodegen generate
-cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
-cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test -only-testing:OppiTests
+cd ios && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+cd ios && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
 # Default target: your device UDID
+# Note: repo ios/scripts/install.sh is a compatibility wrapper to the canonical
+# install implementation in the personal oppi-dev skill.
 cd ios && bash scripts/install.sh -d DEVICE_UDID --launch
 ```
 
-After code changes: run `npm run check` (server) or `xcodebuild build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
+**sim-pool.sh** manages a pool of simulators with slot-based locking so multiple agents can build/test in parallel without colliding. It auto-injects `-destination` and `-derivedDataPath`. Do NOT pass your own `-destination` — the pool handles it. Simulators are lazy-created on first claim. Stale locks from crashed processes are auto-reaped.
+
+After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
 
 See [`docs/testing/`](docs/testing/) for full test strategy, pyramid, and required gates by change type.
 
@@ -58,7 +62,7 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - `git stash` — stashes ALL changes
 - `git push --force`
 - `xcrun devicectl device uninstall` — never uninstall the iOS app
-- Raw `devicectl device install` — use `ios/scripts/install.sh -d DEVICE_UDID` instead
+- Raw `devicectl device install` — use `ios/scripts/install.sh -d DEVICE_UDID` instead (repo wrapper to the canonical oppi-dev install script)
 
 ### GitHub Issues
 ```bash
@@ -142,6 +146,6 @@ ServerMessage (WebSocket)
 ## Definition of Done
 
 A task is done when:
-1. `npm run check` passes (server) and/or `xcodebuild build` + `test -only-testing:OppiTests` pass (iOS)
+1. `npm run check` passes (server) and/or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` pass (iOS)
 2. Protocol changes are mirrored on both sides with tests
 3. `xcodegen generate` was run if iOS file structure changed

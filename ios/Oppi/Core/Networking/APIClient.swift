@@ -721,6 +721,13 @@ actor APIClient {
         return (response.applet, response.latestVersion)
     }
 
+    /// Create a new session preloaded to edit an applet.
+    func createAppletEditSession(workspaceId: String, appletId: String) async throws -> Session {
+        let data = try await post("/workspaces/\(workspaceId)/applets/\(appletId)/edit-session", body: EmptyBody())
+        let response = try JSONDecoder().decode(AppletEditSessionResponse.self, from: data)
+        return response.session
+    }
+
     /// Delete an applet and all its versions.
     func deleteApplet(workspaceId: String, appletId: String) async throws {
         let (data, response) = try await request("DELETE", path: "/workspaces/\(workspaceId)/applets/\(appletId)")

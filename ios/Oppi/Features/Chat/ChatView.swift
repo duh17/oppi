@@ -38,6 +38,7 @@ struct ChatView: View {
     @State private var isZenMode = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
+    @State private var composerExternalFocusRequestID = 0
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
@@ -104,6 +105,7 @@ struct ChatView: View {
             scrollController: scrollController,
             sessionManager: sessionManager,
             onFork: forkFromMessage,
+            selectedTextPiRouter: selectedTextPiRouter,
             topOverlap: isZenMode ? 0 : headerHeight,
             bottomOverlap: isZenMode ? 0 : footerHeight
         )
@@ -349,6 +351,7 @@ struct ChatView: View {
                         )
                     },
                     onExpand: presentComposer,
+                    externalFocusRequestID: composerExternalFocusRequestID,
                     appliesOuterPadding: true,
                     actionRow: {
                         SessionToolbar(
@@ -507,6 +510,12 @@ struct ChatView: View {
         .transition(.opacity)
     }
 
+    private var selectedTextPiRouter: SelectedTextPiActionRouter {
+        SelectedTextPiActionRouter { request in
+            handleSelectedTextPiAction(request)
+        }
+    }
+
     // MARK: - Actions
 
     private func updateFileSuggestions(query: String?) {
@@ -514,6 +523,32 @@ struct ChatView: View {
             connection.fetchFileSuggestions(query: query)
         } else {
             connection.clearFileSuggestions()
+        }
+    }
+
+    @MainActor
+    private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
+        let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+        guard !addition.isEmpty else { return }
+
+        if isZenMode {
+            exitZenMode(animated: false)
+        }
+
+        if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            inputText = addition
+        } else if inputText.hasSuffix("\n\n") {
+            inputText += addition
+        } else if inputText.hasSuffix("\n") {
+            inputText += "\n" + addition
+        } else {
+            inputText += "\n\n" + addition
+        }
+
+        if isStopped {
+            showComposer = true
+        } else if !showComposer {
+            composerExternalFocusRequestID &+= 1
         }
     }
 

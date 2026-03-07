@@ -14,7 +14,7 @@ Oppi has two runtimes in one repo:
 
 ## High-level overview
 
-A user action in iOS becomes a `ClientMessage`, goes to `server/src/ws-message-handler.ts`, is routed into `SessionManager` coordinators, then pi SDK emits agent events. Those events are translated to `ServerMessage` (`session-protocol.ts`), sequenced (`session-broadcast.ts`, `event-ring.ts`), multiplexed (`stream.ts`), decoded on iOS (`ServerMessage.swift` / `StreamMessage`), coalesced (`DeltaCoalescer.swift`), reduced (`TimelineReducer.swift`), and rendered (`ChatTimelineCollectionView.swift`).
+A user action in iOS becomes a `ClientMessage`, goes to `server/src/ws-message-handler.ts`, is routed into `SessionManager` coordinators, then pi SDK emits agent events. Those events are translated to `ServerMessage` (`session-protocol.ts`), sequenced (`session-broadcast.ts`, `event-ring.ts`), multiplexed (`stream.ts`), decoded on iOS (`ServerMessage.swift` / `StreamMessage`), coalesced (`DeltaCoalescer.swift`), reduced (`TimelineReducer.swift`), and rendered by `ChatTimelineView` through `Features/Chat/Timeline/Collection/ChatTimelineCollectionView.swift`.
 
 ---
 
@@ -213,8 +213,13 @@ Core/Services
 Features/Chat
   ├─ ChatSessionManager (UI/session lifecycle + history orchestration)
   ├─ ChatActionHandler (send/stop/model/thinking/session actions)
-  ├─ ChatTimelineView (render window + scroll command wiring)
-  └─ ChatTimelineCollectionView + TimelineSnapshotApplier (UIKit render host)
+  ├─ ChatTimelineView (SwiftUI render window + overlay/scroll wiring)
+  └─ Timeline/
+      ├─ Collection/ (UICollectionView host, apply plan, snapshot diffing, scroll/perf/tool-output loading)
+      ├─ Rows/ (assistant/user/thinking/system/error/audio/permission content configurations)
+      ├─ Tool/ (tool row content, plan builder, interaction policy, expanded surface host, full-screen support, render strategies)
+      ├─ Assistant/ (markdown segment source/applier/block views)
+      └─ Interaction/ (shared full-screen vs inline-selection specs)
 ```
 
 ### iOS layers
@@ -233,6 +238,15 @@ Mechanically enforced boundaries:
    - `SessionStore`, `WorkspaceStore`, `PermissionStore`, and `MessageQueueStore` must not directly reference each other.
    - Cross-store orchestration belongs in `ServerConnection` / coordinators.
 
+### Timeline rendering package map
+
+- `ChatTimelineView.swift` is the SwiftUI entry point for the timeline render window, jump/initial scroll commands, empty state, and permission overlay.
+- `Timeline/Collection/ChatTimelineCollectionView.swift` owns the UIKit host/controller. `ChatTimelineApplyPlan.swift`, `ChatTimelineControllerContext.swift`, `TimelineSnapshotApplier.swift`, `ChatTimelineToolOutputLoader.swift`, and `ChatTimelinePerf.swift` are collection-local support modules.
+- `Timeline/Rows/` contains non-tool row configurations/content views (assistant, user, thinking, permission, system, error, audio, load-more, working-indicator).
+- `Timeline/Assistant/` contains the markdown pipeline split: `AssistantMarkdownSegmentSource`, `AssistantMarkdownSegmentApplier`, and block renderers.
+- `Timeline/Tool/` owns tool-row rendering. The main flow is `ToolPresentationBuilder.ToolExpandedContent` -> `ToolRowPlanBuilder` -> `ToolTimelineRowContentView` -> per-mode `ToolRow*RenderStrategy` or `ToolExpandedSurfaceHostView`.
+- `Timeline/Interaction/` holds the shared explicit interaction contracts: `TimelineExpandableTextInteractionSpec` and `TimelineInteractionSpec`.
+
 ### Event pipeline (runtime)
 
 `ServerMessage` handling path in code:
@@ -242,9 +256,9 @@ Mechanically enforced boundaries:
 3. `ServerConnection.handleServerMessage(...)` maps server protocol to local events/stores.
 4. `DeltaCoalescer.receive(...)` batches `textDelta`, `thinkingDelta`, `toolOutput` (~33ms).
 5. `TimelineReducer.processBatch(...)` mutates timeline state and bumps `renderVersion` once per mutating batch.
-6. `ChatTimelineView` observes `renderVersion` and builds collection configuration.
-7. `TimelineSnapshotApplier.applySnapshot(...)` applies diffable snapshot.
-8. `ChatTimelineCollectionView.Controller.apply(...)` runs `layoutIfNeeded`, scroll logic, and visible hint updates.
+6. `ChatTimelineView` observes `renderVersion` and builds `ChatTimelineCollectionHost.Configuration`.
+7. `ChatTimelineCollectionHost.Controller.apply(...)` builds `ChatTimelineApplyPlan`, updates controller context, and delegates snapshot diffing to `TimelineSnapshotApplier.applySnapshot(...)`.
+8. `ChatTimelineCollectionHost.Controller.apply(...)` then runs `layoutIfNeeded`, scroll logic, and visible hint updates.
 
 ### Store isolation rules (as implemented)
 
@@ -277,7 +291,7 @@ Examples from code comments:
 - `SessionStreamCoordinator` owns stream lifecycle policy (subscribe/resubscribe, queue sync, full-subscription recovery, notification-level sync, and seq/catch-up bookkeeping).
 - `ServerConnection` owns network transport + message routing and delegates stream lifecycle transitions to `SessionStreamCoordinator`.
 - `TimelineReducer`/`DeltaCoalescer` stay UI-framework-free (`Foundation` + runtime types).
-- UIKit-specific rendering stays in timeline view host files (`ChatTimelineCollectionView`, `TimelineSnapshotApplier`, cell/content classes).
+- UIKit-specific rendering stays in timeline host/render files under `Features/Chat/Timeline/Collection`, `Rows`, `Tool`, and `Assistant`; reducers/coalescers remain UIKit-free.
 
 ### Multi-server boundary
 
@@ -325,8 +339,9 @@ pi AgentSession event
   -> DeltaCoalescer.receive (batch high-frequency deltas)
   -> TimelineReducer.processBatch (state machine -> [ChatItem], renderVersion++)
   -> ChatTimelineView observes renderVersion
+  -> ChatTimelineCollectionHost.Controller.apply
   -> TimelineSnapshotApplier.applySnapshot
-  -> ChatTimelineCollectionView layout + scroll coordination
+  -> ChatTimelineCollectionHost layout + scroll coordination
   -> UIKit draws pixels
 ```
 

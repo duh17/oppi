@@ -271,6 +271,55 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(unwrappedOutputScroll.isScrollEnabled)
     }
 
+    @Test func expandedViewportDoubleTapActivationMatchesFullScreenSupport() throws {
+        let markdownView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Header\n\nBody"),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: markdownView, width: 360)
+        let markdownScrollView = try #require(privateScrollView(named: "expandedScrollView", in: markdownView))
+        let markdownDoubleTap = try #require(markdownScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
+            $0.numberOfTapsRequired == 2
+        })
+        #expect(markdownDoubleTap.isEnabled)
+
+        let textView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: .text(text: "Saved to journal: 2026-03-07.md", language: nil),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: textView, width: 360)
+        let textScrollView = try #require(privateScrollView(named: "expandedScrollView", in: textView))
+        let textDoubleTap = try #require(textScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
+            $0.numberOfTapsRequired == 2
+        })
+        #expect(textDoubleTap.isEnabled)
+
+        let plotView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "plot",
+            expandedContent: .plot(
+                spec: PlotChartSpec(
+                    title: nil,
+                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
+                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
+                    xAxis: .init(label: "x", invert: false),
+                    yAxis: .init(label: "y", invert: false),
+                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
+                    preferredHeight: 180
+                ),
+                fallbackText: nil
+            ),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: plotView, width: 360)
+        let plotScrollView = try #require(privateScrollView(named: "expandedScrollView", in: plotView))
+        let plotDoubleTap = try #require(plotScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
+            $0.numberOfTapsRequired == 2
+        })
+        #expect(!plotDoubleTap.isEnabled)
+    }
+
     @Test func horizontalPanPassthroughRejectsVerticalIntent() {
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 180, y: 20)))
         #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 70, y: 55)))
@@ -559,6 +608,110 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(firstPassSize.height.isFinite)
         #expect(firstPassSize.height > 0)
         #expect(firstPassSize.height < 300, "Initial code sizing should stay compact; got \(firstPassSize.height)")
+    }
+
+    @Test func deferredCodeHighlightAppliesEvenIfContainerIsStillHidden() async throws {
+        ToolRowRenderCache.evictAll()
+
+        let text = (1...24)
+            .map { index in
+                "let line\(index) = \"" + String(repeating: "abcdefghij", count: 18) + "\""
+            }
+            .joined(separator: "\n")
+        let signature = ToolTimelineRowRenderMetrics.codeSignature(
+            displayText: text,
+            language: .swift,
+            startLine: 1,
+            isStreaming: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: text, language: .swift, startLine: 1, filePath: "Large.swift"),
+            isExpanded: false
+        ))
+
+        let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
+        #expect(expandedContainer.isHidden)
+
+        view.expandedRenderSignature = signature
+        view.expandedViewportMode = .code
+        view.expandedRenderedText = text
+        expandedLabel.text = text
+
+        view.scheduleDeferredCodeHighlightIfNeeded(.init(
+            text: text,
+            language: .swift,
+            startLine: 1,
+            signature: signature
+        ))
+
+        let deadline = Date().addingTimeInterval(1.5)
+        while ToolRowRenderCache.get(signature: signature) == nil && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        drainMainQueue()
+
+        let attributed = try #require(expandedLabel.attributedText)
+        #expect(attributed.string.contains("│"))
+        #expect(ToolRowRenderCache.get(signature: signature) != nil)
+    }
+
+    @Test func deferredCodeHighlightReappliesAfterTransientModeMismatch() async throws {
+        ToolRowRenderCache.evictAll()
+        ToolTimelineRowContentView.deferredCodeHighlightDelayForTesting = .milliseconds(120)
+        defer { ToolTimelineRowContentView.deferredCodeHighlightDelayForTesting = nil }
+
+        let text = (1...24)
+            .map { index in
+                "let line\(index) = \"" + String(repeating: "abcdefghij", count: 18) + "\""
+            }
+            .joined(separator: "\n")
+        let signature = ToolTimelineRowRenderMetrics.codeSignature(
+            displayText: text,
+            language: .swift,
+            startLine: 1,
+            isStreaming: false
+        )
+        let configuration = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: text, language: .swift, startLine: 1, filePath: "Large.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        _ = fittedSize(for: view, width: 360)
+
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
+        let initialRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(initialRendered == text)
+        #expect(!initialRendered.contains("│"))
+
+        // Simulate a transient mode mismatch while deferred highlighting is in flight.
+        view.expandedViewportMode = .none
+
+        let deadline = Date().addingTimeInterval(2.0)
+        while ToolRowRenderCache.get(signature: signature) == nil && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        while view.expandedCodeDeferredHighlightTask != nil && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        drainMainQueue()
+
+        #expect(ToolRowRenderCache.get(signature: signature) != nil)
+        let plainRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(!plainRendered.contains("│"), "Transient mismatch should leave the first pass plain")
+
+        // Reapplying the same configuration should consume the warmed cache instead
+        // of getting stuck forever on the plain-text first paint.
+        view.configuration = configuration
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue()
+
+        let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(rendered.contains("│"))
     }
 
     // MARK: - Cell Reuse: extension markdown/text constraint bugs
