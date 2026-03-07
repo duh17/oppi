@@ -3,6 +3,21 @@ import Testing
 import UIKit
 @testable import Oppi
 
+@MainActor
+private func makeScrollTestWindow(
+    frame: CGRect = CGRect(x: 0, y: 0, width: 390, height: 844)
+) -> UIWindow {
+    guard let scene = UIApplication.shared.connectedScenes
+        .compactMap({ $0 as? UIWindowScene })
+        .first else {
+        fatalError("Missing UIWindowScene for ScrollStabilityTests")
+    }
+
+    let window = UIWindow(windowScene: scene)
+    window.frame = frame
+    return window
+}
+
 @Suite("Scroll stability")
 struct ScrollStabilityTests {
     // MARK: - Scroll Stability
@@ -11,7 +26,7 @@ struct ScrollStabilityTests {
     @Test func contentOffsetStaysStableWhenNewItemsAppendedWhileScrolledUp() {
         // Reproduce: user is scrolled up; tool calls transition from running
         // to done (height changes), new items are inserted. Viewport must stay.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -129,7 +144,7 @@ struct ScrollStabilityTests {
         // streaming text grows and new tool calls are appended. The viewport
         // must stay pinned. This exercises the estimated-size layout path
         // where items above AND below the viewport have been estimated.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -246,7 +261,7 @@ struct ScrollStabilityTests {
         // performing layoutIfNeeded at each step (simulating frames).
         // After every step it checks that the *first visible item's screen-
         // relative position* hasn't jumped by more than a small tolerance.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -359,7 +374,7 @@ struct ScrollStabilityTests {
         //
         // Key: the target cell must be visible (cellForItem != nil) so we hit
         // the direct-configuration path, NOT the reconfigureItems fallback.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -450,7 +465,7 @@ struct ScrollStabilityTests {
         // Bug: user is near bottom, taps a visible tool row to expand.
         // animateToolRowExpansion invalidates layout, scrollViewDidScroll fires
         // with negative deltaY, detachFromBottomForUserScroll() breaks follow.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
@@ -530,7 +545,7 @@ struct ScrollStabilityTests {
         // Mirror of the expansion test: collapse a visible expanded tool row
         // via tap. The row shrinks through animateToolRowExpansion. Without
         // offset compensation the viewport content jumps.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeScrollTestWindow()
         let collectionView = UICollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()

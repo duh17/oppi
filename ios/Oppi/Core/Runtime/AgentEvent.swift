@@ -1,5 +1,15 @@
 import Foundation
 
+struct ToolOutputEventPayload: Sendable {
+    let sessionId: String
+    let toolEventId: String
+    let output: String
+    let isError: Bool
+    let mode: ToolOutputMode
+    let truncated: Bool
+    let totalBytes: Int?
+}
+
 /// Transport-agnostic domain events from the agent.
 ///
 /// Produced by translating `ServerMessage` into agent-level semantics.
@@ -14,7 +24,7 @@ enum AgentEvent: Sendable {
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
     case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
-    case toolOutput(sessionId: String, toolEventId: String, output: String, isError: Bool, mode: ToolOutputMode = .append, truncated: Bool = false, totalBytes: Int? = nil)
+    case toolOutput(ToolOutputEventPayload)
     case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil)
 
     // Compaction
@@ -32,6 +42,26 @@ enum AgentEvent: Sendable {
     case permissionExpired(id: String)
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
+
+    static func toolOutput(
+        sessionId: String,
+        toolEventId: String,
+        output: String,
+        isError: Bool,
+        mode: ToolOutputMode = .append,
+        truncated: Bool = false,
+        totalBytes: Int? = nil
+    ) -> Self {
+        .toolOutput(.init(
+            sessionId: sessionId,
+            toolEventId: toolEventId,
+            output: output,
+            isError: isError,
+            mode: mode,
+            truncated: truncated,
+            totalBytes: totalBytes
+        ))
+    }
 
     // periphery:ignore - used by OppiTests via @testable import
     var typeLabel: String {

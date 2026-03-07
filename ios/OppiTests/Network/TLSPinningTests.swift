@@ -66,22 +66,19 @@ struct TLSPinningTests {
 
     @Test("delegate initialises without crashing when fingerprint is nil")
     func delegateInitNilFingerprint() {
-        let delegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: nil)
-        #expect(delegate != nil)
+        _ = PinnedServerTrustDelegate(pinnedLeafFingerprint: nil)
     }
 
     @Test("delegate initialises without crashing for valid fingerprint")
     func delegateInitValidFingerprint() {
         let data = Data("sample cert".utf8)
         let fp = PinnedServerTrustDelegate.certFingerprint(for: data)
-        let delegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: fp)
-        #expect(delegate != nil)
+        _ = PinnedServerTrustDelegate(pinnedLeafFingerprint: fp)
     }
 
     @Test("delegate initialises without crashing for whitespace-only fingerprint")
     func delegateInitWhitespaceFingerprint() {
         // Whitespace-only should be treated as nil (no pinning)
-        let delegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: "   ")
-        #expect(delegate != nil)
+        _ = PinnedServerTrustDelegate(pinnedLeafFingerprint: "   ")
     }
 }

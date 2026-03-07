@@ -559,23 +559,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     hasPendingThinkingUpsert = true
                 }
 
-            case .toolOutput(_, let toolEventId, let output, let isError, let mode, let truncated, let totalBytes):
+            case .toolOutput(let payload):
+                let toolEventId = payload.toolEventId
                 if pendingToolOutputChunksByID[toolEventId] == nil {
                     pendingToolOutputOrder.append(toolEventId)
                 }
-                pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || isError
+                pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || payload.isError
 
-                if mode == .replace {
-                    pendingToolOutputChunksByID[toolEventId] = [output]
+                if payload.mode == .replace {
+                    pendingToolOutputChunksByID[toolEventId] = [payload.output]
                     pendingToolOutputIsReplace[toolEventId] = true
-                    pendingToolOutputIsPreviewOnly[toolEventId] = truncated
-                    if let totalBytes {
+                    pendingToolOutputIsPreviewOnly[toolEventId] = payload.truncated
+                    if let totalBytes = payload.totalBytes {
                         pendingToolOutputTotalBytes[toolEventId] = totalBytes
                     } else {
                         pendingToolOutputTotalBytes.removeValue(forKey: toolEventId)
                     }
                 } else if pendingToolOutputIsReplace[toolEventId] != true {
-                    pendingToolOutputChunksByID[toolEventId, default: []].append(output)
+                    pendingToolOutputChunksByID[toolEventId, default: []].append(payload.output)
                 }
 
             default:
@@ -714,19 +715,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 toolArgsStore.args(for: toolEventId) != previousArgs ||
                 toolSegmentStore.callSegments(for: toolEventId) != previousCallSegments
 
-        case .toolOutput(_, let toolEventId, let output, let isError, let mode, let truncated, let totalBytes):
+        case .toolOutput(let payload):
             let outputDidChange: Bool
-            if mode == .replace {
+            if payload.mode == .replace {
                 outputDidChange = toolOutputStore.replace(
-                    output,
-                    for: toolEventId,
-                    previewOnly: truncated,
-                    totalBytes: totalBytes
+                    payload.output,
+                    for: payload.toolEventId,
+                    previewOnly: payload.truncated,
+                    totalBytes: payload.totalBytes
                 )
             } else {
-                outputDidChange = toolOutputStore.append(output, to: toolEventId)
+                outputDidChange = toolOutputStore.append(payload.output, to: payload.toolEventId)
             }
-            let previewDidChange = updateToolCallPreview(id: toolEventId, isError: isError)
+            let previewDidChange = updateToolCallPreview(id: payload.toolEventId, isError: payload.isError)
             return outputDidChange || previewDidChange
 
         case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):

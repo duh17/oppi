@@ -71,8 +71,8 @@ struct AssistantMarkdownLayoutTests {
             )
         }
 
-        let ds = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) {
-            cv, ip, id in cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: id)
+        let ds = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { cv, ip, id in
+            cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: id)
         }
 
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()

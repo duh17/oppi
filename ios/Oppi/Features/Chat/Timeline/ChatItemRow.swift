@@ -20,4 +20,3 @@ enum ToolRowExpansionAnimation {
     // periphery:ignore - SwiftUI animation values, not yet wired to expandable rows
     static let swiftUICollapse: Animation = .linear(duration: collapseDuration)
 }
-
