@@ -159,15 +159,7 @@ final class ServerConnection {
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
             self.reducer.processBatch(events)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                for event in events {
-                    LiveActivityManager.shared.recordEvent(
-                        connectionId: self.liveActivityConnectionId,
-                        event: event
-                    )
-                }
-                self.syncLiveActivityPermissions()
-            }
+            self.handleLiveActivityFlush(events)
         }
 
         // Wire silence watchdog probe to request a state refresh.
