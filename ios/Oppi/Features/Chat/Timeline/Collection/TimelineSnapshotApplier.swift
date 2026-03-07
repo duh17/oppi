@@ -93,7 +93,8 @@ enum TimelineSnapshotApplier {
         var changedIDs = changedItemIDs(
             nextIDs: nextIDs,
             nextItemByID: nextItemByID,
-            previousItemByID: previousItemByID
+            previousItemByID: previousItemByID,
+            streamingAssistantID: streamingAssistantID
         )
 
         if hiddenCount != previousHiddenCount,
@@ -101,7 +102,12 @@ enum TimelineSnapshotApplier {
             changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
         }
 
-        if let streamingAssistantID {
+        if let streamingAssistantID,
+           shouldReconfigureStreamingAssistant(
+               id: streamingAssistantID,
+               nextItemByID: nextItemByID,
+               previousItemByID: previousItemByID
+           ) {
             changedIDs.append(streamingAssistantID)
         }
 
@@ -117,15 +123,41 @@ enum TimelineSnapshotApplier {
         return dedupeVisibleChangedIDs(changedIDs, nextIDSet: nextIDSet)
     }
 
+    /// Detect items whose content changed between snapshots.
+    ///
+    /// During streaming, the vast majority of timeline rows are immutable.
+    /// Use a conservative candidate fast path so we only run `ChatItem`
+    /// equality on rows that are expected to mutate in place:
+    /// - assistant rows (the actively streaming one is handled separately by the caller)
+    /// - in-flight tool rows
+    /// - active thinking rows
+    /// - mutable marker rows such as permission / compaction system events
+    /// - user rows carrying images (memory-warning stripping can change them)
     private static func changedItemIDs(
         nextIDs: [String],
         nextItemByID: [String: ChatItem],
-        previousItemByID: [String: ChatItem]
+        previousItemByID: [String: ChatItem],
+        streamingAssistantID: String? = nil
     ) -> [String] {
-        var changed: [String] = []
-        changed.reserveCapacity(nextIDs.count)
+        guard !previousItemByID.isEmpty else { return [] }
 
-        for id in nextIDs {
+        let candidateIDs: [String]
+        if let streamingAssistantID {
+            candidateIDs = nextIDs.filter { id in
+                guard id != streamingAssistantID else { return false }
+                return isStreamingMutableCandidate(
+                    nextItem: nextItemByID[id],
+                    previousItem: previousItemByID[id]
+                )
+            }
+        } else {
+            candidateIDs = nextIDs
+        }
+
+        var changed: [String] = []
+        changed.reserveCapacity(candidateIDs.count)
+
+        for id in candidateIDs {
             guard let nextItem = nextItemByID[id],
                   let previous = previousItemByID[id] else {
                 continue
@@ -137,6 +169,40 @@ enum TimelineSnapshotApplier {
         }
 
         return changed
+    }
+
+    /// Only the active streaming assistant is allowed to change every tick.
+    /// Reconfigure it only when the row payload actually changed.
+    private static func shouldReconfigureStreamingAssistant(
+        id: String,
+        nextItemByID: [String: ChatItem],
+        previousItemByID: [String: ChatItem]
+    ) -> Bool {
+        nextItemByID[id] != previousItemByID[id]
+    }
+
+    private static func isStreamingMutableCandidate(
+        nextItem: ChatItem?,
+        previousItem: ChatItem?
+    ) -> Bool {
+        isStreamingMutableItem(nextItem) || isStreamingMutableItem(previousItem)
+    }
+
+    private static func isStreamingMutableItem(_ item: ChatItem?) -> Bool {
+        guard let item else { return false }
+
+        switch item {
+        case .toolCall(_, _, _, _, _, _, let isDone):
+            return !isDone
+        case .thinking(_, _, _, let isDone):
+            return !isDone
+        case .assistantMessage, .permission, .permissionResolved, .systemEvent:
+            return true
+        case .userMessage(_, _, let images, _):
+            return !images.isEmpty
+        case .audioClip, .error:
+            return false
+        }
     }
 
     private static func dedupeVisibleChangedIDs(

@@ -1294,6 +1294,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             selectedTextSourceContext: markdownSelectionEnabled
                 ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
                 : nil,
+            textSelectionEnabled: markdownSelectionEnabled,
             showExpandedMarkdown: showExpandedMarkdown,
             setModeText: { self.expandedViewportMode = .text },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
