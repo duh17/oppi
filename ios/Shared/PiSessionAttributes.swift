@@ -41,7 +41,6 @@ struct PiSessionAttributes: ActivityAttributes {
         var topPermissionId: String?
         var topPermissionTool: String?
         var topPermissionSummary: String?
-        var topPermissionSession: String?
         var pendingApprovalCount: Int
 
         // Active turn start (rendered with Text(timerInterval:) in widget)
