@@ -7,13 +7,27 @@ struct MessageQueueContainer: View {
     let onRefresh: () async -> Void
 
     @State private var isExpanded = false
-    @State private var baseVersion = 0
-    @State private var draftSteering: [MessageQueueItem] = []
-    @State private var draftFollowUp: [MessageQueueItem] = []
-    @State private var isDirty = false
+    @State private var editorState: MessageQueueEditorState
     @State private var isApplying = false
     @State private var isRefreshing = false
     @State private var errorText: String?
+
+    init(
+        queue: MessageQueueState,
+        busyStreamingBehavior: Binding<StreamingBehavior>,
+        onApply: @escaping (_ baseVersion: Int, _ steering: [MessageQueueDraftItem], _ followUp: [MessageQueueDraftItem]) async throws -> Void,
+        onRefresh: @escaping () async -> Void
+    ) {
+        self.queue = queue
+        _busyStreamingBehavior = busyStreamingBehavior
+        self.onApply = onApply
+        self.onRefresh = onRefresh
+        _editorState = State(initialValue: MessageQueueEditorState(queue: queue))
+    }
+
+    private var displayedQueue: MessageQueueState {
+        editorState.displayedQueue
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -22,7 +36,19 @@ struct MessageQueueContainer: View {
             if isExpanded {
                 busyModePicker
 
-                if draftSteering.isEmpty && draftFollowUp.isEmpty {
+                if let conflict = editorState.conflict {
+                    statusBanner(title: conflict.title, message: conflict.message, color: .themeOrange)
+                } else if editorState.isDraftMode {
+                    statusBanner(title: "Unsaved text edits", message: "Save to replace the current queue with your updated draft.", color: .themeComment)
+                } else if editorState.hasStashedDraft {
+                    statusBanner(title: "Reviewing latest queue", message: "Your earlier draft is still available if you want to restore it.", color: .themeComment)
+                }
+
+                if let errorText, !errorText.isEmpty {
+                    statusBanner(title: "Queue update failed", message: errorText, color: .themeRed)
+                }
+
+                if displayedQueue.steering.isEmpty && displayedQueue.followUp.isEmpty {
                     Text("Queue is empty")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
@@ -32,20 +58,13 @@ struct MessageQueueContainer: View {
                     queueSection(
                         title: "Steering Queue",
                         kind: .steer,
-                        items: draftSteering
+                        items: displayedQueue.steering
                     )
                     queueSection(
                         title: "Follow-up Queue",
                         kind: .followUp,
-                        items: draftFollowUp
+                        items: displayedQueue.followUp
                     )
-                }
-
-                if let errorText, !errorText.isEmpty {
-                    Text(errorText)
-                        .font(.caption)
-                        .foregroundStyle(.themeRed)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 footerActions
@@ -62,12 +81,10 @@ struct MessageQueueContainer: View {
         .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 2)
         .accessibilityElement(children: .contain)
         .onAppear {
-            resetDraft(from: queue)
+            editorState = MessageQueueEditorState(queue: queue)
         }
         .onChange(of: queue) { _, latestQueue in
-            if !isDirty || !isExpanded {
-                resetDraft(from: latestQueue)
-            }
+            editorState.receiveServerQueue(latestQueue, isExpanded: isExpanded)
         }
     }
 
@@ -83,7 +100,7 @@ struct MessageQueueContainer: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeFg)
 
-                    Text("\(draftSteering.count) steering • \(draftFollowUp.count) follow-up")
+                    Text("\(displayedQueue.steering.count) steering • \(displayedQueue.followUp.count) follow-up")
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
                 }
@@ -110,6 +127,25 @@ struct MessageQueueContainer: View {
             Text("Follow-up").tag(StreamingBehavior.followUp)
         }
         .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private func statusBanner(title: String, message: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.themeComment)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.themeBg.opacity(0.30))
+        )
     }
 
     @ViewBuilder
@@ -143,6 +179,7 @@ struct MessageQueueContainer: View {
                 .textFieldStyle(.plain)
                 .font(.caption)
                 .lineLimit(1...3)
+                .disabled(isApplying || isRefreshing)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
                 .background(
@@ -155,30 +192,54 @@ struct MessageQueueContainer: View {
     }
 
     private func rowActions(kind: MessageQueueKind, index: Int) -> some View {
-        HStack(spacing: 4) {
+        let controlsDisabled = isApplying || isRefreshing
+
+        return HStack(spacing: 4) {
             IconActionButton(systemName: "arrow.up") {
-                moveItem(kind: kind, from: index, direction: -1)
+                let request = editorState.moveItem(kind: kind, from: index, direction: -1)
+                if let request {
+                    applyMutation(request, revertOnFailure: true)
+                } else {
+                    errorText = nil
+                }
             }
-            .disabled(!canMove(kind: kind, index: index, direction: -1))
+            .disabled(controlsDisabled || !canMove(kind: kind, index: index, direction: -1))
 
             IconActionButton(systemName: "arrow.down") {
-                moveItem(kind: kind, from: index, direction: 1)
+                let request = editorState.moveItem(kind: kind, from: index, direction: 1)
+                if let request {
+                    applyMutation(request, revertOnFailure: true)
+                } else {
+                    errorText = nil
+                }
             }
-            .disabled(!canMove(kind: kind, index: index, direction: 1))
+            .disabled(controlsDisabled || !canMove(kind: kind, index: index, direction: 1))
 
             IconActionButton(systemName: kind == .steer ? "arrow.down.right" : "arrow.up.left") {
-                moveBetweenQueues(kind: kind, index: index)
+                let request = editorState.moveBetweenQueues(kind: kind, index: index)
+                if let request {
+                    applyMutation(request, revertOnFailure: true)
+                } else {
+                    errorText = nil
+                }
             }
+            .disabled(controlsDisabled)
 
             IconActionButton(systemName: "trash") {
-                deleteItem(kind: kind, index: index)
+                let request = editorState.deleteItem(kind: kind, index: index)
+                if let request {
+                    applyMutation(request, revertOnFailure: true)
+                } else {
+                    errorText = nil
+                }
             }
+            .disabled(controlsDisabled)
         }
     }
 
     private var footerActions: some View {
         HStack(spacing: 8) {
-            if isRefreshing {
+            if isRefreshing || isApplying {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -192,45 +253,62 @@ struct MessageQueueContainer: View {
 
             Spacer()
 
-            Button("Discard") {
-                resetDraft(from: queue)
+            if editorState.hasStashedDraft {
+                Button("Restore draft") {
+                    editorState.restoreDraft()
+                    errorText = nil
+                }
+                .font(.caption)
+                .disabled(isApplying || isRefreshing)
             }
-            .font(.caption)
-            .disabled(!isDirty || isApplying)
 
-            Button {
-                applyDraft()
-            } label: {
-                if isApplying {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .padding(.horizontal, 4)
+            if editorState.isDraftMode {
+                if let conflict = editorState.conflict {
+                    Button(conflict.reviewActionTitle) {
+                        editorState.reviewLatest()
+                        errorText = nil
+                    }
+                    .font(.caption)
+                    .disabled(isApplying || isRefreshing)
+
+                    Button {
+                        saveDraft()
+                    } label: {
+                        labelText(conflict.applyActionTitle)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.themeBlue)
+                    .disabled(isApplying || isRefreshing)
                 } else {
-                    Text("Apply")
-                        .font(.caption.weight(.semibold))
+                    Button("Discard") {
+                        editorState.discardDraft()
+                        errorText = nil
+                    }
+                    .font(.caption)
+                    .disabled(isApplying || isRefreshing)
+
+                    Button {
+                        saveDraft()
+                    } label: {
+                        labelText("Save")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.themeBlue)
+                    .disabled(isApplying || isRefreshing)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.themeBlue)
-            .disabled(!isDirty || isApplying)
         }
     }
 
-    private func queueItems(for kind: MessageQueueKind) -> [MessageQueueItem] {
-        switch kind {
-        case .steer:
-            return draftSteering
-        case .followUp:
-            return draftFollowUp
-        }
-    }
-
-    private func setQueueItems(_ items: [MessageQueueItem], for kind: MessageQueueKind) {
-        switch kind {
-        case .steer:
-            draftSteering = items
-        case .followUp:
-            draftFollowUp = items
+    @ViewBuilder
+    private func labelText(_ text: String) -> some View {
+        if isApplying {
+            ProgressView()
+                .controlSize(.mini)
+                .padding(.horizontal, 4)
+        } else {
+            Text(text)
+                .font(.caption.weight(.semibold))
         }
     }
 
@@ -240,14 +318,20 @@ struct MessageQueueContainer: View {
                 queueItems(for: kind)[index].message
             },
             set: { newValue in
-                var items = queueItems(for: kind)
-                guard items.indices.contains(index) else { return }
-                items[index].message = newValue
-                setQueueItems(items, for: kind)
-                isDirty = true
-                errorText = nil
+                if editorState.updateMessage(kind: kind, index: index, message: newValue) {
+                    errorText = nil
+                }
             }
         )
+    }
+
+    private func queueItems(for kind: MessageQueueKind) -> [MessageQueueItem] {
+        switch kind {
+        case .steer:
+            return displayedQueue.steering
+        case .followUp:
+            return displayedQueue.followUp
+        }
     }
 
     private func canMove(kind: MessageQueueKind, index: Int, direction: Int) -> Bool {
@@ -256,46 +340,8 @@ struct MessageQueueContainer: View {
         return items.indices.contains(index) && items.indices.contains(target)
     }
 
-    private func moveItem(kind: MessageQueueKind, from index: Int, direction: Int) {
-        var items = queueItems(for: kind)
-        let target = index + direction
-        guard items.indices.contains(index), items.indices.contains(target) else { return }
-        items.swapAt(index, target)
-        setQueueItems(items, for: kind)
-        isDirty = true
-        errorText = nil
-    }
-
-    private func moveBetweenQueues(kind: MessageQueueKind, index: Int) {
-        switch kind {
-        case .steer:
-            guard draftSteering.indices.contains(index) else { return }
-            let item = draftSteering.remove(at: index)
-            draftFollowUp.append(item)
-        case .followUp:
-            guard draftFollowUp.indices.contains(index) else { return }
-            let item = draftFollowUp.remove(at: index)
-            draftSteering.append(item)
-        }
-        isDirty = true
-        errorText = nil
-    }
-
-    private func deleteItem(kind: MessageQueueKind, index: Int) {
-        switch kind {
-        case .steer:
-            guard draftSteering.indices.contains(index) else { return }
-            draftSteering.remove(at: index)
-        case .followUp:
-            guard draftFollowUp.indices.contains(index) else { return }
-            draftFollowUp.remove(at: index)
-        }
-        isDirty = true
-        errorText = nil
-    }
-
     private func refreshQueue() {
-        guard !isRefreshing else { return }
+        guard !isRefreshing, !isApplying else { return }
         isRefreshing = true
         errorText = nil
 
@@ -305,45 +351,44 @@ struct MessageQueueContainer: View {
         }
     }
 
-    private func applyDraft() {
-        guard !isApplying else { return }
+    private func saveDraft() {
+        guard let request = editorState.draftRequest(), !isApplying, !isRefreshing else { return }
+        applyMutation(request, revertOnFailure: false)
+    }
+
+    private func applyMutation(_ request: MessageQueueMutationRequest, revertOnFailure: Bool) {
+        guard !isApplying, !isRefreshing else { return }
         isApplying = true
         errorText = nil
-
-        let steering = draftSteering.map {
-            MessageQueueDraftItem(
-                id: $0.id,
-                message: $0.message,
-                images: $0.images,
-                createdAt: $0.createdAt
-            )
-        }
-        let followUp = draftFollowUp.map {
-            MessageQueueDraftItem(
-                id: $0.id,
-                message: $0.message,
-                images: $0.images,
-                createdAt: $0.createdAt
-            )
-        }
 
         Task { @MainActor in
             defer { isApplying = false }
             do {
-                try await onApply(baseVersion, steering, followUp)
-                isDirty = false
+                try await onApply(request.baseVersion, request.steering, request.followUp)
             } catch {
-                errorText = error.localizedDescription
+                if revertOnFailure {
+                    editorState.revertLiveQueueToServer()
+                }
+                errorText = userFacingQueueError(error, revertOnFailure: revertOnFailure)
+                if Self.isQueueVersionMismatch(error) {
+                    await onRefresh()
+                }
             }
         }
     }
 
-    private func resetDraft(from state: MessageQueueState) {
-        baseVersion = state.version
-        draftSteering = state.steering
-        draftFollowUp = state.followUp
-        isDirty = false
-        errorText = nil
+    private func userFacingQueueError(_ error: Error, revertOnFailure: Bool) -> String {
+        let message = error.localizedDescription
+        if Self.isQueueVersionMismatch(error) {
+            return revertOnFailure
+                ? "Queue changed before your edit was saved. Review the latest queue and try again."
+                : "Queue changed before your draft was saved. Review the latest queue or use your draft again."
+        }
+        return message
+    }
+
+    private static func isQueueVersionMismatch(_ error: Error) -> Bool {
+        error.localizedDescription.localizedCaseInsensitiveContains("queue version mismatch")
     }
 }
 

@@ -1,5 +1,6 @@
 import OSLog
 import SwiftUI
+import UIKit
 import WebKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AppletViewer")
@@ -15,7 +16,6 @@ struct AppletViewerView: View {
 
     @Environment(ServerConnection.self) private var connection
     @State private var html: String?
-    @State private var isLoading = true
     @State private var error: String?
 
     var body: some View {
@@ -58,7 +58,6 @@ struct AppletViewerView: View {
     private func loadHTML() async {
         guard let api = connection.apiClient else {
             error = "Not connected"
-            isLoading = false
             return
         }
 
@@ -75,8 +74,6 @@ struct AppletViewerView: View {
         } catch {
             self.error = error.localizedDescription
         }
-
-        isLoading = false
     }
 }
 
@@ -96,7 +93,7 @@ private struct AppletWebView: UIViewRepresentable {
     let context: AppletBridgeContext
 
     func makeCoordinator() -> AppletBridgeCoordinator {
-        AppletBridgeCoordinator(apiClient: apiClient)
+        AppletBridgeCoordinator(apiClient: apiClient, context: context)
     }
 
     func makeUIView(context ctx: Context) -> WKWebView {
@@ -116,10 +113,13 @@ private struct AppletWebView: UIViewRepresentable {
         config.userContentController.addUserScript(bridgeScript)
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = coordinator
+#if DEBUG
         webView.isInspectable = true
+#endif
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         coordinator.webView = webView
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(Self.injectCSPIfMissing(html), baseURL: nil)
         return webView
     }
 
@@ -132,27 +132,23 @@ private struct AppletWebView: UIViewRepresentable {
           'use strict';
 
           // Pending request callbacks keyed by request ID
-          const _pending = {};
+          const _pending = Object.create(null);
           let _nextId = 1;
 
           window.oppi = {
             // Static context about this applet
             context: Object.freeze({
-              workspaceId: '\(context.workspaceId)',
-              appletId: '\(context.appletId)',
+              workspaceId: \(jsStringLiteral(context.workspaceId)),
+              appletId: \(jsStringLiteral(context.appletId)),
               appletVersion: \(context.appletVersion)
             }),
 
             /**
              * Make an authenticated API request to the Oppi server.
              *
-             * @param {string} path - API path (e.g. '/workspaces/abc/sessions')
+             * @param {string} path - API path (workspace-scoped, starts with '/').
              * @param {object} [options] - { method: 'GET', body: object }
              * @returns {Promise<{status: number, data: any}>}
-             *
-             * Examples:
-             *   const res = await oppi.fetch('/workspaces/' + oppi.context.workspaceId + '/sessions');
-             *   const res = await oppi.fetch('/telemetry/chat-metrics', { method: 'POST', body: payload });
              */
             fetch(path, options) {
               return new Promise((resolve, reject) => {
@@ -196,18 +192,56 @@ private struct AppletWebView: UIViewRepresentable {
         })();
         """
     }
+
+    /// JSON-quoted JS string literal.
+    private static func jsStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+              let encoded = String(data: data, encoding: .utf8),
+              encoded.count >= 2
+        else {
+            return "\"\""
+        }
+        return String(encoded.dropFirst().dropLast())
+    }
+
+    /// `loadHTMLString` bypasses server response headers. Inject a baseline CSP
+    /// unless the applet already declares one in a meta tag.
+    private static func injectCSPIfMissing(_ html: String) -> String {
+        if html.range(of: "content-security-policy", options: .caseInsensitive) != nil {
+            return html
+        }
+
+        let csp = [
+            "default-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh",
+            "data: blob:;",
+            "img-src 'self' data: blob: https:;",
+            "font-src 'self' data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+            "https://fonts.gstatic.com;",
+        ].joined(separator: " ")
+        let tag = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
+
+        if let headRange = html.range(of: "<head>", options: .caseInsensitive) {
+            return html.replacingCharacters(in: headRange, with: "<head>\n\(tag)")
+        }
+
+        return "<head>\n\(tag)\n</head>\n\(html)"
+    }
 }
 
 // MARK: - Bridge Coordinator
 
 /// Handles JS→Swift messages from the applet bridge and dispatches
 /// authenticated API calls through the native APIClient.
-final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
+final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     private let apiClient: APIClient
+    private let context: AppletBridgeContext
+
     weak var webView: WKWebView?
 
-    init(apiClient: APIClient) {
+    init(apiClient: APIClient, context: AppletBridgeContext) {
         self.apiClient = apiClient
+        self.context = context
         super.init()
     }
 
@@ -215,6 +249,12 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
         _: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
+        guard message.name == "oppiBridge" else { return }
+        guard message.frameInfo.isMainFrame else {
+            logger.error("Bridge: rejected non-main-frame message")
+            return
+        }
+
         guard let body = message.body as? [String: Any],
               let id = body["id"] as? String,
               let type = body["type"] as? String
@@ -232,8 +272,18 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
     }
 
     private func handleFetch(id: String, body: [String: Any]) {
-        guard let path = body["path"] as? String else {
+        guard let rawPath = body["path"] as? String else {
             rejectRequest(id: id, error: "Missing path")
+            return
+        }
+
+        guard let path = sanitizeBridgePath(rawPath) else {
+            rejectRequest(id: id, error: "Invalid path")
+            return
+        }
+
+        guard isPathAllowed(path) else {
+            rejectRequest(id: id, error: "Path outside applet workspace scope")
             return
         }
 
@@ -244,18 +294,36 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
             do {
                 let data = try await performRequest(method: method, path: path, body: requestBody)
                 let json = try JSONSerialization.jsonObject(with: data)
-                await resolveRequest(id: id, status: 200, data: json)
+                resolveRequest(id: id, status: 200, data: json)
             } catch let apiError as APIError {
                 switch apiError {
                 case .server(let status, let message):
-                    await resolveRequest(id: id, status: status, data: ["error": message])
+                    resolveRequest(id: id, status: status, data: ["error": message])
                 case .invalidResponse:
-                    await rejectRequestAsync(id: id, error: "Invalid response")
+                    rejectRequestAsync(id: id, error: "Invalid response")
                 }
             } catch {
-                await rejectRequestAsync(id: id, error: error.localizedDescription)
+                rejectRequestAsync(id: id, error: error.localizedDescription)
             }
         }
+    }
+
+    private func sanitizeBridgePath(_ raw: String) -> String? {
+        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, path.hasPrefix("/") else { return nil }
+        guard !path.hasPrefix("//") else { return nil }
+        guard !path.contains("://") else { return nil }
+
+        let routePath = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        guard !routePath.contains("..") else { return nil }
+
+        return path
+    }
+
+    private func isPathAllowed(_ path: String) -> Bool {
+        let routePath = String(path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
+        let workspacePath = "/workspaces/\(context.workspaceId)"
+        return routePath == workspacePath || routePath.hasPrefix(workspacePath + "/")
     }
 
     private func performRequest(method: String, path: String, body: Any?) async throws -> Data {
@@ -263,9 +331,9 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
         case "GET":
             return try await apiClient.bridgeGet(path)
         case "POST":
-            return try await apiClient.bridgePost(path, body: encodeBody(body))
+            return try await apiClient.bridgePost(path, body: try encodeBody(body))
         case "PUT":
-            return try await apiClient.bridgePut(path, body: encodeBody(body))
+            return try await apiClient.bridgePut(path, body: try encodeBody(body))
         case "DELETE":
             return try await apiClient.bridgeDelete(path)
         default:
@@ -273,9 +341,45 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func encodeBody(_ body: Any?) -> Data {
+    private func encodeBody(_ body: Any?) throws -> Data {
         guard let body else { return Data() }
-        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        guard JSONSerialization.isValidJSONObject(body) else {
+            throw APIError.server(status: 400, message: "Body must be valid JSON")
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: body)
+        if data.count > 256_000 {
+            throw APIError.server(status: 413, message: "Body too large")
+        }
+
+        return data
+    }
+
+    // MARK: - Navigation
+
+    @MainActor
+    func webView(
+        _: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if isMainFrame {
+            let scheme = url.scheme?.lowercased() ?? ""
+            let isInternalScheme = scheme == "about" || scheme == "data" || scheme == "blob"
+            if !isInternalScheme {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+        }
+
+        decisionHandler(.allow)
     }
 
     // MARK: - JS Callbacks
@@ -285,7 +389,7 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
         guard let webView else { return }
         let jsonData = (try? JSONSerialization.data(withJSONObject: data)) ?? Data("null".utf8)
         let jsonString = String(data: jsonData, encoding: .utf8) ?? "null"
-        let js = "window.oppi._resolve('\(id)', \(status), \(jsonString));"
+        let js = "window.oppi._resolve(\(jsStringLiteral(id)), \(status), \(jsonString));"
         webView.evaluateJavaScript(js) { _, error in
             if let error {
                 logger.error("Bridge resolve error: \(error.localizedDescription, privacy: .public)")
@@ -295,19 +399,28 @@ final class AppletBridgeCoordinator: NSObject, WKScriptMessageHandler {
 
     private func rejectRequest(id: String, error: String) {
         Task { @MainActor in
-            await rejectRequestAsync(id: id, error: error)
+            rejectRequestAsync(id: id, error: error)
         }
     }
 
     @MainActor
     private func rejectRequestAsync(id: String, error: String) {
         guard let webView else { return }
-        let escaped = error.replacingOccurrences(of: "'", with: "\\'")
-        let js = "window.oppi._reject('\(id)', '\(escaped)');"
+        let js = "window.oppi._reject(\(jsStringLiteral(id)), \(jsStringLiteral(error)));"
         webView.evaluateJavaScript(js) { _, err in
             if let err {
                 logger.error("Bridge reject error: \(err.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    private func jsStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+              let encoded = String(data: data, encoding: .utf8),
+              encoded.count >= 2
+        else {
+            return "\"\""
+        }
+        return String(encoded.dropFirst().dropLast())
     }
 }

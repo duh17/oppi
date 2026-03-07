@@ -36,6 +36,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let onStop: () -> Void
     let onForceStop: () -> Void
     let onExpand: () -> Void
+    let externalFocusRequestID: Int
     let appliesOuterPadding: Bool
     @ViewBuilder let actionRow: () -> ActionRow
 
@@ -212,6 +213,10 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
+        }
+        .onChange(of: externalFocusRequestID) { _, _ in
+            suppressKeyboard = false
+            focusRequestID += 1
         }
         .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
             guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }

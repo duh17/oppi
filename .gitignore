@@ -54,6 +54,7 @@ docs/research/
 docs/review/
 
 docs/**/*.md
+!docs/designs/onboarding-v3-macos.md
 !docs/testing/extraction-opportunities.md
 
 server/extensions/
