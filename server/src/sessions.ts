@@ -64,6 +64,7 @@ export type { ExtensionUIResponse } from "./session-ui.js";
 export class SessionManager extends EventEmitter {
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
+  private pendingPromptPreambles: Map<string, string> = new Map();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -207,7 +208,20 @@ export class SessionManager extends EventEmitter {
     },
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
-    await this.inputCoordinator.sendPrompt(key, message, opts);
+    const active = this.active.get(key);
+    const preamble =
+      active && active.session.messageCount === 0
+        ? this.pendingPromptPreambles.get(sessionId)
+        : undefined;
+
+    await this.inputCoordinator.sendPrompt(key, message, {
+      ...opts,
+      preamble,
+    });
+
+    if (preamble && active && active.session.messageCount > 0) {
+      this.pendingPromptPreambles.delete(sessionId);
+    }
   }
 
   /**
@@ -304,6 +318,16 @@ export class SessionManager extends EventEmitter {
     return this.sendCommandAsync(key, { ...command });
   }
 
+  setPendingPromptPreamble(sessionId: string, preamble: string): void {
+    const normalized = preamble.trim();
+    if (normalized.length === 0) {
+      this.pendingPromptPreambles.delete(sessionId);
+      return;
+    }
+
+    this.pendingPromptPreambles.set(sessionId, normalized);
+  }
+
   /**
    * Apply fields we care about from pi `get_state` response payload.
    * Returns true if the session object changed.
@@ -389,6 +413,7 @@ export class SessionManager extends EventEmitter {
   // ─── Session End ───
 
   private handleSessionEnd(key: string, reason: string): void {
+    this.pendingPromptPreambles.delete(key);
     this.lifecycleCoordinator.handleSessionEnd(key, reason);
   }
 
@@ -406,6 +431,7 @@ export class SessionManager extends EventEmitter {
 
   async stopSession(sessionId: string): Promise<void> {
     const key = this.sessionKey(sessionId);
+    this.pendingPromptPreambles.delete(sessionId);
     await this.stopFlowCoordinator.stopSession(key, sessionId);
   }
 
