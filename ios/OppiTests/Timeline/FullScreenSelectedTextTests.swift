@@ -121,6 +121,30 @@ struct FullScreenSelectedTextTests {
         #expect(piMenu.title == "π")
     }
 
+    @Test func liveSourceBodyPrependsPiSubmenu() throws {
+        let stream = SourceTraceStream(
+            text: "streaming source",
+            filePath: "Draft.swift",
+            isDone: false,
+            finalContent: nil
+        )
+        let controller = makeController(
+            content: .liveSource(snapshot: stream.snapshot, stream: stream)
+        )
+        let textView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("streaming source")
+        })
+
+        let menu = try #require(textView.delegate?.textView?(
+            textView,
+            editMenuForTextIn: NSRange(location: 0, length: 6),
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        ))
+
+        let piMenu = try #require(menu.children.first as? UIMenu)
+        #expect(piMenu.title == "π")
+    }
+
     @Test func nonChatFullScreenCodeStillAllowsSystemTextSelection() throws {
         let controller = FullScreenCodeViewController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)

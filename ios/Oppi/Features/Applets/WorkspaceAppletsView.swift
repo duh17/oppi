@@ -6,11 +6,24 @@ struct WorkspaceAppletsView: View {
 
     @Environment(ServerConnection.self) private var connection
     @Environment(AppletStore.self) private var appletStore
+    @Environment(SessionStore.self) private var sessionStore
 
     @State private var selectedApplet: Applet?
+    @State private var pendingDeleteApplet: Applet?
+    @State private var navigateToSession: SessionDestination?
+    @State private var busyMessage: String?
+    @State private var error: String?
+
+    private struct SessionDestination: Identifiable, Hashable {
+        let id: String
+    }
 
     private var displayedApplets: [Applet] {
         appletStore.applets(for: workspace.id)
+    }
+
+    private var isBusy: Bool {
+        busyMessage != nil
     }
 
     var body: some View {
@@ -32,15 +45,51 @@ struct WorkspaceAppletsView: View {
         .navigationDestination(item: $selectedApplet) { applet in
             AppletViewerView(applet: applet)
         }
+        .navigationDestination(item: $navigateToSession) { destination in
+            ChatView(sessionId: destination.id)
+        }
         .task {
             if let api = connection.apiClient {
-                await appletStore.refreshIfNeeded(workspaceId: workspace.id, api: api)
+                await appletStore.load(workspaceId: workspace.id, api: api)
             }
         }
         .refreshable {
             if let api = connection.apiClient {
                 await appletStore.load(workspaceId: workspace.id, api: api)
             }
+        }
+        .overlay {
+            if let busyMessage {
+                ProgressView(busyMessage)
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .alert("Error", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: {
+            Text(error ?? "")
+        }
+        .alert(
+            pendingDeleteApplet.map { "Delete \($0.title)?" } ?? "Delete Applet?",
+            isPresented: Binding(
+                get: { pendingDeleteApplet != nil },
+                set: { if !$0 { pendingDeleteApplet = nil } }
+            ),
+            presenting: pendingDeleteApplet
+        ) { applet in
+            Button("Delete", role: .destructive) {
+                pendingDeleteApplet = nil
+                Task { await deleteApplet(applet) }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteApplet = nil
+            }
+        } message: { applet in
+            Text("This deletes \(applet.title) and all saved versions.")
         }
     }
 
@@ -60,9 +109,67 @@ struct WorkspaceAppletsView: View {
                         AppletCard(applet: applet)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isBusy)
+                    .contextMenu {
+                        Button {
+                            Task { await editApplet(applet) }
+                        } label: {
+                            Label("Edit in New Session", systemImage: "square.and.pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            pendingDeleteApplet = applet
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .padding()
+        }
+    }
+
+    @MainActor
+    private func editApplet(_ applet: Applet) async {
+        guard let api = connection.apiClient else {
+            error = "Not connected"
+            return
+        }
+
+        busyMessage = "Preparing edit session..."
+        defer { busyMessage = nil }
+
+        do {
+            let session = try await api.createAppletEditSession(
+                workspaceId: applet.workspaceId,
+                appletId: applet.id
+            )
+            _ = sessionStore.upsert(session)
+            sessionStore.activeSessionId = session.id
+            navigateToSession = SessionDestination(id: session.id)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func deleteApplet(_ applet: Applet) async {
+        guard let api = connection.apiClient else {
+            error = "Not connected"
+            return
+        }
+
+        busyMessage = "Deleting applet..."
+        defer { busyMessage = nil }
+
+        do {
+            try await api.deleteApplet(workspaceId: applet.workspaceId, appletId: applet.id)
+            appletStore.remove(id: applet.id)
+            if selectedApplet?.id == applet.id {
+                selectedApplet = nil
+            }
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
