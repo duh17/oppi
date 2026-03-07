@@ -216,6 +216,35 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.totalActiveSessions == 2)
     }
 
+    @Test("working outranks awaitingReply across sessions")
+    @MainActor func workingOutranksAwaitingReply() {
+        let mgr = LiveActivityManager()
+        let working = makeTestSession(id: "s1", status: .busy)
+        let ready = makeTestSession(id: "s2", status: .ready)
+
+        mgr.sync(connectionId: "c1", sessions: [working, ready], pendingPermissions: [])
+
+        #expect(mgr.currentState.primaryPhase == .working)
+        #expect(mgr.currentState.primarySessionId == "s1")
+    }
+
+    @Test("permission summary truncates for live activity width")
+    @MainActor func permissionSummaryTruncates() {
+        let mgr = LiveActivityManager()
+        let session = makeTestSession(id: "s1", status: .busy)
+        let summary = "abcdefghijklmnopqrstuvwxyz 0123456789 EXTRA"
+        let perm = makePermission(id: "p1", sessionId: "s1", tool: "bash", displaySummary: summary)
+
+        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [perm])
+
+        guard let truncated = mgr.currentState.topPermissionSummary else {
+            Issue.record("Expected topPermissionSummary")
+            return
+        }
+        #expect(truncated.count == 40)
+        #expect(truncated == String(summary.prefix(40)))
+    }
+
     @Test("removeConnection clears state")
     @MainActor func removeConnectionClears() {
         let mgr = LiveActivityManager()
@@ -423,7 +452,6 @@ struct LiveActivityDeepLinkTests {
             topPermissionId: "perm-456",
             topPermissionTool: "bash",
             topPermissionSummary: "run ls",
-            topPermissionSession: "Test",
             pendingApprovalCount: 1,
             sessionStartDate: nil
         )
@@ -467,7 +495,6 @@ private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttribut
         topPermissionId: phase == .needsApproval ? "p1" : nil,
         topPermissionTool: phase == .needsApproval ? "bash" : nil,
         topPermissionSummary: nil,
-        topPermissionSession: nil,
         pendingApprovalCount: approvals,
         sessionStartDate: nil
     )
@@ -476,14 +503,15 @@ private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttribut
 private func makePermission(
     id: String,
     sessionId: String,
-    tool: String
+    tool: String,
+    displaySummary: String? = nil
 ) -> PermissionRequest {
     PermissionRequest(
         id: id,
         sessionId: sessionId,
         tool: tool,
         input: [:],
-        displaySummary: "Test permission for \(tool)",
+        displaySummary: displaySummary ?? "Test permission for \(tool)",
         reason: "policy",
         timeoutAt: Date().addingTimeInterval(120)
     )

@@ -46,6 +46,18 @@ final class LiveActivityManager {
         let updatedAt: Date
     }
 
+    private struct DeliveredSnapshot: Equatable {
+        let state: PiSessionAttributes.ContentState
+        let staleDate: Date?
+        let relevanceScore: Double
+
+        init(from content: ActivityContent<PiSessionAttributes.ContentState>) {
+            state = content.state
+            staleDate = content.staleDate
+            relevanceScore = content.relevanceScore
+        }
+    }
+
     private static let emptyState = PiSessionAttributes.ContentState(
         primaryPhase: .ended,
         primarySessionId: nil,
@@ -62,7 +74,6 @@ final class LiveActivityManager {
         topPermissionId: nil,
         topPermissionTool: nil,
         topPermissionSummary: nil,
-        topPermissionSession: nil,
         pendingApprovalCount: 0,
         sessionStartDate: nil
     )
@@ -74,6 +85,7 @@ final class LiveActivityManager {
     private var activityObservationTask: Task<Void, Never>?
 
     private(set) var currentState: PiSessionAttributes.ContentState = LiveActivityManager.emptyState
+    private var lastStateChangeAt = Date()
     private var connectionSnapshots: [String: ConnectionSnapshot] = [:]
 
     private var idleDismissTask: Task<Void, Never>?
@@ -89,6 +101,7 @@ final class LiveActivityManager {
     /// Last pushed state used for alert transitions.
     var lastPushedPrimaryPhase: SessionPhase = .ended
     var lastPushedApprovalCount = 0
+    private var lastDeliveredSnapshot: DeliveredSnapshot?
 
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
     private let pushThrottleInterval: Duration = .seconds(1)
@@ -254,7 +267,7 @@ final class LiveActivityManager {
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
-        case .toolStart(let sessionId, _, let tool, _, _):
+        case .toolStart(let sessionId, let toolEventId, let tool, _, _):
             var entry = upsertSession(sessionId)
             let now = Date()
             entry.status = .busy
@@ -263,7 +276,7 @@ final class LiveActivityManager {
                 entry.startDate = now
             }
             entry.activeTool = displayToolName(tool)
-            entry.lastActivity = "Running \(displayToolName(tool))"
+            entry.lastActivity = toolActivityLabel(tool, seed: toolEventId)
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
@@ -366,6 +379,8 @@ final class LiveActivityManager {
         hasPendingPush = false
         lastPushedPrimaryPhase = .ended
         lastPushedApprovalCount = 0
+        lastDeliveredSnapshot = nil
+        lastStateChangeAt = Date()
     }
 
     // MARK: - Lifecycle
@@ -389,6 +404,12 @@ final class LiveActivityManager {
 
         activeActivity = recovered
         observeActivityLifecycle(recovered)
+        let recoveredContent = recovered.content
+        currentState = recoveredContent.state
+        lastStateChangeAt = recoveredStateChangeDate(from: recoveredContent)
+        lastDeliveredSnapshot = DeliveredSnapshot(from: recoveredContent)
+        lastPushedPrimaryPhase = recoveredContent.state.primaryPhase
+        lastPushedApprovalCount = recoveredContent.state.pendingApprovalCount
         logger.error("Recovered orphaned Live Activity reference (id=\(recovered.id, privacy: .public), state=\(String(describing: recovered.activityState), privacy: .public))")
     }
 
@@ -425,7 +446,7 @@ final class LiveActivityManager {
             endActivitiesIfPreferenceDisabled()
         }
 
-        currentState = aggregateState()
+        applyCurrentState(aggregateState())
 
         guard liveActivitiesEnabled else { return }
 
@@ -446,6 +467,31 @@ final class LiveActivityManager {
 
     private func shouldShowLiveActivity(state: PiSessionAttributes.ContentState) -> Bool {
         state.pendingApprovalCount > 0 || state.totalActiveSessions > 0
+    }
+
+    private func applyCurrentState(_ nextState: PiSessionAttributes.ContentState, now: Date = Date()) {
+        if nextState != currentState {
+            lastStateChangeAt = now
+        }
+        currentState = nextState
+    }
+
+    private func activityContent(for state: PiSessionAttributes.ContentState) -> ActivityContent<PiSessionAttributes.ContentState> {
+        ActivityContent(
+            state: state,
+            staleDate: staleDate(for: state),
+            relevanceScore: relevanceScore(for: state)
+        )
+    }
+
+    private func recoveredStateChangeDate(
+        from content: ActivityContent<PiSessionAttributes.ContentState>,
+        now: Date = Date()
+    ) -> Date {
+        guard let staleDate = content.staleDate else {
+            return now
+        }
+        return staleDate.addingTimeInterval(-staleIntervalSeconds)
     }
 
     private func scheduleAwaitingReplyExpiryIfNeeded() {
@@ -543,7 +589,7 @@ final class LiveActivityManager {
         let attributes = PiSessionAttributes(activityName: "Oppi")
 
         do {
-            let content = ActivityContent(state: currentState, staleDate: staleDate(for: currentState))
+            let content = activityContent(for: currentState)
             let activity = try Activity.request(
                 attributes: attributes,
                 content: content,
@@ -551,6 +597,9 @@ final class LiveActivityManager {
             )
             activeActivity = activity
             observeActivityLifecycle(activity)
+            lastDeliveredSnapshot = DeliveredSnapshot(from: content)
+            lastPushedPrimaryPhase = currentState.primaryPhase
+            lastPushedApprovalCount = currentState.pendingApprovalCount
             logger.error("Live Activity started")
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
@@ -580,7 +629,7 @@ final class LiveActivityManager {
                             self.refreshLifecycle()
                         }
                     }
-                case .active, .stale:
+                case .pending, .active, .stale:
                     break
                 @unknown default:
                     break
@@ -635,6 +684,7 @@ final class LiveActivityManager {
         hasPendingPush = false
 
         let state = currentState
+        let deliveredSnapshot = DeliveredSnapshot(from: activityContent(for: state))
 
         let shouldAlertNow = Self.shouldAlert(
             state: state,
@@ -642,8 +692,13 @@ final class LiveActivityManager {
             lastPushedApprovalCount: lastPushedApprovalCount
         )
 
+        if !shouldAlertNow, deliveredSnapshot == lastDeliveredSnapshot {
+            return
+        }
+
         lastPushedPrimaryPhase = state.primaryPhase
         lastPushedApprovalCount = state.pendingApprovalCount
+        lastDeliveredSnapshot = deliveredSnapshot
 
         let alertConfiguration: AlertConfiguration? = shouldAlertNow
             ? AlertConfiguration(
@@ -655,7 +710,11 @@ final class LiveActivityManager {
 
         Task {
             await activity.update(
-                .init(state: state, staleDate: staleDate(for: state)),
+                .init(
+                    state: state,
+                    staleDate: deliveredSnapshot.staleDate,
+                    relevanceScore: deliveredSnapshot.relevanceScore
+                ),
                 alertConfiguration: alertConfiguration
             )
         }
@@ -695,7 +754,6 @@ final class LiveActivityManager {
         let sessionsWorking = sessionViews.filter { $0.phase == .working }.count
 
         let topPermission = allPermissions.first
-        let topPermissionSession = topPermission.map { sessionLabel(for: $0.sessionId, sessions: sessionViews) }
 
         let primary = sessionViews.max { lhs, rhs in
             let lhsPriority = phasePriority(lhs.phase)
@@ -723,7 +781,6 @@ final class LiveActivityManager {
                 topPermissionId: topPermission?.id,
                 topPermissionTool: topPermission?.tool,
                 topPermissionSummary: topPermission.map(permissionSummaryForLiveActivity),
-                topPermissionSession: topPermissionSession,
                 pendingApprovalCount: allPermissions.count,
                 sessionStartDate: primary.phase == .working ? primary.startDate : nil
             )
@@ -733,7 +790,7 @@ final class LiveActivityManager {
             return PiSessionAttributes.ContentState(
                 primaryPhase: .needsApproval,
                 primarySessionId: topPermission.sessionId,
-                primarySessionName: topPermissionSession ?? fallbackSessionName(topPermission.sessionId),
+                primarySessionName: sessionLabel(for: topPermission.sessionId, sessions: sessionViews),
                 primaryTool: topPermission.tool,
                 primaryLastActivity: "Approval required",
                 totalActiveSessions: 0,
@@ -746,7 +803,6 @@ final class LiveActivityManager {
                 topPermissionId: topPermission.id,
                 topPermissionTool: topPermission.tool,
                 topPermissionSummary: permissionSummaryForLiveActivity(topPermission),
-                topPermissionSession: topPermissionSession,
                 pendingApprovalCount: allPermissions.count,
                 sessionStartDate: nil
             )
@@ -806,11 +862,15 @@ final class LiveActivityManager {
     private func phasePriority(_ phase: SessionPhase) -> Int {
         switch phase {
         case .needsApproval: return 100
-        case .awaitingReply: return 75
-        case .error: return 50
-        case .working: return 25
+        case .error: return 75
+        case .working: return 50
+        case .awaitingReply: return 25
         case .ended: return 0
         }
+    }
+
+    private func relevanceScore(for state: PiSessionAttributes.ContentState) -> Double {
+        Double(phasePriority(state.primaryPhase))
     }
 
     private func staleDate(for state: PiSessionAttributes.ContentState) -> Date? {
@@ -820,7 +880,7 @@ final class LiveActivityManager {
         if state.primaryPhase == .ended {
             return nil
         }
-        return Date().addingTimeInterval(staleIntervalSeconds)
+        return lastStateChangeAt.addingTimeInterval(staleIntervalSeconds)
     }
 
     private func fallbackSessionName(_ sessionId: String) -> String {
@@ -837,7 +897,7 @@ final class LiveActivityManager {
     private func permissionSummaryForLiveActivity(_ request: PermissionRequest) -> String {
         let trimmed = request.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Approval requested" }
-        return String(trimmed.prefix(80))
+        return String(trimmed.prefix(40))
     }
 
     private func defaultLastActivity(for phase: SessionPhase) -> String {
@@ -860,5 +920,59 @@ final class LiveActivityManager {
         default:
             return tool.isEmpty ? "tool" : tool
         }
+    }
+
+    private func toolActivityLabel(_ tool: String, seed: String) -> String {
+        let options: [String]
+        switch tool.lowercased() {
+        case "bash":
+            options = [
+                String(localized: "Bashing"),
+                String(localized: "Invoking"),
+                String(localized: "Poking"),
+                String(localized: "Tinkering"),
+            ]
+        case "read":
+            options = [
+                String(localized: "Scanning"),
+                String(localized: "Inspecting"),
+                String(localized: "Peeking"),
+                String(localized: "Parsing"),
+            ]
+        case "write":
+            options = [
+                String(localized: "Drafting"),
+                String(localized: "Composing"),
+                String(localized: "Writing"),
+                String(localized: "Authoring"),
+            ]
+        case "edit":
+            options = [
+                String(localized: "Patching"),
+                String(localized: "Tweaking"),
+                String(localized: "Refining"),
+                String(localized: "Reworking"),
+            ]
+        default:
+            let displayName = displayToolName(tool)
+            guard !displayName.isEmpty else {
+                return String(localized: "Working")
+            }
+            return displayName
+        }
+
+        let index = stableVariationIndex(seed: seed, count: options.count)
+        return options[index]
+    }
+
+    private func stableVariationIndex(seed: String, count: Int) -> Int {
+        guard count > 1 else { return 0 }
+
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in seed.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Int(hash % UInt64(count))
     }
 }
