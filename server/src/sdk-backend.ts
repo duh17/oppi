@@ -118,6 +118,9 @@ interface PendingExtensionUIResponse {
  *   backend.dispose();
  */
 export class SdkBackend {
+  private static readonly DEFAULT_STEERING_MODE = "all" as const;
+  private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
+
   private piSession: AgentSession;
   private unsub: () => void;
   private readonly emitEvent: (event: SessionBackendEvent) => void;
@@ -217,6 +220,8 @@ export class SdkBackend {
       resourceLoader: loader,
     });
 
+    SdkBackend.applyDefaultQueueModes(piSession);
+
     // Subscribe to agent events — forward everything to the translation layer.
     const unsub = piSession.subscribe((event: AgentSessionEvent) => {
       onEvent(event);
@@ -252,6 +257,13 @@ export class SdkBackend {
 
   get session(): AgentSession {
     return this.piSession;
+  }
+
+  private static applyDefaultQueueModes(
+    session: Pick<AgentSession, "setSteeringMode" | "setFollowUpMode">,
+  ): void {
+    session.setSteeringMode(SdkBackend.DEFAULT_STEERING_MODE);
+    session.setFollowUpMode(SdkBackend.DEFAULT_FOLLOW_UP_MODE);
   }
 
   private emitExtensionUIRequest(request: Omit<ExtensionUIRequestEvent, "type">): void {

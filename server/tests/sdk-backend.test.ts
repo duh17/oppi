@@ -100,3 +100,21 @@ describe("SdkBackend.setModel", () => {
     });
   });
 });
+
+describe("Oppi queue delivery defaults", () => {
+  it("configures steering all and follow-up one-at-a-time for new sdk sessions", () => {
+    const piSession = {
+      setSteeringMode: vi.fn(),
+      setFollowUpMode: vi.fn(),
+    };
+
+    (
+      SdkBackend as unknown as {
+        applyDefaultQueueModes: (session: typeof piSession) => void;
+      }
+    ).applyDefaultQueueModes(piSession);
+
+    expect(piSession.setSteeringMode).toHaveBeenCalledWith("all");
+    expect(piSession.setFollowUpMode).toHaveBeenCalledWith("one-at-a-time");
+  });
+});

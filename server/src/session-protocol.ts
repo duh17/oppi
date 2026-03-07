@@ -43,12 +43,41 @@ function isShellLikeTool(toolName: string): boolean {
  * Takes the last N lines (up to maxLines) and caps total size at maxBytes.
  * Returns the original text if it fits within both limits.
  */
+function utf8ByteCount(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function tailByUtf8Bytes(text: string, maxBytes: number): string {
+  if (utf8ByteCount(text) <= maxBytes) {
+    return text;
+  }
+
+  const chars = Array.from(text);
+  const kept: string[] = [];
+  let bytes = 0;
+
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    const char = chars[index];
+    if (char === undefined) {
+      continue;
+    }
+    const charBytes = utf8ByteCount(char);
+    if (bytes + charBytes > maxBytes) {
+      break;
+    }
+    kept.push(char);
+    bytes += charBytes;
+  }
+
+  return kept.reverse().join("");
+}
+
 function extractTailPreview(
   text: string,
   maxLines = SHELL_PREVIEW_MAX_LINES,
   maxBytes = SHELL_PREVIEW_MAX_BYTES,
 ): string {
-  if (text.length <= maxBytes) {
+  if (utf8ByteCount(text) <= maxBytes) {
     const lineCount = countNewlines(text) + 1;
     if (lineCount <= maxLines) return text;
   }
@@ -59,8 +88,8 @@ function extractTailPreview(
   let preview = tailLines.join("\n");
 
   // Cap by bytes (take tail substring)
-  if (preview.length > maxBytes) {
-    preview = preview.slice(-maxBytes);
+  if (utf8ByteCount(preview) > maxBytes) {
+    preview = tailByUtf8Bytes(preview, maxBytes);
     // Clean break at first newline to avoid partial lines
     const firstNewline = preview.indexOf("\n");
     if (firstNewline > 0 && firstNewline < preview.length - 1) {
@@ -432,7 +461,8 @@ export function translatePiEvent(
           const lastText = ctx.partialResults.get(key) ?? "";
           ctx.partialResults.set(key, fullText);
 
-          if (shellTool && fullText.length > SHELL_PREVIEW_THRESHOLD) {
+          const fullTextBytes = utf8ByteCount(fullText);
+          if (shellTool && fullTextBytes > SHELL_PREVIEW_THRESHOLD) {
             // Shell tool above threshold: send bounded tail preview with replace mode.
             // Throttle to avoid spamming the client with large snapshots.
             const now = Date.now();
@@ -449,7 +479,7 @@ export function translatePiEvent(
               toolCallId,
               mode: "replace",
               truncated: true,
-              totalBytes: fullText.length,
+              totalBytes: fullTextBytes,
             });
           } else {
             // Normal append delta behavior.
@@ -491,7 +521,8 @@ export function translatePiEvent(
           })
           .join("");
 
-        if (shellTool && finalText.length > SHELL_PREVIEW_THRESHOLD) {
+        const finalTextBytes = utf8ByteCount(finalText);
+        if (shellTool && finalTextBytes > SHELL_PREVIEW_THRESHOLD) {
           // Shell tool final output: always send the tail preview (no throttle).
           const preview = extractTailPreview(finalText);
           messages.push({
@@ -500,7 +531,7 @@ export function translatePiEvent(
             toolCallId,
             mode: "replace",
             truncated: true,
-            totalBytes: finalText.length,
+            totalBytes: finalTextBytes,
           });
         } else {
           const delta = computeToolDelta(lastText, finalText);
