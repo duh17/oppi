@@ -23,7 +23,7 @@ struct ToolRowTextRenderStrategy {
         updateExpandedLabelWidthIfNeeded: () -> Void,
         showExpandedViewport: () -> Void,
         scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> ToolTimelineRowExpandedRenderer.Visibility {
+    ) -> ToolRowRenderVisibility {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let signature = ToolTimelineRowRenderMetrics.textSignature(
             displayText: displayText,
@@ -112,7 +112,7 @@ struct ToolRowTextRenderStrategy {
             }
         }
 
-        return ToolTimelineRowExpandedRenderer.Visibility(
+        return ToolRowRenderVisibility(
             showExpandedContainer: true,
             showCommandContainer: false,
             showOutputContainer: false

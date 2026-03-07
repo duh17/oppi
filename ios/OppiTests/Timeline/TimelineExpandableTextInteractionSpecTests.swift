@@ -9,7 +9,10 @@ struct TimelineExpandableTextInteractionSpecTests {
             supportsFullScreenPreview: false
         )
 
-        #expect(spec == .collapsed)
+        #expect(!spec.inlineSelectionEnabled)
+        #expect(!spec.enablesTapActivation)
+        #expect(!spec.enablesPinchActivation)
+        #expect(!spec.supportsFullScreenPreview)
     }
 
     @Test func selectedTextWithoutFullScreenEnablesInlineSelectionOnly() {

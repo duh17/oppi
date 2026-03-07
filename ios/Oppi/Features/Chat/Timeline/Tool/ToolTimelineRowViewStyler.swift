@@ -189,22 +189,6 @@ enum ToolTimelineRowViewStyler {
         imagePreviewImageView.clipsToBounds = true
     }
 
-    static func styleExpandFloatingButton(_ expandFloatingButton: UIButton) {
-        expandFloatingButton.translatesAutoresizingMaskIntoConstraints = false
-        let expandBtnSymbolConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
-        expandFloatingButton.setImage(
-            UIImage(systemName: "arrow.up.left.and.arrow.down.right", withConfiguration: expandBtnSymbolConfig),
-            for: .normal
-        )
-        expandFloatingButton.tintColor = UIColor(Color.themeCyan)
-        expandFloatingButton.backgroundColor = UIColor(Color.themeBgHighlight)
-        expandFloatingButton.layer.cornerRadius = 18
-        expandFloatingButton.layer.borderWidth = 1
-        expandFloatingButton.layer.borderColor = UIColor(Color.themeComment.opacity(0.3)).cgColor
-        expandFloatingButton.accessibilityIdentifier = "tool.expand-full-screen"
-        expandFloatingButton.isHidden = true
-    }
-
     static func styleBodyStack(_ bodyStack: UIStackView) -> NSLayoutConstraint {
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
