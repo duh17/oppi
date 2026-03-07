@@ -27,6 +27,35 @@ struct DeltaCoalescerTests {
     }
 
     @MainActor
+    @Test func repeatedToolStartForSameToolIsBufferedAndCoalesced() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "a"]
+        ))
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "ab"]
+        ))
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "abc"]
+        ))
+
+        #expect(flushed.count == 1, "Only the initial toolStart should flush immediately")
+
+        coalescer.flushNow()
+
+        #expect(flushed.count == 2)
+        #expect(flushed[1].count == 1)
+        guard case .toolStart(_, _, _, let args, _) = flushed[1][0] else {
+            Issue.record("Expected buffered toolStart")
+            return
+        }
+        #expect(args["content"]?.stringValue == "abc")
+    }
+
+    @MainActor
     @Test func toolEndFlushesImmediately() {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []
@@ -35,6 +64,32 @@ struct DeltaCoalescerTests {
         coalescer.receive(.toolEnd(sessionId: "s1", toolEventId: "t1"))
 
         #expect(flushed.count == 1)
+    }
+
+    @MainActor
+    @Test func toolEndFlushesBufferedToolStartUpdateBeforeEnding() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "a"]
+        ))
+        coalescer.receive(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "write", args: ["content": "ab"]
+        ))
+        coalescer.receive(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+
+        #expect(flushed.count == 3)
+        guard case .toolStart(_, _, _, let args, _) = flushed[1][0] else {
+            Issue.record("Expected buffered toolStart before toolEnd")
+            return
+        }
+        #expect(args["content"]?.stringValue == "ab")
+        guard case .toolEnd = flushed[2][0] else {
+            Issue.record("Expected final toolEnd flush")
+            return
+        }
     }
 
     @MainActor

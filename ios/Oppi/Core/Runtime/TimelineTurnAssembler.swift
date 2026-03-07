@@ -64,6 +64,7 @@ enum TimelineTurnAssembler {
     static func makeUpdatedToolCallPreview(
         existing: ChatItem,
         output: String,
+        outputByteCount: Int,
         isError: Bool
     ) -> ChatItem? {
         guard case .toolCall(let id, let tool, let args, _, _, let existingError, let isDone) = existing else {
@@ -75,7 +76,7 @@ enum TimelineTurnAssembler {
             tool: tool,
             argsSummary: args,
             outputPreview: ChatItem.preview(output),
-            outputByteCount: output.utf8.count,
+            outputByteCount: outputByteCount,
             isError: existingError || isError,
             isDone: isDone
         )
