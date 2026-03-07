@@ -3,6 +3,9 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+private let liveActivityTransitionAnimation = Animation.easeInOut(duration: 0.22)
+private let liveActivityCountAnimation = Animation.easeInOut(duration: 0.18)
+
 /// Aggregate Live Activity + Dynamic Island UI for Oppi sessions.
 struct PiSessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -12,46 +15,63 @@ struct PiSessionLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        Image(systemName: primarySymbol(context.state))
-                            .accessibilityHidden(true)
+                    HStack(spacing: 8) {
+                        PhaseGlyphView(
+                            state: context.state,
+                            isStale: context.isStale,
+                            size: 24
+                        )
+
                         Text(context.state.primarySessionName)
                             .font(.caption.bold())
                             .lineLimit(1)
+                            .foregroundStyle(.primary)
+                            .animation(
+                                liveActivityTransitionAnimation,
+                                value: context.state.primarySessionName
+                            )
                     }
-                    .foregroundStyle(phaseColor(context.state.primaryPhase))
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(context.state.primarySessionName), \(phaseLabel(context.state.primaryPhase))")
+                    .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.pendingApprovalCount > 0 {
-                        Text("+\(context.state.pendingApprovalCount)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.orange)
+                        CounterBadgeView(
+                            count: context.state.pendingApprovalCount,
+                            phase: .needsApproval,
+                            isStale: context.isStale,
+                            prefix: "+"
+                        )
                     } else {
-                        Text(phaseLabel(context.state.primaryPhase))
-                            .font(.caption2.bold())
-                            .foregroundStyle(phaseColor(context.state.primaryPhase))
+                        PhaseStatusBadge(
+                            label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
+                            phase: context.state.primaryPhase,
+                            isStale: context.isStale
+                        )
                     }
                 }
 
                 DynamicIslandExpandedRegion(.center) {
-                    if let summary = context.state.topPermissionSummary,
-                       !summary.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Approval required")
-                                .font(.caption.bold())
-                            Text(summary)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    } else if let activity = centerActivityText(context.state) {
-                        Text(activity)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
+                    if context.isStale {
+                        StaleStatusView(message: "Update delayed")
+                    } else if let summary = context.state.topPermissionSummary,
+                              !summary.isEmpty {
+                        StatusMessageView(
+                            title: "Approval required",
+                            message: summary,
+                            systemImage: "exclamationmark.shield.fill",
+                            phase: .needsApproval,
+                            monospacedMessage: true
+                        )
+                    } else if let activity = LiveActivityPresentation.centerActivityText(context.state) {
+                        StatusMessageView(
+                            title: nil,
+                            message: activity,
+                            systemImage: context.state.primaryPhase == .working ? LiveActivityPresentation.primarySymbol(for: context.state) : nil,
+                            phase: context.state.primaryPhase,
+                            monospacedMessage: false
+                        )
                     }
                 }
 
@@ -59,60 +79,69 @@ struct PiSessionLiveActivity: Widget {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             if context.state.pendingApprovalCount == 0,
-                               let changeSummary = changeStatsSummary(context.state) {
-                                ChangeStatsSummaryView(summary: changeSummary)
+                               let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
+                                ChangeStatsSummaryView(
+                                    summary: changeSummary,
+                                    phase: context.state.primaryPhase
+                                )
                             } else {
-                                Text(sessionSummary(context.state))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                SecondaryStatusPill(text: LiveActivityPresentation.sessionSummary(context.state))
                             }
 
                             Spacer()
 
-                            if context.state.primaryPhase == .working,
+                            if !context.isStale,
+                               context.state.primaryPhase == .working,
                                let start = context.state.sessionStartDate {
-                                Text(timerInterval: start...Date.distantFuture, countsDown: false)
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                TimerPill(start: start, phase: context.state.primaryPhase)
                             }
                         }
 
                         if let permissionId = context.state.topPermissionId {
-                            PermissionActionButtons(permissionId: permissionId)
+                            permissionReviewControls(permissionId: permissionId, isStale: context.isStale)
                         }
                     }
                 }
             } compactLeading: {
-                Image(systemName: primarySymbol(context.state))
-                    .font(.caption2)
-                    .foregroundStyle(phaseColor(context.state.primaryPhase))
-                    .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse(context.state.primaryPhase))
-                    .accessibilityLabel(accessibilitySummary(context.state))
+                PhaseGlyphView(
+                    state: context.state,
+                    isStale: context.isStale,
+                    size: 18
+                )
+                .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
             } compactTrailing: {
                 if context.state.pendingApprovalCount > 0 {
-                    Text("\(context.state.pendingApprovalCount)")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.orange)
-                        .contentTransition(.numericText())
-                        .accessibilityLabel("\(context.state.pendingApprovalCount) pending approvals")
+                    CounterBadgeView(
+                        count: context.state.pendingApprovalCount,
+                        phase: .needsApproval,
+                        isStale: context.isStale,
+                        prefix: nil
+                    )
+                    .accessibilityLabel("\(context.state.pendingApprovalCount) pending approvals")
                 } else if let badge = compactChangeBadge(context.state) {
-                    Text(badge)
-                        .font(.caption2.monospacedDigit().bold())
-                        .foregroundStyle(phaseColor(context.state.primaryPhase))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .accessibilityLabel(compactChangeAccessibilityLabel(context.state))
+                    CompactTrailingBadge(
+                        text: badge,
+                        phase: context.state.primaryPhase,
+                        isStale: context.isStale,
+                        monospaced: true
+                    )
+                    .accessibilityLabel(compactChangeAccessibilityLabel(context.state))
                 } else {
-                    Text(phaseShortLabel(context.state.primaryPhase))
-                        .font(.caption2.bold())
-                        .foregroundStyle(phaseColor(context.state.primaryPhase))
-                        .accessibilityLabel(phaseLabel(context.state.primaryPhase))
+                    CompactTrailingBadge(
+                        text: LiveActivityPresentation.phaseShortLabel(context.state.primaryPhase),
+                        phase: context.state.primaryPhase,
+                        isStale: context.isStale,
+                        monospaced: false
+                    )
+                    .accessibilityLabel(LiveActivityPresentation.phaseLabel(context.state.primaryPhase))
                 }
             } minimal: {
-                Image(systemName: primarySymbol(context.state))
-                    .font(.caption2)
-                    .foregroundStyle(phaseColor(context.state.primaryPhase))
-                    .accessibilityLabel(accessibilitySummary(context.state))
+                PhaseGlyphView(
+                    state: context.state,
+                    isStale: context.isStale,
+                    size: 16
+                )
+                .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
             }
         }
     }
@@ -124,74 +153,273 @@ private struct LockScreenView: View {
     let context: ActivityViewContext<PiSessionAttributes>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: primarySymbol(context.state))
-                            .font(.caption)
-                            .foregroundStyle(phaseColor(context.state.primaryPhase))
-                            .accessibilityHidden(true)
+                HStack(spacing: 10) {
+                    PhaseGlyphView(
+                        state: context.state,
+                        isStale: context.isStale,
+                        size: 34
+                    )
+
+                    VStack(alignment: .leading, spacing: 5) {
                         Text(context.state.primarySessionName)
                             .font(.subheadline.bold())
                             .lineLimit(1)
-                    }
 
-                    if let summary = context.state.topPermissionSummary,
-                       !summary.isEmpty {
-                        Text(summary)
-                            .font(.caption.monospaced())
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
-                    } else if let activity = centerActivityText(context.state) {
-                        Text(activity)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
+                        if context.isStale {
+                            StaleStatusView(message: "Update delayed")
+                        } else if let summary = context.state.topPermissionSummary,
+                                  !summary.isEmpty {
+                            StatusMessageView(
+                                title: nil,
+                                message: summary,
+                                systemImage: "exclamationmark.shield.fill",
+                                phase: .needsApproval,
+                                monospacedMessage: true
+                            )
+                        } else if let activity = LiveActivityPresentation.centerActivityText(context.state) {
+                            StatusMessageView(
+                                title: nil,
+                                message: activity,
+                                systemImage: context.state.primaryPhase == .working ? LiveActivityPresentation.primarySymbol(for: context.state) : nil,
+                                phase: context.state.primaryPhase,
+                                monospacedMessage: false
+                            )
+                        }
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 12)
 
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(phaseLabel(context.state.primaryPhase))
-                        .font(.caption2.bold())
-                        .foregroundStyle(phaseColor(context.state.primaryPhase))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(phaseColor(context.state.primaryPhase).opacity(0.15))
-                        .clipShape(Capsule())
+                VStack(alignment: .trailing, spacing: 6) {
+                    PhaseStatusBadge(
+                        label: LiveActivityPresentation.phaseLabel(context.state.primaryPhase),
+                        phase: context.state.primaryPhase,
+                        isStale: context.isStale
+                    )
 
                     if context.state.pendingApprovalCount > 0 {
-                        Text("\(context.state.pendingApprovalCount) approvals")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.orange)
-                    } else if let changeSummary = changeStatsSummary(context.state) {
-                        ChangeStatsSummaryView(summary: changeSummary)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        CounterBadgeView(
+                            count: context.state.pendingApprovalCount,
+                            phase: .needsApproval,
+                            isStale: context.isStale,
+                            prefix: nil
+                        )
+                    } else if let changeSummary = LiveActivityPresentation.changeStatsSummary(context.state) {
+                        ChangeStatsSummaryView(
+                            summary: changeSummary,
+                            phase: context.state.primaryPhase
+                        )
                     } else {
-                        Text(sessionSummary(context.state))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        SecondaryStatusPill(text: LiveActivityPresentation.sessionSummary(context.state))
                     }
 
-                    if context.state.primaryPhase == .working,
+                    if !context.isStale,
+                       context.state.primaryPhase == .working,
                        let start = context.state.sessionStartDate {
-                        Text(timerInterval: start...Date.distantFuture, countsDown: false)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        TimerPill(start: start, phase: context.state.primaryPhase)
                             .accessibilityLabel("Session timer")
                     }
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(accessibilitySummary(context.state))
+            .accessibilityLabel(accessibilitySummary(context.state, isStale: context.isStale))
 
             if let permissionId = context.state.topPermissionId {
-                PermissionActionButtons(permissionId: permissionId)
+                permissionReviewControls(permissionId: permissionId, isStale: context.isStale)
             }
         }
         .padding(16)
+    }
+}
+
+private struct PhaseGlyphView: View {
+    let state: PiSessionAttributes.ContentState
+    let isStale: Bool
+    let size: CGFloat
+
+    var body: some View {
+        let accent = phaseAccentColor(for: state.primaryPhase, isStale: isStale)
+
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.38, style: .continuous)
+                .fill(phaseBackgroundColor(state.primaryPhase, isStale: isStale))
+
+            RoundedRectangle(cornerRadius: size * 0.38, style: .continuous)
+                .strokeBorder(phaseBorderColor(state.primaryPhase, isStale: isStale), lineWidth: 0.9)
+
+            Image(systemName: LiveActivityPresentation.primarySymbol(for: state))
+                .font(.system(size: size * 0.56, weight: .semibold))
+                .foregroundStyle(accent)
+                .symbolEffect(.bounce, value: glyphAnimationToken(state, isStale: isStale))
+                .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse(state.primaryPhase) && !isStale)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: accent.opacity(isStale ? 0.0 : 0.22), radius: size * 0.16, y: 1)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct PhaseStatusBadge: View {
+    let label: String
+    let phase: SessionPhase
+    let isStale: Bool
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.bold())
+            .foregroundStyle(phaseAccentColor(for: phase, isStale: isStale))
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(phaseBackgroundColor(phase, isStale: isStale)))
+            .overlay(
+                Capsule().strokeBorder(phaseBorderColor(phase, isStale: isStale), lineWidth: 0.8)
+            )
+            .animation(liveActivityTransitionAnimation, value: label)
+    }
+}
+
+private struct CompactTrailingBadge: View {
+    let text: String
+    let phase: SessionPhase
+    let isStale: Bool
+    let monospaced: Bool
+
+    var body: some View {
+        Group {
+            if monospaced {
+                Text(text)
+                    .font(.caption2.monospacedDigit().bold())
+            } else {
+                Text(text)
+                    .font(.caption2.bold())
+            }
+        }
+        .foregroundStyle(phaseAccentColor(for: phase, isStale: isStale))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(phaseBackgroundColor(phase, isStale: isStale)))
+        .overlay(
+            Capsule().strokeBorder(phaseBorderColor(phase, isStale: isStale), lineWidth: 0.75)
+        )
+        .animation(liveActivityTransitionAnimation, value: text)
+    }
+}
+
+private struct CounterBadgeView: View {
+    let count: Int
+    let phase: SessionPhase
+    let isStale: Bool
+    let prefix: String?
+
+    var body: some View {
+        Text("\(prefix ?? "")\(count)")
+            .font(.caption2.bold())
+            .foregroundStyle(phaseAccentColor(for: phase, isStale: isStale))
+            .contentTransition(.numericText())
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(phaseBackgroundColor(phase, isStale: isStale)))
+            .overlay(
+                Capsule().strokeBorder(phaseBorderColor(phase, isStale: isStale), lineWidth: 0.8)
+            )
+            .animation(liveActivityCountAnimation, value: count)
+    }
+}
+
+private struct StatusMessageView: View {
+    let title: String?
+    let message: String
+    let systemImage: String?
+    let phase: SessionPhase
+    let monospacedMessage: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(phaseAccentColor(for: phase))
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let title {
+                    Text(title)
+                        .font(.caption.bold())
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                messageView
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(neutralSurfaceColor())
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(neutralSurfaceBorderColor(), lineWidth: 0.8)
+        )
+        .animation(liveActivityTransitionAnimation, value: message)
+    }
+
+    @ViewBuilder
+    private var messageView: some View {
+        if monospacedMessage {
+            Text(message)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+private struct SecondaryStatusPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(neutralSurfaceColor()))
+            .overlay(
+                Capsule().strokeBorder(neutralSurfaceBorderColor(), lineWidth: 0.8)
+            )
+    }
+}
+
+private struct TimerPill: View {
+    let start: Date
+    let phase: SessionPhase
+
+    var body: some View {
+        Text(timerInterval: start...Date.distantFuture, countsDown: false)
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(phaseAccentColor(for: phase))
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(phaseBackgroundColor(phase)))
+            .overlay(
+                Capsule().strokeBorder(phaseBorderColor(phase), lineWidth: 0.8)
+            )
     }
 }
 
@@ -219,25 +447,58 @@ private struct PermissionActionButtons: View {
     }
 }
 
-// MARK: - Helpers
+private struct StaleStatusView: View {
+    let message: LocalizedStringKey
 
-private func primarySymbol(_ state: PiSessionAttributes.ContentState) -> String {
-    if state.primaryPhase == .working,
-       let tool = state.primaryTool,
-       !tool.isEmpty {
-        return toolSymbol(tool)
+    var body: some View {
+        Label(message, systemImage: "clock.badge.exclamationmark")
+            .font(.caption2.bold())
+            .foregroundStyle(phaseAccentColor(for: .needsApproval, isStale: true))
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(phaseBackgroundColor(.needsApproval, isStale: true)))
+            .overlay(
+                Capsule().strokeBorder(phaseBorderColor(.needsApproval, isStale: true), lineWidth: 0.8)
+            )
     }
-    return phaseIcon(state.primaryPhase)
 }
 
-private func toolSymbol(_ tool: String) -> String {
-    switch tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "bash": return "terminal.fill"
-    case "read": return "doc.text.fill"
-    case "write": return "square.and.pencil"
-    case "edit": return "pencil.and.scribble"
-    default: return "hammer.fill"
+private struct OpenAppReviewHint: View {
+    var body: some View {
+        Label("Open Oppi to review", systemImage: "iphone")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(neutralSurfaceColor()))
+            .overlay(
+                Capsule().strokeBorder(neutralSurfaceBorderColor(), lineWidth: 0.8)
+            )
+            .accessibilityLabel("Open Oppi to review this request")
     }
+}
+
+@ViewBuilder
+private func permissionReviewControls(permissionId: String, isStale: Bool) -> some View {
+    if isStale {
+        OpenAppReviewHint()
+    } else {
+        PermissionActionButtons(permissionId: permissionId)
+    }
+}
+
+// MARK: - Helpers
+
+private func glyphAnimationToken(_ state: PiSessionAttributes.ContentState, isStale: Bool) -> String {
+    [
+        state.primaryPhase.rawValue,
+        state.primaryTool ?? "",
+        state.primarySessionName,
+        String(state.pendingApprovalCount),
+        isStale ? "stale" : "fresh",
+    ].joined(separator: "|")
 }
 
 private func compactChangeBadge(_ state: PiSessionAttributes.ContentState) -> String? {
@@ -259,15 +520,9 @@ private func compactChangeBadge(_ state: PiSessionAttributes.ContentState) -> St
     return "T\(compactCountLabel(mutatingTools))"
 }
 
-private struct ChangeStatsSnapshot {
-    let mutatingToolCalls: Int
-    let filesChanged: Int
-    let addedLines: Int
-    let removedLines: Int
-}
-
 private struct ChangeStatsSummaryView: View {
-    let summary: ChangeStatsSnapshot
+    let summary: LiveActivityChangeStatsSummary
+    let phase: SessionPhase
 
     var body: some View {
         HStack(spacing: 6) {
@@ -302,19 +557,13 @@ private struct ChangeStatsSummaryView: View {
             }
         }
         .lineLimit(1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(phaseBackgroundColor(phase)))
+        .overlay(
+            Capsule().strokeBorder(phaseBorderColor(phase), lineWidth: 0.8)
+        )
     }
-}
-
-private func changeStatsSummary(_ state: PiSessionAttributes.ContentState) -> ChangeStatsSnapshot? {
-    let mutatingTools = max(state.primaryMutatingToolCalls ?? 0, 0)
-    guard mutatingTools > 0 else { return nil }
-
-    return ChangeStatsSnapshot(
-        mutatingToolCalls: mutatingTools,
-        filesChanged: max(state.primaryFilesChanged ?? 0, 0),
-        addedLines: max(state.primaryAddedLines ?? 0, 0),
-        removedLines: max(state.primaryRemovedLines ?? 0, 0)
-    )
 }
 
 private func compactChangeAccessibilityLabel(_ state: PiSessionAttributes.ContentState) -> String {
@@ -362,114 +611,44 @@ private func toolCountLabel(_ count: Int) -> String {
     count == 1 ? "1 tool" : "\(count) tools"
 }
 
-private func phaseLabel(_ phase: SessionPhase) -> String {
-    switch phase {
-    case .working: return String(localized: "Working")
-    case .awaitingReply: return String(localized: "Your turn")
-    case .needsApproval: return String(localized: "Approval")
-    case .error: return String(localized: "Attention")
-    case .ended: return String(localized: "Idle")
-    }
+private func phaseAccentColor(for phase: SessionPhase, isStale: Bool = false) -> Color {
+    isStale ? Color(red: 0.97, green: 0.65, blue: 0.24) : LiveActivityPresentation.phaseColor(phase)
 }
 
-private func phaseShortLabel(_ phase: SessionPhase) -> String {
-    switch phase {
-    case .working: return String(localized: "Run")
-    case .awaitingReply: return String(localized: "Reply")
-    case .needsApproval: return String(localized: "Ask")
-    case .error: return String(localized: "Err")
-    case .ended: return String(localized: "Idle")
-    }
+private func phaseBackgroundColor(_ phase: SessionPhase, isStale: Bool = false) -> Color {
+    phaseAccentColor(for: phase, isStale: isStale).opacity(isStale ? 0.18 : 0.16)
 }
 
-private func phaseIcon(_ phase: SessionPhase) -> String {
-    switch phase {
-    case .working: return "waveform.path.ecg"
-    case .awaitingReply: return "bubble.left.fill"
-    case .needsApproval: return "exclamationmark.shield.fill"
-    case .error: return "exclamationmark.triangle.fill"
-    case .ended: return "terminal"
-    }
+private func phaseBorderColor(_ phase: SessionPhase, isStale: Bool = false) -> Color {
+    phaseAccentColor(for: phase, isStale: isStale).opacity(isStale ? 0.42 : 0.28)
 }
 
-private func phaseColor(_ phase: SessionPhase) -> Color {
-    switch phase {
-    case .working: return .yellow
-    case .awaitingReply: return .green
-    case .needsApproval: return .orange
-    case .error: return .red
-    case .ended: return .secondary
-    }
+private func neutralSurfaceColor() -> Color {
+    Color.white.opacity(0.06)
+}
+
+private func neutralSurfaceBorderColor() -> Color {
+    Color.white.opacity(0.08)
 }
 
 private func shouldPulse(_ phase: SessionPhase) -> Bool {
     switch phase {
-    case .working, .needsApproval:
+    case .working:
         return true
-    case .awaitingReply, .error, .ended:
+    case .awaitingReply, .needsApproval, .error, .ended:
         return false
     }
 }
 
-private func sessionSummary(_ state: PiSessionAttributes.ContentState) -> String {
-    if state.totalActiveSessions <= 1 {
-        switch state.primaryPhase {
-        case .working:
-            return "1 active"
-        case .awaitingReply:
-            return "Awaiting input"
-        case .needsApproval:
-            let approvals = max(state.pendingApprovalCount, 1)
-            return approvals == 1 ? "1 approval pending" : "\(approvals) approvals pending"
-        case .error:
-            return "Needs attention"
-        case .ended:
-            return "Idle"
-        }
-    }
-
-    if state.sessionsWorking > 0 {
-        return "\(state.sessionsWorking) working · \(state.totalActiveSessions) active"
-    }
-
-    if state.sessionsAwaitingReply > 0 {
-        return state.sessionsAwaitingReply == 1
-            ? "1 awaiting reply"
-            : "\(state.sessionsAwaitingReply) awaiting reply"
-    }
-
-    return "\(state.totalActiveSessions) active"
-}
-
-private func centerActivityText(_ state: PiSessionAttributes.ContentState) -> String? {
-    guard let raw = state.primaryLastActivity?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !raw.isEmpty else {
-        return nil
-    }
-
-    let normalized = raw.lowercased()
-    if normalized == phaseLabel(state.primaryPhase).lowercased() {
-        return nil
-    }
-    if normalized == sessionSummary(state).lowercased() {
-        return nil
-    }
-
-    let generic = Set([
-        "working",
-        "your turn",
-        "approval required",
-        "attention needed",
-        "session ended",
-        "idle"
-    ])
-
-    return generic.contains(normalized) ? nil : raw
-}
-
 /// VoiceOver summary combining session name, phase, and key details.
-private func accessibilitySummary(_ state: PiSessionAttributes.ContentState) -> String {
-    var parts = ["\(state.primarySessionName), \(phaseLabel(state.primaryPhase))"]
+private func accessibilitySummary(
+    _ state: PiSessionAttributes.ContentState,
+    isStale: Bool = false
+) -> String {
+    var parts = ["\(state.primarySessionName), \(LiveActivityPresentation.phaseLabel(state.primaryPhase))"]
+    if isStale {
+        parts.append("Update delayed")
+    }
     if state.pendingApprovalCount > 0 {
         parts.append("\(state.pendingApprovalCount) pending approval\(state.pendingApprovalCount == 1 ? "" : "s")")
     }

@@ -153,6 +153,7 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: Oppi
         INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
 
   OppiTests:
     type: bundle.unit-test
