@@ -20,7 +20,7 @@ struct ToolRowMarkdownRenderStrategy {
         updateExpandedLabelWidthIfNeeded: () -> Void,
         showExpandedViewport: () -> Void,
         scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> ToolTimelineRowExpandedRenderer.Visibility {
+    ) -> ToolRowRenderVisibility {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text)
         let shouldRerender = signature != expandedRenderSignature
             || !isUsingMarkdownLayout
@@ -64,7 +64,7 @@ struct ToolRowMarkdownRenderStrategy {
             }
         }
 
-        return ToolTimelineRowExpandedRenderer.Visibility(
+        return ToolRowRenderVisibility(
             showExpandedContainer: true,
             showCommandContainer: false,
             showOutputContainer: false

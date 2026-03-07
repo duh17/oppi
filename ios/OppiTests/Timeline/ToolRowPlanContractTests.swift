@@ -4,24 +4,18 @@ import Testing
 @MainActor
 @Suite("Tool row render plan contract")
 struct ToolRowPlanContractTests {
-    @Test func collapsedToolPlanTracksPreviewAndImageVisibility() {
+    @Test func collapsedToolPlanUsesCollapsedInteractionSpec() {
         let plan = ToolRowPlanBuilder.build(configuration: makeTimelineToolConfiguration(
             preview: "summary",
             collapsedImageBase64: "abcd",
             isExpanded: false
         ))
 
-        #expect(plan.expandedMode == .none)
         #expect(plan.interactionPolicy == nil)
         #expect(plan.interactionSpec == .collapsed)
-        #expect(plan.collapsedPreviewPresent)
-        #expect(plan.collapsedImagePreviewPresent)
-        #expect(!plan.expectsExpandedContainer)
-        #expect(!plan.expectsCommandContainer)
-        #expect(!plan.expectsOutputContainer)
     }
 
-    @Test func expandedBashPlanKeepsCommandSelectionButPrefersFullScreenForOutput() {
+    @Test func expandedBashPlanKeepsCommandSelectionButPrefersFullScreenForOutput() throws {
         let plan = ToolRowPlanBuilder.build(configuration: makeTimelineToolConfiguration(
             expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
             copyCommandText: "echo hi",
@@ -31,18 +25,17 @@ struct ToolRowPlanContractTests {
             selectedTextSessionId: "session-1"
         ))
 
-        #expect(plan.expandedMode == .bash)
-        #expect(plan.expectsCommandContainer)
-        #expect(plan.expectsOutputContainer)
-        #expect(!plan.expectsExpandedContainer)
-        #expect(plan.interactionPolicy?.supportsFullScreenPreview == true)
-        #expect(plan.interactionSpec.supportsFullScreenPreview)
+        let policy = try #require(plan.interactionPolicy)
+        #expect(policy.mode == .bash(unwrapped: true))
+        #expect(policy.supportsFullScreenPreview)
         #expect(plan.interactionSpec.commandSelectionEnabled)
         #expect(!plan.interactionSpec.outputSelectionEnabled)
         #expect(plan.interactionSpec.allowsHorizontalScroll)
+        #expect(plan.interactionSpec.enablesTapCopyGesture)
+        #expect(plan.interactionSpec.enablesPinchGesture)
     }
 
-    @Test func expandedMarkdownPlanPreservesFullScreenGesturesAndDisablesInlineSelection() {
+    @Test func expandedMarkdownPlanPreservesFullScreenGesturesAndDisablesInlineSelection() throws {
         let plan = ToolRowPlanBuilder.build(configuration: makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Header\n\nBody"),
             copyOutputText: "# Header\n\nBody",
@@ -52,17 +45,16 @@ struct ToolRowPlanContractTests {
             selectedTextSessionId: "session-1"
         ))
 
-        #expect(plan.expandedMode == .markdown)
-        #expect(plan.expectsExpandedContainer)
-        #expect(plan.interactionPolicy?.supportsFullScreenPreview == true)
-        #expect(plan.interactionSpec.supportsFullScreenPreview)
+        let policy = try #require(plan.interactionPolicy)
+        #expect(policy.mode == .markdown)
+        #expect(policy.supportsFullScreenPreview)
         #expect(plan.interactionSpec.enablesTapCopyGesture)
         #expect(plan.interactionSpec.enablesPinchGesture)
         #expect(!plan.interactionSpec.markdownSelectionEnabled)
         #expect(!plan.interactionSpec.expandedLabelSelectionEnabled)
     }
 
-    @Test func hostedPlansDoNotExposeTextFullScreenOrInlineSelection() {
+    @Test func hostedPlansDoNotExposeTextFullScreenOrInlineSelection() throws {
         let readMediaPlan = ToolRowPlanBuilder.build(configuration: makeTimelineToolConfiguration(
             expandedContent: .readMedia(
                 output: "data:image/png;base64,abc",
@@ -74,9 +66,9 @@ struct ToolRowPlanContractTests {
             selectedTextPiRouter: SelectedTextPiActionRouter { _ in },
             selectedTextSessionId: "session-1"
         ))
-        #expect(readMediaPlan.expandedMode == .readMedia)
-        #expect(readMediaPlan.expectsExpandedContainer)
-        #expect(!readMediaPlan.interactionSpec.supportsFullScreenPreview)
+        let readMediaPolicy = try #require(readMediaPlan.interactionPolicy)
+        #expect(readMediaPolicy.mode == .readMedia)
+        #expect(!readMediaPolicy.supportsFullScreenPreview)
         #expect(!readMediaPlan.interactionSpec.commandSelectionEnabled)
         #expect(!readMediaPlan.interactionSpec.outputSelectionEnabled)
         #expect(!readMediaPlan.interactionSpec.expandedLabelSelectionEnabled)
@@ -96,8 +88,9 @@ struct ToolRowPlanContractTests {
             toolNamePrefix: "plot",
             isExpanded: true
         ))
-        #expect(plotPlan.expandedMode == .plot)
-        #expect(!plotPlan.interactionSpec.supportsFullScreenPreview)
+        let plotPolicy = try #require(plotPlan.interactionPolicy)
+        #expect(plotPolicy.mode == .plot)
+        #expect(!plotPolicy.supportsFullScreenPreview)
         #expect(!plotPlan.interactionSpec.enablesTapCopyGesture)
         #expect(!plotPlan.interactionSpec.enablesPinchGesture)
     }

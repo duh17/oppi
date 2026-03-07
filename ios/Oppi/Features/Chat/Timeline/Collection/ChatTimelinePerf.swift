@@ -23,7 +23,6 @@ enum ChatTimelinePerf {
         let layoutMaxMs: Int
         let cellConfigureLastMs: Int
         let cellConfigureMaxMs: Int
-        let slowCellCount: Int
         let hardGuardrailBreachCount: Int
         let failsafeConfigureCount: Int
         let scrollCommandsPerSecond: Int
@@ -66,7 +65,6 @@ enum ChatTimelinePerf {
     private static var layoutMaxMs = 0
     private static var cellConfigureLastMs = 0
     private static var cellConfigureMaxMs = 0
-    private static var slowCellCount = 0
     private static var hardGuardrailBreachCount = 0
     private static var failsafeConfigureCount = 0
 
@@ -97,7 +95,6 @@ enum ChatTimelinePerf {
         layoutMaxMs = 0
         cellConfigureLastMs = 0
         cellConfigureMaxMs = 0
-        slowCellCount = 0
         hardGuardrailBreachCount = 0
         failsafeConfigureCount = 0
 
@@ -126,7 +123,6 @@ enum ChatTimelinePerf {
             layoutMaxMs: layoutMaxMs,
             cellConfigureLastMs: cellConfigureLastMs,
             cellConfigureMaxMs: cellConfigureMaxMs,
-            slowCellCount: slowCellCount,
             hardGuardrailBreachCount: hardGuardrailBreachCount,
             failsafeConfigureCount: failsafeConfigureCount,
             scrollCommandsPerSecond: scrollCommandsPerSecond
@@ -394,7 +390,6 @@ enum ChatTimelinePerf {
         }
 
         guard durationMs >= slowCellThresholdMs else { return }
-        slowCellCount &+= 1
 
 #if canImport(Sentry)
         if let root = activeTimelineApplySpan {

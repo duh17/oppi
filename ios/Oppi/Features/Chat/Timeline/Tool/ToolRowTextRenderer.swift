@@ -74,22 +74,6 @@ enum ToolRowTextRenderer {
     @MainActor
     static func applyANSIOutputPresentation(
         _ presentation: ANSIOutputPresentation,
-        to label: UILabel,
-        plainTextColor: UIColor
-    ) {
-        if let attributed = presentation.attributedText {
-            label.attributedText = attributed
-            return
-        }
-
-        label.attributedText = nil
-        label.text = presentation.plainText
-        label.textColor = plainTextColor
-    }
-
-    @MainActor
-    static func applyANSIOutputPresentation(
-        _ presentation: ANSIOutputPresentation,
         to textView: UITextView,
         plainTextColor: UIColor
     ) {

@@ -412,6 +412,14 @@ final class TimelineStreamingScrollScenarioRunner {
             return
         }
 
+        let isDone: Bool
+        if case .toolCall(_, _, _, _, _, _, let done) = toolItem {
+            isDone = done
+        } else {
+            Issue.record("\(step): expected tool row for \(toolEventID)")
+            return
+        }
+
         switch expected {
         case .bash:
             guard case .bash = config.expandedContent else {
@@ -420,9 +428,19 @@ final class TimelineStreamingScrollScenarioRunner {
             }
 
         case .markdown:
-            guard case .markdown = config.expandedContent else {
-                Issue.record("\(step): expected .markdown expanded content")
-                return
+            if isDone {
+                guard case .markdown = config.expandedContent else {
+                    Issue.record("\(step): expected .markdown expanded content")
+                    return
+                }
+            } else {
+                switch config.expandedContent {
+                case .markdown, .text:
+                    break
+                default:
+                    Issue.record("\(step): expected cheap markdown/source expanded content")
+                    return
+                }
             }
 
         case .code:

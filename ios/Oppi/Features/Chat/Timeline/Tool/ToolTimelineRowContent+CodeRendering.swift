@@ -5,6 +5,10 @@ extension ToolTimelineRowContentView {
         let attributed: NSAttributedString
     }
 
+    #if DEBUG
+    nonisolated(unsafe) static var deferredCodeHighlightDelayForTesting: Duration?
+    #endif
+
     func cancelDeferredCodeHighlight() {
         expandedCodeDeferredHighlightTask?.cancel()
         expandedCodeDeferredHighlightTask = nil
@@ -24,6 +28,12 @@ extension ToolTimelineRowContentView {
         expandedCodeDeferredHighlightSignature = deferredHighlight.signature
 
         expandedCodeDeferredHighlightTask = Task.detached(priority: .utility) { [weak self] in
+            #if DEBUG
+            if let artificialDelay = Self.deferredCodeHighlightDelayForTesting {
+                try? await Task.sleep(for: artificialDelay)
+            }
+            #endif
+
             let renderStart = ContinuousClock.now
             let highlighted = DeferredHighlightedCode(attributed: ToolRowTextRenderer.makeCodeAttributedText(
                 text: deferredHighlight.text,
@@ -57,8 +67,7 @@ extension ToolTimelineRowContentView {
                 guard self.expandedRenderSignature == deferredHighlight.signature,
                       self.expandedViewportMode == .code,
                       !self.expandedUsesMarkdownLayout,
-                      !self.expandedUsesReadMediaLayout,
-                      !self.expandedContainer.isHidden else {
+                      !self.expandedUsesReadMediaLayout else {
                     return
                 }
 
@@ -75,13 +84,14 @@ extension ToolTimelineRowContentView {
         text: String,
         language: SyntaxLanguage?,
         startLine: Int?,
-        isStreaming: Bool
-    ) -> ToolTimelineRowExpandedRenderer.Visibility {
+        isStreaming: Bool,
+        wasExpandedVisible: Bool
+    ) -> ToolRowRenderVisibility {
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let result = ToolTimelineRowExpandedRenderer.renderCodeMode(
+        let result = ToolRowCodeRenderStrategy.render(
             text: text,
             language: language,
             startLine: startLine,
@@ -92,10 +102,12 @@ extension ToolTimelineRowContentView {
             expandedRenderedText: &localExpandedRenderedText,
             expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
             isCurrentModeCode: expandedViewportMode == .code,
+            wasExpandedVisible: wasExpandedVisible,
             showExpandedLabel: showExpandedLabel,
             setModeCode: { self.expandedViewportMode = .code },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: { self.scheduleExpandedAutoScrollToBottomIfNeeded() }
         )
 
         expandedRenderSignature = localExpandedRenderSignature

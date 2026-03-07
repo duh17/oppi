@@ -13,7 +13,7 @@ struct ToolRowCodeRenderStrategy {
     /// Result of a render call. `deferredHighlight` is non-nil when the strategy
     /// showed plain text and needs the caller to schedule async highlighting.
     struct RenderResult {
-        let visibility: ToolTimelineRowExpandedRenderer.Visibility
+        let visibility: ToolRowRenderVisibility
         let deferredHighlight: DeferredHighlight?
     }
 
@@ -41,10 +41,12 @@ struct ToolRowCodeRenderStrategy {
         expandedRenderedText: inout String?,
         expandedShouldAutoFollow: inout Bool,
         isCurrentModeCode: Bool,
+        wasExpandedVisible: Bool,
         showExpandedLabel: () -> Void,
         setModeCode: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
-        showExpandedViewport: () -> Void
+        showExpandedViewport: () -> Void,
+        scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
     ) -> RenderResult {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
@@ -54,9 +56,18 @@ struct ToolRowCodeRenderStrategy {
             startLine: resolvedStartLine,
             isStreaming: isStreaming
         )
+        // If a deferred highlight task cached the final attributed result but
+        // couldn't apply it due to a transient mode/signature mismatch, the
+        // label can be left showing the raw source text for the same signature.
+        // UITextView may synthesize a plain attributedText even when we set
+        // only `.text`, so detect the cheap first-paint state by comparing the
+        // currently rendered string with the raw display text.
+        let currentRenderedString = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        let needsNonStreamingUpgrade = !isStreaming && currentRenderedString == displayText
         let shouldRerender = signature != expandedRenderSignature
             || !isCurrentModeCode
-            || expandedLabel.attributedText == nil
+            || needsNonStreamingUpgrade
+        let previousRenderedText = expandedRenderedText
 
         var deferred: DeferredHighlight?
 
@@ -108,11 +119,31 @@ struct ToolRowCodeRenderStrategy {
         setModeCode()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
-        expandedShouldAutoFollow = isStreaming
-        if shouldRerender && !isStreaming { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
+
+        let isStreamingContinuation = previousRenderedText.map {
+            !$0.isEmpty && displayText.hasPrefix($0)
+        } ?? false
+
+        if isStreaming {
+            if !wasExpandedVisible || previousRenderedText == nil {
+                expandedShouldAutoFollow = true
+            } else if !isStreamingContinuation {
+                expandedShouldAutoFollow = false
+            }
+        } else {
+            expandedShouldAutoFollow = false
+        }
+
+        if shouldRerender {
+            if expandedShouldAutoFollow {
+                scheduleExpandedAutoScrollToBottomIfNeeded()
+            } else if !isStreaming {
+                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
+            }
+        }
 
         return RenderResult(
-            visibility: ToolTimelineRowExpandedRenderer.Visibility(
+            visibility: ToolRowRenderVisibility(
                 showExpandedContainer: true,
                 showCommandContainer: false,
                 showOutputContainer: false

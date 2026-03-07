@@ -23,10 +23,8 @@ struct ChatTimelineView: View {
     @Environment(TimelineReducer.self) private var reducer
     @Environment(ServerConnection.self) private var connection
     @Environment(AudioPlayerService.self) private var audioPlayer
-    @Environment(\.theme) private var theme
 
     @State private var renderWindow = Self.initialRenderWindow
-    @State private var fileToOpen: FileToOpen?
     @State private var scrollCommandNonce = 0
     @State private var pendingScrollCommand: ChatTimelineScrollCommand?
 
@@ -60,7 +58,6 @@ struct ChatTimelineView: View {
                 sessionId: sessionId,
                 workspaceId: workspaceId,
                 onFork: onFork,
-                onOpenFile: { fileToOpen = $0 },
                 onShowEarlier: {
                     renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
                 },
@@ -73,7 +70,6 @@ struct ChatTimelineView: View {
                 toolDetailsStore: reducer.toolDetailsStore,
                 connection: connection,
                 audioPlayer: audioPlayer,
-                theme: theme,
                 themeID: ThemeRuntimeState.currentThemeID(),
                 selectedTextPiRouter: selectedTextPiRouter,
                 topOverlap: topOverlap,
@@ -128,9 +124,6 @@ struct ChatTimelineView: View {
         .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
             guard let bottomItemID else { return }
             issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
-        }
-        .sheet(item: $fileToOpen) { file in
-            RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)
         }
     }
 

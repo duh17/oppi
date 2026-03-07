@@ -1,33 +1,37 @@
 import UIKit
 
 @MainActor
-struct ToolRowPlotRenderStrategy {
+struct ToolRowReadMediaRenderStrategy {
     static func render(
-        spec: PlotChartSpec,
-        fallbackText: String?,
+        output: String,
+        filePath: String?,
+        startLine: Int,
+        isError: Bool,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
         expandedRenderedText: inout String?,
         expandedShouldAutoFollow: inout Bool,
         isUsingReadMediaLayout: Bool,
-        hasExpandedPlotContentView: Bool,
+        hasExpandedReadMediaContentView: Bool,
         showExpandedHostedView: () -> Void,
-        installExpandedPlotView: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Void,
+        installExpandedReadMediaView: (_ output: String, _ isError: Bool, _ filePath: String?, _ startLine: Int) -> Void,
         setModeText: () -> Void,
         showExpandedViewport: () -> Void
-    ) -> ToolTimelineRowExpandedRenderer.Visibility {
-        let signature = ToolTimelineRowRenderMetrics.plotSignature(
-            spec: spec,
-            fallbackText: fallbackText
+    ) -> ToolRowRenderVisibility {
+        let signature = ToolTimelineRowRenderMetrics.readMediaSignature(
+            output: output,
+            filePath: filePath,
+            startLine: startLine,
+            isError: isError
         )
         let shouldReinstall = signature != expandedRenderSignature
             || !isUsingReadMediaLayout
-            || !hasExpandedPlotContentView
+            || !hasExpandedReadMediaContentView
 
         showExpandedHostedView()
-        expandedRenderedText = fallbackText
+        expandedRenderedText = output
         if shouldReinstall {
-            installExpandedPlotView(spec, fallbackText)
+            installExpandedReadMediaView(output, isError, filePath, startLine)
             expandedRenderSignature = signature
         }
 
@@ -38,7 +42,7 @@ struct ToolRowPlotRenderStrategy {
         expandedShouldAutoFollow = false
         if shouldReinstall { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
 
-        return ToolTimelineRowExpandedRenderer.Visibility(
+        return ToolRowRenderVisibility(
             showExpandedContainer: true,
             showCommandContainer: false,
             showOutputContainer: false

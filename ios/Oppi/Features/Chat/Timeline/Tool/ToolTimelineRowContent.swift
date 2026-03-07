@@ -200,6 +200,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
     private let fullScreenTerminalStream: TerminalTraceStream
+    private let fullScreenSourceStream: SourceTraceStream
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCommandDoubleTap))
@@ -258,6 +259,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             output: configuration.copyOutputText ?? "",
             command: configuration.copyCommandText,
             isDone: configuration.isDone
+        )
+        self.fullScreenSourceStream = SourceTraceStream(
+            text: "",
+            filePath: nil,
+            isDone: configuration.isDone,
+            finalContent: nil
         )
         super.init(frame: .zero)
         setupViews()
@@ -711,7 +718,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedLabelWidthConstraint?.constant = -12
     }
 
-    /// Prepare for embedded expanded content (UIKit-first, optional SwiftUI fallback).
+    /// Prepare for embedded expanded content.
     private func showExpandedHostedView() {
         expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
         expandedLabel.attributedText = nil
@@ -848,8 +855,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         commandContainer.addGestureRecognizer(commandDoubleTapGesture)
         outputContainer.addGestureRecognizer(outputDoubleTapGesture)
-        expandedContainer.addGestureRecognizer(expandedDoubleTapGesture)
-        expandedContainer.addGestureRecognizer(expandedPinchGesture)
+        expandedScrollView.addGestureRecognizer(expandedDoubleTapGesture)
+        expandedScrollView.addGestureRecognizer(expandedPinchGesture)
 
         commandContainer.addGestureRecognizer(commandSingleTapBlocker)
         outputContainer.addGestureRecognizer(outputSingleTapBlocker)
@@ -915,7 +922,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         NSLayoutConstraint.activate(layout.all)
     }
 
-    private typealias ExpandedRenderVisibility = ToolTimelineRowExpandedRenderer.Visibility
+    private typealias ExpandedRenderVisibility = ToolRowRenderVisibility
 
     private func apply(configuration: ToolTimelineRowConfiguration) {
         let previousConfiguration = currentConfiguration
@@ -973,14 +980,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // Reset gesture interception (specific cases disable it below)
         setExpandedContainerGestureInterceptionEnabled(true)
         currentInteractionPolicy = renderPlan.interactionPolicy
+        updateFullScreenSourceStream(configuration: configuration)
 
         var showExpandedContainer = false
         var showCommandContainer = false
         var showOutputContainer = false
         var activeExpandedContent: ToolPresentationBuilder.ToolExpandedContent?
 
-        if configuration.isExpanded, let rawExpandedContent = configuration.expandedContent {
-            let expandedContent = normalizedExpandedContentForHotPath(rawExpandedContent)
+        if configuration.isExpanded, let expandedContent = configuration.expandedContent {
             activeExpandedContent = expandedContent
             let visibility = ToolTimelineRowExpandedModeRouter.route(
                 expandedContent: expandedContent,
@@ -998,7 +1005,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     self.renderExpandedDiffMode(
                         lines: lines,
                         path: path,
-                        isStreaming: !configuration.isDone
+                        isStreaming: !configuration.isDone,
+                        wasExpandedVisible: wasExpandedVisible
                     )
                 },
                 renderCode: { text, language, startLine in
@@ -1006,7 +1014,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                         text: text,
                         language: language,
                         startLine: startLine,
-                        isStreaming: !configuration.isDone
+                        isStreaming: !configuration.isDone,
+                        wasExpandedVisible: wasExpandedVisible
                     )
                 },
                 renderMarkdown: { text in
@@ -1169,7 +1178,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localOutputShouldAutoFollow = outputShouldAutoFollow
         var outputDidTextChange = false
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderBashMode(
+        let visibility = ToolRowBashRenderStrategy.render(
             command: command,
             output: output,
             unwrapped: unwrapped,
@@ -1215,7 +1224,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func renderExpandedDiffMode(
         lines: [DiffLine],
         path: String?,
-        isStreaming: Bool
+        isStreaming: Bool,
+        wasExpandedVisible: Bool
     ) -> ExpandedRenderVisibility {
         cancelDeferredCodeHighlight()
 
@@ -1223,7 +1233,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderDiffMode(
+        let visibility = ToolRowDiffRenderStrategy.render(
             lines: lines,
             path: path,
             isStreaming: isStreaming,
@@ -1233,10 +1243,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedRenderedText: &localExpandedRenderedText,
             expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
             isCurrentModeDiff: expandedViewportMode == .diff,
+            wasExpandedVisible: wasExpandedVisible,
             showExpandedLabel: showExpandedLabel,
             setModeDiff: { self.expandedViewportMode = .diff },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
         )
 
         expandedRenderSignature = localExpandedRenderSignature
@@ -1267,7 +1279,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderMarkdownMode(
+        let visibility = ToolRowMarkdownRenderStrategy.render(
             text: text,
             isStreaming: isStreaming,
             expandedMarkdownView: expandedMarkdownView,
@@ -1324,7 +1336,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderPlotMode(
+        let visibility = ToolRowPlotRenderStrategy.render(
             spec: spec,
             fallbackText: fallbackText,
             expandedScrollView: expandedScrollView,
@@ -1359,7 +1371,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderReadMediaMode(
+        let visibility = ToolRowReadMediaRenderStrategy.render(
             output: output,
             filePath: filePath,
             startLine: startLine,
@@ -1397,7 +1409,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        let visibility = ToolTimelineRowExpandedRenderer.renderTextMode(
+        let visibility = ToolRowTextRenderStrategy.render(
             text: text,
             language: language,
             isError: configuration.isError,
@@ -1426,14 +1438,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         setExpandedVerticalLockEnabled(false)
 
         return visibility
-    }
-
-    private func normalizedExpandedContentForHotPath(
-        _ content: ToolPresentationBuilder.ToolExpandedContent
-    ) -> ToolPresentationBuilder.ToolExpandedContent {
-        // Expanded tool content is now UIKit-first for timeline hot paths.
-        // SwiftUI is preserved behind per-view install gates as a fallback.
-        content
     }
 
     private func updateSelectedTextIntegration(
@@ -1699,12 +1703,48 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return nil
     }
 
+    private func updateFullScreenSourceStream(configuration: ToolTimelineRowConfiguration) {
+        guard let policy = currentInteractionPolicy,
+              policy.supportsFullScreenPreview,
+              let snapshot = ToolTimelineRowFullScreenSupport.liveSourceSnapshot(
+                configuration: configuration,
+                outputCopyText: outputCopyText
+              ) else {
+            fullScreenSourceStream.update(
+                text: "",
+                filePath: nil,
+                isDone: true,
+                finalContent: nil
+            )
+            return
+        }
+
+        let finalContent: FullScreenCodeContent?
+        if configuration.isDone {
+            finalContent = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+                configuration: configuration,
+                outputCopyText: outputCopyText,
+                terminalStream: nil
+            )
+        } else {
+            finalContent = nil
+        }
+
+        fullScreenSourceStream.update(
+            text: snapshot.text,
+            filePath: snapshot.filePath,
+            isDone: configuration.isDone,
+            finalContent: finalContent
+        )
+    }
+
     private var fullScreenContent: FullScreenCodeContent? {
         ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: currentConfiguration,
             outputCopyText: outputCopyText,
             interactionPolicy: currentInteractionPolicy,
-            terminalStream: fullScreenTerminalStream
+            terminalStream: fullScreenTerminalStream,
+            sourceStream: fullScreenSourceStream
         )
     }
 
@@ -1791,7 +1831,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func scheduleExpandedAutoScrollToBottomIfNeeded() {
+    func scheduleExpandedAutoScrollToBottomIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let self,
                   self.expandedShouldAutoFollow,

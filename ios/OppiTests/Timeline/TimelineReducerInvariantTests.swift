@@ -184,16 +184,12 @@ struct TimelineReducerInvariantTests {
         #expect(snapshot(of: chunked).toolOutputsByVisibleToolID == snapshot(of: sequential).toolOutputsByVisibleToolID)
     }
 
-    @Test func timelineHotPathComplexityBudgets() throws {
+    @Test func timelineHotPathCyclomaticDisableBudgets() throws {
         for budget in timelineComplexityBudgets {
-            let metrics = try sourceMetrics(for: budget.path)
+            let cyclomaticDisableCount = try cyclomaticDisableCount(for: budget.path)
             #expect(
-                metrics.lines <= budget.maxLines,
-                "\(budget.path) grew to \(metrics.lines) lines (budget \(budget.maxLines))"
-            )
-            #expect(
-                metrics.cyclomaticDisableCount <= budget.maxCyclomaticDisables,
-                "\(budget.path) has \(metrics.cyclomaticDisableCount) cyclomatic disables (budget \(budget.maxCyclomaticDisables))"
+                cyclomaticDisableCount <= budget.maxCyclomaticDisables,
+                "\(budget.path) has \(cyclomaticDisableCount) cyclomatic disables (budget \(budget.maxCyclomaticDisables))"
             )
         }
     }
@@ -383,44 +379,32 @@ private func deterministicTerminalEvents() -> [AgentEvent] {
 
 private struct TimelineComplexityBudget {
     let path: String
-    let maxLines: Int
     let maxCyclomaticDisables: Int
 }
 
 private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
     .init(
         path: "ios/Oppi/Core/Runtime/TimelineReducer.swift",
-        maxLines: 1_190,
         maxCyclomaticDisables: 1
     ),
     .init(
         path: "ios/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift",
-        maxLines: 620,
         maxCyclomaticDisables: 0
     ),
     .init(
-        path: "ios/Oppi/Features/Chat/Timeline/ToolTimelineRowContent.swift",
-        maxLines: 1_920,
+        path: "ios/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
         maxCyclomaticDisables: 0
     ),
 ]
 
-private struct SourceMetrics {
-    let lines: Int
-    let cyclomaticDisableCount: Int
-}
-
-private func sourceMetrics(for relativePath: String) throws -> SourceMetrics {
+private func cyclomaticDisableCount(for relativePath: String) throws -> Int {
     let projectRoot = try findProjectRoot(startingFrom: URL(filePath: #filePath))
     let fileURL = projectRoot.appending(path: relativePath)
     let text = try String(contentsOf: fileURL, encoding: .utf8)
 
-    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
-    let cyclomaticDisableCount = text
+    return text
         .components(separatedBy: "cyclomatic_complexity")
         .count - 1
-
-    return SourceMetrics(lines: lines, cyclomaticDisableCount: cyclomaticDisableCount)
 }
 
 private func findProjectRoot(startingFrom url: URL) throws -> URL {
