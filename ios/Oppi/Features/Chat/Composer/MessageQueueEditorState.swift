@@ -76,22 +76,17 @@ struct MessageQueueEditorState: Equatable, Sendable {
         stashedDraft != nil && mode == .live
     }
 
-    mutating func receiveServerQueue(_ latest: MessageQueueState, isExpanded: Bool) {
+    mutating func receiveServerQueue(_ latest: MessageQueueState, isExpanded _: Bool) {
         let previousServerQueue = serverQueue
         serverQueue = latest
 
-        if !isExpanded, mode == .draft {
-            guard latest != previousServerQueue else { return }
-            conflict = Self.makeConflict(previous: previousServerQueue, latest: latest)
-            return
-        }
+        guard latest != previousServerQueue else { return }
 
         switch mode {
         case .live:
             displayedQueue = latest
             conflict = nil
         case .draft:
-            guard latest != previousServerQueue else { return }
             conflict = Self.makeConflict(previous: previousServerQueue, latest: latest)
         }
     }

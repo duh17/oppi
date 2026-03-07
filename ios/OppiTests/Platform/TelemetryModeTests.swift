@@ -50,4 +50,34 @@ struct TelemetryModeTests {
         #expect(TelemetryMode.fromRawString("") == .internalDiagnostics)
         #expect(TelemetryMode.fromRawString("mystery") == .internalDiagnostics)
     }
+
+    @Test func telemetrySettingsDisableRemoteUploadsDuringAutomatedTests() {
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                environment: ["XCTestConfigurationFilePath": "/tmp/test.xctestconfiguration"]
+            )
+        )
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                environment: ["XCTestBundlePath": "/tmp/OppiTests.xctest"]
+            )
+        )
+    }
+
+    @Test func telemetrySettingsStillRespectModeOutsideTests() {
+        #expect(
+            TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                environment: [:]
+            )
+        )
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .public,
+                environment: [:]
+            )
+        )
+    }
 }

@@ -204,26 +204,13 @@ enum SelectedTextPiPromptFormatter {
 
     static func composeDraftAddition(for request: SelectedTextPiRequest) -> String {
         let snippet = formattedSnippet(for: request.selectedText, source: request.source)
-        switch request.action {
-        case .explain:
-            return ["Explain this:", sourceMetadataBlock(for: request.source), snippet]
-                .compactMap(nonEmpty)
-                .joined(separator: "\n\n")
-        case .doIt:
-            return ["Do this:", sourceMetadataBlock(for: request.source), snippet]
-                .compactMap(nonEmpty)
-                .joined(separator: "\n\n")
-        case .fix:
-            return ["Fix this:", sourceMetadataBlock(for: request.source), snippet]
-                .compactMap(nonEmpty)
-                .joined(separator: "\n\n")
-        case .refactor:
-            return ["Refactor this:", sourceMetadataBlock(for: request.source), snippet]
-                .compactMap(nonEmpty)
-                .joined(separator: "\n\n")
-        case .addToPrompt:
+        guard let actionTitle = draftActionTitle(for: request.action) else {
             return snippet
         }
+
+        return [actionTitle, sourceMetadataBlock(for: request.source), snippet]
+            .compactMap(nonEmpty)
+            .joined(separator: "\n\n")
     }
 
     static func normalizedSelectedText(_ text: String) -> String {
@@ -243,11 +230,23 @@ enum SelectedTextPiPromptFormatter {
         return quotedBlock(clamped.text) + clamped.noticeSuffix
     }
 
-    private static func prefersCodeBlockFormatting(for source: SelectedTextSourceContext) -> Bool {
-        if source.surface.prefersCodeBlockInsertion {
-            return true
+    private static func draftActionTitle(for action: SelectedTextPiActionKind) -> String? {
+        switch action {
+        case .explain:
+            return "Explain this:"
+        case .doIt:
+            return "Do this:"
+        case .fix:
+            return "Fix this:"
+        case .refactor:
+            return "Refactor this:"
+        case .addToPrompt:
+            return nil
         }
-        return source.languageHint != nil
+    }
+
+    private static func prefersCodeBlockFormatting(for source: SelectedTextSourceContext) -> Bool {
+        source.surface.prefersCodeBlockInsertion || source.languageHint != nil
     }
 
     private static func sourceMetadataBlock(for source: SelectedTextSourceContext) -> String? {
