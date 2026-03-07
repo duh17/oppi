@@ -34,6 +34,8 @@ interface RuntimeUpdateManagerOptions {
   packageName?: string;
   currentVersion: string;
   npmExecutable?: string;
+  /** Working directory for npm install (local dependency update). */
+  cwd?: string;
   checkIntervalMs?: number;
   checkTimeoutMs?: number;
   updateTimeoutMs?: number;
@@ -102,6 +104,7 @@ export class RuntimeUpdateManager {
   private readonly packageName: string;
   private readonly currentVersion: string;
   private readonly npmExecutable: string;
+  private readonly cwd: string | undefined;
   private readonly checkIntervalMs: number;
   private readonly checkTimeoutMs: number;
   private readonly updateTimeoutMs: number;
@@ -113,9 +116,10 @@ export class RuntimeUpdateManager {
   private status: RuntimeUpdateStatus;
 
   constructor(options: RuntimeUpdateManagerOptions) {
-    this.packageName = options.packageName || "oppi-server";
+    this.packageName = options.packageName || "@mariozechner/pi-coding-agent";
     this.currentVersion = options.currentVersion;
     this.npmExecutable = options.npmExecutable || "npm";
+    this.cwd = options.cwd;
     this.checkIntervalMs = options.checkIntervalMs ?? 6 * 60 * 60 * 1000;
     this.checkTimeoutMs = options.checkTimeoutMs ?? 4_000;
     this.updateTimeoutMs = options.updateTimeoutMs ?? 3 * 60 * 1000;
@@ -138,6 +142,7 @@ export class RuntimeUpdateManager {
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 64 * 1024,
+      cwd: this.cwd,
     });
 
     return result.stdout;
@@ -250,7 +255,7 @@ export class RuntimeUpdateManager {
 
       await this.commandRunner(
         this.npmExecutable,
-        ["install", "-g", `${this.packageName}@latest`],
+        ["install", `${this.packageName}@latest`],
         this.updateTimeoutMs,
       );
 
