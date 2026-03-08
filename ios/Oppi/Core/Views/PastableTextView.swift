@@ -476,6 +476,10 @@ struct FullSizeTextView: UIViewRepresentable {
     let onCommandEnter: (() -> Void)?
     let onAlternateEnter: (() -> Void)?
     let autoFocusOnAppear: Bool
+    let focusRequestID: Int
+    let suppressKeyboard: Bool
+    let allowKeyboardRestoreOnTap: Bool
+    let onKeyboardRestoreRequest: (() -> Void)?
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
@@ -496,6 +500,13 @@ struct FullSizeTextView: UIViewRepresentable {
         applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
         context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
         context.coordinator.observedTextView = textView
+
+        textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
+        textView.installKeyboardRestoreGesture()
+        if suppressKeyboard {
+            textView.setKeyboardSuppressed(true)
+        }
 
         if autoFocusOnAppear {
             // Auto-focus after sheet animation settles
@@ -525,6 +536,7 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
+        textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
         context.coordinator.observedTextView = textView
 
         let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
@@ -534,6 +546,23 @@ struct FullSizeTextView: UIViewRepresentable {
             DispatchQueue.main.async {
                 guard textView.window != nil else { return }
                 textView.reloadInputViews()
+            }
+        }
+
+        if textView.allowsKeyboardRestoreOnTap != allowKeyboardRestoreOnTap {
+            textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
+        }
+        if textView.isKeyboardSuppressed != suppressKeyboard {
+            textView.setKeyboardSuppressed(suppressKeyboard)
+        }
+
+        if focusRequestID != context.coordinator.lastFocusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                if !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
             }
         }
     }
@@ -547,6 +576,7 @@ struct FullSizeTextView: UIViewRepresentable {
         @Binding var keyboardLanguage: String?
 
         var lastAutocorrectionEnabled: Bool?
+        var lastFocusRequestID = 0
         weak var observedTextView: UITextView?
         nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
 

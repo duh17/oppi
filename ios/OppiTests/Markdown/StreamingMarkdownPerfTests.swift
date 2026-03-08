@@ -106,7 +106,7 @@ struct IncrementalParseCorrectnessTests {
     private func simulateIncrementalParse(
         content: String,
         prefixUTF8ByteCount: Int,
-        themeID: ThemeID = .init(rawValue: "dark") ?? ThemeRuntimeState.currentThemeID()
+        themeID: ThemeID = .dark
     ) -> [FlatSegment] {
         let utf8 = content.utf8
         guard prefixUTF8ByteCount > 0, prefixUTF8ByteCount < utf8.count else {

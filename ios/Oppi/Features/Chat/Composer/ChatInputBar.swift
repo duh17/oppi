@@ -140,16 +140,11 @@ struct ChatInputBar<ActionRow: View>: View {
         isBusy || isInputFocused || !pendingImages.isEmpty
     }
 
-    /// While active voice capture is running, keep keyboard-restore-on-tap disabled
-    /// so accidental taps don't pop the keyboard and interrupt dictation flow.
+    /// Tapping the input while voice is active should switch back to typing:
+    /// restore the keyboard immediately and stop/cancel voice automatically.
     private var allowKeyboardRestoreOnTap: Bool {
         guard let manager = voiceInputManager else { return true }
-        switch manager.state {
-        case .recording, .preparingModel, .processing:
-            return false
-        case .idle, .error:
-            return true
-        }
+        return Self.allowKeyboardRestoreOnTap(voiceState: manager.state)
     }
 
     /// Text binding for the input field.
@@ -620,6 +615,10 @@ struct ChatInputBar<ActionRow: View>: View {
             return "Cancel voice input"
         }
         return "Start voice input"
+    }
+
+    static func allowKeyboardRestoreOnTap(voiceState _: VoiceInputManager.State) -> Bool {
+        true
     }
 
     static func suppressKeyboardAfterSend(

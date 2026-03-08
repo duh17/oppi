@@ -52,6 +52,13 @@ struct ExpandedComposerView: View {
     /// Text in the field before voice recording started.
     @State private var textBeforeRecording: String?
 
+    /// Bumped to programmatically focus the text view for voice mode.
+    @State private var focusRequestID = 0
+
+    /// Mirrors inline composer behavior: keep the cursor visible during voice
+    /// capture while hiding the keyboard until the user taps back into typing.
+    @State private var suppressKeyboard = false
+
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -122,7 +129,11 @@ struct ExpandedComposerView: View {
                     onPasteImages: handlePastedImages,
                     onCommandEnter: handleSend,
                     onAlternateEnter: handleSend,
-                    autoFocusOnAppear: false
+                    autoFocusOnAppear: false,
+                    focusRequestID: focusRequestID,
+                    suppressKeyboard: suppressKeyboard,
+                    allowKeyboardRestoreOnTap: true,
+                    onKeyboardRestoreRequest: handleKeyboardRestore
                 )
 
                 if !slashSuggestions.isEmpty {
@@ -326,6 +337,7 @@ struct ExpandedComposerView: View {
                 case .preparingModel:
                     await manager.cancelRecording()
                     textBeforeRecording = nil
+                    suppressKeyboard = false
                 case .idle:
                     let current = text
                     if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
@@ -333,6 +345,8 @@ struct ExpandedComposerView: View {
                     } else {
                         textBeforeRecording = current + " "
                     }
+                    suppressKeyboard = true
+                    focusRequestID += 1
                     do {
                         try await manager.startRecording(
                             keyboardLanguage: keyboardLanguage,
@@ -340,6 +354,7 @@ struct ExpandedComposerView: View {
                         )
                     } catch {
                         textBeforeRecording = nil
+                        suppressKeyboard = false
                     }
                 case .processing, .error:
                     break
@@ -404,6 +419,22 @@ struct ExpandedComposerView: View {
         }
         onSend()
         dismiss()
+    }
+
+    /// User tapped back into the composer while voice was active — restore the
+    /// keyboard immediately and stop/cancel voice so typing takes over.
+    private func handleKeyboardRestore() {
+        suppressKeyboard = false
+        textBeforeRecording = nil
+        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
+            Task {
+                if manager.isRecording {
+                    await manager.stopRecording()
+                } else {
+                    await manager.cancelRecording()
+                }
+            }
+        }
     }
 
     private func insertSlashCommand(_ command: SlashCommand) {

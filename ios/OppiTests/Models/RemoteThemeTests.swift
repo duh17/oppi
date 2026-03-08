@@ -25,9 +25,9 @@ struct RemoteThemeTests {
         #expect(theme.colorScheme == nil)
     }
 
-    @Test func decodingFailsWithMissingRequiredField() {
+    @Test func decodingFailsWithMissingRequiredField() throws {
         // Remove "bg" from colors — should fail decoding
-        var jsonString = String(data: makeFullThemeJSON(name: "Bad", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "Bad", colorScheme: "dark")
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\",", with: "")
         let data = Data(jsonString.utf8)
         #expect(throws: DecodingError.self) {
@@ -46,7 +46,7 @@ struct RemoteThemeTests {
 
     @Test func toPaletteFailsWithInvalidBaseHex() throws {
         // If a base color has an invalid hex, toPalette returns nil
-        var jsonString = String(data: makeFullThemeJSON(name: "Bad", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "Bad", colorScheme: "dark")
         // Corrupt the "bg" value to be invalid hex
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\"", with: "\"bg\": \"not-hex\"")
         let data = Data(jsonString.utf8)
@@ -57,7 +57,7 @@ struct RemoteThemeTests {
 
     @Test func toPaletteFallsBackForInvalidSemanticHex() throws {
         // Semantic colors (e.g. thinkingText) fall back to derived values when invalid
-        var jsonString = String(data: makeFullThemeJSON(name: "Fallback", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "Fallback", colorScheme: "dark")
         jsonString = jsonString.replacingOccurrences(
             of: "\"thinkingText\": \"#6272a4\"",
             with: "\"thinkingText\": \"invalid\""
@@ -85,7 +85,7 @@ struct RemoteThemeTests {
 
     @Test func toPaletteHandlesColorsWithoutHash() throws {
         // The hex parser strips the # prefix — test that colors with bare hex work
-        var jsonString = String(data: makeFullThemeJSON(name: "NoHash", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "NoHash", colorScheme: "dark")
         // Change bg from "#282a36" to "282a36" (no hash)
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\"", with: "\"bg\": \"282a36\"")
         let data = Data(jsonString.utf8)
@@ -96,7 +96,7 @@ struct RemoteThemeTests {
 
     @Test func toPaletteRejectsShortHex() throws {
         // 3-digit hex like "#abc" should fail — the parser only handles 6-digit
-        var jsonString = String(data: makeFullThemeJSON(name: "Short", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "Short", colorScheme: "dark")
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\"", with: "\"bg\": \"#abc\"")
         let data = Data(jsonString.utf8)
         let theme = try JSONDecoder().decode(RemoteTheme.self, from: data)
@@ -106,7 +106,7 @@ struct RemoteThemeTests {
     }
 
     @Test func toPaletteRejectsEmptyHex() throws {
-        var jsonString = String(data: makeFullThemeJSON(name: "Empty", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "Empty", colorScheme: "dark")
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\"", with: "\"bg\": \"\"")
         let data = Data(jsonString.utf8)
         let theme = try JSONDecoder().decode(RemoteTheme.self, from: data)
@@ -115,7 +115,7 @@ struct RemoteThemeTests {
     }
 
     @Test func toPaletteRejectsWhitespaceOnlyHex() throws {
-        var jsonString = String(data: makeFullThemeJSON(name: "WS", colorScheme: "dark"), encoding: .utf8)!
+        var jsonString = try makeFullThemeJSONString(name: "WS", colorScheme: "dark")
         jsonString = jsonString.replacingOccurrences(of: "\"bg\": \"#282a36\"", with: "\"bg\": \"   \"")
         let data = Data(jsonString.utf8)
         let theme = try JSONDecoder().decode(RemoteTheme.self, from: data)
@@ -124,6 +124,13 @@ struct RemoteThemeTests {
     }
 
     // MARK: - Helpers
+
+    private func makeFullThemeJSONString(name: String, colorScheme: String?) throws -> String {
+        try #require(
+            String(bytes: makeFullThemeJSON(name: name, colorScheme: colorScheme), encoding: .utf8),
+            "Expected UTF-8 test JSON"
+        )
+    }
 
     private func makeFullThemeJSON(name: String, colorScheme: String?) -> Data {
         let csField: String
