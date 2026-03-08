@@ -771,7 +771,7 @@ export class Server {
       if (this.matchToken(auth.slice(7))) return true;
     }
 
-    // Query-param token — for browser-loadable content (applet HTML, etc.)
+    // Query-param token — for browser-loadable content
     if (url) {
       const queryToken = url.searchParams.get("token");
       if (queryToken && this.matchToken(queryToken)) return true;

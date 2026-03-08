@@ -76,7 +76,7 @@ describe("SessionManager pending prompt preamble", () => {
 
     manager.setPendingPromptPreamble(
       session.id,
-      "Hidden context: edit this applet. Inspect with get_applet(appletId).",
+      "Hidden context: you are in a specialized editing mode.",
     );
 
     await manager.sendPrompt(session.id, "Add search to the toolbar.");
@@ -85,7 +85,7 @@ describe("SessionManager pending prompt preamble", () => {
     expect(sdkBackend.prompt).toHaveBeenCalledTimes(2);
     expect(sdkBackend.prompt).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining("Hidden context: edit this applet."),
+      expect.stringContaining("Hidden context: you are in a specialized editing mode."),
       expect.objectContaining({}),
     );
     expect(sdkBackend.prompt).toHaveBeenNthCalledWith(
