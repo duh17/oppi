@@ -112,7 +112,6 @@ struct OppiApp: App {
             .environment(coordinator.activeConnection.reducer)
             .environment(coordinator.activeConnection.reducer.toolOutputStore)
             .environment(coordinator.activeConnection.reducer.toolArgsStore)
-            .environment(coordinator.activeConnection.appletStore)
             .environment(coordinator.activeConnection.audioPlayer)
             .environment(navigation)
             .environment(coordinator.serverStore)

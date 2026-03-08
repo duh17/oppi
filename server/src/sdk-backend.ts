@@ -25,7 +25,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
 
-import { createAppletExtensionFactory } from "./applet-extension.js";
 import type { GateServer } from "./gate.js";
 import type {
   ExtensionErrorEvent,
@@ -92,7 +91,7 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
-  /** Storage for server-managed extensions (applets, etc.). */
+  /** Storage for server-managed extensions. */
   storage?: Storage;
 }
 
@@ -173,13 +172,6 @@ export class SdkBackend {
       );
     }
 
-    // Applet extension — create/update/list applets via server storage
-    if (config.storage && config.workspaceId) {
-      extensionFactories.push(
-        createAppletExtensionFactory(config.storage, session.id, config.workspaceId),
-      );
-    }
-
     // Resource loader — suppress auto-discovery, load only what we need.
     // Extension factories (permission gate) are injected here.
     // Pi's auto-discovered permission-gate extension is filtered out since
@@ -196,6 +188,7 @@ export class SdkBackend {
       noPromptTemplates: true,
       noThemes: true,
       extensionFactories,
+      appendSystemPrompt: workspace?.systemPrompt,
       extensionsOverride: (base) => ({
         ...base,
         extensions: base.extensions.filter(
