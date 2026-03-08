@@ -43,6 +43,10 @@ struct VoiceMetricAnnotation: Sendable {
 }
 
 enum VoiceInputTelemetry {
+#if DEBUG
+    nonisolated(unsafe) static var _recordMetricForTesting: ((ChatMetricName, Double, ChatMetricUnit, [String: String]) -> Void)?
+#endif
+
     static func userFacingMessage(for error: Error) -> String {
         if let voiceError = error as? VoiceInputError,
            let description = voiceError.errorDescription,
@@ -155,6 +159,10 @@ enum VoiceInputTelemetry {
         let tags = annotation.tags(phase: phase, status: status, extra: extraTags)
         let clampedValue = max(0, valueMs)
 
+#if DEBUG
+        _recordMetricForTesting?(metric, Double(clampedValue), .ms, tags)
+#endif
+
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: metric,
@@ -174,6 +182,10 @@ enum VoiceInputTelemetry {
     ) {
         let tags = annotation.tags(status: status, extra: extraTags)
         let clampedValue = max(0, value)
+
+#if DEBUG
+        _recordMetricForTesting?(metric, Double(clampedValue), .count, tags)
+#endif
 
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(

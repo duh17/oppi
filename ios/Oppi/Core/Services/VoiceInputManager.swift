@@ -142,6 +142,7 @@ final class VoiceInputManager {
     private let providerRegistry: VoiceProviderRegistry
     private let routeResolver: VoiceInputRouteResolver
     private let sessionMonitor: VoiceInputSessionMonitor
+    private let systemAccess: any VoiceInputSystemAccessing
 
     /// Operation lock — prevents overlapping async operations.
     private var operationInFlight = false
@@ -168,11 +169,13 @@ final class VoiceInputManager {
     init(
         providerRegistry: VoiceProviderRegistry = .makeDefault(),
         routeResolver: VoiceInputRouteResolver = VoiceInputRouteResolver(),
-        sessionMonitor: VoiceInputSessionMonitor = VoiceInputSessionMonitor()
+        sessionMonitor: VoiceInputSessionMonitor = VoiceInputSessionMonitor(),
+        systemAccess: any VoiceInputSystemAccessing = VoiceInputSystemAccess.live
     ) {
         self.providerRegistry = providerRegistry
         self.routeResolver = routeResolver
         self.sessionMonitor = sessionMonitor
+        self.systemAccess = systemAccess
         loadPreferences()
     }
 
@@ -355,12 +358,12 @@ final class VoiceInputManager {
 
     /// Check current permission status without prompting.
     static var hasPermissions: Bool {
-        VoiceInputSystemAccess.hasPermissions
+        VoiceInputSystemAccess.live.hasPermissions
     }
 
     /// Request mic + speech permissions. Returns true if both granted.
     func requestPermissions() async -> Bool {
-        let granted = await VoiceInputSystemAccess.requestPermissions()
+        let granted = await systemAccess.requestPermissions()
         guard granted else {
             if AVAudioApplication.shared.recordPermission != .granted {
                 logger.warning("Microphone permission denied")
@@ -401,7 +404,7 @@ final class VoiceInputManager {
         finalizedTranscript = ""
         volatileTranscript = ""
 
-        if !Self.hasPermissions {
+        if !systemAccess.hasPermissions {
             guard await requestPermissions() else {
                 state = .error("Microphone or speech permission denied")
                 scheduleErrorReset()
@@ -666,11 +669,11 @@ final class VoiceInputManager {
     // MARK: - Setup
 
     private func setupAudioSession() throws {
-        try VoiceInputSystemAccess.activateAudioSession()
+        try systemAccess.activateAudioSession()
     }
 
     private func deactivateAudioSession() {
-        VoiceInputSystemAccess.deactivateAudioSession()
+        systemAccess.deactivateAudioSession()
     }
 
     private func applySessionEvent(
