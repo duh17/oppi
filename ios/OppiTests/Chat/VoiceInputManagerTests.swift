@@ -488,4 +488,188 @@ struct VoiceInputManagerTests {
         #expect(locale3 == Locale.current,
                 "Should fall back to device locale")
     }
+
+    // MARK: - Orchestration
+
+    @Test func startRecordingProcessesSessionLifecycle() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(manager.state == .recording)
+        #expect(manager.activeEngine == .classicDictation)
+        #expect(manager.activeLanguageLabel == "EN")
+        #expect(manager.routeIndicator == .onDevice)
+        #expect(systemAccess.activateAudioSessionCallCount == 1)
+        #expect(session.startCallCount == 1)
+
+        session.yieldAudioLevel(0.6)
+        session.yieldEvent(.partialTranscript("hel"))
+        session.yieldEvent(.appendFinalTranscript("hello"))
+
+        #expect(await waitForMainActorCondition { manager.audioLevel == 0.6 })
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "hello" })
+
+        await manager.stopRecording()
+
+        #expect(manager.state == .idle)
+        #expect(manager.audioLevel == 0)
+        #expect(manager.activeEngine == nil)
+        #expect(manager.activeLanguageLabel == nil)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        #expect(session.stopCallCount == 1)
+    }
+
+    @Test func startRecordingRequestsPermissionsAndHandlesDenial() async {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.hasPermissions = false
+        systemAccess.requestPermissionsResult = false
+
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try? await manager.startRecording(source: "test")
+
+        #expect(systemAccess.requestPermissionsCallCount == 1)
+        #expect(manager.state == .error("Microphone or speech permission denied"))
+        #expect(classicProvider.prepareSessionCallCount == 0)
+    }
+
+    @Test func cancelDuringPreparingCancelsProviderPreparationAndPreventsStaleRecording() async {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        let session = MockVoiceSession()
+        let gate = AsyncGate()
+
+        classicProvider.prepareSessionHandler = { _ in
+            await gate.wait()
+            return VoiceProviderPreparation(audioFormat: nil, pathTag: "gate", setupMetricTags: [:])
+        }
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        let startTask = Task {
+            try? await manager.startRecording(source: "test")
+        }
+
+        #expect(await waitForMainActorCondition { manager.state == .preparingModel })
+        await manager.cancelRecording()
+        await gate.open()
+        await startTask.value
+
+        #expect(manager.state == .idle)
+        #expect(classicProvider.cancelPreparationCallCount == 1)
+        #expect(session.startCallCount == 0)
+        #expect(manager.activeEngine == nil)
+    }
+
+    @Test func resultsStreamFailureTransitionsToError() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(source: "test")
+        session.finishEvents(throwing: TestVoiceError("stream blew up"))
+
+        #expect(await waitForMainActorCondition {
+            if case .error("Transcription failed") = manager.state {
+                return true
+            }
+            return false
+        })
+    }
+
+    @Test func startRecordingFailureCleansUpAudioSessionAndRethrows() async {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        session.startError = TestVoiceError("start failed")
+
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        await #expect(throws: TestVoiceError.self) {
+            try await manager.startRecording(source: "test")
+        }
+
+        #expect(systemAccess.activateAudioSessionCallCount == 1)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        #expect(manager.activeEngine == nil)
+        #expect(manager.activeLanguageLabel == nil)
+        #expect(manager.audioLevel == 0)
+        #expect({
+            if case .error("start failed") = manager.state {
+                return true
+            }
+            return false
+        }())
+    }
+
+    @Test func remoteModeWithoutEndpointSurfacesConfigurationError() async {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [RemoteASRVoiceProvider()]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.remote)
+
+        await #expect(throws: VoiceInputError.self) {
+            try await manager.startRecording(source: "test")
+        }
+
+        #expect({
+            if case .error(let message) = manager.state {
+                return message.contains("not configured")
+            }
+            return false
+        }())
+    }
+
+    private func resetVoicePreferences() {
+        VoiceInputPreferences.setEngineMode(.auto)
+        VoiceInputPreferences.setRemoteEndpoint(nil)
+    }
 }

@@ -73,6 +73,8 @@ final class VoiceInputSessionMonitor {
 
     func teardown() {
         activeSession = nil
+        resultsTask?.cancel()
+        resultsTask = nil
         audioLevelTask?.cancel()
         audioLevelTask = nil
     }
