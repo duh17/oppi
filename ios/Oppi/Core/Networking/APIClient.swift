@@ -706,72 +706,6 @@ actor APIClient {
         _ = try await post("/telemetry/chat-metrics", body: body)
     }
 
-    // MARK: - Applets
-
-    /// List all applets in a workspace.
-    func listApplets(workspaceId: String) async throws -> [Applet] {
-        let data = try await get("/workspaces/\(workspaceId)/applets")
-        return try JSONDecoder().decode(AppletListResponse.self, from: data).applets
-    }
-
-    /// Get applet metadata + latest version HTML.
-    func getApplet(workspaceId: String, appletId: String) async throws -> (Applet, AppletVersionWithHTML?) {
-        let data = try await get("/workspaces/\(workspaceId)/applets/\(appletId)")
-        let response = try JSONDecoder().decode(AppletDetailResponse.self, from: data)
-        return (response.applet, response.latestVersion)
-    }
-
-    /// Create a new session preloaded to edit an applet.
-    func createAppletEditSession(workspaceId: String, appletId: String) async throws -> Session {
-        let data = try await post("/workspaces/\(workspaceId)/applets/\(appletId)/edit-session", body: EmptyBody())
-        let response = try JSONDecoder().decode(AppletEditSessionResponse.self, from: data)
-        return response.session
-    }
-
-    /// Delete an applet and all its versions.
-    func deleteApplet(workspaceId: String, appletId: String) async throws {
-        let (data, response) = try await request("DELETE", path: "/workspaces/\(workspaceId)/applets/\(appletId)")
-        try checkStatus(response, data: data)
-    }
-
-    /// Build the authenticated URL for rendering applet HTML in a browser/WKWebView.
-    nonisolated func appletHTMLURL(workspaceId: String, appletId: String, version: Int) -> URL? {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.path += "/workspaces/\(workspaceId)/applets/\(appletId)/versions/\(version)/html"
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
-        return components.url
-    }
-
-    // MARK: - Bridge (for applet JS→native calls)
-
-    /// Raw GET returning Data — used by applet bridge to proxy any server endpoint.
-    func bridgeGet(_ path: String) async throws -> Data {
-        try await get(path)
-    }
-
-    /// Raw POST with pre-encoded body — used by applet bridge.
-    func bridgePost(_ path: String, body: Data) async throws -> Data {
-        let (data, response) = try await requestRaw("POST", path: path, body: body)
-        try checkStatus(response, data: data)
-        return data
-    }
-
-    /// Raw PUT with pre-encoded body — used by applet bridge.
-    func bridgePut(_ path: String, body: Data) async throws -> Data {
-        let (data, response) = try await requestRaw("PUT", path: path, body: body)
-        try checkStatus(response, data: data)
-        return data
-    }
-
-    /// Raw DELETE returning Data — used by applet bridge.
-    func bridgeDelete(_ path: String) async throws -> Data {
-        let (data, response) = try await request("DELETE", path: path)
-        try checkStatus(response, data: data)
-        return data
-    }
-
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {
@@ -807,17 +741,6 @@ actor APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path)")
-        return try await session.data(for: req)
-    }
-
-    /// Raw body variant for bridge calls with pre-serialized JSON.
-    private func requestRaw(_ method: String, path: String, body: Data) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: try makeURL(path: path))
-        req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
-        logger.debug("\(method) \(path) [bridge]")
         return try await session.data(for: req)
     }
 

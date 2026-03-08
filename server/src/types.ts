@@ -916,48 +916,6 @@ export type ServerMessage = // ── Connection ──
     streamSeq?: number;
   };
 
-// ─── Applets ───
-
-export interface Applet {
-  id: string;
-  workspaceId: string;
-  title: string;
-  description?: string;
-  currentVersion: number; // latest version (1-indexed)
-  tags?: string[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AppletVersion {
-  version: number; // 1, 2, 3...
-  appletId: string;
-  sessionId?: string; // provenance: which session created this
-  toolCallId?: string; // provenance: which tool call
-  size: number; // byte count of HTML
-  changeNote?: string;
-  createdAt: number;
-}
-
-export interface CreateAppletRequest {
-  title: string;
-  html: string;
-  description?: string;
-  tags?: string[];
-  sessionId?: string;
-  toolCallId?: string;
-}
-
-export interface UpdateAppletRequest {
-  html: string;
-  title?: string;
-  description?: string;
-  tags?: string[];
-  changeNote?: string;
-  sessionId?: string;
-  toolCallId?: string;
-}
-
 // ─── Push ───
 
 export interface RegisterDeviceTokenRequest {
