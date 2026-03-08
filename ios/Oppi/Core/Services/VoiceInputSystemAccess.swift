@@ -3,22 +3,32 @@ import Foundation
 import Speech
 
 @MainActor
-enum VoiceInputSystemAccess {
-    static var hasPermissions: Bool {
+protocol VoiceInputSystemAccessing {
+    var hasPermissions: Bool { get }
+    func requestPermissions() async -> Bool
+    func activateAudioSession() throws
+    func deactivateAudioSession()
+}
+
+@MainActor
+struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
+    static let live = Self()
+
+    var hasPermissions: Bool {
         let mic = AVAudioApplication.shared.recordPermission == .granted
         let speech = SFSpeechRecognizer.authorizationStatus() == .authorized
         return mic && speech
     }
 
-    static func requestPermissions() async -> Bool {
-        let mic = await requestMicPermission()
+    func requestPermissions() async -> Bool {
+        let mic = await Self.requestMicPermission()
         guard mic else { return false }
 
-        let speech = await requestSpeechPermission()
+        let speech = await Self.requestSpeechPermission()
         return speech
     }
 
-    static func activateAudioSession() throws {
+    func activateAudioSession() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
@@ -30,7 +40,7 @@ enum VoiceInputSystemAccess {
         #endif
     }
 
-    static func deactivateAudioSession() {
+    func deactivateAudioSession() {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(
             false,
