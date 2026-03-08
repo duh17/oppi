@@ -88,7 +88,7 @@ struct PiSessionLiveActivity: Widget {
                                 SecondaryStatusPill(text: LiveActivityPresentation.sessionSummary(context.state))
                             }
 
-                            Spacer()
+                            Spacer(minLength: 8)
 
                             if !context.isStale,
                                context.state.primaryPhase == .working,
@@ -101,6 +101,8 @@ struct PiSessionLiveActivity: Widget {
                             permissionReviewControls(permissionId: permissionId, isStale: context.isStale)
                         }
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 6)
                 }
             } compactLeading: {
                 PhaseGlyphView(
@@ -414,6 +416,7 @@ private struct TimerPill: View {
             .font(.caption2.monospacedDigit())
             .foregroundStyle(phaseAccentColor(for: phase))
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: true)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(Capsule().fill(phaseBackgroundColor(phase)))
