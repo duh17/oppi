@@ -107,7 +107,7 @@ struct StreamingCodeBlockParsingTests {
 
         #expect(blocks.count == 1)
         if case .codeBlock(_, let code, let isComplete) = blocks[0] {
-            #expect(code == "")
+            #expect(code.isEmpty)
             #expect(isComplete == true)
         }
     }
