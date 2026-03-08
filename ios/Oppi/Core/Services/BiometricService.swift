@@ -35,6 +35,7 @@ final class BiometricService {
         var error: NSError?
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
             switch context.biometryType {
+            case .none: cachedBiometricName = "Biometrics"
             case .faceID: cachedBiometricName = "Face ID"
             case .touchID: cachedBiometricName = "Touch ID"
             case .opticID: cachedBiometricName = "Optic ID"
