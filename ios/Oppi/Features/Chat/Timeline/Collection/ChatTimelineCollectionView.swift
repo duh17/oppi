@@ -23,6 +23,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let hiddenCount: Int
         let renderWindowStep: Int
         let isBusy: Bool
+        let isZenMode: Bool
         let streamingAssistantID: String?
         let sessionId: String
         let workspaceId: String?
@@ -47,6 +48,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             hiddenCount: Int,
             renderWindowStep: Int,
             isBusy: Bool,
+            isZenMode: Bool = false,
             streamingAssistantID: String?,
             sessionId: String,
             workspaceId: String?,
@@ -70,6 +72,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.hiddenCount = hiddenCount
             self.renderWindowStep = renderWindowStep
             self.isBusy = isBusy
+            self.isZenMode = isZenMode
             self.streamingAssistantID = streamingAssistantID
             self.sessionId = sessionId
             self.workspaceId = workspaceId
@@ -148,6 +151,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         var hiddenCount = 0
         var renderWindowStep = 0
+        var isZenMode = false
         var streamingAssistantID: String?
         var audioPlayer: AudioPlayerService?
         weak var collectionView: UICollectionView?
@@ -451,6 +455,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             hiddenCount = configuration.hiddenCount
             renderWindowStep = configuration.renderWindowStep
+            isZenMode = configuration.isZenMode
             streamingAssistantID = configuration.streamingAssistantID
             isTimelineBusy = configuration.isBusy
 
