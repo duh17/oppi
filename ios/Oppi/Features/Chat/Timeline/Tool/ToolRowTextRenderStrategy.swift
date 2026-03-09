@@ -41,8 +41,15 @@ struct ToolRowTextRenderStrategy {
         showExpandedLabel()
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
+            let tier = StreamingRenderPolicy.tier(
+                isStreaming: isStreaming,
+                contentKind: .plainText,
+                byteCount: displayText.utf8.count,
+                lineCount: 0
+            )
+
             let presentation: ToolRowTextRenderer.ANSIOutputPresentation
-            if isStreaming {
+            if tier == .cheap {
                 presentation = ToolRowTextRenderer.ANSIOutputPresentation(
                     attributedText: nil,
                     plainText: ANSIParser.strip(displayText)
@@ -72,7 +79,7 @@ struct ToolRowTextRenderStrategy {
                 presentation = p
             }
             ChatTimelinePerf.recordRenderStrategy(
-                mode: isStreaming ? "text.stream" : (language != nil ? "text.syntax" : "text.ansi"),
+                mode: tier == .cheap ? "text.stream" : (language != nil ? "text.syntax" : "text.ansi"),
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: displayText.utf8.count,
                 language: language?.displayName
@@ -98,9 +105,13 @@ struct ToolRowTextRenderStrategy {
 
         if !wasExpandedVisible {
             expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
-        } else if !shouldAutoFollowOnFirstRender,
+        } else if shouldAutoFollowOnFirstRender,
                   shouldRerender,
                   !isStreamingContinuation {
+            // Streaming but content isn't a continuation — cell reuse.
+            expandedShouldAutoFollow = true
+        } else if !shouldAutoFollowOnFirstRender {
+            // Streaming finished — stop following.
             expandedShouldAutoFollow = false
         }
 

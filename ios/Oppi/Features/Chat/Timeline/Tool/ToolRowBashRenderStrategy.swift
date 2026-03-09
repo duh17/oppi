@@ -67,8 +67,15 @@ struct ToolRowBashRenderStrategy {
 
             if signature != outputRenderSignature {
                 let outputStartNs = ChatTimelinePerf.timestampNs()
+                let tier = StreamingRenderPolicy.tier(
+                    isStreaming: isStreaming,
+                    contentKind: .bash,
+                    byteCount: displayOutput.utf8.count,
+                    lineCount: 0
+                )
+
                 let presentation: ToolRowTextRenderer.ANSIOutputPresentation
-                if isStreaming {
+                if tier == .cheap {
                     presentation = ToolRowTextRenderer.ANSIOutputPresentation(
                         attributedText: nil,
                         plainText: ANSIParser.strip(displayOutput)
@@ -89,7 +96,7 @@ struct ToolRowBashRenderStrategy {
                     presentation = p
                 }
                 ChatTimelinePerf.recordRenderStrategy(
-                    mode: isStreaming ? "bash.output.stream" : "bash.output.ansi",
+                    mode: tier == .cheap ? "bash.output.stream" : "bash.output.ansi",
                     durationMs: ChatTimelinePerf.elapsedMs(since: outputStartNs),
                     inputBytes: displayOutput.utf8.count
                 )

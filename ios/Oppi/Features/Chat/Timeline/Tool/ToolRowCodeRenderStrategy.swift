@@ -3,13 +3,6 @@ import UIKit
 
 @MainActor
 struct ToolRowCodeRenderStrategy {
-    /// Thresholds for switching inline code rows to the cheap first paint path.
-    /// We defer sooner than before because `read` output often contains medium-
-    /// sized files that are still expensive to syntax highlight inline.
-    static let deferredHighlightLineThreshold = 80
-    static let deferredHighlightByteThreshold = 4 * 1024
-    static let deferredHighlightLongLineByteThreshold = 160
-
     /// Result of a render call. `deferredHighlight` is non-nil when the strategy
     /// showed plain text and needs the caller to schedule async highlighting.
     struct RenderResult {
@@ -22,12 +15,6 @@ struct ToolRowCodeRenderStrategy {
         let language: SyntaxLanguage
         let startLine: Int
         let signature: Int
-    }
-
-    private struct HighlightProfile {
-        let byteCount: Int
-        let lineCount: Int
-        let maxLineByteCount: Int
     }
 
     static func render(
@@ -74,14 +61,25 @@ struct ToolRowCodeRenderStrategy {
         showExpandedLabel()
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
-            if isStreaming {
+            let profile = StreamingRenderPolicy.ContentProfile.from(text: displayText)
+            let languageCategory = Self.languageCategory(for: language)
+            let tier = StreamingRenderPolicy.tier(
+                isStreaming: isStreaming,
+                contentKind: .code(language: languageCategory),
+                byteCount: profile.byteCount,
+                lineCount: profile.lineCount,
+                maxLineByteCount: profile.maxLineByteCount
+            )
+
+            switch tier {
+            case .cheap:
                 applyPlainText(displayText, to: expandedLabel)
-            } else if let cached = ToolRowRenderCache.get(signature: signature) {
-                expandedLabel.text = nil
-                expandedLabel.attributedText = cached
-            } else {
-                let highlightProfile = highlightProfile(for: displayText)
-                if shouldDeferHighlight(language: language, profile: highlightProfile) {
+
+            case .deferred, .full:
+                if let cached = ToolRowRenderCache.get(signature: signature) {
+                    expandedLabel.text = nil
+                    expandedLabel.attributedText = cached
+                } else if tier == .deferred {
                     // Large uncached file: show the cheapest possible first paint
                     // (plain monospace text, no line-number gutter), then upgrade
                     // to highlighted + numbered code asynchronously.
@@ -103,8 +101,9 @@ struct ToolRowCodeRenderStrategy {
                     expandedLabel.attributedText = codeText
                 }
             }
+
             ChatTimelinePerf.recordRenderStrategy(
-                mode: isStreaming ? "code.stream" : (deferred != nil ? "code.deferred" : "code.highlight"),
+                mode: tier == .cheap ? "code.stream" : (deferred != nil ? "code.deferred" : "code.highlight"),
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: displayText.utf8.count,
                 language: language?.displayName
@@ -127,8 +126,10 @@ struct ToolRowCodeRenderStrategy {
         if isStreaming {
             if !wasExpandedVisible || previousRenderedText == nil {
                 expandedShouldAutoFollow = true
-            } else if !isStreamingContinuation {
-                expandedShouldAutoFollow = false
+            } else if !isStreamingContinuation, shouldRerender {
+                // Non-continuation content during streaming means cell reuse —
+                // re-enable auto-follow for the new tool's content.
+                expandedShouldAutoFollow = true
             }
         } else {
             expandedShouldAutoFollow = false
@@ -159,44 +160,10 @@ struct ToolRowCodeRenderStrategy {
         label.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
     }
 
-    private static func shouldDeferHighlight(
-        language: SyntaxLanguage?,
-        profile: HighlightProfile
-    ) -> Bool {
-        guard let language else { return false }
-        if language == .unknown {
-            return profile.byteCount >= deferredHighlightByteThreshold * 2
-                || profile.lineCount >= deferredHighlightLineThreshold * 2
-                || profile.maxLineByteCount >= deferredHighlightLongLineByteThreshold * 2
-        }
-
-        return profile.lineCount >= deferredHighlightLineThreshold
-            || profile.byteCount >= deferredHighlightByteThreshold
-            || profile.maxLineByteCount >= deferredHighlightLongLineByteThreshold
-    }
-
-    private static func highlightProfile(for text: String) -> HighlightProfile {
-        var byteCount = 0
-        var lineCount = 1
-        var currentLineByteCount = 0
-        var maxLineByteCount = 0
-
-        for byte in text.utf8 {
-            byteCount += 1
-            if byte == 0x0A {
-                maxLineByteCount = max(maxLineByteCount, currentLineByteCount)
-                currentLineByteCount = 0
-                lineCount += 1
-            } else {
-                currentLineByteCount += 1
-            }
-        }
-
-        maxLineByteCount = max(maxLineByteCount, currentLineByteCount)
-        return HighlightProfile(
-            byteCount: byteCount,
-            lineCount: lineCount,
-            maxLineByteCount: maxLineByteCount
-        )
+    static func languageCategory(
+        for language: SyntaxLanguage?
+    ) -> StreamingRenderPolicy.CodeLanguageCategory {
+        guard let language else { return .none }
+        return language == .unknown ? .unknown : .known
     }
 }

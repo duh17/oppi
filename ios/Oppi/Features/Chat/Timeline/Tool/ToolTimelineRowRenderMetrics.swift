@@ -85,11 +85,12 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
-    static func markdownSignature(_ text: String) -> Int {
+    static func markdownSignature(_ text: String, isStreaming: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine("markdown")
         combineActiveTheme(into: &hasher)
         hasher.combine(text)
+        hasher.combine(isStreaming)
         return hasher.finalize()
     }
 

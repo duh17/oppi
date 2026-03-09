@@ -31,7 +31,14 @@ struct ToolRowDiffRenderStrategy {
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
             let inputBytes = lines.reduce(0) { $0 + $1.text.utf8.count }
-            if isStreaming {
+            let tier = StreamingRenderPolicy.tier(
+                isStreaming: isStreaming,
+                contentKind: .diff,
+                byteCount: inputBytes,
+                lineCount: lines.count
+            )
+
+            if tier == .cheap {
                 let plainDiff = lines.map { line in
                     switch line.kind {
                     case .added: "+ \(line.text)"
@@ -56,7 +63,7 @@ struct ToolRowDiffRenderStrategy {
                 expandedRenderedText = diffText.string
             }
             ChatTimelinePerf.recordRenderStrategy(
-                mode: isStreaming ? "diff.stream" : "diff.highlight",
+                mode: tier == .cheap ? "diff.stream" : "diff.highlight",
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: inputBytes,
                 language: path.flatMap { ToolRowTextRenderer.diffLanguage(for: $0)?.displayName }
