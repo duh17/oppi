@@ -8,17 +8,20 @@ struct WorkspaceContextBar: View {
     let gitStatus: GitStatus?
     let isLoading: Bool
     let appliesOuterHorizontalPadding: Bool
+    let onOpenReview: (() -> Void)?
 
     @State private var isExpanded = false
 
     init(
         gitStatus: GitStatus?,
         isLoading: Bool,
-        appliesOuterHorizontalPadding: Bool = true
+        appliesOuterHorizontalPadding: Bool = true,
+        onOpenReview: (() -> Void)? = nil
     ) {
         self.gitStatus = gitStatus
         self.isLoading = isLoading
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
+        self.onOpenReview = onOpenReview
     }
 
     // MARK: - Computed
@@ -62,77 +65,96 @@ struct WorkspaceContextBar: View {
     // MARK: - Collapsed
 
     private var collapsedBar: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 8) {
-                // Branch
-                if let branch = gitStatus?.branch {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.branch")
-                            .font(.caption2.weight(.semibold))
-                        Text(branch)
-                            .font(.caption.monospaced().weight(.medium))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.themeCyan)
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
                 }
-
-                // Dirty count
-                if let gitStatus, gitStatus.uncommittedCount > 0 {
-                    Text("\(gitStatus.uncommittedCount) changed")
-                        .font(.caption.monospaced().weight(.semibold))
-                        .foregroundStyle(dirtyColor)
-                }
-
-                // Repo-wide +/- from git diff HEAD
-                if let gitStatus, gitStatus.addedLines > 0 || gitStatus.removedLines > 0 {
-                    HStack(spacing: 4) {
-                        if gitStatus.addedLines > 0 {
-                            Text("+\(gitStatus.addedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeDiffAdded)
-                        }
-                        if gitStatus.removedLines > 0 {
-                            Text("-\(gitStatus.removedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeDiffRemoved)
-                        }
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                // Ahead/behind
-                if let ahead = gitStatus?.ahead, let behind = gitStatus?.behind {
-                    if ahead > 0 || behind > 0 {
+            } label: {
+                HStack(spacing: 8) {
+                    // Branch
+                    if let branch = gitStatus?.branch {
                         HStack(spacing: 4) {
-                            if ahead > 0 {
-                                Text("\u{2191}\(ahead)")
-                                    .font(.caption2.monospaced())
+                            Image(systemName: "arrow.branch")
+                                .font(.caption2.weight(.semibold))
+                            Text(branch)
+                                .font(.caption.monospaced().weight(.medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.themeCyan)
+                    }
+
+                    // Dirty count
+                    if let gitStatus, gitStatus.uncommittedCount > 0 {
+                        Text("\(gitStatus.uncommittedCount) changed")
+                            .font(.caption.monospaced().weight(.semibold))
+                            .foregroundStyle(dirtyColor)
+                    }
+
+                    // Repo-wide +/- from git diff HEAD
+                    if let gitStatus, gitStatus.addedLines > 0 || gitStatus.removedLines > 0 {
+                        HStack(spacing: 4) {
+                            if gitStatus.addedLines > 0 {
+                                Text("+\(gitStatus.addedLines)")
+                                    .font(.caption2.monospaced().bold())
                                     .foregroundStyle(.themeDiffAdded)
                             }
-                            if behind > 0 {
-                                Text("\u{2193}\(behind)")
-                                    .font(.caption2.monospaced())
-                                    .foregroundStyle(.themeOrange)
+                            if gitStatus.removedLines > 0 {
+                                Text("-\(gitStatus.removedLines)")
+                                    .font(.caption2.monospaced().bold())
+                                    .foregroundStyle(.themeDiffRemoved)
                             }
                         }
                     }
-                }
 
-                // Expand chevron
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.themeComment)
+                    Spacer(minLength: 0)
+
+                    // Ahead/behind
+                    if let ahead = gitStatus?.ahead, let behind = gitStatus?.behind {
+                        if ahead > 0 || behind > 0 {
+                            HStack(spacing: 4) {
+                                if ahead > 0 {
+                                    Text("\u{2191}\(ahead)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.themeDiffAdded)
+                                }
+                                if behind > 0 {
+                                    Text("\u{2193}\(behind)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.themeOrange)
+                                }
+                            }
+                        }
+                    }
+
+                    // Expand chevron
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.themeComment)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if let onOpenReview {
+                Divider()
+                    .frame(height: 18)
+                    .padding(.trailing, 2)
+
+                Button(action: onOpenReview) {
+                    Image(systemName: "list.bullet.rectangle.portrait")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themePurple)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open workspace review")
+            }
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Expanded

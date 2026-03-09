@@ -19,6 +19,7 @@ struct CreateWorkspaceRequest: Encodable {
     var icon: String?
     let skills: [String]
     var systemPrompt: String?
+    var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?
     var gitStatusEnabled: Bool?
     var memoryEnabled: Bool?
@@ -27,18 +28,64 @@ struct CreateWorkspaceRequest: Encodable {
     var defaultModel: String?
 }
 
-struct UpdateWorkspaceRequest: Encodable {
-    var name: String?
-    var description: String?
-    var icon: String?
-    var skills: [String]?
-    var systemPrompt: String?
-    var hostMount: String?
-    var gitStatusEnabled: Bool?
-    var memoryEnabled: Bool?
-    var memoryNamespace: String?
-    var extensions: [String]?
-    var defaultModel: String?
+struct UpdateWorkspaceRequest {
+    let body: [String: JSONValue]
+
+    init(
+        name: String? = nil,
+        description: JSONValue? = nil,
+        icon: JSONValue? = nil,
+        skills: [String]? = nil,
+        systemPrompt: JSONValue? = nil,
+        systemPromptMode: WorkspaceSystemPromptMode? = nil,
+        hostMount: JSONValue? = nil,
+        gitStatusEnabled: Bool? = nil,
+        memoryEnabled: Bool? = nil,
+        memoryNamespace: JSONValue? = nil,
+        extensions: [String]? = nil,
+        defaultModel: JSONValue? = nil
+    ) {
+        var body: [String: JSONValue] = [:]
+
+        if let name {
+            body["name"] = .string(name)
+        }
+        if let description {
+            body["description"] = description
+        }
+        if let icon {
+            body["icon"] = icon
+        }
+        if let skills {
+            body["skills"] = .array(skills.map(JSONValue.string))
+        }
+        if let systemPrompt {
+            body["systemPrompt"] = systemPrompt
+        }
+        if let systemPromptMode {
+            body["systemPromptMode"] = .string(systemPromptMode.rawValue)
+        }
+        if let hostMount {
+            body["hostMount"] = hostMount
+        }
+        if let gitStatusEnabled {
+            body["gitStatusEnabled"] = .bool(gitStatusEnabled)
+        }
+        if let memoryEnabled {
+            body["memoryEnabled"] = .bool(memoryEnabled)
+        }
+        if let memoryNamespace {
+            body["memoryNamespace"] = memoryNamespace
+        }
+        if let extensions {
+            body["extensions"] = .array(extensions.map(JSONValue.string))
+        }
+        if let defaultModel {
+            body["defaultModel"] = defaultModel
+        }
+
+        self.body = body
+    }
 }
 
 // MARK: - Policy Models

@@ -1,12 +1,6 @@
 import SwiftUI
 
-/// Renders a unified diff between two text blocks with Tokyo Night styling.
-///
-/// Computes a line-level LCS diff, then renders each line with:
-/// - Colored left accent bar (green for added, red for removed)
-/// - `+`/`-` gutter prefix
-/// - Syntax-highlighted code (when file language is known)
-/// - Tinted row background
+/// Renders a unified diff between two text blocks using the shared performant diff view.
 struct DiffContentView: View {
     let oldText: String
     let newText: String
@@ -32,38 +26,30 @@ struct DiffContentView: View {
         self.diffLines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
     }
 
-    private var language: SyntaxLanguage {
-        guard let path = filePath else { return .unknown }
-        let ext = (path as NSString).pathExtension
-        return ext.isEmpty ? .unknown : SyntaxLanguage.detect(ext)
+    private var renderedDiff: WorkspaceReviewDiffResponse {
+        WorkspaceReviewDiffResponse.local(
+            path: filePath ?? "diff.txt",
+            baselineText: oldText,
+            currentText: newText,
+            precomputedLines: diffLines
+        )
     }
 
     private var hasFullScreenAffordance: Bool {
         allowsFullScreenExpansion
     }
 
-    private var inlineSelectionEnabled: Bool {
-        ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
-            hasFullScreenAffordance: hasFullScreenAffordance
-        )
-    }
-
     var body: some View {
-        let lines = diffLines
-        let numberedLines = makeNumberedLines(lines)
-
         VStack(alignment: .leading, spacing: 0) {
             if showHeader {
-                diffHeader(changeStats: DiffEngine.stats(lines))
+                diffHeader(changeStats: DiffEngine.stats(diffLines))
             }
 
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(numberedLines.enumerated()), id: \.offset) { _, numbered in
-                        diffRow(numbered)
-                    }
-                }
-            }
+            UnifiedDiffView(
+                hunks: renderedDiff.hunks,
+                filePath: filePath ?? "diff.txt",
+                emptyDescription: "This diff has no textual changes to show."
+            )
             .frame(maxHeight: 500)
         }
         .background(theme.bg.secondary)
@@ -100,8 +86,6 @@ struct DiffContentView: View {
         }
     }
 
-    // MARK: - Header
-
     @ViewBuilder
     private func diffHeader(changeStats: (added: Int, removed: Int)) -> some View {
         HStack(spacing: 6) {
@@ -118,7 +102,6 @@ struct DiffContentView: View {
 
             Spacer()
 
-            // +N / -N badges
             if changeStats.added > 0 {
                 Text("+\(changeStats.added)")
                     .font(.caption2.monospaced().bold())
@@ -143,124 +126,4 @@ struct DiffContentView: View {
         .padding(.vertical, 6)
         .background(theme.bg.highlight)
     }
-
-    // MARK: - Diff Row
-
-    @ViewBuilder
-    private func diffRow(_ numbered: NumberedDiffLine) -> some View {
-        let line = numbered.line
-        let lang = language
-
-        HStack(alignment: .top, spacing: 0) {
-            // Left accent bar
-            Rectangle()
-                .fill(accentColor(for: line.kind))
-                .frame(width: 3)
-
-            // Prefix (+, -, space)
-            Text(line.kind.prefix)
-                .font(.system(size: theme.code.fontSize, design: .monospaced).bold())
-                .foregroundStyle(prefixColor(for: line.kind))
-                .frame(width: 16, alignment: .center)
-
-            // Old/New line numbers
-            Text(numbered.oldLine.map(String.init) ?? "")
-                .font(.system(size: theme.code.fontSize, design: .monospaced))
-                .foregroundStyle(theme.text.tertiary)
-                .frame(width: 36, alignment: .trailing)
-            Text(numbered.newLine.map(String.init) ?? "")
-                .font(.system(size: theme.code.fontSize, design: .monospaced))
-                .foregroundStyle(theme.text.tertiary)
-                .frame(width: 36, alignment: .trailing)
-                .padding(.trailing, 6)
-
-            // Code text
-            ScrollView(.horizontal, showsIndicators: false) {
-                // Syntax highlight all lines — the subtle tinted backgrounds
-                // provide enough add/remove context while token colors keep
-                // the code readable (same approach as GitHub/VS Code diffs).
-                if lang != .unknown {
-                    Text(AttributedString(SyntaxHighlighter.highlightLine(line.text, language: lang)))
-                        .font(.system(size: theme.code.fontSize, design: .monospaced))
-                        .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
-                        .fixedSize(horizontal: true, vertical: false)
-                } else {
-                    Text(line.text)
-                        .font(.system(size: theme.code.fontSize, design: .monospaced))
-                        .foregroundStyle(textColor(for: line.kind))
-                        .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            .padding(.trailing, 8)
-        }
-        .padding(.vertical, 1)
-        .background(rowBackground(for: line.kind))
-    }
-
-    private struct NumberedDiffLine {
-        let line: DiffLine
-        let oldLine: Int?
-        let newLine: Int?
-    }
-
-    private func makeNumberedLines(_ lines: [DiffLine]) -> [NumberedDiffLine] {
-        var oldNumber = 1
-        var newNumber = 1
-        var numbered: [NumberedDiffLine] = []
-        numbered.reserveCapacity(lines.count)
-
-        for line in lines {
-            switch line.kind {
-            case .context:
-                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: newNumber))
-                oldNumber += 1
-                newNumber += 1
-            case .removed:
-                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: nil))
-                oldNumber += 1
-            case .added:
-                numbered.append(NumberedDiffLine(line: line, oldLine: nil, newLine: newNumber))
-                newNumber += 1
-            }
-        }
-
-        return numbered
-    }
-
-    // MARK: - Colors
-
-    private func accentColor(for kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: return theme.diff.addedAccent
-        case .removed: return theme.diff.removedAccent
-        case .context: return .clear
-        }
-    }
-
-    private func prefixColor(for kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: return theme.diff.addedAccent
-        case .removed: return theme.diff.removedAccent
-        case .context: return theme.text.tertiary
-        }
-    }
-
-    private func textColor(for kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: return theme.text.primary
-        case .removed: return theme.text.primary
-        case .context: return theme.diff.contextFg
-        }
-    }
-
-    private func rowBackground(for kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: return theme.diff.addedBg
-        case .removed: return theme.diff.removedBg
-        case .context: return .clear
-        }
-    }
 }
-
-// DiffLine and DiffEngine live in Core/Models/DiffEngine.swift
