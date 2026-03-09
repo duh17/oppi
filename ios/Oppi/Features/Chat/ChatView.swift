@@ -253,35 +253,25 @@ struct ChatView: View {
     private var configuredChatContent: some View {
         chatTimelineScaffold
             .background(Color.themeBg.ignoresSafeArea())
-            .overlay {
-                if isZenMode {
-                    zenModeOverlayChrome
+        .navigationTitle(ZenNavigationPolicy.navigationTitle(sessionDisplayName: sessionDisplayName, isZenMode: isZenMode))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $forkedSessionToOpen) { route in
+            Self(sessionId: route.id)
+        }
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .bottomBar)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbar {
+            if !isZenMode {
+                ToolbarItem(placement: .principal) {
+                    chatPrincipalToolbarItem
                 }
             }
-            .onTapGesture {
-                if isZenMode {
-                    exitZenMode()
-                }
-            }
-            .navigationTitle(sessionDisplayName)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $forkedSessionToOpen) { route in
-                Self(sessionId: route.id)
-            }
-            .toolbar(.hidden, for: .tabBar)
-            .toolbar(.hidden, for: .bottomBar)
-            .toolbar(isZenMode ? .hidden : .visible, for: .navigationBar)
-            .toolbar {
-                if !isZenMode {
-                    ToolbarItem(placement: .principal) {
-                        chatPrincipalToolbarItem
-                    }
 
-                    ToolbarItem(placement: .topBarTrailing) {
-                        chatTrailingToolbarItem
-                    }
-                }
+            ToolbarItem(placement: .topBarTrailing) {
+                chatTrailingToolbarItem
             }
+        }
     }
 
     @ViewBuilder
@@ -399,25 +389,34 @@ struct ChatView: View {
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
         HStack(spacing: 10) {
-            if !reducer.items.isEmpty {
+            if !isZenMode, !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
                 }
             }
 
-            Button {
-                enterZenMode()
-            } label: {
-                Image(systemName: "viewfinder")
-                    .font(.subheadline)
+            if isZenMode, ZenNavigationPolicy.showsStopButton(isBusy: isBusy) {
+                zenStopToolbarButton
             }
-            .accessibilityLabel("Enter zen mode")
+
+            zenToggleToolbarButton
 
             contextRingButton
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)
         }
+    }
+
+    private var zenToggleToolbarButton: some View {
+        Button {
+            toggleZenMode(animated: false)
+        } label: {
+            Image(systemName: ZenNavigationPolicy.zenToggleSystemImage(isZenMode: isZenMode))
+                .font(.subheadline)
+        }
+        .accessibilityIdentifier("chat.zen.toggle")
+        .accessibilityLabel(ZenNavigationPolicy.zenToggleAccessibilityLabel(isZenMode: isZenMode))
     }
 
     private var contextRingButton: some View {
