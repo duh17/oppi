@@ -135,10 +135,11 @@ final class MarkdownSegmentCache: @unchecked Sendable {
 struct MarkdownText: View {
     let content: String
     let isStreaming: Bool
+    let plainTextFallbackThreshold: Int?
 
-    /// Very large responses are rendered as plain text to avoid expensive
-    /// markdown parsing/layout spikes that can trigger memory pressure.
-    private static let plainTextFallbackThreshold = 20_000
+    /// Default inline fallback for very large markdown payloads.
+    /// Pass `nil` to disable the fallback for dedicated document/full-screen readers.
+    private static let defaultPlainTextFallbackThreshold = 20_000
     /// Placeholder height is clamped so huge messages don't allocate giant
     /// temporary layout regions before async parsing completes.
     private static let maxPlaceholderHeight: CGFloat = 480
@@ -159,9 +160,14 @@ struct MarkdownText: View {
     /// Raw CommonMark blocks — intermediate, only used during parsing.
     @State private var commonMarkBlocks: [MarkdownBlock]?
 
-    init(_ content: String, isStreaming: Bool = false) {
+    init(
+        _ content: String,
+        isStreaming: Bool = false,
+        plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold
+    ) {
         self.content = content
         self.isStreaming = isStreaming
+        self.plainTextFallbackThreshold = plainTextFallbackThreshold
     }
 
     var body: some View {
@@ -176,7 +182,8 @@ struct MarkdownText: View {
     private var finalizedBody: some View {
         let themeID = ThemeRuntimeState.currentThemeID()
 
-        if content.count > Self.plainTextFallbackThreshold {
+        if let plainTextFallbackThreshold,
+           content.count > plainTextFallbackThreshold {
             Text(content)
                 .foregroundStyle(.themeFg)
         } else if let segments = cachedSegments, cachedThemeID == themeID {

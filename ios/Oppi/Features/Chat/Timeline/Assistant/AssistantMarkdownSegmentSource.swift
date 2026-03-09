@@ -2,9 +2,6 @@ import Foundation
 
 @MainActor
 final class AssistantMarkdownSegmentSource {
-    /// Very large responses fall back to plain text to avoid expensive layout.
-    private static let plainTextFallbackThreshold = 20_000
-
     /// Cached state for tail-only re-parsing during streaming.
     private struct StreamingParseState {
         /// UTF-8 byte length of the finalized prefix (content before last block).
@@ -28,7 +25,8 @@ final class AssistantMarkdownSegmentSource {
     func buildSegments(_ config: AssistantMarkdownContentView.Configuration) -> [FlatSegment] {
         let content = config.content
 
-        guard content.count <= Self.plainTextFallbackThreshold else {
+        if let plainTextFallbackThreshold = config.plainTextFallbackThreshold,
+           content.count > plainTextFallbackThreshold {
             var plain = AttributedString(content)
             plain.foregroundColor = config.themeID.palette.fg
             return [.text(plain)]
