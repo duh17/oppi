@@ -22,7 +22,7 @@ struct ToolRowMarkdownRenderStrategy {
         showExpandedViewport: () -> Void,
         scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
     ) -> ToolRowRenderVisibility {
-        let signature = ToolTimelineRowRenderMetrics.markdownSignature(text)
+        let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
         let shouldRerender = signature != expandedRenderSignature
             || !isUsingMarkdownLayout
         let previousRenderedText = expandedRenderedText
