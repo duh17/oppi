@@ -285,6 +285,7 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 stream: nil,
                 palette: palette,
+                plainTextFallbackThreshold: nil,
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenMarkdown,

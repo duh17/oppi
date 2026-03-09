@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 // MARK: - parseCodeBlocks (streaming parser)
@@ -510,5 +512,55 @@ struct MarkdownSegmentCacheTests {
 
         // Same content, same key — bytes should remain the same
         #expect(before == after)
+    }
+}
+
+@MainActor
+@Suite("Markdown document rendering")
+struct MarkdownDocumentRenderingTests {
+    @Test func documentPresentationDoesNotFallbackToRawSourceForLargeMarkdown() async throws {
+        let content = [
+            "# Heading",
+            "",
+            "**Bold intro** with `inline code`.",
+            "",
+            String(repeating: "Body paragraph with enough text to cross the inline fallback threshold.\n\n", count: 320),
+        ].joined(separator: "\n")
+        #expect(content.count > 20_000)
+
+        let controller = UIHostingController(
+            rootView: FileContentView(
+                content: content,
+                filePath: "Notes.md",
+                presentation: .document
+            )
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+
+        let window = UIWindow(frame: controller.view.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let rendered = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                controller.view.setNeedsLayout()
+                controller.view.layoutIfNeeded()
+                let renderedText = timelineAllTextViews(in: controller.view)
+                    .map { timelineRenderedText(of: $0) }
+                    .joined(separator: "\n")
+                return renderedText.contains("Heading")
+                    && renderedText.contains("Bold intro")
+                    && renderedText.contains("inline code")
+                    && !renderedText.contains("# Heading")
+                    && !renderedText.contains("**Bold intro**")
+                    && !renderedText.contains("`inline code`")
+            }
+        }
+
+        #expect(rendered)
     }
 }

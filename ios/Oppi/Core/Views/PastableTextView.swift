@@ -374,9 +374,21 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         /// Read the keyboard language from the actual text view via responder chain.
+        ///
+        /// Skips updates when the keyboard is suppressed (voice recording mode).
+        /// With `inputView` set to an empty `UIView`, UIKit's `textInputMode`
+        /// may report nil or the device's default keyboard instead of the
+        /// user's previously active one. Writing that stale value would corrupt
+        /// both the `@State keyboardLanguage` binding and the persisted
+        /// `KeyboardLanguageStore`, causing the next voice session to use
+        /// the wrong speech model.
         func updateKeyboardLanguage() {
             // Walk responder chain to find our text view
             guard let textView = findFirstResponderTextView() else { return }
+            // Don't trust textInputMode while keyboard is suppressed
+            if let pastable = textView as? PastableUITextView, pastable.isKeyboardSuppressed {
+                return
+            }
             let lang = textView.textInputMode?.primaryLanguage
             keyboardLanguage = lang
             KeyboardLanguageStore.save(lang)
@@ -400,9 +412,17 @@ struct PastableTextView: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             onFocusChange?(true)
-            let lang = textView.textInputMode?.primaryLanguage
-            keyboardLanguage = lang
-            KeyboardLanguageStore.save(lang)
+            // Only read keyboard language when the real keyboard is visible.
+            // During voice recording the keyboard is suppressed via empty
+            // inputView, and textInputMode may report stale/wrong values.
+            if let pastable = textView as? PastableUITextView, pastable.isKeyboardSuppressed {
+                // Skip language update — preserve the value captured before
+                // suppression so the next voice session uses the correct locale.
+            } else {
+                let lang = textView.textInputMode?.primaryLanguage
+                keyboardLanguage = lang
+                KeyboardLanguageStore.save(lang)
+            }
             notifyLineCountIfNeeded(textView)
             notifyDictationStateIfNeeded(textView)
         }
@@ -609,6 +629,11 @@ struct FullSizeTextView: UIViewRepresentable {
         }
 
         func updateKeyboardLanguage(from textView: UITextView) {
+            // Skip language update when keyboard is suppressed (voice recording).
+            // textInputMode is unreliable with a custom empty inputView.
+            if let pastable = textView as? PastableUITextView, pastable.isKeyboardSuppressed {
+                return
+            }
             let lang = textView.textInputMode?.primaryLanguage
             keyboardLanguage = lang
             KeyboardLanguageStore.save(lang)
