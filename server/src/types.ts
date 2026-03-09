@@ -4,6 +4,8 @@
 
 // ─── Workspaces ───
 
+export type WorkspaceSystemPromptMode = "append" | "replace";
+
 export interface Workspace {
   id: string;
   name: string; // "coding", "research"
@@ -18,7 +20,8 @@ export interface Workspace {
   allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
   // Context
-  systemPrompt?: string; // Additional instructions appended to base prompt
+  systemPrompt?: string; // Workspace prompt text (appended or replacement depending on mode)
+  systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
 
   // Memory
@@ -268,6 +271,89 @@ export interface GitStatus {
   lastCommitDate: string | null;
 }
 
+export interface WorkspaceReviewFile {
+  /** Relative file path from repo root. */
+  path: string;
+  /** Two-char status code derived from `git status --porcelain`. */
+  status: string;
+  /** Lines added vs HEAD (null for binary/untracked). */
+  addedLines: number | null;
+  /** Lines removed vs HEAD (null for binary/untracked). */
+  removedLines: number | null;
+  /** File has staged changes in the index. */
+  isStaged: boolean;
+  /** File has unstaged changes in the working tree. */
+  isUnstaged: boolean;
+  /** File is untracked. */
+  isUntracked: boolean;
+  /** File path was touched by the selected session. */
+  selectedSessionTouched: boolean;
+}
+
+export interface WorkspaceReviewFilesResponse {
+  workspaceId: string;
+  isGitRepo: boolean;
+  branch: string | null;
+  headSha: string | null;
+  ahead: number | null;
+  behind: number | null;
+  changedFileCount: number;
+  stagedFileCount: number;
+  unstagedFileCount: number;
+  untrackedFileCount: number;
+  addedLines: number;
+  removedLines: number;
+  selectedSessionId?: string;
+  selectedSessionTouchedCount: number;
+  files: WorkspaceReviewFile[];
+}
+
+export interface WorkspaceReviewDiffSpan {
+  start: number;
+  end: number;
+  kind: "changed";
+}
+
+export interface WorkspaceReviewDiffLine {
+  kind: "context" | "added" | "removed";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+  spans?: WorkspaceReviewDiffSpan[];
+}
+
+export interface WorkspaceReviewDiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: WorkspaceReviewDiffLine[];
+}
+
+export interface WorkspaceReviewDiffResponse {
+  workspaceId: string;
+  path: string;
+  baselineText: string;
+  currentText: string;
+  addedLines: number;
+  removedLines: number;
+  hunks: WorkspaceReviewDiffHunk[];
+}
+
+export type WorkspaceReviewSessionAction = "review" | "reflect" | "prepare_commit";
+
+export interface CreateWorkspaceReviewSessionRequest {
+  action: WorkspaceReviewSessionAction;
+  paths: string[];
+  selectedSessionId?: string;
+}
+
+export interface WorkspaceReviewSessionResponse {
+  action: WorkspaceReviewSessionAction;
+  selectedPathCount: number;
+  session: Session;
+}
+
 // ─── Local Sessions ───
 
 /** A pi TUI session discovered on the host (not yet managed by oppi). */
@@ -300,6 +386,7 @@ export interface CreateWorkspaceRequest {
   allowedPaths?: { path: string; access: "read" | "readwrite" }[];
   allowedExecutables?: string[];
   systemPrompt?: string;
+  systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string;
   memoryEnabled?: boolean;
   memoryNamespace?: string;
@@ -310,17 +397,18 @@ export interface CreateWorkspaceRequest {
 
 export interface UpdateWorkspaceRequest {
   name?: string;
-  description?: string;
-  icon?: string;
+  description?: string | null;
+  icon?: string | null;
   skills?: string[];
   allowedPaths?: { path: string; access: "read" | "readwrite" }[];
   allowedExecutables?: string[];
-  systemPrompt?: string;
-  hostMount?: string;
+  systemPrompt?: string | null;
+  systemPromptMode?: WorkspaceSystemPromptMode;
+  hostMount?: string | null;
   memoryEnabled?: boolean;
-  memoryNamespace?: string;
+  memoryNamespace?: string | null;
   extensions?: string[];
-  defaultModel?: string;
+  defaultModel?: string | null;
   gitStatusEnabled?: boolean;
 }
 

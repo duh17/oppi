@@ -18,6 +18,9 @@ const ROUTES = {
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
+  wsReviewFiles: /^\/workspaces\/([^/]+)\/review\/files$/,
+  wsReviewDiff: /^\/workspaces\/([^/]+)\/review\/diff$/,
+  wsReviewSession: /^\/workspaces\/([^/]+)\/review\/session$/,
   wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
   userStream: /^\/stream$/,
   userStreamEvents: /^\/stream\/events$/,
@@ -111,6 +114,24 @@ describe("Workspace-scoped API routes", () => {
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("s1");
+  });
+
+  it("matches GET /workspaces/:wid/review/files", () => {
+    const m = "/workspaces/ws-1/review/files".match(ROUTES.wsReviewFiles);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+  });
+
+  it("matches GET /workspaces/:wid/review/diff", () => {
+    const m = "/workspaces/ws-1/review/diff".match(ROUTES.wsReviewDiff);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+  });
+
+  it("matches POST /workspaces/:wid/review/session", () => {
+    const m = "/workspaces/ws-1/review/session".match(ROUTES.wsReviewSession);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
   });
 
   it("matches GET /workspaces/:wid/graph", () => {

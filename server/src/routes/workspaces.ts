@@ -1,10 +1,26 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { DefaultResourceLoader, SettingsManager, getAgentDir } from "@mariozechner/pi-coding-agent";
+
 import { isValidExtensionName } from "../extension-loader.js";
 import { buildWorkspaceGraph } from "../graph.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
-import type { CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace } from "../types.js";
+import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import type {
+  CreateWorkspaceRequest,
+  CreateWorkspaceReviewSessionRequest,
+  Session,
+  UpdateWorkspaceRequest,
+  Workspace,
+  WorkspaceReviewSessionResponse,
+} from "../types.js";
+import { buildWorkspaceReviewFilesResponse } from "../workspace-review.js";
+import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
+import {
+  prepareWorkspaceReviewSession,
+  WorkspaceReviewSessionError,
+} from "../workspace-review-session.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -68,6 +84,35 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return undefined;
   }
 
+  function systemPromptModeValidationError(mode: unknown): string | undefined {
+    if (mode === undefined) {
+      return undefined;
+    }
+
+    if (mode !== "append" && mode !== "replace") {
+      return "systemPromptMode must be append or replace";
+    }
+
+    return undefined;
+  }
+
+  async function loadWorkspaceBaseSystemPrompt(workspace: Workspace): Promise<string> {
+    const cwd = resolveSdkSessionCwd(workspace);
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+    await loader.reload();
+    return loader.getSystemPrompt() ?? "";
+  }
+
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
     const knownFiles = new Set<string>();
     for (const session of ctx.storage.listSessions()) {
@@ -126,6 +171,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
+    const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
+    if (systemPromptModeError) {
+      helpers.error(res, 400, systemPromptModeError);
+      return;
+    }
+
     const workspace = ctx.storage.createWorkspace(body);
     helpers.json(res, { workspace }, 201);
   }
@@ -138,6 +189,20 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     helpers.json(res, { workspace: removeUnknownSkills(workspace) });
+  }
+
+  async function handleGetWorkspaceBaseSystemPrompt(
+    wsId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const systemPrompt = await loadWorkspaceBaseSystemPrompt(workspace);
+    helpers.json(res, { systemPrompt });
   }
 
   async function handleUpdateWorkspace(
@@ -175,6 +240,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const allowedPathsError = allowedPathsValidationError(body.allowedPaths);
     if (allowedPathsError) {
       helpers.error(res, 400, allowedPathsError);
+      return;
+    }
+
+    const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
+    if (systemPromptModeError) {
+      helpers.error(res, 400, systemPromptModeError);
       return;
     }
 
@@ -220,6 +291,180 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const status = await getGitStatus(workspace.hostMount);
     helpers.json(res, status);
+  }
+
+  function sessionWithinWorkspace(
+    session: Session | undefined,
+    workspaceId: string,
+  ): session is Session {
+    return !!session && session.workspaceId === workspaceId;
+  }
+
+  async function handleGetWorkspaceReviewFiles(
+    wsId: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const selectedSessionId = url.searchParams.get("sessionId")?.trim();
+    const selectedSession = selectedSessionId
+      ? ctx.storage.getSession(selectedSessionId)
+      : undefined;
+
+    if (selectedSessionId && !sessionWithinWorkspace(selectedSession, wsId)) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      helpers.json(
+        res,
+        buildWorkspaceReviewFilesResponse({
+          workspaceId: wsId,
+          gitStatus: {
+            isGitRepo: false,
+            branch: null,
+            headSha: null,
+            ahead: null,
+            behind: null,
+            dirtyCount: 0,
+            untrackedCount: 0,
+            stagedCount: 0,
+            files: [],
+            totalFiles: 0,
+            addedLines: 0,
+            removedLines: 0,
+            stashCount: 0,
+            lastCommitMessage: null,
+            lastCommitDate: null,
+          },
+          selectedSession,
+        }),
+      );
+      return;
+    }
+
+    const status = await getGitStatus(workspace.hostMount);
+    helpers.compressedJson(
+      req,
+      res,
+      buildWorkspaceReviewFilesResponse({
+        workspaceId: wsId,
+        gitStatus: status,
+        selectedSession,
+        workspaceRoot: workspace.hostMount,
+      }),
+    );
+  }
+
+  async function handleGetWorkspaceReviewDiff(
+    wsId: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      helpers.error(res, 404, "Workspace review unavailable");
+      return;
+    }
+
+    try {
+      const diff = await buildWorkspaceReviewDiff({
+        workspaceId: wsId,
+        workspaceRoot: workspace.hostMount,
+        path: url.searchParams.get("path") ?? "",
+      });
+      helpers.compressedJson(req, res, diff);
+    } catch (error) {
+      if (error instanceof WorkspaceReviewDiffError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async function handleCreateWorkspaceReviewSession(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await helpers.parseBody<CreateWorkspaceReviewSessionRequest>(req);
+    const selectedSessionId = body.selectedSessionId?.trim();
+    const selectedSession = selectedSessionId
+      ? ctx.storage.getSession(selectedSessionId)
+      : undefined;
+
+    if (selectedSessionId && !sessionWithinWorkspace(selectedSession, wsId)) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (body.action !== "review" && body.action !== "reflect" && body.action !== "prepare_commit") {
+      helpers.error(res, 400, "action must be review, reflect, or prepare_commit");
+      return;
+    }
+
+    try {
+      const launch = await prepareWorkspaceReviewSession({
+        workspaceId: wsId,
+        workspace,
+        action: body.action,
+        paths: Array.isArray(body.paths) ? body.paths : [],
+        selectedSession,
+      });
+
+      const model = workspace.lastUsedModel || workspace.defaultModel;
+      const session = ctx.storage.createSession(launch.sessionName, model);
+      session.workspaceId = workspace.id;
+      session.workspaceName = workspace.name;
+      ctx.storage.saveSession(session);
+
+      try {
+        ctx.sessions.setPendingPromptPreamble(session.id, launch.preamble);
+        await ctx.sessions.startSession(session.id, workspace);
+        await ctx.sessions.sendPrompt(session.id, launch.visiblePrompt);
+      } catch (error) {
+        await ctx.sessions.stopSession(session.id).catch(() => {});
+        ctx.storage.deleteSession(session.id);
+        throw error;
+      }
+
+      const launchedSession =
+        ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
+      const response: WorkspaceReviewSessionResponse = {
+        action: body.action,
+        selectedPathCount: launch.files.length,
+        session: ctx.ensureSessionContextWindow(launchedSession),
+      };
+      helpers.json(res, response, 201);
+    } catch (error) {
+      if (error instanceof WorkspaceReviewSessionError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Failed to create review session";
+      helpers.error(res, 500, message);
+    }
   }
 
   function handleGetWorkspaceGraph(workspaceId: string, url: URL, res: ServerResponse): void {
@@ -303,9 +548,33 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
+    const wsBaseSystemPromptMatch = path.match(/^\/workspaces\/([^/]+)\/system-prompt\/base$/);
+    if (wsBaseSystemPromptMatch && method === "GET") {
+      await handleGetWorkspaceBaseSystemPrompt(wsBaseSystemPromptMatch[1], res);
+      return true;
+    }
+
     const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
     if (wsGitStatusMatch && method === "GET") {
       await handleGetWorkspaceGitStatus(wsGitStatusMatch[1], res);
+      return true;
+    }
+
+    const wsReviewFilesMatch = path.match(/^\/workspaces\/([^/]+)\/review\/files$/);
+    if (wsReviewFilesMatch && method === "GET") {
+      await handleGetWorkspaceReviewFiles(wsReviewFilesMatch[1], url, req, res);
+      return true;
+    }
+
+    const wsReviewDiffMatch = path.match(/^\/workspaces\/([^/]+)\/review\/diff$/);
+    if (wsReviewDiffMatch && method === "GET") {
+      await handleGetWorkspaceReviewDiff(wsReviewDiffMatch[1], url, req, res);
+      return true;
+    }
+
+    const wsReviewSessionMatch = path.match(/^\/workspaces\/([^/]+)\/review\/session$/);
+    if (wsReviewSessionMatch && method === "POST") {
+      await handleCreateWorkspaceReviewSession(wsReviewSessionMatch[1], req, res);
       return true;
     }
 
