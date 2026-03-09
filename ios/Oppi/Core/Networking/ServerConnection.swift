@@ -144,6 +144,11 @@ final class ServerConnection {
     /// when `syncNotificationSubscriptions()` is triggered repeatedly.
     var pendingNotificationSubscriptionIds: Set<String> = []
 
+    /// Debounce timer for notification subscription sync.
+    /// Coalesces rapid-fire calls (every server message triggers
+    /// syncLiveActivityPermissions) into a single WS subscribe batch.
+    var pendingNotificationSyncTask: Task<Void, Never>?
+
     /// In-flight auto-recovery when server rejects a command because the
     /// session lost full subscription level on `/stream`.
     var fullSubscriptionRecoveryTask: Task<Void, Never>?
@@ -404,6 +409,8 @@ final class ServerConnection {
             task.cancel()
         }
         pendingUnsubscribeTasks.removeAll()
+        pendingNotificationSyncTask?.cancel()
+        pendingNotificationSyncTask = nil
         notificationSessionIds.removeAll()
         pendingNotificationSubscriptionIds.removeAll()
         sessionUsageMetricSnapshots.removeAll()
@@ -479,9 +486,16 @@ final class ServerConnection {
 
     /// Keep non-active sessions subscribed at notification level so cross-session
     /// state transitions (agent_start/agent_end/permissions) continue flowing.
+    ///
+    /// Debounced: coalesces rapid calls (server messages trigger this on every
+    /// state/permission/lifecycle event) into a single subscribe batch after
+    /// a 400ms quiet period. Eliminates the feedback loop where subscribe
+    /// responses trigger more syncs, which trigger more subscribes.
     func syncNotificationSubscriptions() {
-        Task { [weak self] in
-            guard let self else { return }
+        pendingNotificationSyncTask?.cancel()
+        pendingNotificationSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
             await self.sessionStreamCoordinator.syncNotificationSubscriptions(connection: self)
         }
     }
