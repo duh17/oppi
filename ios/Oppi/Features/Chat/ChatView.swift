@@ -20,6 +20,7 @@ struct ChatView: View {
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
     @State private var showOutline = false
+    @State private var showWorkspaceReview = false
     @State private var showModelPicker = false
     @State private var showModelSwitchWarning = false
     @State private var pendingModelSwitch: ModelInfo?
@@ -119,7 +120,8 @@ struct ChatView: View {
                 if !isZenMode {
                     WorkspaceContextBar(
                         gitStatus: connection.gitStatusStore.gitStatus,
-                        isLoading: connection.gitStatusStore.isLoading
+                        isLoading: connection.gitStatusStore.isLoading,
+                        onOpenReview: session?.workspaceId == nil ? nil : { showWorkspaceReview = true }
                     )
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                 }
@@ -146,6 +148,7 @@ struct ChatView: View {
     private var chatContent: some View {
         configuredChatContent
             .sheet(isPresented: $showOutline) { outlineSheet }
+            .sheet(isPresented: $showWorkspaceReview) { workspaceReviewSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
@@ -706,8 +709,6 @@ struct ChatView: View {
 
     private var outlineSheet: some View {
         SessionOutlineView(
-            sessionId: sessionId,
-            workspaceId: session?.workspaceId,
             items: reducer.items,
             onSelect: { targetID in
                 scrollController.scrollTargetID = targetID
@@ -715,6 +716,30 @@ struct ChatView: View {
             onFork: forkFromMessage
         )
         .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder
+    private var workspaceReviewSheet: some View {
+        if let workspaceId = session?.workspaceId {
+            NavigationStack {
+                WorkspaceReviewView(workspaceId: workspaceId, selectedSessionId: sessionId)
+            }
+        } else {
+            NavigationStack {
+                ContentUnavailableView(
+                    "Review Unavailable",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text("Missing workspace context for this session.")
+                )
+                .navigationTitle("Review")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { showWorkspaceReview = false }
+                    }
+                }
+            }
+        }
     }
 
     private func forkFromMessage(_ entryId: String) {

@@ -518,6 +518,14 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "PUT")
+
+            let body = self.requestBodyData(request)
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                #expect(json["name"] as? String == "Updated")
+            } else {
+                Issue.record("Expected JSON body")
+            }
+
             return self.mockResponse(json: """
             {"workspace":{"id":"w1","name":"Updated","skills":[],"createdAt":0,"updatedAt":0}}
             """)
@@ -525,6 +533,50 @@ struct APIClientTests {
 
         let ws = try await client.updateWorkspace(id: "w1", UpdateWorkspaceRequest(name: "Updated"))
         #expect(ws.name == "Updated")
+    }
+
+    @Test func updateWorkspaceEncodesNullForClearedPrompt() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PUT")
+            #expect(request.url?.path == "/workspaces/w1")
+
+            let body = self.requestBodyData(request)
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+                Issue.record("Expected JSON body")
+                return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
+            }
+
+            #expect(json["systemPrompt"] is NSNull)
+            #expect(json["systemPromptMode"] as? String == "append")
+
+            return self.mockResponse(json: """
+            {"workspace":{"id":"w1","name":"Updated","skills":[],"createdAt":0,"updatedAt":0}}
+            """)
+        }
+
+        _ = try await client.updateWorkspace(
+            id: "w1",
+            UpdateWorkspaceRequest(systemPrompt: .null, systemPromptMode: .append)
+        )
+    }
+
+    @Test func getWorkspaceBaseSystemPrompt() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/workspaces/w1/system-prompt/base")
+            return self.mockResponse(json: """
+            {"systemPrompt":"You are a helpful coding assistant."}
+            """)
+        }
+
+        let prompt = try await client.getWorkspaceBaseSystemPrompt(id: "w1")
+        #expect(prompt == "You are a helpful coding assistant.")
     }
 
     @Test func deleteWorkspace() async throws {
