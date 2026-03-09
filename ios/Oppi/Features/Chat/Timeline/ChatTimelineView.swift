@@ -1,5 +1,28 @@
 import SwiftUI
 
+enum ZenTimelineRenderWindowPolicy {
+    static let standardWindow = 80
+    static let zenAttachedWindow = 40
+    static let renderWindowStep = 60
+
+    static func syncedWindow(
+        currentWindow: Int,
+        totalItems: Int,
+        isZenMode: Bool,
+        isNearBottom: Bool
+    ) -> Int {
+        let clampedTotal = max(0, totalItems)
+        let clampedCurrent = min(max(0, currentWindow), clampedTotal)
+
+        if isZenMode, isNearBottom {
+            return min(clampedTotal, zenAttachedWindow)
+        }
+
+        let baseline = min(clampedTotal, standardWindow)
+        return max(clampedCurrent, baseline)
+    }
+}
+
 /// Extracted from ChatView so that @State inputText changes (every keystroke)
 /// do NOT trigger a full ForEach re-diff of 200+ items.
 ///
@@ -7,12 +30,13 @@ import SwiftUI
 /// It only re-evaluates when its own dependencies change (reducer.items,
 /// renderVersion, session status) — NOT when the parent's @State changes.
 struct ChatTimelineView: View {
-    private static let initialRenderWindow = 80
-    private static let renderWindowStep = 60
+    private static let initialRenderWindow = ZenTimelineRenderWindowPolicy.standardWindow
+    private static let renderWindowStep = ZenTimelineRenderWindowPolicy.renderWindowStep
 
     let sessionId: String
     let workspaceId: String?
     let isBusy: Bool
+    let isZenMode: Bool
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let onFork: (String) -> Void
@@ -47,6 +71,15 @@ struct ChatTimelineView: View {
         return visibleItems.last?.id
     }
 
+    private func syncRenderWindowToMode() {
+        renderWindow = ZenTimelineRenderWindowPolicy.syncedWindow(
+            currentWindow: renderWindow,
+            totalItems: reducer.items.count,
+            isZenMode: isZenMode,
+            isNearBottom: scrollController.isCurrentlyNearBottom
+        )
+    }
+
     var body: some View {
         ChatTimelineCollectionHost(
             configuration: .init(
@@ -54,6 +87,7 @@ struct ChatTimelineView: View {
                 hiddenCount: hiddenCount,
                 renderWindowStep: Self.renderWindowStep,
                 isBusy: isBusy,
+                isZenMode: isZenMode,
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
                 workspaceId: workspaceId,
@@ -85,6 +119,18 @@ struct ChatTimelineView: View {
             if reducer.items.isEmpty && !isBusy {
                 ChatEmptyState()
             }
+        }
+        .onAppear {
+            syncRenderWindowToMode()
+        }
+        .onChange(of: isZenMode) { _, _ in
+            syncRenderWindowToMode()
+        }
+        .onChange(of: scrollController.isCurrentlyNearBottom) { _, _ in
+            syncRenderWindowToMode()
+        }
+        .onChange(of: reducer.items.count) { _, _ in
+            syncRenderWindowToMode()
         }
         // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
         // the footer's z-order blocking taps on this overlay.

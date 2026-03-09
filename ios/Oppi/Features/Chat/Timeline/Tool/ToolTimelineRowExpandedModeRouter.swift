@@ -29,6 +29,9 @@ enum ToolTimelineRowExpandedModeRouter {
         case .readMedia(let output, let filePath, let startLine):
             return renderReadMedia(output, filePath, startLine)
 
+        case .status(let message):
+            return renderText(message, nil)
+
         case .text(let text, let language):
             return renderText(text, language)
         }

@@ -213,8 +213,8 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text content for loading state")
+        guard case .status(let text) = config.expandedContent else {
+            Issue.record("Expected .status content for loading state")
             return
         }
         #expect(text == "Loading read output…")
@@ -325,6 +325,30 @@ struct ToolPresentationBuilderTests {
         #expect(startLine == 1)
         #expect(filePath == "src/index.ts")
         #expect(config.copyOutputText == content)
+    }
+
+    @Test("streaming expanded tool without body renders status placeholder")
+    func streamingExpandedToolWithoutBodyRendersStatusPlaceholder() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: src/index.ts",
+            outputPreview: "",
+            isError: false, isDone: false,
+            context: emptyContext(
+                args: [
+                    "path": .string("src/index.ts"),
+                ],
+                expanded: ["t1"]
+            )
+        )
+
+        #expect(config.isExpanded)
+        guard case .status(let message) = config.expandedContent else {
+            Issue.record("Expected .status placeholder content")
+            return
+        }
+        #expect(message == "Writing…")
+        #expect(config.copyOutputText == nil)
     }
 
     @Test("write expanded renders markdown files")
@@ -1407,6 +1431,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "plot"
     case .readMedia:
         return "readMedia"
+    case .status:
+        return "status"
     case .text:
         return "text"
     case nil:

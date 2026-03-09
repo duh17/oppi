@@ -765,7 +765,7 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
-    @Test func thinkingRowStreamingGrowsWithPreviewText() {
+    @Test func thinkingRowStreamingUsesFixedViewportHeight() {
         let short = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "hmm",
@@ -785,7 +785,12 @@ struct ChatTimelineCoordinatorTests {
         let shortSize = fittedTimelineSize(for: shortView, width: 338)
         let longSize = fittedTimelineSize(for: longView, width: 338)
 
-        #expect(longSize.height > shortSize.height)
+        // Streaming uses a fixed viewport — cell height stays constant
+        // regardless of content length, matching the tool row contract.
+        #expect(
+            shortSize.height == longSize.height,
+            "Streaming bubble should use fixed height; short=\(shortSize.height) long=\(longSize.height)"
+        )
     }
 
     @MainActor

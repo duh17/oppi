@@ -76,6 +76,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private static let minDiffViewportHeight: CGFloat = 68
     private static let maxOutputViewportHeight: CGFloat = 620
     private static let maxDiffViewportHeight: CGFloat = 760
+    /// Fixed viewport height used during streaming. The cell height stays
+    /// constant while content grows inside, eliminating the nested-scroll
+    /// invalidation cascade (inner content resize → cell height change →
+    /// outer collection layout → contentOffset fight). Double-tap opens
+    /// full-screen for the complete content. On completion (isDone), the
+    /// viewport resizes once to the natural bucketed height.
+    static let streamingViewportHeight: CGFloat = 200
     private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let collapsedImagePreviewHeight: CGFloat = 136
@@ -322,48 +329,71 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func updateViewportHeightsIfNeeded() {
+        let isStreaming = !currentConfiguration.isDone
+
         if outputUsesViewport,
            let outputViewportHeightConstraint {
             let mode: ViewportMode = .output
-            outputViewportHeightConstraint.constant = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
-                cache: &outputViewportHeightCache,
-                signature: outputRenderSignature,
-                widthBucket: Int(outputContainer.bounds.width.rounded()),
-                mode: mode,
-                inputBytes: outputRenderedText?.utf8.count ?? 0,
-                profile: currentOutputViewportProfile,
-                availableHeight: availableViewportHeight(for: mode)
-            ) {
-                preferredViewportHeight(for: outputLabel, in: outputContainer, mode: mode)
+            if isStreaming {
+                // Fixed viewport during streaming — only contentOffset moves inside.
+                outputViewportHeightConstraint.constant = streamingConstrainedHeight(for: mode)
+            } else {
+                outputViewportHeightConstraint.constant = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
+                    cache: &outputViewportHeightCache,
+                    signature: outputRenderSignature,
+                    widthBucket: Int(outputContainer.bounds.width.rounded()),
+                    mode: mode,
+                    inputBytes: outputRenderedText?.utf8.count ?? 0,
+                    profile: currentOutputViewportProfile,
+                    availableHeight: availableViewportHeight(for: mode)
+                ) {
+                    preferredViewportHeight(for: outputLabel, in: outputContainer, mode: mode)
+                }
             }
         }
 
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
-            let mode: ViewportMode = switch expandedViewportMode {
-            case .diff: .expandedDiff
-            case .code: .expandedCode
-            case .text, .none: .expandedText
-            }
-            let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
-                : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
-            let widthBucket = Int(expandedContainer.bounds.width.rounded())
-            let signature = expandedRenderSignature
+            if isStreaming {
+                let mode: ViewportMode = switch expandedViewportMode {
+                case .diff: .expandedDiff
+                case .code: .expandedCode
+                case .text, .none: .expandedText
+                }
+                // Fixed viewport during streaming — only contentOffset moves inside.
+                expandedViewportHeightConstraint.constant = streamingConstrainedHeight(for: mode)
+            } else {
+                let mode: ViewportMode = switch expandedViewportMode {
+                case .diff: .expandedDiff
+                case .code: .expandedCode
+                case .text, .none: .expandedText
+                }
+                let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
+                    : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
+                let widthBucket = Int(expandedContainer.bounds.width.rounded())
+                let signature = expandedRenderSignature
 
-            let preferredHeight = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
-                cache: &expandedViewportHeightCache,
-                signature: signature,
-                widthBucket: widthBucket,
-                mode: mode,
-                inputBytes: expandedRenderedText?.utf8.count ?? 0,
-                profile: currentExpandedViewportProfile,
-                availableHeight: availableViewportHeight(for: mode)
-            ) {
-                preferredViewportHeight(for: expandedContentView, in: expandedContainer, mode: mode)
-            }
+                let preferredHeight = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
+                    cache: &expandedViewportHeightCache,
+                    signature: signature,
+                    widthBucket: widthBucket,
+                    mode: mode,
+                    inputBytes: expandedRenderedText?.utf8.count ?? 0,
+                    profile: currentExpandedViewportProfile,
+                    availableHeight: availableViewportHeight(for: mode)
+                ) {
+                    preferredViewportHeight(for: expandedContentView, in: expandedContainer, mode: mode)
+                }
 
-            expandedViewportHeightConstraint.constant = preferredHeight
+                expandedViewportHeightConstraint.constant = preferredHeight
+            }
         }
+    }
+
+    /// Fixed streaming viewport height, clamped to the available screen space.
+    private func streamingConstrainedHeight(for mode: ViewportMode) -> CGFloat {
+        let available = availableViewportHeight(for: mode)
+        return max(mode.minHeight, min(Self.streamingViewportHeight, available))
     }
 
     private func updateOutputLabelWidthIfNeeded() {
@@ -1544,7 +1574,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 languageHint: language?.displayName
             )
 
-        case .bash, .markdown, .plot, .readMedia:
+        case .bash, .markdown, .plot, .readMedia, .status:
             return nil
         }
     }
