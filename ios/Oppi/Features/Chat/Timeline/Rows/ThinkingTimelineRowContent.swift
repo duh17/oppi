@@ -1,6 +1,22 @@
 import SwiftUI
 import UIKit
 
+enum ZenThinkingRowPolicy {
+    static let defaultMaxBubbleHeight: CGFloat = 200
+    static let zenAttachedStreamingMaxBubbleHeight: CGFloat = 280
+
+    static func maxBubbleHeight(
+        isDone: Bool,
+        isZenMode: Bool,
+        isNearBottom: Bool
+    ) -> CGFloat {
+        if isZenMode, isNearBottom, !isDone {
+            return zenAttachedStreamingMaxBubbleHeight
+        }
+        return defaultMaxBubbleHeight
+    }
+}
+
 /// Native UIKit thinking row.
 ///
 /// Single-vertical-owner policy:
@@ -20,8 +36,27 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let previewText: String
     let fullText: String?
     let themeID: ThemeID
+    let maxBubbleHeight: CGFloat
     var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
     var selectedTextSourceContext: SelectedTextSourceContext? = nil
+
+    init(
+        isDone: Bool,
+        previewText: String,
+        fullText: String?,
+        themeID: ThemeID,
+        maxBubbleHeight: CGFloat = ZenThinkingRowPolicy.defaultMaxBubbleHeight,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextSourceContext: SelectedTextSourceContext? = nil
+    ) {
+        self.isDone = isDone
+        self.previewText = previewText
+        self.fullText = fullText
+        self.themeID = themeID
+        self.maxBubbleHeight = maxBubbleHeight
+        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextSourceContext = selectedTextSourceContext
+    }
 
     /// Best available text for display.
     var displayText: String {
@@ -39,7 +74,6 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class ThinkingTimelineRowContentView: UIView, UIContentView {
-    static let maxBubbleHeight: CGFloat = 200
     private static let bubblePadding: CGFloat = 10
     private static let brainIndent: CGFloat = 14 + 6 // icon width + spacing
     /// Fraction of the bubble height where the fade begins (bottom 30%).
@@ -432,26 +466,29 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let textWidth = max(1, width - leadingOffset - Self.bubblePadding)
         let textSize = textLabel.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         let intrinsic = ceil(textSize.height) + Self.bubblePadding * 2
+        let maxBubbleHeight = currentConfiguration.maxBubbleHeight
 
-        if intrinsic <= Self.maxBubbleHeight {
-            // Fits — show everything, no truncation.
+        if !isDone {
+            // Streaming: fixed viewport height. Cell height never changes
+            // during streaming — only contentOffset moves inside the bubble.
+            // Matches the tool row fixed-viewport-during-streaming contract.
+            bubbleHeightConstraint?.constant = maxBubbleHeight
+            contentIsTruncated = intrinsic > maxBubbleHeight
+            removeFadeMask()
+        } else if intrinsic <= maxBubbleHeight {
+            // Done + fits: natural height.
             contentIsTruncated = false
             bubbleHeightConstraint?.constant = intrinsic
             removeFadeMask()
-        } else if isDone {
+        } else {
             // Done + overflow: snap to complete lines + fade mask.
             contentIsTruncated = true
             let lineHeight = ceil(textLabel.font?.lineHeight ?? 18)
-            let maxTextHeight = Self.maxBubbleHeight - Self.bubblePadding * 2
+            let maxTextHeight = maxBubbleHeight - Self.bubblePadding * 2
             let visibleLines = floor(maxTextHeight / lineHeight)
             let snappedHeight = visibleLines * lineHeight + Self.bubblePadding * 2
             bubbleHeightConstraint?.constant = snappedHeight
             applyFadeMask()
-        } else {
-            // Streaming + overflow: cap at max and auto-follow tail.
-            contentIsTruncated = true
-            bubbleHeightConstraint?.constant = Self.maxBubbleHeight
-            removeFadeMask()
         }
 
         configureScrollBehavior()
@@ -471,6 +508,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         guard !currentConfiguration.isDone,
               contentIsTruncated,
               scrollView.bounds.height > 0 else { return }
+
+        // Force the scroll view subtree to settle so contentSize reflects
+        // the latest text. Without this, contentSize can be stale when
+        // updateBubbleHeight() changed the constraint in the same pass.
+        scrollView.layoutIfNeeded()
 
         let bottomY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
         guard bottomY > 0, scrollView.contentOffset.y < bottomY - 1 else { return }

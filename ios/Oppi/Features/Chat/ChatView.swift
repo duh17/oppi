@@ -102,6 +102,7 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             isBusy: isBusy,
+            isZenMode: isZenMode,
             scrollController: scrollController,
             sessionManager: sessionManager,
             onFork: forkFromMessage,
@@ -471,42 +472,29 @@ struct ChatView: View {
         }
     }
 
-    private var zenModeOverlayChrome: some View {
-        GeometryReader { proxy in
-            ZStack {
-                contextRingButton
-                    .padding(.trailing, 14)
-                    .padding(.top, 8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-
-                if isBusy {
-                    ZenStopButton(isStopping: isStopping) {
-                        actionHandler.stop(
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore,
-                            sessionManager: sessionManager,
-                            sessionId: sessionId
-                        )
-                    }
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                }
-
-                if showsMessageQueue {
-                    ZenQueueBubble(
-                        steeringCount: messageQueueState.steering.count,
-                        followUpCount: messageQueueState.followUp.count
-                    ) {
-                        exitZenMode()
-                    }
-                    .padding(.leading, 16)
-                    .padding(.bottom, proxy.safeAreaInsets.bottom + 16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                }
+    @ViewBuilder
+    private var zenStopToolbarButton: some View {
+        Button {
+            actionHandler.stop(
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                sessionManager: sessionManager,
+                sessionId: sessionId
+            )
+        } label: {
+            if isStopping {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Text("Stop")
+                    .font(.subheadline.weight(.semibold))
             }
         }
-        .transition(.opacity)
+        .disabled(isStopping)
+        .foregroundStyle(isStopping ? .themeComment : .themeRed)
+        .accessibilityIdentifier("chat.zen.stop")
+        .accessibilityLabel(isStopping ? "Stopping agent" : "Stop agent")
     }
 
     private var selectedTextPiRouter: SelectedTextPiActionRouter {
@@ -555,10 +543,22 @@ struct ChatView: View {
         showComposer = true
     }
 
-    private func enterZenMode() {
+    private func toggleZenMode(animated: Bool = true) {
+        if isZenMode {
+            exitZenMode(animated: animated)
+        } else {
+            enterZenMode(animated: animated)
+        }
+    }
+
+    private func enterZenMode(animated: Bool = true) {
         guard !isZenMode else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        withAnimation(.easeInOut(duration: 0.18)) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isZenMode = true
+            }
+        } else {
             isZenMode = true
         }
     }
