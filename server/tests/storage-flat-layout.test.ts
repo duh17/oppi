@@ -46,6 +46,7 @@ describe("storage flat layout", () => {
       userId: owner.id,
       name: "Test Workspace",
       skills: ["fetch"],
+      systemPromptMode: "append",
       createdAt: Date.now() - 8_000,
       updatedAt: Date.now() - 8_000,
     };

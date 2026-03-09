@@ -247,6 +247,32 @@ describe("workspaces API", () => {
     expect(body.workspace.name).toBe("after");
   });
 
+  it("PUT /workspaces/:id clears system prompt with null", async () => {
+    const createRes = await post("/workspaces", {
+      name: "prompt-test",
+      skills: [],
+      systemPrompt: "Keep it",
+      systemPromptMode: "append",
+    });
+    const { workspace } = await createRes.json();
+
+    const res = await put(`/workspaces/${workspace.id}`, { systemPrompt: null });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.workspace.systemPrompt).toBeUndefined();
+    expect(body.workspace.systemPromptMode).toBe("append");
+  });
+
+  it("GET /workspaces/:id/system-prompt/base returns a string payload", async () => {
+    const createRes = await post("/workspaces", { name: "base-prompt", skills: [] });
+    const { workspace } = await createRes.json();
+
+    const res = await get(`/workspaces/${workspace.id}/system-prompt/base`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(typeof body.systemPrompt).toBe("string");
+  });
+
   it("DELETE /workspaces/:id removes workspace", async () => {
     const createRes = await post("/workspaces", { name: "delete-me", skills: [] });
     const { workspace } = await createRes.json();

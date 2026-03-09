@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 
 import { generateId } from "../id.js";
-import type { CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace } from "../types.js";
+import type {
+  CreateWorkspaceRequest,
+  UpdateWorkspaceRequest,
+  Workspace,
+  WorkspaceSystemPromptMode,
+} from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
 function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
@@ -24,6 +29,14 @@ function normalizeExtensions(extensions: string[] | undefined): string[] | undef
   }
 
   return normalized;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeSystemPromptMode(value: unknown): WorkspaceSystemPromptMode {
+  return value === "replace" ? "replace" : "append";
 }
 
 function withMemoryNamespaceFallback(workspace: Workspace): Workspace {
@@ -55,17 +68,18 @@ export class WorkspaceStore {
     const workspace = withMemoryNamespaceFallback({
       id,
       name: req.name,
-      description: req.description,
-      icon: req.icon,
+      description: normalizeOptionalString(req.description),
+      icon: normalizeOptionalString(req.icon),
       skills: req.skills,
       allowedPaths: req.allowedPaths,
       allowedExecutables: req.allowedExecutables,
-      systemPrompt: req.systemPrompt,
-      hostMount: req.hostMount,
+      systemPrompt: normalizeOptionalString(req.systemPrompt),
+      systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
+      hostMount: normalizeOptionalString(req.hostMount),
       memoryEnabled: req.memoryEnabled,
       memoryNamespace: req.memoryEnabled ? req.memoryNamespace || `ws-${id}` : req.memoryNamespace,
       extensions: normalizeExtensions(req.extensions),
-      defaultModel: req.defaultModel,
+      defaultModel: normalizeOptionalString(req.defaultModel),
       createdAt: now,
       updatedAt: now,
     });
@@ -90,8 +104,8 @@ export class WorkspaceStore {
     const workspace: Workspace = {
       id: typeof raw.id === "string" ? raw.id : "unknown",
       name: typeof raw.name === "string" ? raw.name : "",
-      description: typeof raw.description === "string" ? raw.description : undefined,
-      icon: typeof raw.icon === "string" ? raw.icon : undefined,
+      description: normalizeOptionalString(raw.description),
+      icon: normalizeOptionalString(raw.icon),
       skills: Array.isArray(raw.skills)
         ? raw.skills.filter((skill): skill is string => typeof skill === "string")
         : [],
@@ -101,12 +115,13 @@ export class WorkspaceStore {
       allowedExecutables: Array.isArray(raw.allowedExecutables)
         ? (raw.allowedExecutables as string[])
         : undefined,
-      systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : undefined,
-      hostMount: typeof raw.hostMount === "string" ? raw.hostMount : undefined,
+      systemPrompt: normalizeOptionalString(raw.systemPrompt),
+      systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
+      hostMount: normalizeOptionalString(raw.hostMount),
       memoryEnabled: typeof raw.memoryEnabled === "boolean" ? raw.memoryEnabled : undefined,
-      memoryNamespace: typeof raw.memoryNamespace === "string" ? raw.memoryNamespace : undefined,
+      memoryNamespace: normalizeOptionalString(raw.memoryNamespace),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
-      defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : undefined,
+      defaultModel: normalizeOptionalString(raw.defaultModel),
       lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
@@ -161,19 +176,26 @@ export class WorkspaceStore {
     }
 
     if (updates.name !== undefined) workspace.name = updates.name;
-    if (updates.description !== undefined) workspace.description = updates.description;
-    if (updates.icon !== undefined) workspace.icon = updates.icon;
+    if (updates.description !== undefined)
+      workspace.description = normalizeOptionalString(updates.description);
+    if (updates.icon !== undefined) workspace.icon = normalizeOptionalString(updates.icon);
     if (updates.skills !== undefined) workspace.skills = updates.skills;
     if (updates.allowedPaths !== undefined) workspace.allowedPaths = updates.allowedPaths;
     if (updates.allowedExecutables !== undefined)
       workspace.allowedExecutables = updates.allowedExecutables;
-    if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
-    if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
+    if (updates.systemPrompt !== undefined)
+      workspace.systemPrompt = normalizeOptionalString(updates.systemPrompt);
+    if (updates.systemPromptMode !== undefined)
+      workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
+    if (updates.hostMount !== undefined)
+      workspace.hostMount = normalizeOptionalString(updates.hostMount);
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
-    if (updates.memoryNamespace !== undefined) workspace.memoryNamespace = updates.memoryNamespace;
+    if (updates.memoryNamespace !== undefined)
+      workspace.memoryNamespace = normalizeOptionalString(updates.memoryNamespace);
     if (updates.extensions !== undefined)
       workspace.extensions = normalizeExtensions(updates.extensions);
-    if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
+    if (updates.defaultModel !== undefined)
+      workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
 

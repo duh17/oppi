@@ -67,11 +67,17 @@ describe("Storage.createWorkspace", () => {
     expect(ws.extensions).toBeUndefined();
   });
 
+  it("defaults systemPromptMode to append", () => {
+    const ws = storage.createWorkspace(createReq());
+    expect(ws.systemPromptMode).toBe("append");
+  });
+
   it("creates workspace with all optional fields", () => {
     const ws = storage.createWorkspace(createReq({
         description: "A coding workspace",
         icon: "terminal",
         systemPrompt: "Be helpful",
+        systemPromptMode: "replace",
         hostMount: "~/workspace/oppi",
         memoryEnabled: true,
         memoryNamespace: "coding",
@@ -84,6 +90,7 @@ describe("Storage.createWorkspace", () => {
     expect(ws.icon).toBe("terminal");
     expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
     expect(ws.systemPrompt).toBe("Be helpful");
+    expect(ws.systemPromptMode).toBe("replace");
     expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.memoryEnabled).toBe(true);
     expect(ws.memoryNamespace).toBe("coding");
@@ -301,6 +308,21 @@ describe("Storage.updateWorkspace", () => {
     const updated = storage.updateWorkspace(ws.id, { systemPrompt: "Be concise." });
 
     expect(updated!.systemPrompt).toBe("Be concise.");
+  });
+
+  it("clears systemPrompt when set to null", () => {
+    const ws = storage.createWorkspace(createReq({ systemPrompt: "Keep me? no." }));
+    const updated = storage.updateWorkspace(ws.id, { systemPrompt: null });
+
+    expect(updated!.systemPrompt).toBeUndefined();
+    expect(storage.getWorkspace(ws.id)!.systemPrompt).toBeUndefined();
+  });
+
+  it("updates systemPromptMode", () => {
+    const ws = storage.createWorkspace(createReq());
+    const updated = storage.updateWorkspace(ws.id, { systemPromptMode: "replace" });
+
+    expect(updated!.systemPromptMode).toBe("replace");
   });
 
   it("updates hostMount", () => {
