@@ -278,7 +278,7 @@ private struct MarkdownFileView: View {
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.themeFg)
                 } else {
-                    MarkdownText(content)
+                    MarkdownText(content, plainTextFallbackThreshold: nil)
                         .allowsFullScreenExpansion(false)
                 }
             }
@@ -315,7 +315,7 @@ private struct FullScreenMarkdownView: View {
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(.themeFg)
                     } else {
-                        MarkdownText(content)
+                        MarkdownText(content, plainTextFallbackThreshold: nil)
                     }
                 }
                 .textSelection(.enabled)

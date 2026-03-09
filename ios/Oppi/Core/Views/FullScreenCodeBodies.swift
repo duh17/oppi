@@ -522,6 +522,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let markdownView = AssistantMarkdownContentView()
     private let markdownWidthConstraint: NSLayoutConstraint
     private let stream: ThinkingTraceStream?
+    private let plainTextFallbackThreshold: Int?
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
 
@@ -541,10 +542,12 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         content: String,
         stream: ThinkingTraceStream?,
         palette: ThemePalette,
+        plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?
     ) {
         self.stream = stream
+        self.plainTextFallbackThreshold = plainTextFallbackThreshold
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
         let initialSnapshot = stream?.snapshot
@@ -626,6 +629,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             themeID: ThemeRuntimeState.currentThemeID(),
+            plainTextFallbackThreshold: plainTextFallbackThreshold,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext
         ))
