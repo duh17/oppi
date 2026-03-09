@@ -8,6 +8,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case markdown
         case plot
         case readMedia
+        case status
         case text
     }
 
@@ -51,7 +52,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: false
             )
 
-        case .plot, .readMedia:
+        case .plot, .readMedia, .status:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: false,
@@ -75,7 +76,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         switch mode {
         case .diff, .code, .markdown, .bash, .text:
             return true
-        case .plot, .readMedia:
+        case .plot, .readMedia, .status:
             return false
         }
     }
@@ -96,6 +97,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .plot
         case .readMedia:
             self = .readMedia
+        case .status:
+            self = .status
         case .text:
             self = .text
         }

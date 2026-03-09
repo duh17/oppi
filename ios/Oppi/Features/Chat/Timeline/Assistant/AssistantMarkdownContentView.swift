@@ -10,10 +10,14 @@ import UIKit
 /// - `NativeCodeBlockView` / `NativeTableBlockView` render block-level surfaces.
 final class AssistantMarkdownContentView: UIView {
     struct Configuration: Equatable {
+        /// Default inline fallback. Pass `nil` for dedicated reader/document surfaces.
+        static let defaultPlainTextFallbackThreshold = 20_000
+
         let content: String
         let isStreaming: Bool
         let themeID: ThemeID
         let textSelectionEnabled: Bool
+        let plainTextFallbackThreshold: Int?
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let selectedTextSourceContext: SelectedTextSourceContext?
 
@@ -22,6 +26,7 @@ final class AssistantMarkdownContentView: UIView {
             isStreaming: Bool,
             themeID: ThemeID,
             textSelectionEnabled: Bool = true,
+            plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil
         ) {
@@ -29,6 +34,7 @@ final class AssistantMarkdownContentView: UIView {
             self.isStreaming = isStreaming
             self.themeID = themeID
             self.textSelectionEnabled = textSelectionEnabled
+            self.plainTextFallbackThreshold = plainTextFallbackThreshold
             self.selectedTextPiRouter = selectedTextPiRouter
             self.selectedTextSourceContext = selectedTextSourceContext
         }
@@ -38,6 +44,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.isStreaming == rhs.isStreaming
                 && lhs.themeID == rhs.themeID
                 && lhs.textSelectionEnabled == rhs.textSelectionEnabled
+                && lhs.plainTextFallbackThreshold == rhs.plainTextFallbackThreshold
                 && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
         }

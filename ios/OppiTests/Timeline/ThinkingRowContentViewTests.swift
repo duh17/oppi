@@ -22,6 +22,35 @@ struct ThinkingRowContentViewTests {
         #expect(scrollView.contentOffset.y > 0, "Streaming overflow should tail-follow inside capped bubble")
     }
 
+    @Test func streamingOverflowRespectsConfiguredBubbleCap() throws {
+        let text = Array(repeating: "streaming thought line", count: 300).joined(separator: "\n")
+
+        let defaultView = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: text,
+            fullText: nil,
+            themeID: .dark,
+            maxBubbleHeight: ZenThinkingRowPolicy.defaultMaxBubbleHeight
+        ))
+        _ = fittedTimelineSize(for: defaultView, width: 360)
+
+        let zenView = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: text,
+            fullText: nil,
+            themeID: .dark,
+            maxBubbleHeight: ZenThinkingRowPolicy.zenAttachedStreamingMaxBubbleHeight
+        ))
+        _ = fittedTimelineSize(for: zenView, width: 360)
+
+        let defaultHeight = try #require(privateBubbleHeightConstraintConstant(in: defaultView))
+        let zenHeight = try #require(privateBubbleHeightConstraintConstant(in: zenView))
+
+        #expect(defaultHeight == ZenThinkingRowPolicy.defaultMaxBubbleHeight)
+        #expect(zenHeight == ZenThinkingRowPolicy.zenAttachedStreamingMaxBubbleHeight)
+        #expect(zenHeight > defaultHeight)
+    }
+
     @Test func thinkingRowDoesNotInstallFloatingFullScreenButton() {
         let overflowConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
@@ -335,6 +364,11 @@ private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UIText
 @MainActor
 private func privateRenderSignature(in view: ThinkingTimelineRowContentView) -> Int? {
     Mirror(reflecting: view).children.first { $0.label == "renderSignature" }?.value as? Int
+}
+
+@MainActor
+private func privateBubbleHeightConstraintConstant(in view: ThinkingTimelineRowContentView) -> CGFloat? {
+    (Mirror(reflecting: view).children.first { $0.label == "bubbleHeightConstraint" }?.value as? NSLayoutConstraint)?.constant
 }
 
 @MainActor

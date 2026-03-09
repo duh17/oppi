@@ -301,6 +301,8 @@ enum ToolPresentationBuilder {
         case plot(spec: PlotChartSpec, fallbackText: String?)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
+        /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
+        case status(message: String)
         /// Plain/ANSI text with optional syntax highlighting
         case text(text: String, language: SyntaxLanguage?)
     }
@@ -355,9 +357,9 @@ enum ToolPresentationBuilder {
                         startLine: startLine
                     )
             } else if isLoadingOutput {
-                content = .text(text: "Loading read output…", language: nil)
+                content = .status(message: "Loading read output…")
             } else if isDone {
-                content = .text(text: "Waiting for output…", language: nil)
+                content = .status(message: "Waiting for output…")
             }
 
         case "write":
@@ -445,6 +447,10 @@ enum ToolPresentationBuilder {
                 content = resolved.content
                 copyOutput = resolved.copyOutput
             }
+        }
+
+        if content == nil, !isDone {
+            content = .status(message: pendingStatusMessage(normalizedTool: normalizedTool))
         }
 
         return ExpandedPresentation(
@@ -560,6 +566,21 @@ enum ToolPresentationBuilder {
             return editText.newText
         }
         return editText.oldText
+    }
+
+    private static func pendingStatusMessage(normalizedTool: String) -> String {
+        switch normalizedTool {
+        case "read":
+            return "Reading…"
+        case "write":
+            return "Writing…"
+        case "edit":
+            return "Editing…"
+        case "plot":
+            return "Rendering plot…"
+        default:
+            return "Waiting for output…"
+        }
     }
 
     static func shouldWarnInlineMediaForToolOutput(
