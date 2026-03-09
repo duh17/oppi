@@ -67,6 +67,31 @@ struct FullScreenSelectedTextTests {
         #expect(piMenu.title == "π")
     }
 
+    @Test func fullScreenMarkdownUsesRichRenderingForLargeDocuments() throws {
+        let content = [
+            "# Heading",
+            "",
+            "**Bold intro** with `inline code`.",
+            "",
+            String(repeating: "Body paragraph with enough text to cross the old fallback threshold.\n\n", count: 320),
+        ].joined(separator: "\n")
+        #expect(content.count > AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold)
+
+        let controller = makeController(
+            content: .markdown(content: content, filePath: "Notes.md")
+        )
+        let renderedText = timelineAllTextViews(in: controller.view)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+
+        #expect(renderedText.contains("Heading"))
+        #expect(renderedText.contains("Bold intro"))
+        #expect(renderedText.contains("inline code"))
+        #expect(!renderedText.contains("# Heading"))
+        #expect(!renderedText.contains("**Bold intro**"))
+        #expect(!renderedText.contains("`inline code`"))
+    }
+
     @Test func thinkingBodyPrependsPiSubmenu() throws {
         let controller = makeController(
             content: .thinking(content: "Think harder")

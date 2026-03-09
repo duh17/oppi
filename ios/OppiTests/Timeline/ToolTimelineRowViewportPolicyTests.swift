@@ -114,6 +114,186 @@ struct ToolTimelineRowViewportPolicyTests {
         #expect(privateView(named: "expandFloatingButton", in: view) == nil)
     }
 
+    // MARK: - Streaming fixed viewport
+
+    @Test func streamingCodeViewportUsesFixedHeight() throws {
+        let source = syntheticSwiftSource(lineCount: 180)
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .code(
+                text: source,
+                language: .swift,
+                startLine: 1,
+                filePath: "Streaming.swift"
+            ),
+            copyOutputText: source,
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(
+            viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight,
+            "Streaming code should use fixed viewport height; got \(viewportConstraint.constant)"
+        )
+    }
+
+    @Test func completedCodeViewportUsesBucketedHeight() throws {
+        let source = syntheticSwiftSource(lineCount: 180)
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .code(
+                text: source,
+                language: .swift,
+                startLine: 1,
+                filePath: "Done.swift"
+            ),
+            copyOutputText: source,
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(
+            viewportConstraint.constant == 420,
+            "Completed code should use bucketed height; got \(viewportConstraint.constant)"
+        )
+    }
+
+    @Test func streamingBashOutputUsesFixedViewport() throws {
+        let output = (0..<60).map { "line \($0): some output text here" }.joined(separator: "\n")
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .bash(command: "find . -name '*.swift'", output: output, unwrapped: false),
+            copyCommandText: "find . -name '*.swift'",
+            copyOutputText: output,
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "outputViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(
+            viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight,
+            "Streaming bash output should use fixed viewport height; got \(viewportConstraint.constant)"
+        )
+    }
+
+    @Test func streamingToCompletedTransitionResizesViewport() throws {
+        let source = syntheticSwiftSource(lineCount: 100)
+
+        // Start streaming
+        let streamingConfig = makeTimelineToolConfiguration(
+            expandedContent: .code(
+                text: source,
+                language: .swift,
+                startLine: 1,
+                filePath: "Trans.swift"
+            ),
+            copyOutputText: source,
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streamingConfig)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight)
+
+        // Transition to done
+        let doneConfig = makeTimelineToolConfiguration(
+            expandedContent: .code(
+                text: source,
+                language: .swift,
+                startLine: 1,
+                filePath: "Trans.swift"
+            ),
+            copyOutputText: source,
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: true
+        )
+
+        view.configuration = doneConfig
+        // Force layout to trigger viewport recalculation
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        #expect(
+            viewportConstraint.constant > ToolTimelineRowContentView.streamingViewportHeight,
+            "Completed transition should resize to bucketed height; got \(viewportConstraint.constant)"
+        )
+    }
+
+    @Test func streamingViewportHeightIsConsistentAcrossContentGrowth() throws {
+        // Simulate growing content during streaming — viewport should stay fixed
+        let smallSource = syntheticSwiftSource(lineCount: 5)
+        let mediumSource = syntheticSwiftSource(lineCount: 40)
+        let largeSource = syntheticSwiftSource(lineCount: 150)
+
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .code(text: smallSource, language: .swift, startLine: 1, filePath: "Grow.swift"),
+            copyOutputText: smallSource,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: false
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        let heightAfterSmall = viewportConstraint.constant
+
+        // Grow to medium
+        view.configuration = makeTimelineToolConfiguration(
+            expandedContent: .code(text: mediumSource, language: .swift, startLine: 1, filePath: "Grow.swift"),
+            copyOutputText: mediumSource,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: false
+        )
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let heightAfterMedium = viewportConstraint.constant
+
+        // Grow to large
+        view.configuration = makeTimelineToolConfiguration(
+            expandedContent: .code(text: largeSource, language: .swift, startLine: 1, filePath: "Grow.swift"),
+            copyOutputText: largeSource,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: false
+        )
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let heightAfterLarge = viewportConstraint.constant
+
+        #expect(heightAfterSmall == heightAfterMedium, "Viewport height should not change during streaming")
+        #expect(heightAfterMedium == heightAfterLarge, "Viewport height should not change during streaming")
+        #expect(heightAfterSmall == ToolTimelineRowContentView.streamingViewportHeight)
+    }
+
     private func syntheticSwiftSource(lineCount: Int) -> String {
         (0..<lineCount)
             .map { "func example\($0)() { print(\"line \($0)\") }" }

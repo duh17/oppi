@@ -379,6 +379,7 @@ extension ChatTimelineCollectionHost.Controller {
         case .markdown: return "markdown"
         case .plot: return "plot"
         case .readMedia: return "readMedia"
+        case .status: return "status"
         case .text: return "text"
         }
     }
