@@ -13,6 +13,7 @@ struct WorkspaceEditView: View {
     @State private var selectedSkills: Set<String> = []
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
+    @State private var systemPromptMode: WorkspaceSystemPromptMode = .append
     @State private var gitStatusEnabled: Bool = true
     @State private var memoryEnabled: Bool = false
     @State private var memoryNamespace: String = ""
@@ -25,6 +26,7 @@ struct WorkspaceEditView: View {
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
+    @State private var loadedWorkspaceID: String?
 
     private var activeServerId: String? {
         connection.currentServerId
@@ -72,8 +74,67 @@ struct WorkspaceEditView: View {
         selectedExtensionNames.filter { !discoveredExtensions.contains($0) }
     }
 
+    private var systemPromptEditorSummary: String {
+        if systemPrompt.isEmpty {
+            return systemPromptMode == .append ? "No custom prompt" : "Using Pi base prompt"
+        }
+
+        let lineCount = systemPrompt.split(separator: "\n", omittingEmptySubsequences: false).count
+        return "\(lineCount)L • \(systemPrompt.count)C"
+    }
+
+    private var systemPromptPreviewText: String {
+        if systemPrompt.isEmpty {
+            return systemPromptMode.emptyStateText
+        }
+
+        return systemPrompt
+    }
+
     var body: some View {
         Form {
+            Section("System Prompt") {
+                Picker("Behavior", selection: $systemPromptMode) {
+                    Text("Append").tag(WorkspaceSystemPromptMode.append)
+                    Text("Replace").tag(WorkspaceSystemPromptMode.replace)
+                }
+                .pickerStyle(.segmented)
+
+                NavigationLink {
+                    WorkspaceSystemPromptEditorView(
+                        workspaceId: workspace.id,
+                        systemPrompt: $systemPrompt,
+                        mode: systemPromptMode
+                    )
+                } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(systemPromptMode.editorLinkTitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.themeFg)
+
+                            Spacer(minLength: 8)
+
+                            Text(systemPromptEditorSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.themeComment)
+                        }
+
+                        Text(systemPromptPreviewText)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(systemPrompt.isEmpty ? .themeComment : .themeFg)
+                            .lineLimit(6)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .foregroundStyle(.themeFg)
+
+                Text(systemPromptMode.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+
             Section("Identity") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
@@ -223,28 +284,6 @@ struct WorkspaceEditView: View {
                 }
             }
 
-            Section("System Prompt") {
-                TextEditor(text: $systemPrompt)
-                    .frame(minHeight: 120)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.themeFg)
-                    .tint(.themeBlue)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.themeBgDark)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
-                    )
-
-                Text("Appended to the base agent prompt")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
-
             if let error {
                 Section {
                     Text(error)
@@ -269,7 +308,11 @@ struct WorkspaceEditView: View {
         .navigationDestination(for: SkillFileDestination.self) { dest in
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
-        .onAppear { loadFromWorkspace() }
+        .onAppear {
+            guard loadedWorkspaceID != workspace.id else { return }
+            loadFromWorkspace()
+            loadedWorkspaceID = workspace.id
+        }
         .task {
             await loadModels()
             await loadExtensions()
@@ -330,6 +373,10 @@ struct WorkspaceEditView: View {
         return Array(selectedSkills.intersection(knownSkillNames))
     }
 
+    private func nullableJSONString(_ value: String) -> JSONValue {
+        value.isEmpty ? .null : .string(value)
+    }
+
     private func loadFromWorkspace() {
         let source = workspaceForEditing
 
@@ -339,6 +386,7 @@ struct WorkspaceEditView: View {
         selectedSkills = Set(source.skills)
         hostMount = source.hostMount ?? ""
         systemPrompt = source.systemPrompt ?? ""
+        systemPromptMode = source.systemPromptMode
         gitStatusEnabled = source.gitStatusEnabled ?? true
         memoryEnabled = source.memoryEnabled ?? false
         memoryNamespace = source.memoryNamespace ?? ""
@@ -377,16 +425,17 @@ struct WorkspaceEditView: View {
 
         let request = UpdateWorkspaceRequest(
             name: name,
-            description: description.isEmpty ? nil : description,
-            icon: icon.isEmpty ? nil : icon,
+            description: nullableJSONString(description),
+            icon: nullableJSONString(icon),
             skills: validSelectedSkillNames(),
-            systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-            hostMount: hostMount.isEmpty ? nil : hostMount,
+            systemPrompt: nullableJSONString(systemPrompt),
+            systemPromptMode: systemPromptMode,
+            hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
             memoryEnabled: memoryEnabled,
-            memoryNamespace: memoryNamespace.isEmpty ? nil : memoryNamespace,
+            memoryNamespace: nullableJSONString(memoryNamespace),
             extensions: selectedExtensionNames,
-            defaultModel: defaultModel.isEmpty ? nil : defaultModel
+            defaultModel: nullableJSONString(defaultModel)
         )
 
         do {
@@ -398,6 +447,155 @@ struct WorkspaceEditView: View {
         } catch {
             self.error = error.localizedDescription
             isSaving = false
+        }
+    }
+}
+
+// MARK: - System Prompt Editor
+
+private struct WorkspaceSystemPromptEditorView: View {
+    let workspaceId: String
+    @Binding var systemPrompt: String
+    let mode: WorkspaceSystemPromptMode
+
+    @Environment(ServerConnection.self) private var connection
+
+    @State private var isLoadingBasePrompt = false
+    @State private var basePromptError: String?
+    @State private var loadedBasePromptCandidate: String?
+    @State private var confirmReplacingPrompt = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(mode.editorCalloutTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+
+                Text(mode.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                if mode == .replace {
+                    Button {
+                        Task { await loadBasePrompt() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isLoadingBasePrompt {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.down.doc")
+                            }
+                            Text(isLoadingBasePrompt ? "Loading Pi base prompt…" : "Load Pi base prompt")
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .disabled(isLoadingBasePrompt)
+                }
+
+                if let basePromptError {
+                    Text(basePromptError)
+                        .font(.caption)
+                        .foregroundStyle(.themeRed)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            TextEditor(text: $systemPrompt)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.themeFg)
+                .tint(.themeBlue)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .scrollContentBackground(.hidden)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.themeBgDark)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.themeBg.ignoresSafeArea())
+        .navigationTitle(mode.editorTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if mode == .replace {
+                        Button(isLoadingBasePrompt ? "Loading Pi Base Prompt…" : "Load Pi Base Prompt") {
+                            Task { await loadBasePrompt() }
+                        }
+                        .disabled(isLoadingBasePrompt)
+                    }
+
+                    Button("Clear", role: .destructive) {
+                        systemPrompt = ""
+                    }
+                    .disabled(systemPrompt.isEmpty)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Text(mode == .append ? "Appended prompt" : "Replacement prompt")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                Spacer()
+
+                Text("\(systemPrompt.count) chars")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.themeComment)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
+        }
+        .alert("Replace with Pi base prompt?", isPresented: $confirmReplacingPrompt) {
+            Button("Cancel", role: .cancel) {
+                loadedBasePromptCandidate = nil
+            }
+            Button("Replace", role: .destructive) {
+                systemPrompt = loadedBasePromptCandidate ?? systemPrompt
+                loadedBasePromptCandidate = nil
+            }
+        } message: {
+            Text("This will replace the current prompt text in the editor.")
+        }
+    }
+
+    private func loadBasePrompt() async {
+        guard let api = connection.apiClient else {
+            basePromptError = "Server is offline — reconnecting in background"
+            return
+        }
+
+        isLoadingBasePrompt = true
+        basePromptError = nil
+        defer { isLoadingBasePrompt = false }
+
+        do {
+            let basePrompt = try await api.getWorkspaceBaseSystemPrompt(id: workspaceId)
+            if systemPrompt.isEmpty {
+                systemPrompt = basePrompt
+            } else {
+                loadedBasePromptCandidate = basePrompt
+                confirmReplacingPrompt = true
+            }
+        } catch {
+            basePromptError = error.localizedDescription
         }
     }
 }
@@ -447,6 +645,53 @@ private struct SkillToggleRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("View \(skill.name) details")
+        }
+    }
+}
+
+private extension WorkspaceSystemPromptMode {
+    var editorTitle: String {
+        switch self {
+        case .append:
+            return "Appended Prompt"
+        case .replace:
+            return "Base Prompt Override"
+        }
+    }
+
+    var editorLinkTitle: String {
+        switch self {
+        case .append:
+            return "Edit appended prompt"
+        case .replace:
+            return "Edit replacement prompt"
+        }
+    }
+
+    var editorCalloutTitle: String {
+        switch self {
+        case .append:
+            return "Workspace instructions"
+        case .replace:
+            return "Pi base prompt override"
+        }
+    }
+
+    var detailText: String {
+        switch self {
+        case .append:
+            return "Add workspace-specific instructions after Pi’s base prompt."
+        case .replace:
+            return "Replace Pi’s base prompt for new sessions in this workspace. AGENTS files, skills, and runtime context still apply."
+        }
+    }
+
+    var emptyStateText: String {
+        switch self {
+        case .append:
+            return "No workspace prompt yet. Pi’s base prompt will be used as-is."
+        case .replace:
+            return "No replacement prompt saved. Load Pi’s base prompt as a starting point, then edit it here."
         }
     }
 }

@@ -1,5 +1,10 @@
 import Foundation
 
+enum WorkspaceSystemPromptMode: String, Codable, Sendable, CaseIterable {
+    case append
+    case replace
+}
+
 /// Workspace model matching server's `Workspace` type.
 ///
 /// A workspace defines the agent environment: skills, permissions,
@@ -16,6 +21,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
 
     // Context
     var systemPrompt: String?
+    var systemPromptMode: WorkspaceSystemPromptMode = .append
     var hostMount: String?      // Host directory mounted as /work
 
     // Memory
@@ -43,7 +49,7 @@ extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
         case skills
-        case systemPrompt, hostMount
+        case systemPrompt, systemPromptMode, hostMount
         case memoryEnabled, memoryNamespace
         case extensions
         case gitStatusEnabled
@@ -60,6 +66,7 @@ extension Workspace: Codable {
         skills = try c.decode([String].self, forKey: .skills)
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+        systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
         extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
@@ -81,6 +88,7 @@ extension Workspace: Codable {
         try c.encodeIfPresent(icon, forKey: .icon)
         try c.encode(skills, forKey: .skills)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
+        try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
         try c.encodeIfPresent(memoryEnabled, forKey: .memoryEnabled)
         try c.encodeIfPresent(memoryNamespace, forKey: .memoryNamespace)

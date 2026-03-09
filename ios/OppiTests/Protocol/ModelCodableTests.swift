@@ -463,6 +463,7 @@ struct WorkspaceCodableTests {
             "icon": "hammer",
             "skills": ["searxng", "fetch"],
             "systemPrompt": "You are helpful",
+            "systemPromptMode": "replace",
             "hostMount": "/Users/me/workspace",
             "memoryEnabled": true,
             "memoryNamespace": "dev",
@@ -481,6 +482,7 @@ struct WorkspaceCodableTests {
         #expect(ws.icon == "hammer")
         #expect(ws.skills == ["searxng", "fetch"])
         #expect(ws.systemPrompt == "You are helpful")
+        #expect(ws.systemPromptMode == .replace)
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.memoryEnabled == true)
         #expect(ws.memoryNamespace == "dev")
@@ -507,6 +509,7 @@ struct WorkspaceCodableTests {
         #expect(ws.icon == nil)
         #expect(ws.skills.isEmpty)
         #expect(ws.systemPrompt == nil)
+        #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == nil)
         #expect(ws.memoryEnabled == nil)
         #expect(ws.memoryNamespace == nil)
@@ -520,7 +523,7 @@ struct WorkspaceCodableTests {
             "id": "w3", "name": "RT",
             "description": "test", "icon": "star",
             "skills": ["fetch"],
-            "systemPrompt": "prompt", "hostMount": "/work",
+            "systemPrompt": "prompt", "systemPromptMode": "replace", "hostMount": "/work",
             "memoryEnabled": false, "memoryNamespace": "ns",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
             "defaultModel": "model-1",

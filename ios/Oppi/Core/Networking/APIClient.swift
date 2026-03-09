@@ -302,9 +302,16 @@ actor APIClient {
 
     /// Update an existing workspace.
     func updateWorkspace(id: String, _ request: UpdateWorkspaceRequest) async throws -> Workspace {
-        let data = try await put("/workspaces/\(id)", body: request)
+        let data = try await put("/workspaces/\(id)", body: request.body)
         struct Response: Decodable { let workspace: Workspace }
         return try JSONDecoder().decode(Response.self, from: data).workspace
+    }
+
+    /// Fetch the current Pi base system prompt resolved for a workspace.
+    func getWorkspaceBaseSystemPrompt(id: String) async throws -> String {
+        let data = try await get("/workspaces/\(id)/system-prompt/base")
+        struct Response: Decodable { let systemPrompt: String }
+        return try JSONDecoder().decode(Response.self, from: data).systemPrompt
     }
 
     /// Delete a workspace.
@@ -354,6 +361,50 @@ actor APIClient {
     func getGitStatus(workspaceId: String) async throws -> GitStatus {
         let data = try await get("/workspaces/\(workspaceId)/git-status")
         return try JSONDecoder().decode(GitStatus.self, from: data)
+    }
+
+    /// Fetch the workspace review file list, optionally annotated for a specific session.
+    func getWorkspaceReviewFiles(
+        workspaceId: String,
+        sessionId: String? = nil
+    ) async throws -> WorkspaceReviewFilesResponse {
+        var route = "/workspaces/\(workspaceId)/review/files"
+        if let sessionId, !sessionId.isEmpty {
+            route += "?sessionId=\(try encodeQueryPath(sessionId))"
+        }
+        let data = try await get(route)
+        return try JSONDecoder().decode(WorkspaceReviewFilesResponse.self, from: data)
+    }
+
+    /// Fetch a review diff for a single workspace file.
+    func getWorkspaceReviewDiff(
+        workspaceId: String,
+        path: String
+    ) async throws -> WorkspaceReviewDiffResponse {
+        let encodedPath = try encodeQueryPath(path)
+        let route = "/workspaces/\(workspaceId)/review/diff?path=\(encodedPath)"
+        let data = try await get(route)
+        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
+    }
+
+    /// Create and seed a focused follow-up session from the workspace review selection.
+    func createWorkspaceReviewSession(
+        workspaceId: String,
+        action: WorkspaceReviewSessionAction,
+        paths: [String],
+        selectedSessionId: String? = nil
+    ) async throws -> WorkspaceReviewSessionResponse {
+        struct Body: Encodable {
+            let action: WorkspaceReviewSessionAction
+            let paths: [String]
+            let selectedSessionId: String?
+        }
+
+        let data = try await post(
+            "/workspaces/\(workspaceId)/review/session",
+            body: Body(action: action, paths: paths, selectedSessionId: selectedSessionId)
+        )
+        return try JSONDecoder().decode(WorkspaceReviewSessionResponse.self, from: data)
     }
 
     // MARK: - Safety Policy
@@ -754,7 +805,11 @@ actor APIClient {
     }
 
     private func encodeQueryPath(_ path: String) throws -> String {
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+        // urlQueryAllowed preserves `+`, but URLSearchParams decodes `+` as
+        // space. Remove `+` from the allowed set so it gets percent-encoded.
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove("+")
+        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) else {
             throw APIError.server(status: 400, message: "Invalid file path")
         }
         return encoded

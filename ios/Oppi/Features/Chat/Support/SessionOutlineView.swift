@@ -2,17 +2,13 @@ import SwiftUI
 
 /// Condensed session timeline for navigating long conversations.
 ///
-/// Shows two panes:
-/// - Session Timeline: scannable timeline entries, filterable by type
-/// - Changes: centralized file-change summary (edit/write) grouped by file
+/// Shows a scannable timeline of session entries, filterable by type.
 ///
 /// **Performance:** Pre-computes per-item summaries and lowercased search text
 /// on appear. Filtering uses pre-lowercased `String.contains` instead of
 /// `localizedCaseInsensitiveContains`. Search is debounced at 200ms. A render
 /// window limits ForEach scope to ~200 visible items with auto-expand on scroll.
 struct SessionOutlineView: View {
-    let sessionId: String
-    let workspaceId: String?
     let items: [ChatItem]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
@@ -23,7 +19,6 @@ struct SessionOutlineView: View {
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var filter: OutlineFilter = .all
-    @State private var mode: OutlineMode = .outline
 
     // Pre-computed outline entries — built once on appear.
     @State private var allEntries: [OutlineEntry] = []
@@ -35,11 +30,6 @@ struct SessionOutlineView: View {
 
     @State private var searchDebounceTask: Task<Void, Never>?
 
-    enum OutlineMode: String, CaseIterable {
-        case outline = "Session Timeline"
-        case changes = "Changes"
-    }
-
     enum OutlineFilter: String, CaseIterable {
         case all = "All"
         case messages = "Messages"
@@ -48,70 +38,43 @@ struct SessionOutlineView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("View", selection: $mode) {
-                    ForEach(OutlineMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+            outlinePane
+                .background(Color.themeBg)
+                .searchable(text: $searchText, prompt: "Search session timeline…")
+                .navigationTitle("Session Timeline")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { dismiss() }
                     }
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                Divider().overlay(Color.themeComment.opacity(0.3))
-
-                switch mode {
-                case .outline:
-                    outlinePane
-                case .changes:
-                    SessionChangesView(
-                        sessionId: sessionId,
-                        workspaceId: workspaceId,
-                        items: items,
-                        searchText: debouncedSearchText
-                    )
-                }
-            }
-            .background(Color.themeBg)
-            .searchable(
-                text: $searchText,
-                prompt: mode == .outline ? "Search session timeline…" : "Search changed files…"
-            )
-            .navigationTitle(mode.rawValue)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .task {
-                buildIndex()
-                applyFilter()
-            }
-            .onChange(of: searchText) { _, newValue in
-                searchDebounceTask?.cancel()
-                if newValue.isEmpty {
-                    // Clear search immediately for responsiveness.
-                    debouncedSearchText = ""
+                .task {
+                    buildIndex()
                     applyFilter()
-                } else {
-                    searchDebounceTask = Task {
-                        try? await Task.sleep(for: .milliseconds(200))
-                        guard !Task.isCancelled else { return }
-                        debouncedSearchText = newValue
+                }
+                .onChange(of: searchText) { _, newValue in
+                    searchDebounceTask?.cancel()
+                    if newValue.isEmpty {
+                        // Clear search immediately for responsiveness.
+                        debouncedSearchText = ""
+                        applyFilter()
+                    } else {
+                        searchDebounceTask = Task {
+                            try? await Task.sleep(for: .milliseconds(200))
+                            guard !Task.isCancelled else { return }
+                            debouncedSearchText = newValue
+                        }
                     }
                 }
-            }
-            .onChange(of: debouncedSearchText) { _, _ in
-                applyFilter()
-            }
-            .onChange(of: filter) { _, _ in
-                applyFilter()
-            }
-            .onDisappear {
-                searchDebounceTask?.cancel()
-            }
+                .onChange(of: debouncedSearchText) { _, _ in
+                    applyFilter()
+                }
+                .onChange(of: filter) { _, _ in
+                    applyFilter()
+                }
+                .onDisappear {
+                    searchDebounceTask?.cancel()
+                }
         }
     }
 
