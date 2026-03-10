@@ -86,7 +86,11 @@ struct ImageExtractor {
     static func extract(from text: String) -> [ExtractedImage] {
         var images: [ExtractedImage] = []
 
-        let dataUriPattern = /data:image\/([a-zA-Z0-9+.-]+);base64,([A-Za-z0-9+\/=\n\r]+)/
+        // Use alternation so newlines within base64 are captured but a newline
+        // followed by `data:` (start of the next URI) stops the match. Without
+        // this, the greedy `[\n\r]` eats into the next data URI when trace text
+        // joins multiple images with `\n`.
+        let dataUriPattern = /data:image\/([a-zA-Z0-9+.-]+);base64,((?:[A-Za-z0-9+\/=]|[\r\n](?!data:))+)/
         for match in text.matches(of: dataUriPattern) {
             let mimeType = "image/" + String(match.output.1)
             let base64 = String(match.output.2)
@@ -117,7 +121,9 @@ struct AudioExtractor {
     static func extract(from text: String) -> [ExtractedAudio] {
         var audio: [ExtractedAudio] = []
 
-        let dataUriPattern = /data:audio\/([a-zA-Z0-9+.-]+);base64,([A-Za-z0-9+\/=\n\r]+)/
+        // Same boundary-safe alternation as ImageExtractor — prevent greedy
+        // over-matching across newline-separated data URIs.
+        let dataUriPattern = /data:audio\/([a-zA-Z0-9+.-]+);base64,((?:[A-Za-z0-9+\/=]|[\r\n](?!data:))+)/
         for match in text.matches(of: dataUriPattern) {
             let mimeType = "audio/" + String(match.output.1)
             let base64 = String(match.output.2)
