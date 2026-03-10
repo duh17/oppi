@@ -20,7 +20,6 @@ struct ChatView: View {
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
     @State private var showOutline = false
-    @State private var showWorkspaceReview = false
     @State private var showModelPicker = false
     @State private var showModelSwitchWarning = false
     @State private var pendingModelSwitch: ModelInfo?
@@ -40,6 +39,9 @@ struct ChatView: View {
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
     @State private var composerExternalFocusRequestID = 0
+    @State private var contextBarCollapseToken = 0
+    @State private var contextBarExpanded = false
+
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
@@ -116,12 +118,24 @@ struct ChatView: View {
     private var chatTimelineScaffold: some View {
         chatTimeline
             .ignoresSafeArea(.container, edges: .top)
+            .overlay {
+                // Dismiss layer: tap anywhere outside the bar to collapse it
+                if !isZenMode, contextBarExpanded {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .onTapGesture { contextBarCollapseToken &+= 1 }
+                }
+            }
             .overlay(alignment: .top) {
                 if !isZenMode {
                     WorkspaceContextBar(
                         gitStatus: connection.gitStatusStore.gitStatus,
                         isLoading: connection.gitStatusStore.isLoading,
-                        onOpenReview: session?.workspaceId == nil ? nil : { showWorkspaceReview = true }
+                        workspaceId: session?.workspaceId,
+                        sessionId: sessionId,
+                        collapseToken: contextBarCollapseToken,
+                        onExpandedChanged: { contextBarExpanded = $0 }
                     )
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                 }
@@ -143,12 +157,14 @@ struct ChatView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
+            .onChange(of: scrollController.isJumpToBottomHintVisible) { _, visible in
+                if visible { contextBarCollapseToken &+= 1 }
+            }
     }
 
     private var chatContent: some View {
         configuredChatContent
             .sheet(isPresented: $showOutline) { outlineSheet }
-            .sheet(isPresented: $showWorkspaceReview) { workspaceReviewSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
@@ -204,6 +220,7 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
+                contextBarCollapseToken &+= 1
                 if isZenMode {
                     exitZenMode(animated: false)
                 }
@@ -716,30 +733,6 @@ struct ChatView: View {
             onFork: forkFromMessage
         )
         .presentationDetents([.medium, .large])
-    }
-
-    @ViewBuilder
-    private var workspaceReviewSheet: some View {
-        if let workspaceId = session?.workspaceId {
-            NavigationStack {
-                WorkspaceReviewView(workspaceId: workspaceId, selectedSessionId: sessionId)
-            }
-        } else {
-            NavigationStack {
-                ContentUnavailableView(
-                    "Review Unavailable",
-                    systemImage: "arrow.triangle.branch",
-                    description: Text("Missing workspace context for this session.")
-                )
-                .navigationTitle("Review")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { showWorkspaceReview = false }
-                    }
-                }
-            }
-        }
     }
 
     private func forkFromMessage(_ entryId: String) {

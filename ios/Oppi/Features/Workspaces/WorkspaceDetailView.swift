@@ -18,13 +18,13 @@ struct WorkspaceDetailView: View {
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var showEditWorkspace = false
-    @State private var showWorkspaceReview = false
-    @State private var reviewSessionScope: Session?
     @State private var showWorkspacePolicy = false
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
     @State private var policyFallback: PolicyFallbackDecision = .allow
+    @State private var contextBarCollapseToken = 0
+    @State private var contextBarExpanded = false
 
     private struct SessionLineageSummary {
         let parentSessionName: String?
@@ -154,7 +154,9 @@ struct WorkspaceDetailView: View {
                         gitStatus: gitStatus,
                         isLoading: false,
                         appliesOuterHorizontalPadding: false,
-                        onOpenReview: { showWorkspaceReview = true }
+                        workspaceId: workspace.id,
+                        collapseToken: contextBarCollapseToken,
+                        onExpandedChanged: { contextBarExpanded = $0 }
                     )
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
@@ -172,13 +174,6 @@ struct WorkspaceDetailView: View {
                             )
                         }
                         .listRowBackground(Color.themeBg)
-                        .contextMenu {
-                            if canReviewTouchedFiles(session) {
-                                Button("Review touched files", systemImage: "list.bullet.rectangle.portrait") {
-                                    reviewSessionScope = session
-                                }
-                            }
-                        }
                         .swipeActions(edge: .trailing) {
                             Button {
                                 Task { await stopSession(session) }
@@ -202,9 +197,6 @@ struct WorkspaceDetailView: View {
                 },
                 onDeleteSession: { session in
                     Task { await deleteSession(session) }
-                },
-                onReviewSession: { session in
-                    reviewSessionScope = session
                 },
                 onImportLocal: { local in
                     Task { await importAndResumeLocal(local) }
@@ -237,6 +229,13 @@ struct WorkspaceDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .overlay {
+            if contextBarExpanded {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { contextBarCollapseToken &+= 1 }
+            }
+        }
         .navigationTitle(currentWorkspace.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
@@ -319,19 +318,6 @@ struct WorkspaceDetailView: View {
         } message: {
             Text(error ?? "")
         }
-        .sheet(isPresented: $showWorkspaceReview) {
-            NavigationStack {
-                WorkspaceReviewView(workspaceId: workspace.id)
-            }
-        }
-        .sheet(item: $reviewSessionScope) { session in
-            NavigationStack {
-                WorkspaceReviewView(
-                    workspaceId: workspace.id,
-                    selectedSessionId: session.id
-                )
-            }
-        }
         .navigationDestination(isPresented: $showEditWorkspace) {
             WorkspaceEditView(workspace: currentWorkspace)
         }
@@ -391,10 +377,6 @@ struct WorkspaceDetailView: View {
 
     private func sessionTitle(_ session: Session) -> String {
         session.displayTitle
-    }
-
-    private func canReviewTouchedFiles(_ session: Session) -> Bool {
-        (session.changeStats?.filesChanged ?? 0) > 0
     }
 
     private func refreshLineage() async {
