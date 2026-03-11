@@ -149,25 +149,36 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as {
+        workspaceId: string;
         path: string;
         revisionCount: number;
         baselineText: string;
         currentText: string;
         addedLines: number;
         removedLines: number;
-        diffLines: Array<{ kind: string; text: string }>;
+        hunks: Array<{
+          oldStart: number;
+          oldCount: number;
+          newStart: number;
+          newCount: number;
+          lines: Array<{ kind: string; text: string; oldLine: number | null; newLine: number | null }>;
+        }>;
+        cacheKey: string;
       };
 
+      expect(body.workspaceId).toBe("w1");
       expect(body.path).toBe("file.txt");
       expect(body.revisionCount).toBe(1);
       expect(body.baselineText).toBe("A");
       expect(body.currentText).toBe("B");
       expect(body.addedLines).toBe(1);
       expect(body.removedLines).toBe(1);
-      expect(body.diffLines).toEqual([
-        { kind: "removed", text: "A" },
-        { kind: "added", text: "B" },
+      expect(body.hunks).toHaveLength(1);
+      expect(body.hunks[0].lines).toEqual([
+        { kind: "removed", text: "A", oldLine: 1, newLine: null, spans: [{ start: 0, end: 1, kind: "changed" }] },
+        { kind: "added", text: "B", oldLine: null, newLine: 1, spans: [{ start: 0, end: 1, kind: "changed" }] },
       ]);
+      expect(body.cacheKey).toContain("s1:file.txt:");
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }
