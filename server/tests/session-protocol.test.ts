@@ -32,6 +32,7 @@ function makeCtx(): TranslationContext {
     hasStreamedThinking: false,
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
+    streamingArgPreviews: new Set(),
   };
 }
 

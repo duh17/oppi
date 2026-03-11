@@ -214,6 +214,61 @@ export default renderers;
 - Keep summaries short — they're collapsed one-liners on mobile
 - Never throw — return `[]` as fallback
 
+### Expanded Viewport Rendering
+
+When a user taps a tool row to expand it, iOS renders the tool's output in a scrollable viewport. For extension tools, the expanded content is controlled by two mechanisms:
+
+#### 1. Tool Result `details` (post-execution)
+
+Return `expandedText` and `presentationFormat` in your tool's `details` to control how the expanded viewport displays content after execution completes:
+
+```typescript
+async execute(toolCallId, params, signal, onUpdate, ctx) {
+  const result = doWork(params);
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],  // For LLM
+    details: {
+      expandedText: formatMarkdown(result),    // For iOS viewport
+      presentationFormat: "markdown",          // Rendering hint
+    },
+  };
+}
+```
+
+| `presentationFormat` | iOS Rendering |
+|---------------------|---------------|
+| `"markdown"` / `"md"` | Rendered markdown with headers, code blocks, lists |
+| `"code"` / `"source"` / `"syntax"` | Syntax-highlighted code with line numbers |
+| `"json"` | Pretty-printed JSON |
+| `"diff"` / `"patch"` / `"unified-diff"` | Unified diff with added/removed highlighting |
+| _(omitted)_ | Auto-detect: tries JSON parse → unified diff → markdown heuristic → plain text |
+
+Additional detail fields:
+- `language` / `lang` — syntax language hint for `"code"` format (e.g. `"typescript"`)
+- `filePath` / `file_path` / `path` — file path context for code display
+- `startLine` / `start_line` — starting line number for code display
+
+When `expandedText` is omitted, iOS uses the raw tool output (`content[].text`). When `presentationFormat` is omitted, iOS auto-detects format from the content (JSON objects get pretty-printed, markdown-like content renders as markdown, etc).
+
+#### 2. Streaming Arg Preview (during execution)
+
+When the LLM generates a tool call with a large string argument (>200 bytes), the server automatically streams that content to the iOS viewport during arg generation. This means users see the content appearing in real-time instead of a "Waiting for output..." placeholder.
+
+This is fully automatic and requires no extension code. The server:
+1. Detects the largest string arg exceeding the threshold
+2. Emits it as `tool_output` with `mode: "replace"` alongside each streaming `tool_start`
+3. Clears the preview when real execution begins (`tool_execution_start`)
+
+The mobile renderer controls what appears in the **title bar** during streaming (via `callSegments`). The preview mechanism controls what appears in the **viewport**. Keep large content values (markdown bodies, long text) in dedicated string parameters — the server picks the largest one.
+
+**Design your args to render well:**
+
+| Pattern | Title (callSegments) | Viewport (auto) |
+|---------|---------------------|-----------------|
+| `{ action: "create", title: "Short", body: "# Long markdown..." }` | `todo create "Short"` | Full markdown renders in viewport |
+| `{ text: "Long memory entry...", tags: ["a","b"] }` | `remember "First line..."` | Full text in viewport |
+| `{ query: "short search" }` | `recall "short search"` | No preview (below threshold) |
+
 ### Dynamic UI via `plot` Tool
 
 For dynamic chart UI in chat, use the `plot` extension tool contract documented in:

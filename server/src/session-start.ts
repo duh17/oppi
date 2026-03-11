@@ -1,3 +1,5 @@
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -21,6 +23,7 @@ export interface SessionStartActiveSession {
   hasStreamedThinking: boolean;
   toolNames: Map<string, string>;
   shellPreviewLastSent: Map<string, number>;
+  streamingArgPreviews: Set<string>;
   toolFullOutputPaths: Map<string, string>;
   messageQueue?: SessionMessageQueueStore;
   turnCache: TurnDedupeCache;
@@ -37,6 +40,7 @@ export interface SessionStartCoordinatorDeps {
   gate: GateServer;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
+  getAndClearPendingExtensionFactories: (sessionId: string) => ExtensionFactory[];
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
@@ -64,6 +68,7 @@ export class SessionStartCoordinator {
         const skillPathResolver = this.deps.getSkillPathResolver();
         const skillPaths =
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
+        const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
         const sdkBackend = await SdkBackend.create({
           session,
@@ -75,6 +80,8 @@ export class SessionStartCoordinator {
           permissionGate: useGate,
           skillPaths,
           storage: this.deps.storage,
+          extraExtensionFactories:
+            extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
         });
 
         const activeSession: SessionStartActiveSession = {
@@ -88,6 +95,7 @@ export class SessionStartCoordinator {
           hasStreamedThinking: false,
           toolNames: new Map(),
           shellPreviewLastSent: new Map(),
+          streamingArgPreviews: new Set(),
           toolFullOutputPaths: new Map(),
           messageQueue: {
             version: 0,
