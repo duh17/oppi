@@ -349,6 +349,10 @@ export interface WorkspaceReviewDiffResponse {
   addedLines: number;
   removedLines: number;
   hunks: WorkspaceReviewDiffHunk[];
+  /** Number of trace mutations (session overall-diff only). */
+  revisionCount?: number;
+  /** Cache key for client-side caching (session overall-diff only). */
+  cacheKey?: string;
 }
 
 export type WorkspaceReviewSessionAction = "review" | "reflect" | "prepare_commit";
