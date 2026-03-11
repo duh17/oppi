@@ -35,10 +35,6 @@ struct DiffContentView: View {
         )
     }
 
-    private var hasFullScreenAffordance: Bool {
-        allowsFullScreenExpansion
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if showHeader {
@@ -59,7 +55,7 @@ struct DiffContentView: View {
                 .stroke(theme.text.tertiary.opacity(0.35), lineWidth: 1)
         )
         .contextMenu {
-            if hasFullScreenAffordance {
+            if allowsFullScreenExpansion {
                 Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                     showFullScreen = true
                 }
@@ -113,7 +109,7 @@ struct DiffContentView: View {
                     .foregroundStyle(theme.diff.removedAccent)
             }
 
-            if hasFullScreenAffordance {
+            if allowsFullScreenExpansion {
                 Button { showFullScreen = true } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.caption2)

@@ -363,19 +363,6 @@ actor APIClient {
         return try JSONDecoder().decode(GitStatus.self, from: data)
     }
 
-    /// Fetch the workspace review file list, optionally annotated for a specific session.
-    func getWorkspaceReviewFiles(
-        workspaceId: String,
-        sessionId: String? = nil
-    ) async throws -> WorkspaceReviewFilesResponse {
-        var route = "/workspaces/\(workspaceId)/review/files"
-        if let sessionId, !sessionId.isEmpty {
-            route += "?sessionId=\(try encodeQueryPath(sessionId))"
-        }
-        let data = try await get(route)
-        return try JSONDecoder().decode(WorkspaceReviewFilesResponse.self, from: data)
-    }
-
     /// Fetch a review diff for a single workspace file.
     func getWorkspaceReviewDiff(
         workspaceId: String,
@@ -628,39 +615,6 @@ actor APIClient {
     }
 
     // MARK: - Tool Output & Files
-
-    struct SessionOverallDiffResponse: Decodable, Sendable, Equatable {
-        struct DiffLine: Decodable, Sendable, Equatable {
-            enum Kind: String, Decodable, Sendable {
-                case context
-                case added
-                case removed
-            }
-
-            let kind: Kind
-            let text: String
-        }
-
-        let path: String
-        let revisionCount: Int
-        let baselineText: String
-        let currentText: String
-        let diffLines: [DiffLine]
-        let addedLines: Int
-        let removedLines: Int
-        let cacheKey: String
-    }
-
-    func getSessionOverallDiff(
-        sessionId: String,
-        workspaceId: String,
-        path: String
-    ) async throws -> SessionOverallDiffResponse {
-        let encodedPath = try encodeQueryPath(path)
-        let route = "/workspaces/\(workspaceId)/sessions/\(sessionId)/overall-diff?path=\(encodedPath)"
-        let data = try await get(route)
-        return try JSONDecoder().decode(SessionOverallDiffResponse.self, from: data)
-    }
 
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
     ///

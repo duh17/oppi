@@ -8,6 +8,7 @@ import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
+  ContextSummary,
   CreateWorkspaceRequest,
   CreateWorkspaceReviewSessionRequest,
   Session,
@@ -15,7 +16,6 @@ import type {
   Workspace,
   WorkspaceReviewSessionResponse,
 } from "../types.js";
-import { buildWorkspaceReviewFilesResponse } from "../workspace-review.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
   prepareWorkspaceReviewSession,
@@ -300,69 +300,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return !!session && session.workspaceId === workspaceId;
   }
 
-  async function handleGetWorkspaceReviewFiles(
-    wsId: string,
-    url: URL,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const selectedSessionId = url.searchParams.get("sessionId")?.trim();
-    const selectedSession = selectedSessionId
-      ? ctx.storage.getSession(selectedSessionId)
-      : undefined;
-
-    if (selectedSessionId && !sessionWithinWorkspace(selectedSession, wsId)) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-
-    if (!workspace.hostMount) {
-      helpers.json(
-        res,
-        buildWorkspaceReviewFilesResponse({
-          workspaceId: wsId,
-          gitStatus: {
-            isGitRepo: false,
-            branch: null,
-            headSha: null,
-            ahead: null,
-            behind: null,
-            dirtyCount: 0,
-            untrackedCount: 0,
-            stagedCount: 0,
-            files: [],
-            totalFiles: 0,
-            addedLines: 0,
-            removedLines: 0,
-            stashCount: 0,
-            lastCommitMessage: null,
-            lastCommitDate: null,
-          },
-          selectedSession,
-        }),
-      );
-      return;
-    }
-
-    const status = await getGitStatus(workspace.hostMount);
-    helpers.compressedJson(
-      req,
-      res,
-      buildWorkspaceReviewFilesResponse({
-        workspaceId: wsId,
-        gitStatus: status,
-        selectedSession,
-        workspaceRoot: workspace.hostMount,
-      }),
-    );
-  }
-
   async function handleGetWorkspaceReviewDiff(
     wsId: string,
     url: URL,
@@ -418,44 +355,14 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (body.action !== "review" && body.action !== "reflect" && body.action !== "prepare_commit") {
-      helpers.error(res, 400, "action must be review, reflect, or prepare_commit");
+    const validActions = ["review", "reflect", "prepare_commit"] as const;
+    if (!validActions.includes(body.action as (typeof validActions)[number])) {
+      helpers.error(res, 400, `action must be one of: ${validActions.join(", ")}`);
       return;
     }
 
     try {
-      const launch = await prepareWorkspaceReviewSession({
-        workspaceId: wsId,
-        workspace,
-        action: body.action,
-        paths: Array.isArray(body.paths) ? body.paths : [],
-        selectedSession,
-      });
-
-      const model = workspace.lastUsedModel || workspace.defaultModel;
-      const session = ctx.storage.createSession(launch.sessionName, model);
-      session.workspaceId = workspace.id;
-      session.workspaceName = workspace.name;
-      ctx.storage.saveSession(session);
-
-      try {
-        ctx.sessions.setPendingPromptPreamble(session.id, launch.preamble);
-        await ctx.sessions.startSession(session.id, workspace);
-        await ctx.sessions.sendPrompt(session.id, launch.visiblePrompt);
-      } catch (error) {
-        await ctx.sessions.stopSession(session.id).catch(() => {});
-        ctx.storage.deleteSession(session.id);
-        throw error;
-      }
-
-      const launchedSession =
-        ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
-      const response: WorkspaceReviewSessionResponse = {
-        action: body.action,
-        selectedPathCount: launch.files.length,
-        session: ctx.ensureSessionContextWindow(launchedSession),
-      };
-      helpers.json(res, response, 201);
+      await handleReviewAction(wsId, workspace, body, selectedSession, res);
     } catch (error) {
       if (error instanceof WorkspaceReviewSessionError) {
         helpers.error(res, error.status, error.message);
@@ -465,6 +372,54 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       const message = error instanceof Error ? error.message : "Failed to create review session";
       helpers.error(res, 500, message);
     }
+  }
+
+  async function handleReviewAction(
+    wsId: string,
+    workspace: Workspace,
+    body: CreateWorkspaceReviewSessionRequest,
+    selectedSession: Session | undefined,
+    res: ServerResponse,
+  ): Promise<void> {
+    const launch = await prepareWorkspaceReviewSession({
+      workspaceId: wsId,
+      workspace,
+      action: body.action,
+      paths: Array.isArray(body.paths) ? body.paths : [],
+      selectedSession,
+    });
+
+    const model = workspace.lastUsedModel || workspace.defaultModel;
+    const session = ctx.storage.createSession(launch.sessionName, model);
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    ctx.storage.saveSession(session);
+
+    try {
+      ctx.sessions.setPendingPromptPreamble(session.id, launch.preamble);
+      await ctx.sessions.startSession(session.id, workspace);
+    } catch (error) {
+      await ctx.sessions.stopSession(session.id).catch(() => {});
+      ctx.storage.deleteSession(session.id);
+      throw error;
+    }
+
+    const launchedSession =
+      ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
+    const contextSummary: ContextSummary[] = launch.files.map((f) => ({
+      kind: "file_diff" as const,
+      path: f.path,
+      addedLines: f.addedLines ?? 0,
+      removedLines: f.removedLines ?? 0,
+    }));
+    const response: WorkspaceReviewSessionResponse = {
+      action: body.action,
+      selectedPathCount: launch.files.length,
+      session: ctx.ensureSessionContextWindow(launchedSession),
+      visiblePrompt: launch.visiblePrompt,
+      contextSummary,
+    };
+    helpers.json(res, response, 201);
   }
 
   function handleGetWorkspaceGraph(workspaceId: string, url: URL, res: ServerResponse): void {
@@ -557,12 +512,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
     if (wsGitStatusMatch && method === "GET") {
       await handleGetWorkspaceGitStatus(wsGitStatusMatch[1], res);
-      return true;
-    }
-
-    const wsReviewFilesMatch = path.match(/^\/workspaces\/([^/]+)\/review\/files$/);
-    if (wsReviewFilesMatch && method === "GET") {
-      await handleGetWorkspaceReviewFiles(wsReviewFilesMatch[1], url, req, res);
       return true;
     }
 

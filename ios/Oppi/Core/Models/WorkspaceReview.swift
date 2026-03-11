@@ -1,23 +1,5 @@
 import Foundation
 
-struct WorkspaceReviewFilesResponse: Codable, Sendable, Equatable {
-    let workspaceId: String
-    let isGitRepo: Bool
-    let branch: String?
-    let headSha: String?
-    let ahead: Int?
-    let behind: Int?
-    let changedFileCount: Int
-    let stagedFileCount: Int
-    let unstagedFileCount: Int
-    let untrackedFileCount: Int
-    let addedLines: Int
-    let removedLines: Int
-    let selectedSessionId: String?
-    let selectedSessionTouchedCount: Int
-    let files: [WorkspaceReviewFile]
-}
-
 struct WorkspaceReviewFile: Codable, Sendable, Equatable, Identifiable {
     let path: String
     let status: String
@@ -43,6 +25,10 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     let addedLines: Int
     let removedLines: Int
     let hunks: [WorkspaceReviewDiffHunk]
+    /// Number of trace mutations (session overall-diff only).
+    let revisionCount: Int?
+    /// Cache key for client-side caching (session overall-diff only).
+    let cacheKey: String?
 
     static func local(
         path: String,
@@ -59,7 +45,9 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
             currentText: currentText,
             addedLines: stats.added,
             removedLines: stats.removed,
-            hunks: WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
+            hunks: WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines),
+            revisionCount: nil,
+            cacheKey: nil
         )
     }
 }
@@ -120,6 +108,50 @@ struct WorkspaceReviewSessionResponse: Codable, Sendable, Equatable {
     let action: WorkspaceReviewSessionAction
     let selectedPathCount: Int
     let session: Session
+    let visiblePrompt: String
+    let contextSummary: [ContextSummary]
+}
+
+struct ContextSummary: Codable, Sendable, Equatable {
+    let kind: String
+    let path: String
+    let addedLines: Int
+    let removedLines: Int
+}
+
+/// Display-only context summary for the input bar pill strip.
+struct ContextPill: Identifiable, Sendable, Equatable, Hashable {
+    let id: String
+    let path: String
+    let addedLines: Int
+    let removedLines: Int
+
+    init(from summary: ContextSummary) {
+        self.id = summary.path
+        self.path = summary.path
+        self.addedLines = summary.addedLines
+        self.removedLines = summary.removedLines
+    }
+
+    var displayTitle: String {
+        (path as NSString).lastPathComponent
+    }
+
+    var displaySubtitle: String? {
+        let parts = [
+            addedLines > 0 ? "+\(addedLines)" : nil,
+            removedLines > 0 ? "-\(removedLines)" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+}
+
+/// Navigation destination for a created review session, carrying pill context
+/// and the pre-filled input text to show in ChatView.
+struct ReviewSessionNavDestination: Identifiable, Hashable {
+    let id: String
+    let pills: [ContextPill]
+    let inputText: String
 }
 
 struct WorkspaceReviewDiffHunk: Codable, Sendable, Equatable, Identifiable {
@@ -174,62 +206,6 @@ struct WorkspaceReviewDiffSpan: Codable, Sendable, Equatable {
     let kind: Kind
 }
 
-enum WorkspaceReviewHistoryEntryKind: String, Sendable {
-    case edit
-    case write
-
-    var icon: String {
-        switch self {
-        case .edit: return "pencil"
-        case .write: return "square.and.pencil"
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .edit: return "Edit"
-        case .write: return "Write"
-        }
-    }
-
-    var detailActionLabel: String {
-        switch self {
-        case .edit: return "Modify existing file"
-        case .write: return "Create or overwrite file"
-        }
-    }
-}
-
-struct WorkspaceReviewHistoryEntry: Identifiable, Sendable, Equatable {
-    let id: String
-    let kind: WorkspaceReviewHistoryEntryKind
-    let path: String
-    let oldText: String?
-    let newText: String?
-    let writeContent: String?
-    let addedLines: Int
-    let removedLines: Int
-    let order: Int
-}
-
-struct ReviewHistoryOverallDiff: Sendable, Equatable {
-    struct Line: Sendable, Equatable {
-        enum Kind: Sendable {
-            case context
-            case added
-            case removed
-        }
-
-        let kind: Kind
-        let text: String
-    }
-
-    let revisionCount: Int
-    let baselineText: String
-    let currentText: String
-    let diffLines: [Line]
-}
-
 enum WorkspaceReviewDiffHunkBuilder {
     private static let contextLines = 3
 
@@ -266,9 +242,9 @@ enum WorkspaceReviewDiffHunkBuilder {
         var mergedWindows: [(start: Int, end: Int)] = [firstWindow]
 
         for next in changeWindows.dropFirst() {
-            let currentIndex = mergedWindows.index(before: mergedWindows.endIndex)
-            if next.start <= mergedWindows[currentIndex].end + 1 {
-                mergedWindows[currentIndex].end = max(mergedWindows[currentIndex].end, next.end)
+            let lastIndex = mergedWindows.count - 1
+            if next.start <= mergedWindows[lastIndex].end + 1 {
+                mergedWindows[lastIndex].end = max(mergedWindows[lastIndex].end, next.end)
             } else {
                 mergedWindows.append(next)
             }
@@ -331,79 +307,4 @@ enum WorkspaceReviewDiffHunkBuilder {
     }
 }
 
-enum WorkspaceReviewHistoryBuilder {
-    static func buildEntries(trace: [TraceEvent], path: String) -> [WorkspaceReviewHistoryEntry] {
-        var entries: [WorkspaceReviewHistoryEntry] = []
-        entries.reserveCapacity(trace.count)
 
-        for (index, event) in trace.enumerated() {
-            guard event.type == .toolCall else { continue }
-
-            let toolName = normalizeToolName(event.tool)
-            guard toolName == "edit" || toolName == "write" else { continue }
-
-            guard let rawPath = ToolCallFormatting.filePath(from: event.args) else { continue }
-            guard matchesPath(rawPath, target: path) else { continue }
-
-            if toolName == "edit" {
-                let editText = ToolCallFormatting.editOldAndNewText(from: event.args)
-                let stats = ToolCallFormatting.editDiffStats(from: event.args)
-                entries.append(WorkspaceReviewHistoryEntry(
-                    id: event.id,
-                    kind: .edit,
-                    path: rawPath,
-                    oldText: editText?.oldText,
-                    newText: editText?.newText,
-                    writeContent: nil,
-                    addedLines: stats?.added ?? 0,
-                    removedLines: stats?.removed ?? 0,
-                    order: index
-                ))
-            } else {
-                let content = ToolCallFormatting.writeContent(from: event.args)
-                entries.append(WorkspaceReviewHistoryEntry(
-                    id: event.id,
-                    kind: .write,
-                    path: rawPath,
-                    oldText: nil,
-                    newText: nil,
-                    writeContent: content,
-                    addedLines: content.map(lineCount(of:)) ?? 0,
-                    removedLines: 0,
-                    order: index
-                ))
-            }
-        }
-
-        return entries.sorted { $0.order > $1.order }
-    }
-
-    static func matchesPath(_ candidate: String, target: String) -> Bool {
-        let normalizedCandidate = normalizePath(candidate)
-        let normalizedTarget = normalizePath(target)
-        guard !normalizedCandidate.isEmpty, !normalizedTarget.isEmpty else { return false }
-
-        return normalizedCandidate == normalizedTarget
-            || normalizedCandidate.hasSuffix("/" + normalizedTarget)
-    }
-
-    private static func normalizeToolName(_ raw: String?) -> String {
-        let normalized = raw?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        return normalized.split(separator: ".").last.map(String.init) ?? normalized
-    }
-
-    private static func normalizePath(_ path: String) -> String {
-        var normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        while normalized.hasPrefix("./") {
-            normalized.removeFirst(2)
-        }
-        return normalized.replacingOccurrences(of: "\\", with: "/")
-    }
-
-    private static func lineCount(of text: String) -> Int {
-        if text.isEmpty { return 0 }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).count
-    }
-}
