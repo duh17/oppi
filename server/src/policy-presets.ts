@@ -458,10 +458,10 @@ export function defaultPolicy(): DeclarativePolicyConfig {
 
       // ── Local machine control → ask ──
       {
-        id: "ask-build-install",
+        id: "ask-ios-install",
         decision: "ask",
-        label: "Reinstall iOS app",
-        match: { tool: "bash", commandMatches: "*scripts/build-install.sh*" },
+        label: "Install iOS app on device",
+        match: { tool: "bash", commandMatches: "*scripts/install.sh*" },
       },
       {
         id: "ask-xcrun-install",
@@ -474,10 +474,10 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         },
       },
       {
-        id: "ask-ios-dev-up",
+        id: "ask-launchctl-oppi",
         decision: "ask",
-        label: "Restart server and deploy app",
-        match: { tool: "bash", commandMatches: "*scripts/ios-dev-up.sh*" },
+        label: "Manage oppi server service",
+        match: { tool: "bash", executable: "launchctl", commandMatches: "*dev.chenda.oppi*" },
       },
     ],
     heuristics: {
@@ -886,9 +886,9 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   // Local machine control flows (explicit approval required)
   {
     tool: "bash",
-    pattern: "*scripts/build-install.sh*",
+    pattern: "*scripts/install.sh*",
     action: "ask",
-    label: "Reinstall iOS app",
+    label: "Install iOS app on device",
   },
   {
     tool: "bash",
@@ -899,9 +899,10 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   },
   {
     tool: "bash",
-    pattern: "*scripts/ios-dev-up.sh*",
+    exec: "launchctl",
+    pattern: "*dev.chenda.oppi*",
     action: "ask",
-    label: "Restart oppi-server server and deploy app",
+    label: "Manage oppi server service",
   },
   {
     tool: "bash",

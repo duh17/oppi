@@ -146,14 +146,14 @@ describe("host preset: external actions gated", () => {
 // ─── Host-control flows → ask ───
 
 describe("host preset: host-control flows gated", () => {
-  it("asks for ios build-install script", () => {
-    expect(policy.evaluate(bash("./ios/scripts/build-install.sh --launch")).action).toBe("ask");
+  it("asks for ios install script", () => {
+    expect(policy.evaluate(bash("./ios/scripts/install.sh --launch")).action).toBe("ask");
   });
 
-  it("asks for build-install script after cd ios", () => {
+  it("asks for install script after cd ios", () => {
     expect(
       policy.evaluate(
-        bash("cd ios && scripts/build-install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+        bash("cd ios && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
       ).action,
     ).toBe("ask");
   });
@@ -166,16 +166,24 @@ describe("host preset: host-control flows gated", () => {
     ).toBe("ask");
   });
 
-  it("asks for ios-dev-up script (restart + deploy)", () => {
-    expect(policy.evaluate(bash("./scripts/ios-dev-up.sh -- --device ABC")).action).toBe("ask");
+  it("asks for launchctl stop oppi service", () => {
+    expect(policy.evaluate(bash("launchctl stop dev.chenda.oppi")).action).toBe("ask");
+  });
+
+  it("asks for launchctl kickstart oppi service", () => {
+    expect(
+      policy.evaluate(bash("launchctl kickstart -kp gui/501/dev.chenda.oppi")).action,
+    ).toBe("ask");
   });
 
   it("asks for oppi-server serve command", () => {
     expect(policy.evaluate(bash("npx tsx src/cli.ts serve")).action).toBe("ask");
   });
 
-  it("asks for chained ios-dev-up script", () => {
-    expect(policy.evaluate(bash("cd /repo && ./scripts/ios-dev-up.sh")).action).toBe("ask");
+  it("asks for chained launchctl restart", () => {
+    expect(
+      policy.evaluate(bash("cd /repo/server && launchctl stop dev.chenda.oppi")).action,
+    ).toBe("ask");
   });
 });
 
