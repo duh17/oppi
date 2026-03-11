@@ -237,6 +237,8 @@ export interface TranslationContext {
   toolNames: Map<string, string>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
+  /** toolCallIds with active streaming arg viewport previews (tool_output emitted from args). */
+  streamingArgPreviews: Set<string>;
 }
 
 /**
@@ -262,6 +264,37 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
     }
   }
   return out;
+}
+
+// ─── Streaming Arg Preview ───
+
+/**
+ * Byte threshold for emitting a streaming arg value as tool_output.
+ *
+ * When a string arg value exceeds this during toolcall_delta streaming,
+ * the server emits a tool_output (replace mode) so the iOS viewport shows
+ * the content in real time instead of stuffing it into the title bar.
+ */
+const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
+
+/**
+ * Find the largest string arg value suitable for viewport preview.
+ *
+ * Returns the largest string value from args that exceeds the threshold,
+ * or null if all string args are below it. Non-string values (objects,
+ * arrays, numbers) are ignored — only plain text content is meaningful
+ * for viewport rendering.
+ */
+function findLargestStringArg(args: Record<string, unknown>): string | null {
+  let largest: string | null = null;
+  let largestLen = 0;
+  for (const value of Object.values(args)) {
+    if (typeof value === "string" && value.length > largestLen) {
+      largest = value;
+      largestLen = value.length;
+    }
+  }
+  return largest !== null && largestLen > STREAMING_ARG_PREVIEW_THRESHOLD ? largest : null;
 }
 
 /**
@@ -408,8 +441,36 @@ export function translatePiEvent(
       }
 
       const toolCallUpdate = extractStreamingToolCallUpdate(event);
-      if (toolCallUpdate) {
-        return [toolCallUpdate];
+      if (toolCallUpdate && toolCallUpdate.type === "tool_start") {
+        const messages: ServerMessage[] = [toolCallUpdate];
+
+        // Augment streaming tool_start with callSegments so iOS renders a
+        // properly formatted title instead of raw argsSummary.
+        if (ctx.mobileRenderers) {
+          const callSegments = ctx.mobileRenderers.renderCall(
+            toolCallUpdate.tool,
+            toolCallUpdate.args,
+          );
+          if (callSegments) {
+            toolCallUpdate.callSegments = callSegments;
+          }
+        }
+
+        // Stream the largest string arg value as tool_output (replace mode)
+        // so the iOS viewport shows streaming content instead of "Waiting for
+        // output…". Cleared at tool_execution_start with an empty replace.
+        const largestArg = findLargestStringArg(toolCallUpdate.args);
+        if (largestArg && toolCallUpdate.toolCallId) {
+          messages.push({
+            type: "tool_output",
+            output: largestArg,
+            toolCallId: toolCallUpdate.toolCallId,
+            mode: "replace",
+          });
+          ctx.streamingArgPreviews.add(toolCallUpdate.toolCallId);
+        }
+
+        return messages;
       }
 
       // Other sub-events (start, text_start/end, thinking_start/end, done)
@@ -424,15 +485,30 @@ export function translatePiEvent(
       if (toolCallId) {
         ctx.toolNames.set(toolCallId, event.toolName);
       }
-      return [
-        {
-          type: "tool_start",
-          tool: event.toolName,
-          args: event.args || {},
+
+      const messages: ServerMessage[] = [];
+
+      // Clear streaming arg viewport preview before real execution begins.
+      // The preview was emitted during toolcall_delta streaming; now real
+      // tool output will arrive via tool_execution_update/end.
+      if (toolCallId && ctx.streamingArgPreviews.delete(toolCallId)) {
+        messages.push({
+          type: "tool_output",
+          output: "",
           toolCallId,
-          ...(callSegments ? { callSegments } : {}),
-        },
-      ];
+          mode: "replace",
+        });
+      }
+
+      messages.push({
+        type: "tool_start",
+        tool: event.toolName,
+        args: event.args || {},
+        toolCallId,
+        ...(callSegments ? { callSegments } : {}),
+      });
+
+      return messages;
     }
 
     case "tool_execution_update": {

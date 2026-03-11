@@ -84,6 +84,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     hasStreamedThinking: false,
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
+    streamingArgPreviews: new Set(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     seq: 0,
