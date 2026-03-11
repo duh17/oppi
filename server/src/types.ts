@@ -238,6 +238,15 @@ export interface GitFileStatus {
   removedLines: number | null;
 }
 
+export interface GitCommitSummary {
+  /** Short SHA (7-char) */
+  sha: string;
+  /** Commit subject line */
+  message: string;
+  /** ISO timestamp */
+  date: string;
+}
+
 export interface GitStatus {
   /** Whether the directory is a git repo */
   isGitRepo: boolean;
@@ -269,6 +278,8 @@ export interface GitStatus {
   lastCommitMessage: string | null;
   /** ISO timestamp of most recent commit */
   lastCommitDate: string | null;
+  /** Recent commits (newest first, capped at 5) */
+  recentCommits: GitCommitSummary[];
 }
 
 export interface WorkspaceReviewFile {

@@ -9,19 +9,13 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { GitFileStatus, GitStatus } from "./types.js";
+import { resolveHomePath } from "./git-utils.js";
+import type { GitCommitSummary, GitFileStatus, GitStatus } from "./types.js";
 
 const FILE_CAP = 500;
 const GIT_TIMEOUT_MS = 5000;
-
-// ─── Helpers ───
-
-function resolveDir(dir: string): string {
-  return dir.replace(/^~/, homedir());
-}
 
 /**
  * Run a git command and return stdout. Returns null on any error.
@@ -45,7 +39,7 @@ function git(cwd: string, args: string[]): Promise<string | null> {
  * If the directory is not a git repo, returns { isGitRepo: false, ... }.
  */
 export async function getGitStatus(dir: string): Promise<GitStatus> {
-  const resolved = resolveDir(dir);
+  const resolved = resolveHomePath(dir);
 
   const empty: GitStatus = {
     isGitRepo: false,
@@ -63,14 +57,18 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     stashCount: 0,
     lastCommitMessage: null,
     lastCommitDate: null,
+    recentCommits: [],
   };
 
   if (!existsSync(join(resolved, ".git"))) {
     return empty;
   }
 
+  const RECENT_COMMITS_CAP = 5;
+  const COMMIT_RECORD_SEP = "---commit-sep---";
+
   // Run all git commands in parallel
-  const [branchOut, shaOut, statusOut, stashOut, logOut, upstreamOut, numstatOut] =
+  const [branchOut, shaOut, statusOut, stashOut, logOut, upstreamOut, numstatOut, recentOut] =
     await Promise.all([
       git(resolved, ["branch", "--show-current"]),
       git(resolved, ["rev-parse", "--short", "HEAD"]),
@@ -79,6 +77,11 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
       git(resolved, ["log", "-1", "--format=%s%n%aI"]),
       git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
       git(resolved, ["diff", "HEAD", "--numstat"]),
+      git(resolved, [
+        "log",
+        `--max-count=${RECENT_COMMITS_CAP}`,
+        `--format=%h${COMMIT_RECORD_SEP}%s${COMMIT_RECORD_SEP}%aI`,
+      ]),
     ]);
 
   // Branch (empty string means detached HEAD)
@@ -180,6 +183,18 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     }
   }
 
+  // Recent commits
+  const recentCommits: GitCommitSummary[] = [];
+  if (recentOut) {
+    const lines = recentOut.split("\n").filter((l) => l.length > 0);
+    for (const line of lines) {
+      const parts = line.split(COMMIT_RECORD_SEP);
+      if (parts.length >= 3) {
+        recentCommits.push({ sha: parts[0], message: parts[1], date: parts[2] });
+      }
+    }
+  }
+
   return {
     isGitRepo: true,
     branch,
@@ -196,5 +211,6 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     stashCount,
     lastCommitMessage,
     lastCommitDate,
+    recentCommits,
   };
 }
