@@ -52,10 +52,19 @@ final class ChatActionHandler {
 
         Rules:
         - 2 to 6 words.
-        - Capture one concrete objective.
-        - Prefer specific nouns from the request (feature, bug, file, subsystem, tool).
+        - Start with a category verb or noun when the intent is clear:
+          "Fix", "Debug", "Add", "Refactor", "Review", "Investigate", "Polish", "Test", "Research".
+        - Capture one concrete objective using specific nouns from the request \
+        (feature name, bug symptom, file, subsystem, tool).
         - Skip conversational filler like "please", "can you", "help me", or "I need to".
         - No quotes, markdown, emojis, or trailing punctuation.
+
+        Examples:
+        - "fix the websocket reconnect state drift" -> Fix WebSocket Reconnect Drift
+        - "let's polish the review view icons" -> Polish Review View Icons
+        - "can you investigate why voice input language changes" -> Investigate Voice Input Language Bug
+        - "research code review agents" -> Research Code Review Agents
+        - "install our app" -> Install App
         """
 
     var sendProgressText: String? {
@@ -174,7 +183,6 @@ final class ChatActionHandler {
                     })
                     self.scheduleSendStageClear()
                     self.scheduleAutoSessionTitleIfNeeded(
-                        firstMessage: trimmed,
                         sessionId: sessionId,
                         connection: connection,
                         sessionStore: sessionStore
@@ -458,21 +466,25 @@ final class ChatActionHandler {
     // MARK: - Helpers
 
     private func scheduleAutoSessionTitleIfNeeded(
-        firstMessage: String,
         sessionId: String,
         connection: ServerConnection,
         sessionStore: SessionStore?
     ) {
         guard Self.isAutoTitleEnabled else { return }
         guard let sessionStore else { return }
-
-        let source = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { return }
         guard !autoTitleAttemptedSessionIds.contains(sessionId) else { return }
+
+        // Use the session's recorded first message — not whatever the user
+        // just typed.  This is the single source of truth and survives view
+        // recreation, so even if this function fires on a later turn the
+        // title always reflects the original intent.
         guard let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
               (session.name?.trimmingCharacters(in: .whitespacesAndNewlines))?.isEmpty ?? true else {
             return
         }
+
+        let source = (session.firstMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return }
 
         autoTitleAttemptedSessionIds.insert(sessionId)
         autoTitleTasksBySessionId[sessionId]?.cancel()
@@ -651,10 +663,13 @@ final class ChatActionHandler {
         forceStopTask?.cancel()
         forceStopTask = nil
 
-        for task in autoTitleTasksBySessionId.values {
-            task.cancel()
-        }
-        autoTitleTasksBySessionId.removeAll()
+        // Do NOT cancel auto-title tasks here.  They are lightweight on-device
+        // model calls that should be allowed to complete even when the user
+        // navigates away.  Cancelling them was the root cause of the
+        // "auto-rename fires on wrong message" bug: the task would get killed
+        // on onDisappear, and when the view was recreated the ephemeral
+        // autoTitleAttemptedSessionIds guard was lost, causing the next send
+        // to re-trigger title generation from a later (wrong) message.
 
         clearSendStageNow()
         isSending = false
