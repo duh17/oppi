@@ -130,6 +130,32 @@ export class SessionMessageQueueCoordinator {
     });
   }
 
+  /**
+   * Clear all queued messages (both steering and follow-up) from the SDK and
+   * server-side store, then broadcast the empty queue state to clients.
+   *
+   * Mirrors what the TUI does on Escape: clear queues before abort so stale
+   * messages never leak into the next agent turn.
+   */
+  clearQueueOnAbort(key: string): void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) {
+      return;
+    }
+
+    const queue = this.ensureQueueStore(active);
+
+    // Clear SDK-level queues (AgentSession + Agent internal queues)
+    active.sdkBackend.session.clearQueue();
+
+    // Clear server-side tracking
+    queue.steering = [];
+    queue.followUp = [];
+    queue.version += 1;
+
+    this.broadcastQueueState(key, queue);
+  }
+
   getQueue(key: string): MessageQueueState {
     const active = this.deps.getActiveSession(key);
     if (!active) {
