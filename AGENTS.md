@@ -120,9 +120,15 @@ ServerMessage (WebSocket)
   → ChatTimelineCollectionView (UIKit)
 ```
 
-**Observable stores:** `SessionStore`, `WorkspaceStore`, `PermissionStore`, `TimelineReducer`, `ToolOutputStore`, `ToolArgsStore` — separate `@Observable` objects to prevent cross-store re-renders.
+**Observable stores:** `SessionStore`, `WorkspaceStore`, `PermissionStore`, `ChatSessionState`, `TimelineReducer`, `ToolOutputStore`, `ToolArgsStore` — separate `@Observable` objects to prevent cross-store re-renders.
 
-**ServerConnection** is the top-level coordinator per server. Owns API client, WebSocket, all stores, event pipeline. Multi-server via `ConnectionCoordinator`.
+**ServerConnection** is the per-server transport coordinator. Decomposed into focused sub-objects:
+- `MessageSender` — send/ack/retry protocol (owns CommandTracker)
+- `ChatSessionState` — UI state (composer, caches, thinking level)
+- `SessionStreamCoordinator` — stream lifecycle state machine
+- Stores (SessionStore, WorkspaceStore, etc.) — injected into SwiftUI environment separately
+
+Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-only, `@Environment(ChatSessionState.self)` for UI state, `@Environment(ServerConnection.self)` only when transport/send/cross-store coordination is needed. See `ARCHITECTURE.md` for the full environment injection table.
 
 **Forward-compatible decoding.** `ServerMessage` has `.unknown(type:)`. Unknown server types are logged and skipped.
 
