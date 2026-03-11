@@ -302,9 +302,10 @@ export class Server {
     const ruleStore = new RuleStore(rulesPath);
     ruleStore.seedIfEmpty(policyRulesFromDeclarativeConfig(configuredPolicy));
 
-    // Protect the rules file from silent agent modification.
-    // This is a hard-coded guard — it can't be overridden by rules in the store.
-    this.policy.setProtectedPaths([rulesPath]);
+    // Protect config and rules files from silent agent modification.
+    // Hard-coded guard — can't be overridden by rules in the store.
+    const configPath = storage.getConfigPath();
+    this.policy.setProtectedPaths([rulesPath, configPath]);
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
