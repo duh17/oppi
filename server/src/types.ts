@@ -363,10 +363,19 @@ export interface CreateWorkspaceReviewSessionRequest {
   selectedSessionId?: string;
 }
 
+export interface ContextSummary {
+  kind: "file_diff";
+  path: string;
+  addedLines: number;
+  removedLines: number;
+}
+
 export interface WorkspaceReviewSessionResponse {
   action: WorkspaceReviewSessionAction;
   selectedPathCount: number;
   session: Session;
+  visiblePrompt: string;
+  contextSummary: ContextSummary[];
 }
 
 // ─── Local Sessions ───

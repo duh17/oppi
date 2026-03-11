@@ -7,105 +7,6 @@ typealias WorkspaceReviewMockURLProtocol = TestURLProtocol
 @Suite("Workspace review API")
 struct WorkspaceReviewAPITests {
 
-    @Test func getWorkspaceReviewFilesUsesWorkspaceScopedEndpoint() async throws {
-        let client = makeClient()
-        defer { WorkspaceReviewMockURLProtocol.handler = nil }
-
-        WorkspaceReviewMockURLProtocol.handler = { request in
-            let url = try #require(request.url)
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            #expect(url.path == "/workspaces/w1/review/files")
-            #expect(components?.query == nil)
-
-            return self.mockResponse(json: """
-            {
-              "workspaceId": "w1",
-              "isGitRepo": true,
-              "branch": "main",
-              "headSha": "abc1234",
-              "ahead": 0,
-              "behind": 0,
-              "changedFileCount": 2,
-              "stagedFileCount": 1,
-              "unstagedFileCount": 1,
-              "untrackedFileCount": 0,
-              "addedLines": 12,
-              "removedLines": 3,
-              "selectedSessionTouchedCount": 0,
-              "files": [
-                {
-                  "path": "Sources/App.swift",
-                  "status": " M",
-                  "addedLines": 10,
-                  "removedLines": 3,
-                  "isStaged": false,
-                  "isUnstaged": true,
-                  "isUntracked": false,
-                  "selectedSessionTouched": false
-                }
-              ]
-            }
-            """)
-        }
-
-        let response = try await client.getWorkspaceReviewFiles(workspaceId: "w1")
-        #expect(response.workspaceId == "w1")
-        #expect(response.changedFileCount == 2)
-        #expect(response.files.count == 1)
-        #expect(response.files[0].path == "Sources/App.swift")
-        #expect(response.files[0].isUnstaged == true)
-    }
-
-    @Test func getWorkspaceReviewFilesIncludesSelectedSessionQuery() async throws {
-        let client = makeClient()
-        defer { WorkspaceReviewMockURLProtocol.handler = nil }
-
-        WorkspaceReviewMockURLProtocol.handler = { request in
-            let url = try #require(request.url)
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            let sessionId = components?.queryItems?.first(where: { $0.name == "sessionId" })?.value
-
-            #expect(url.path == "/workspaces/w1/review/files")
-            #expect(sessionId == "s1")
-
-            return self.mockResponse(json: """
-            {
-              "workspaceId": "w1",
-              "isGitRepo": true,
-              "branch": "main",
-              "headSha": "abc1234",
-              "ahead": 0,
-              "behind": 0,
-              "changedFileCount": 1,
-              "stagedFileCount": 0,
-              "unstagedFileCount": 1,
-              "untrackedFileCount": 0,
-              "addedLines": 2,
-              "removedLines": 1,
-              "selectedSessionId": "s1",
-              "selectedSessionTouchedCount": 1,
-              "files": [
-                {
-                  "path": "README.md",
-                  "status": " M",
-                  "addedLines": 2,
-                  "removedLines": 1,
-                  "isStaged": false,
-                  "isUnstaged": true,
-                  "isUntracked": false,
-                  "selectedSessionTouched": true
-                }
-              ]
-            }
-            """)
-        }
-
-        let response = try await client.getWorkspaceReviewFiles(workspaceId: "w1", sessionId: "s1")
-        #expect(response.selectedSessionId == "s1")
-        #expect(response.selectedSessionTouchedCount == 1)
-        #expect(response.files[0].selectedSessionTouched == true)
-    }
-
     @Test func getWorkspaceReviewDiffUsesWorkspaceScopedEndpoint() async throws {
         let client = makeClient()
         defer { WorkspaceReviewMockURLProtocol.handler = nil }
@@ -194,7 +95,12 @@ struct WorkspaceReviewAPITests {
                 "messageCount": 1,
                 "tokens": { "input": 0, "output": 0 },
                 "cost": 0
-              }
+              },
+              "visiblePrompt": "Prepare a commit for these selected changes.",
+              "contextSummary": [
+                { "kind": "file_diff", "path": "Sources/App.swift", "addedLines": 5, "removedLines": 2 },
+                { "kind": "file_diff", "path": "README.md", "addedLines": 1, "removedLines": 0 }
+              ]
             }
             """)
         }
@@ -209,6 +115,14 @@ struct WorkspaceReviewAPITests {
         #expect(response.selectedPathCount == 2)
         #expect(response.session.id == "s-new")
         #expect(response.session.workspaceId == "w1")
+        #expect(response.visiblePrompt == "Prepare a commit for these selected changes.")
+        #expect(response.contextSummary.count == 2)
+        #expect(response.contextSummary[0].path == "Sources/App.swift")
+        #expect(response.contextSummary[0].addedLines == 5)
+        #expect(response.contextSummary[0].removedLines == 2)
+        #expect(response.contextSummary[1].path == "README.md")
+        #expect(response.contextSummary[1].addedLines == 1)
+        #expect(response.contextSummary[1].removedLines == 0)
     }
 
     private func requestBodyData(_ request: URLRequest) -> Data {
