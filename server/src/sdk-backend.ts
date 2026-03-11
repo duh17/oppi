@@ -93,6 +93,8 @@ export interface SdkBackendConfig {
   skillPaths?: string[];
   /** Storage for server-managed extensions. */
   storage?: Storage;
+  /** Additional extension factories injected for this session. */
+  extraExtensionFactories?: ExtensionFactory[];
 }
 
 interface ExtensionUIResponsePayload {
@@ -170,6 +172,9 @@ export class SdkBackend {
       extensionFactories.push(
         createPermissionGateFactory(config.gate, session.id, config.workspaceId || "", cwd),
       );
+    }
+    if (config.extraExtensionFactories) {
+      extensionFactories.push(...config.extraExtensionFactories);
     }
 
     // Resource loader — suppress auto-discovery, load only what we need.

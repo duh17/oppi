@@ -33,6 +33,7 @@ import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.j
 import { SessionUICoordinator } from "./session-ui.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 
 export type { SessionCatchUpResponse };
@@ -67,6 +68,7 @@ export interface SessionCoordinatorBundleDeps {
   stopSessionGraceMs: number;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
+  getAndClearPendingExtensionFactories: (sessionId: string) => ExtensionFactory[];
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
@@ -136,6 +138,8 @@ export function createSessionCoordinatorBundle(
     gate: deps.gate,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
+    getAndClearPendingExtensionFactories: (sessionId) =>
+      deps.getAndClearPendingExtensionFactories(sessionId),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
     registerActiveSession: (key, active) => deps.active.set(key, active),
@@ -209,6 +213,7 @@ export function createSessionCoordinatorBundle(
       stopCoordinator,
       broadcast: (key, message) => deps.broadcast(key, message),
       sendCommand: (key, command) => deps.sendCommand(key, command),
+      clearQueueOnAbort: (key) => queueCoordinator.clearQueueOnAbort(key),
     },
     deps.stopSessionGraceMs,
   );
