@@ -25,9 +25,7 @@ final class ChatSessionManager {
     enum SessionEntryState: Equatable {
         case idle
         case loadingCache
-        case cached(events: [TraceEvent], signature: TraceSignature)
-        case connecting(workspaceId: String)
-        case awaitingConnected(workspaceId: String, hasCachedHistory: Bool)
+        case awaitingConnected(workspaceId: String)
         case streaming
         case stopped(historyLoaded: Bool)
         case disconnected(reason: DisconnectReason)
@@ -186,36 +184,9 @@ final class ChatSessionManager {
         return false
     }
 
-    private struct TransitionOptions: OptionSet {
-        let rawValue: Int
-
-        static let preserveHistoryReload = Self(rawValue: 1 << 0)
-    }
-
-    private func stateOwnsHistoryReload(_ state: SessionEntryState) -> Bool {
-        switch state {
-        case .awaitingConnected,
-             .streaming,
-             .stopped(historyLoaded: false):
-            return true
-        case .idle,
-             .loadingCache,
-             .cached,
-             .connecting,
-             .stopped(historyLoaded: true),
-             .disconnected:
-            return false
-        }
-    }
-
-    private func transitionTo(_ newState: SessionEntryState, options: TransitionOptions = []) {
+    private func transitionTo(_ newState: SessionEntryState) {
         let oldState = entryState
         guard oldState != newState else { return }
-
-        if stateOwnsHistoryReload(oldState),
-           !options.contains(.preserveHistoryReload) {
-            cancelHistoryReload()
-        }
 
         log.debug("State transition for \(self.sessionId, privacy: .public): \(oldState.logDescription, privacy: .public) -> \(newState.logDescription, privacy: .public)")
         entryState = newState
@@ -372,9 +343,6 @@ final class ChatSessionManager {
             reducer.loadSession(cached.events)
             let reducerLoadDurationMs = max(0, ChatMetricsService.nowMs() - reducerLoadStartMs)
 
-            let signature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
-            transitionTo(.cached(events: cached.events, signature: signature))
-
             Task.detached(priority: .utility) {
                 await ChatMetricsService.shared.record(
                     metric: .reducerLoadMs,
@@ -397,12 +365,8 @@ final class ChatSessionManager {
                 "sessionId": sessionId,
             ])
 
-            // Always start at the latest message when entering a session.
-            // This keeps chat behavior consistent with terminal agent workflows.
             needsInitialScroll = true
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
-        } else {
-            transitionTo(.connecting(workspaceId: workspaceIdForState(from: sessionStore)))
         }
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
@@ -432,37 +396,17 @@ final class ChatSessionManager {
             return
         }
 
-        // Freshness-first: if we already rendered cached history, prioritize
-        // stream + catch-up and avoid eager full trace reload on enter.
-        // Keep full reload fallback for ring miss / seq regression / fetch errors.
-        let hasCachedHistory: Bool
-        switch entryState {
-        case .cached:
-            hasCachedHistory = true
-        case .connecting:
-            hasCachedHistory = false
-        default:
-            hasCachedHistory = cached?.events.isEmpty == false
-        }
-
-        if !hasCachedHistory {
-            scheduleHistoryReload(
-                generation: generation,
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore,
-                cachedSignature: latestTraceSignature
-            )
-        } else {
-            log.info("Skipping initial history reload for \(self.sessionId) — cache present")
-        }
-
-        transitionTo(
-            .awaitingConnected(
-                workspaceId: workspaceIdForState(from: sessionStore),
-                hasCachedHistory: hasCachedHistory
-            )
+        // Always fetch fresh trace in background — independent of WS/catch-up.
+        // Cache gives instant display; this gives ground truth.
+        scheduleHistoryReload(
+            generation: generation,
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            cachedSignature: latestTraceSignature
         )
+
+        transitionTo(.awaitingConnected(workspaceId: workspaceIdForState(from: sessionStore)))
 
         guard !Task.isCancelled else {
             transitionTo(.disconnected(reason: .cancelled))
@@ -545,59 +489,32 @@ final class ChatSessionManager {
                         }
                     }
 
-                    let catchUpOutcome: CatchUpOutcome?
+                    // Seed seq tracking from the server's current position.
+                    // History reload runs independently — no catch-up interaction.
                     if let currentSeq = inboundMeta?.currentSeq {
-                        log.debug("Performing catch-up (state: \(self.entryState.logDescription, privacy: .public))")
-                        let outcome = await performCatchUpIfNeeded(
-                            currentSeq: currentSeq,
-                            generation: generation,
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore
+                        await connection.sessionStreamCoordinator.seedLastSeenSeq(
+                            sessionId: sessionId,
+                            value: currentSeq
                         )
-                        log.debug("Catch-up outcome: \(String(describing: outcome), privacy: .public) (state: \(self.entryState.logDescription, privacy: .public))")
-                        catchUpOutcome = outcome
-                    } else {
-                        catchUpOutcome = nil
+                        persistLastSeenSeq(currentSeq)
+                        log.info("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
                     }
 
                     // Request freshest server session state only once the stream is connected.
                     // This avoids speculative pre-connect sends that can stall/fail during startup.
                     scheduleStateSync(generation: generation, connection: connection)
 
-                    var preserveHistoryReloadOnStreamingEntry = true
-                    if let catchUpOutcome {
-                        switch catchUpOutcome {
-                        case .applied:
-                            preserveHistoryReloadOnStreamingEntry = false
-                            log.info("First connect catch-up applied for \(self.sessionId) — cancelled pending history reload")
-                            recordFreshContentLagIfNeeded(reason: "catchup_applied")
-                        case .noGap:
-                            preserveHistoryReloadOnStreamingEntry = false
-                            log.info("First connect no gap for \(self.sessionId) — cancelled pending history reload")
-                            recordFreshContentLagIfNeeded(reason: "catchup_no_gap")
-                        case .fullReloadScheduled:
-                            preserveHistoryReloadOnStreamingEntry = true
-                        }
-                    }
-
                     hasReceivedConnected = true
                     unexpectedStreamExitCount = 0
-                    transitionTo(
-                        .streaming,
-                        options: preserveHistoryReloadOnStreamingEntry ? [.preserveHistoryReload] : []
-                    )
+                    transitionTo(.streaming)
                 }
 
             case .streaming:
                 // Detect reconnection: a second `.connected` message means the WS
-                // dropped and recovered. Prefer seq-based catch-up and only
-                // fallback to full history reload when catch-up cannot guarantee
-                // continuity.
+                // dropped and recovered. Use ring catch-up to fill the gap;
+                // fall back to full history reload on ring miss.
                 if case .connected = message {
-                    let catchUpOutcome: CatchUpOutcome?
                     if let currentSeq = inboundMeta?.currentSeq {
-                        log.debug("Performing catch-up (state: \(self.entryState.logDescription, privacy: .public))")
                         let outcome = await performCatchUpIfNeeded(
                             currentSeq: currentSeq,
                             generation: generation,
@@ -605,27 +522,15 @@ final class ChatSessionManager {
                             reducer: reducer,
                             sessionStore: sessionStore
                         )
-                        log.debug("Catch-up outcome: \(String(describing: outcome), privacy: .public) (state: \(self.entryState.logDescription, privacy: .public))")
-                        catchUpOutcome = outcome
-                    } else {
-                        catchUpOutcome = nil
-                    }
-
-                    // Request freshest server session state only once the stream is connected.
-                    // This avoids speculative pre-connect sends that can stall/fail during startup.
-                    scheduleStateSync(generation: generation, connection: connection)
-
-                    if let catchUpOutcome {
-                        switch catchUpOutcome {
-                        case .fullReloadScheduled:
-                            log.info("WS reconnected — scheduled full history reload for \(self.sessionId)")
+                        switch outcome {
                         case .noGap:
-                            log.info("WS reconnected — catch-up complete for \(self.sessionId), skipping full history reload")
-                            recordFreshContentLagIfNeeded(reason: "catchup_no_gap")
+                            log.info("WS reconnected — no gap for \(self.sessionId)")
                         case .applied:
-                            log.info("WS reconnected — catch-up complete for \(self.sessionId), skipping full history reload")
-                            recordFreshContentLagIfNeeded(reason: "catchup_applied")
+                            log.info("WS reconnected — catch-up applied for \(self.sessionId)")
+                        case .fullReloadScheduled:
+                            log.info("WS reconnected — full history reload scheduled for \(self.sessionId)")
                         }
+                        recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)")
                     } else {
                         log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
                         scheduleHistoryReload(
@@ -636,6 +541,7 @@ final class ChatSessionManager {
                             cachedSignature: latestTraceSignature
                         )
                     }
+                    scheduleStateSync(generation: generation, connection: connection)
                     hasReceivedConnected = true
                     unexpectedStreamExitCount = 0
                 }
@@ -684,7 +590,7 @@ final class ChatSessionManager {
                     }
                 }
 
-            case .idle, .loadingCache, .cached, .connecting, .stopped, .disconnected:
+            case .idle, .loadingCache, .stopped, .disconnected:
                 log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
             }
 
@@ -836,6 +742,14 @@ final class ChatSessionManager {
         cancelStateSync()
     }
 
+    /// Ring buffer catch-up for WS reconnection only.
+    ///
+    /// Fills the gap in live events between the last seen seq and the
+    /// server's current seq. Falls back to a full history reload when
+    /// the ring can't serve the gap (ring miss, regression, fetch failure).
+    ///
+    /// This is NOT used on first connect — first connect seeds the seq
+    /// directly and relies on the independent history reload for content.
     private func performCatchUpIfNeeded(
         currentSeq: Int,
         generation: Int,
@@ -848,7 +762,6 @@ final class ChatSessionManager {
         let catchupStartMs = ChatMetricsService.nowMs()
         let metricSessionId = sessionId
 
-        // Local helper: record catch-up latency with a result tag.
         let recordCatchupMs = { (result: String) in
             let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
             Task.detached(priority: .utility) {
@@ -862,47 +775,6 @@ final class ChatSessionManager {
             }
         }
 
-        // ── Re-entry with cache: seed seq, skip ring ──────────────────────
-        //
-        // When entering a chat with cached history (awaitingConnected),
-        // skip the ring-based catch-up entirely. The cached timeline is
-        // already rendered; seeding lastSeenSeq from the subscribe ack's
-        // currentSeq lets live WSS events flow immediately. A background
-        // trace refresh updates any stale cache.
-        //
-        // Ring catch-up is reserved for brief WS drops during active
-        // streaming (.streaming state) where the timeline is already live
-        // and only the incremental delta is needed.
-        if loadedFromCacheAtConnect, case .awaitingConnected = entryState {
-            await connection.sessionStreamCoordinator.seedLastSeenSeq(
-                sessionId: sessionId,
-                value: currentSeq
-            )
-            persistLastSeenSeq(currentSeq)
-
-            log.info("Re-entry with cache: seeded seq=\(currentSeq) for \(self.sessionId), skipping ring catch-up")
-
-            // Clear the flag so the background trace reload is NOT deferred
-            // when the session is actively streaming. The deferral logic in
-            // loadHistory() skips rebuilds when loadedFromCacheAtConnect is
-            // true + session busy + reducer non-empty. But this reload was
-            // explicitly scheduled to fill the gap between stale cache and
-            // live events — deferring it leaves the gap unfilled.
-            loadedFromCacheAtConnect = false
-
-            scheduleHistoryReload(
-                generation: generation,
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore,
-                cachedSignature: latestTraceSignature
-            )
-
-            recordCatchupMs("cache_seeded")
-            return .fullReloadScheduled
-        }
-
-        let trackedBeforeDecision = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         let decision = await connection.sessionStreamCoordinator.catchUpDecision(
             sessionId: sessionId,
             currentSeq: currentSeq
@@ -910,9 +782,7 @@ final class ChatSessionManager {
 
         switch decision {
         case .seqRegression(let resetTo):
-            log.warning(
-                "Connected currentSeq \(currentSeq) behind lastSeenSeq \(trackedBeforeDecision) — forcing full history reload"
-            )
+            log.warning("Seq regression for \(self.sessionId): currentSeq=\(currentSeq) — scheduling history reload")
             persistLastSeenSeq(resetTo)
             scheduleHistoryReload(
                 generation: generation,
@@ -921,7 +791,6 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
-
             recordCatchupMs("seq_regression")
             return .fullReloadScheduled
 
@@ -951,7 +820,7 @@ final class ChatSessionManager {
             guard generation == connectionGeneration else { return .noGap }
             guard let response else {
                 markSyncFailed()
-                log.warning("Catch-up fetch failed for \(self.sessionId) since seq \(since)")
+                log.warning("Catch-up fetch failed for \(self.sessionId) — scheduling history reload")
                 scheduleHistoryReload(
                     generation: generation,
                     connection: connection,
@@ -967,7 +836,7 @@ final class ChatSessionManager {
             markSyncSucceeded()
 
             if !response.catchUpComplete {
-                log.warning("Catch-up ring miss for \(self.sessionId) since seq \(since) — forcing full history reload")
+                log.warning("Ring miss for \(self.sessionId) since seq \(since) — scheduling history reload")
                 await connection.sessionStreamCoordinator.seedLastSeenSeq(
                     sessionId: sessionId,
                     value: response.currentSeq
@@ -1090,12 +959,16 @@ final class ChatSessionManager {
                 } else {
                     // Avoid clobbering in-flight streaming rows (thinking/tool calls)
                     // with a stale trace snapshot while the session is still running.
-                    // Only defer when the reducer was loaded from cache — if items
-                    // came solely from live streaming (fresh install), apply the trace.
+                    // Two conditions gate deferral:
+                    //   1. entryState == .streaming — live events may have added items
+                    //   2. loadedFromCacheAtConnect — cache provided a baseline worth
+                    //      preserving; without cache, reducer has only live fragments
+                    //      and the trace is the authoritative source.
                     let sessionIsActivelyStreaming = session.status == .busy || session.status == .stopping
                     let shouldDeferRebuild =
                         sessionIsActivelyStreaming
                         && !reducer.items.isEmpty
+                        && entryState == .streaming
                         && loadedFromCacheAtConnect
 
                     if shouldDeferRebuild {
@@ -1273,13 +1146,8 @@ private extension ChatSessionManager.SessionEntryState {
             return "idle"
         case .loadingCache:
             return "loading_cache"
-        case .cached(let events, let signature):
-            let lastEventId = signature.lastEventId ?? "nil"
-            return "cached(events=\(events.count), signature=\(signature.eventCount)/\(lastEventId))"
-        case .connecting(let workspaceId):
-            return "connecting(workspace=\(workspaceId))"
-        case .awaitingConnected(let workspaceId, let hasCachedHistory):
-            return "awaiting_connected(workspace=\(workspaceId), cache=\(hasCachedHistory ? "1" : "0"))"
+        case .awaitingConnected(let workspaceId):
+            return "awaiting_connected(workspace=\(workspaceId))"
         case .streaming:
             return "streaming"
         case .stopped(let historyLoaded):
