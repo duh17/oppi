@@ -563,6 +563,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            sessionStore.recordTurnEnded(sessionId: sessionId)
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
