@@ -114,6 +114,7 @@ extension ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            sessionStore.recordTurnEnded(sessionId: sessionId)
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
