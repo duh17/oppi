@@ -12,6 +12,7 @@ func makeTestSession(
     lastActivity: Date = Date(timeIntervalSince1970: 1_700_000_000),
     model: String? = nil,
     messageCount: Int = 0,
+    firstMessage: String? = nil,
     thinkingLevel: String? = nil
 ) -> Session {
     Session(
@@ -28,7 +29,7 @@ func makeTestSession(
         cost: 0,
         contextTokens: nil,
         contextWindow: nil,
-        firstMessage: nil,
+        firstMessage: firstMessage,
         lastMessage: nil,
         thinkingLevel: thinkingLevel
     )

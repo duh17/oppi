@@ -138,7 +138,8 @@ struct GitStatusStoreTests {
             removedLines: 0,
             stashCount: 0,
             lastCommitMessage: "test commit",
-            lastCommitDate: nil
+            lastCommitDate: nil,
+            recentCommits: []
         )
     }
 }

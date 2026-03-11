@@ -50,6 +50,9 @@ struct GitStatus: Codable, Sendable, Equatable {
     /// ISO timestamp of most recent commit
     var lastCommitDate: String?
 
+    /// Recent commits (newest first, capped at 5 by server)
+    var recentCommits: [GitCommitSummary]
+
     /// Total uncommitted files (dirty + untracked + staged).
     var uncommittedCount: Int {
         totalFiles
@@ -76,8 +79,23 @@ struct GitStatus: Codable, Sendable, Equatable {
         removedLines: 0,
         stashCount: 0,
         lastCommitMessage: nil,
-        lastCommitDate: nil
+        lastCommitDate: nil,
+        recentCommits: []
     )
+}
+
+/// Summary of a single git commit, included in `GitStatus.recentCommits`.
+struct GitCommitSummary: Codable, Sendable, Equatable, Identifiable {
+    /// Short SHA (7-char)
+    var sha: String
+
+    /// Commit subject line
+    var message: String
+
+    /// ISO timestamp
+    var date: String
+
+    var id: String { sha }
 }
 
 /// Individual file status from `git status --porcelain`.
@@ -95,6 +113,25 @@ struct GitFileStatus: Codable, Sendable, Equatable, Identifiable {
     var removedLines: Int?
 
     var id: String { path }
+
+    /// Convert to a `WorkspaceReviewFile` for use with the review detail view.
+    /// Derives staged/unstaged/untracked from the two-char porcelain status code.
+    func toReviewFile() -> WorkspaceReviewFile {
+        let trimmed = status.trimmingCharacters(in: .whitespaces)
+        let indexChar = status.first ?? " "
+        let workChar = status.dropFirst().first ?? " "
+
+        return WorkspaceReviewFile(
+            path: path,
+            status: trimmed,
+            addedLines: addedLines,
+            removedLines: removedLines,
+            isStaged: indexChar != " " && indexChar != "?",
+            isUnstaged: workChar != " " && trimmed != "??",
+            isUntracked: trimmed == "??",
+            selectedSessionTouched: false
+        )
+    }
 
     // periphery:ignore - API surface for git status display UI
     /// Human-readable status label.

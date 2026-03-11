@@ -116,7 +116,8 @@ struct GitStatusTests {
             removedLines: 3,
             stashCount: 0,
             lastCommitMessage: "feat: test",
-            lastCommitDate: "2026-03-05T00:00:00Z"
+            lastCommitDate: "2026-03-05T00:00:00Z",
+            recentCommits: []
         )
 
         #expect(status.uncommittedCount == 4)

@@ -275,6 +275,9 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
         stashCount: 0,
         lastCommitMessage: "Initial commit",
         lastCommitDate: "2026-02-20T18:00:00.000Z",
+        recentCommits: [
+          { sha: "a1b2c3d", message: "Initial commit", date: "2026-02-20T18:00:00.000Z" },
+        ],
       },
     },
   };
