@@ -237,6 +237,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/**/*.test.ts", "src/**/__tests__/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+  {
     files: ["src/types.ts"],
     plugins: {
       local: localPlugin,
