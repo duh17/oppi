@@ -61,13 +61,6 @@ struct ContextInspectorView: View {
         }
     }
 
-    private var availableButDisabledSkills: [SkillInfo] {
-        let enabled = Set(workspaceSkillNames)
-        return availableSkills
-            .filter { !enabled.contains($0.name) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
     /// Breaks the total context into up to 4 colored segments:
     /// base prompt, AGENTS files, skills listing, and messages+runtime.
     private var compositionSegments: [CompositionSegment] {
@@ -168,9 +161,9 @@ struct ContextInspectorView: View {
                 }
             }
 
-            Section("Skills in Workspace") {
+            Section("Session Skills") {
                 if workspaceSkillEstimates.isEmpty {
-                    Text("No workspace skills configured.")
+                    Text("No skills loaded for this session.")
                         .font(.subheadline)
                         .foregroundStyle(.themeComment)
                 } else {
@@ -183,34 +176,6 @@ struct ContextInspectorView: View {
                     Text("Tap a skill to read SKILL.md and files.")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
-                }
-            }
-
-            if !availableButDisabledSkills.isEmpty {
-                Section("Other Available Skills") {
-                    ForEach(availableButDisabledSkills) { skill in
-                        NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 8) {
-                                    Text(skill.name)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(.themeFg)
-
-                                    Spacer(minLength: 8)
-
-                                    Text("not enabled")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.themeComment)
-                                }
-
-                                Text(skill.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.themeComment)
-                                    .lineLimit(2)
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
                 }
             }
         }
