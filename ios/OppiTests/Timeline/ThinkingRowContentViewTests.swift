@@ -6,15 +6,20 @@ import UIKit
 @Suite("ThinkingTimelineRowContentView")
 struct ThinkingRowContentViewTests {
     @Test func streamingOverflowKeepsInnerScrollDisabledAndAutoFollowsTail() throws {
-        let config = ThinkingTimelineRowConfiguration(
+        // Establish bounds first (mirrors real collection view lifecycle where
+        // cells have valid frames before apply() runs on content updates).
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false, previewText: "seed", fullText: nil, themeID: .dark
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        // Now grow to overflow — apply() drives followTail synchronously.
+        view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n"),
             fullText: nil,
             themeID: .dark
         )
-
-        let view = ThinkingTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 360)
 
         let scrollView = try #require(privateScrollView(in: view))
         #expect(!scrollView.isScrollEnabled)

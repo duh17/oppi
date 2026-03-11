@@ -121,7 +121,11 @@ extension ToolTimelineRowContentView {
         }
 
         if result.visibility.showExpandedContainer {
-            setExpandedVerticalLockEnabled(true)
+            // During streaming, don't lock label height to the viewport.
+            // The label must grow beyond the viewport so followTail() can
+            // scroll the inner scroll view to show the latest content.
+            // On done, re-enable the lock for horizontal-scroll-only mode.
+            setExpandedVerticalLockEnabled(!isStreaming)
             updateExpandedLabelWidthIfNeeded()
         }
 
