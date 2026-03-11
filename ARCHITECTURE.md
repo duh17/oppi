@@ -195,10 +195,12 @@ Core/Models
   └─ ServerMessage.swift (+ StreamMessage, SessionScopedMessage)
 
 Core/Networking
-  ├─ APIClient (REST)
+  ├─ APIClient (REST; actor, injected via custom EnvironmentKey)
   ├─ WebSocketClient (/stream transport, reconnect, ping)
   ├─ SessionStreamCoordinator (actor: stream lifecycle + recovery state machine)
-  └─ ServerConnection (+ MessageRouter/Refresh/ModelCommands/Fork; transport + routing)
+  ├─ MessageSender (send/ack/retry protocol, owned by ServerConnection)
+  ├─ ChatSessionState (@Observable: composer, caches, thinking level; owned by ServerConnection)
+  └─ ServerConnection (transport coordinator + MessageRouter/Refresh/ModelCommands/Fork extensions)
 
 Core/Runtime
   ├─ DeltaCoalescer (33ms batch for high-frequency deltas)
@@ -222,6 +224,39 @@ Features/Chat
       └─ Interaction/ (shared full-screen vs inline-selection specs)
 ```
 
+### ServerConnection decomposition
+
+`ServerConnection` is the per-server coordinator. It was previously a god object (95 stored properties, 2600+ lines); it has been decomposed into focused sub-objects:
+
+- **`MessageSender`** — send/ack/retry protocol. Owns `CommandTracker`, turn send with ack correlation, command request/response, and retry logic. ServerConnection delegates all outbound message operations here. Independently testable.
+- **`ChatSessionState`** (`@Observable`) — UI state that views observe: `composerDraft`, `thinkingLevel`, `slashCommands`, `cachedModels`, `fileSuggestions`, scroll restoration, and their associated `Task` lifecycles. Injected into the SwiftUI environment separately from ServerConnection.
+- **`APIClient`** — REST actor, injected via `@Environment(\.apiClient)` (custom `EnvironmentKey` since actors are not `Observable`). Views that only need REST access depend on this instead of ServerConnection.
+- **`SessionStreamCoordinator`** (actor) — stream lifecycle policy: subscribe/resubscribe, catch-up, queue sync, notification-level sync, seq bookkeeping. Extracted earlier.
+- **`CommandTracker`** — pending command lifecycle, timeout, cleanup. Owned by MessageSender.
+- **`SilenceWatchdog`** — idle detection with configurable threshold.
+
+ServerConnection itself retains: WS connect/disconnect, stream message routing, store ownership/wiring, permission/extension UI responses (which have store side effects), and thin forwarding methods for send operations.
+
+### Environment injection (SwiftUI)
+
+The app root (`OppiApp`) injects these into the environment:
+
+| Object | Type | Injected as | Used by |
+|--------|------|-------------|---------|
+| `ServerConnection` | `@Observable` | `@Environment(ServerConnection.self)` | Chat views, workspace CRUD, permissions, onboarding |
+| `ChatSessionState` | `@Observable` | `@Environment(ChatSessionState.self)` | ChatView, ModelPickerSheet (composer, caches, thinking) |
+| `APIClient` | actor | `@Environment(\.apiClient)` | Skills, themes, review, policy, file views |
+| `SessionStore` | `@Observable` | `@Environment(SessionStore.self)` | Session lists, workspace context |
+| `WorkspaceStore` | `@Observable` | `@Environment(WorkspaceStore.self)` | Skill panel, workspace views |
+| `PermissionStore` | `@Observable` | `@Environment(PermissionStore.self)` | Permission overlay |
+| `TimelineReducer` | `@Observable` | `@Environment(TimelineReducer.self)` | Timeline rendering |
+| `ToolOutputStore` | `@Observable` | `@Environment(ToolOutputStore.self)` | Tool row content |
+| `ToolArgsStore` | `@Observable` | `@Environment(ToolArgsStore.self)` | Tool row content |
+| `AudioPlayerService` | `@Observable` | `@Environment(AudioPlayerService.self)` | Audio playback |
+| `ConnectionCoordinator` | `@Observable` | `@Environment(ConnectionCoordinator.self)` | Server switching, settings |
+
+**Convention for new views:** prefer the most focused dependency. If a view only needs REST access, use `@Environment(\.apiClient)`. If it only needs cached models or thinking level, use `@Environment(ChatSessionState.self)`. Only depend on `ServerConnection` when the view needs transport, send operations, or cross-store coordination that hasn't been extracted yet.
+
 ### iOS layers
 
 Mechanically enforced boundaries:
@@ -230,9 +265,10 @@ Mechanically enforced boundaries:
    - `Core/Runtime/TimelineReducer.swift` and `Core/Runtime/DeltaCoalescer.swift` must not import UIKit.
    - UIKit-only behavior belongs in `Features/Chat/Timeline/*` host/render files.
 
-2. **View-layer files avoid direct networking primitives**
-   - `Core/Views/*` and `Features/Chat/Timeline/*` must not reference `APIClient` / `WebSocketClient` directly.
-   - Network work should flow through `ServerConnection` / session managers / stores.
+2. **View-layer files prefer focused environment dependencies**
+   - Views that only need REST access use `@Environment(\.apiClient)`, not `ServerConnection`.
+   - Views that only need UI state (thinking level, models, etc.) use `@Environment(ChatSessionState.self)`.
+   - `Core/Views/*` and `Features/Chat/Timeline/*` must not reference `WebSocketClient` directly.
 
 3. **Primary stores stay isolated from each other**
    - `SessionStore`, `WorkspaceStore`, `PermissionStore`, and `MessageQueueStore` must not directly reference each other.
@@ -268,28 +304,27 @@ Separate `@Observable` stores are used to avoid cross-feature re-renders:
 - `WorkspaceStore` (workspace + skill catalogs, freshness)
 - `PermissionStore` (pending permission requests)
 - `MessageQueueStore` (queue chips/state)
+- `ChatSessionState` (composer draft, thinking level, slash commands, model cache, file suggestions)
 - `TimelineReducer` (chat items state machine)
 - `ToolOutputStore`, `ToolArgsStore`, `ToolSegmentStore`, `ToolDetailsStore` (large/tool-specific payloads)
 
-Examples from code comments:
+Design principle: each store covers one reason for a view to re-render. `ChatSessionState` was extracted from `ServerConnection` specifically so that composer draft changes and model cache refreshes don't cause re-evaluation of views that observe `ServerConnection` for transport state.
 
-- `SessionStore`: scoped so permission timer ticks do not re-render session list.
-- `PermissionStore`: separate from session store so permission polling does not churn session UI.
-- Tool data stores: kept outside `ChatItem` to keep `Equatable` comparisons cheap and snapshot diffs stable.
-
-### Stream lifecycle ownership (post P1 split)
+### Stream lifecycle ownership
 
 - `SessionStreamCoordinator` is the single owner of stream lifecycle state transitions.
-- `ServerConnection` handles `/stream` socket connectivity, message routing, and command tracking.
+- `ServerConnection` handles `/stream` socket connectivity and message routing.
+- `MessageSender` handles outbound message dispatch, ack correlation, and retry (delegated from `ServerConnection`).
 - `ChatSessionManager` owns UI entry state and reconnect scheduling, and delegates stream lifecycle policy to the coordinator through `ServerConnection`.
 - Recovery behavior (full-subscription recovery cooldown/in-flight guard), queue sync retries, and reconnect resubscribe sequencing are centralized in the coordinator actor.
 
 ### Import direction rules (observed)
 
-- `ChatView` composes `ChatSessionManager` + `ChatActionHandler` + `ChatTimelineView`.
+- `ChatView` composes `ChatSessionManager` + `ChatActionHandler` + `ChatTimelineView`. Reads UI state from `ChatSessionState` (environment), send actions through `ServerConnection` forwarding methods.
 - `ChatSessionManager` depends on `ServerConnection`, `TimelineReducer`, `SessionStore`, and history APIs; it does not own stream subscribe/resubscribe/recovery mechanics.
+- `ChatActionHandler` calls send operations through `ServerConnection` forwarding methods (which delegate to `MessageSender`).
 - `SessionStreamCoordinator` owns stream lifecycle policy (subscribe/resubscribe, queue sync, full-subscription recovery, notification-level sync, and seq/catch-up bookkeeping).
-- `ServerConnection` owns network transport + message routing and delegates stream lifecycle transitions to `SessionStreamCoordinator`.
+- `ServerConnection` owns network transport + message routing and delegates send protocol to `MessageSender`, stream lifecycle to `SessionStreamCoordinator`, UI state to `ChatSessionState`.
 - `TimelineReducer`/`DeltaCoalescer` stay UI-framework-free (`Foundation` + runtime types).
 - UIKit-specific rendering stays in timeline host/render files under `Features/Chat/Timeline/Collection`, `Rows`, `Tool`, and `Assistant`; reducers/coalescers remain UIKit-free.
 
