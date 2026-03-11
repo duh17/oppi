@@ -149,9 +149,11 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    /// History reload always runs on entry, even when cache is present.
+    /// Cache provides instant display; reload provides ground truth.
     @MainActor
-    @Test func initialConnectSkipsEagerHistoryReloadWhenCachePresent() async {
-        let sessionId = "cache-skip-\(UUID().uuidString)"
+    @Test func initialConnectAlwaysSchedulesHistoryReloadWithCache() async {
+        let sessionId = "cache-reload-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
@@ -178,12 +180,12 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         try? await Task.sleep(for: .milliseconds(120))
 
-        #expect(historyReloadCalls == 0, "Cache-present entry should skip eager history reload")
-        if case .awaitingConnected(_, let hasCachedHistory) = manager.entryState {
-            #expect(hasCachedHistory)
+        if case .awaitingConnected = manager.entryState {
+            // good
         } else {
-            #expect(Bool(false), "Expected awaitingConnected state before stream completion")
+            #expect(Bool(false), "Expected awaitingConnected state")
         }
+        #expect(historyReloadCalls >= 1, "History reload must run even with cache present")
 
         streams.finish(index: 0)
         await connectTask.value
@@ -215,8 +217,8 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
-                if case .awaitingConnected(_, let hasCachedHistory) = manager.entryState {
-                    return !hasCachedHistory
+                if case .awaitingConnected = manager.entryState {
+                    return true
                 }
                 return false
             }
@@ -263,28 +265,24 @@ struct ChatSessionManagerTests {
         #expect(manager.entryState == .disconnected(reason: .generationChanged))
     }
 
-    /// Validates that when a session has no cache and the initial history reload
-    /// is scheduled, a successful first-connect catch-up cancels the pending
-    /// reload to avoid redundant double-work (fetch + rebuild).
+    /// History reload always runs to completion on first connect — it is
+    /// never cancelled by catch-up outcomes or state transitions. This is
+    /// the fix for blank timelines when entering a READY session without cache.
     @MainActor
-    @Test func firstConnectCatchUpAppliedCancelsPendingHistoryReload() async {
-        let sessionId = "first-catchup-\(UUID().uuidString)"
+    @Test func firstConnectAlwaysCompletesHistoryReload() async {
+        let sessionId = "first-connect-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
-        // Track history reload calls — use a slow hook so the task stays in-flight
-        // long enough for catch-up to cancel it.
         let tracker = HistoryReloadTracker()
         manager._loadHistoryForTesting = { cachedCount, cachedLastId in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return nil }
             _ = await tracker.recordCall(cachedEventCount: cachedCount, cachedLastEventId: cachedLastId)
             return (eventCount: 50, lastEventId: "evt-50")
         }
 
-        // First .connected will have currentSeq > 0, triggering catch-up.
+        // Simulate server at currentSeq=5 — first connect seeds seq directly.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 5),
         ]
@@ -293,19 +291,6 @@ struct ChatSessionManagerTests {
             return inboundMetaQueue.removeFirst()
         }
 
-        manager._loadCatchUpForTesting = { _, _ in
-            APIClient.SessionEventsResponse(
-                events: [
-                    .init(seq: 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
-                    .init(seq: 5, message: .state(session: makeTestSession(id: sessionId, status: .ready))),
-                ],
-                currentSeq: 5,
-                session: makeTestSession(id: sessionId, status: .ready),
-                catchUpComplete: true
-            )
-        }
-
-        // No cache → connect() will schedule history reload before stream opens.
         let connection = ServerConnection()
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
@@ -315,17 +300,14 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
-        // Give the no-cache history reload time to start.
         try? await Task.sleep(for: .milliseconds(50))
 
-        // Deliver first .connected — catch-up will apply and should cancel the reload.
-        let session = makeTestSession(id: sessionId)
-        streams.yield(index: 0, message: .connected(session: session))
-        try? await Task.sleep(for: .milliseconds(150))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+        try? await Task.sleep(for: .milliseconds(200))
 
-        // The catch-up should have cancelled the pending history reload task.
+        // History reload must complete regardless of WS/catch-up state.
         let snapshot = await tracker.snapshot()
-        #expect(snapshot.calls.isEmpty, "Successful first-connect catch-up should cancel pending history reload")
+        #expect(snapshot.calls.count == 1, "History reload must complete on first connect")
         #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 5)
         #expect(manager.entryState == .streaming)
 
@@ -333,10 +315,10 @@ struct ChatSessionManagerTests {
         await connectTask.value
     }
 
-    /// Validates that a first-connect catch-up returning .noGap also cancels
-    /// the pending history reload (no work needed at all).
+    /// With the persisted lastSeenSeq matching server currentSeq (the exact
+    /// scenario that caused blank timelines), history reload still completes.
     @MainActor
-    @Test func firstConnectNoGapCancelsPendingHistoryReload() async {
+    @Test func firstConnectNoGapStillCompletesHistoryReload() async {
         let sessionId = "nogap-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
@@ -345,13 +327,11 @@ struct ChatSessionManagerTests {
 
         let tracker = HistoryReloadTracker()
         manager._loadHistoryForTesting = { cachedCount, cachedLastId in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return nil }
             _ = await tracker.recordCall(cachedEventCount: cachedCount, cachedLastEventId: cachedLastId)
             return (eventCount: 50, lastEventId: "evt-50")
         }
 
-        // currentSeq == 0, lastSeenSeq == 0 → no gap.
+        // currentSeq == 0, lastSeenSeq == 0 → noGap in old code would cancel reload.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 0),
         ]
@@ -372,10 +352,10 @@ struct ChatSessionManagerTests {
         try? await Task.sleep(for: .milliseconds(50))
 
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
-        try? await Task.sleep(for: .milliseconds(150))
+        try? await Task.sleep(for: .milliseconds(200))
 
         let snapshot = await tracker.snapshot()
-        #expect(snapshot.calls.isEmpty, "First-connect no-gap should cancel pending history reload")
+        #expect(snapshot.calls.count == 1, "History reload must complete even with noGap")
         #expect(manager.entryState == .streaming)
 
         streams.finish(index: 0)
@@ -615,9 +595,12 @@ struct ChatSessionManagerTests {
         #expect(await tracker.waitForCalls(1))
 
         let session = makeTestSession(id: sessionId)
+        // First .connected → streaming (seeds seq=0).
         streams.yield(index: 0, message: .connected(session: session))
+        try? await Task.sleep(for: .milliseconds(50))
+        // Second .connected → reconnection catch-up.
         streams.yield(index: 0, message: .connected(session: session))
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.sleep(for: .milliseconds(200))
 
         let snapshot = await tracker.snapshot()
         #expect(snapshot.calls.count == 1, "Sequenced catch-up should avoid full history reload")
@@ -807,7 +790,9 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
 
+        // First .connected seeds seq=0, second triggers reconnect catch-up.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 0),
             .init(seq: nil, currentSeq: 2),
         ]
         manager._consumeInboundMetaForTesting = {
@@ -839,6 +824,13 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
+
+        // First .connected → transitions to streaming (no catch-up).
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(manager.entryState == .streaming)
+
+        // Second .connected → reconnection, triggers catch-up.
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
 
         #expect(await waitForTestCondition(timeoutMs: 500) {
@@ -863,7 +855,9 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
 
+        // First .connected seeds seq=0, second triggers reconnect catch-up.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 0),
             .init(seq: nil, currentSeq: 2),
         ]
         manager._consumeInboundMetaForTesting = {
@@ -895,6 +889,13 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
+
+        // First .connected → streaming.
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .stopping)))
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(manager.entryState == .streaming)
+
+        // Second .connected → reconnection catch-up with stop_failed.
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
 
         #expect(await waitForTestCondition(timeoutMs: 500) {
@@ -927,7 +928,9 @@ struct ChatSessionManagerTests {
             return (eventCount: 3, lastEventId: "evt-3")
         }
 
+        // First .connected seeds seq=0, second triggers reconnect with ring miss.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 0),
             .init(seq: nil, currentSeq: 5),
         ]
         manager._consumeInboundMetaForTesting = {
@@ -953,8 +956,15 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
+        // Wait for initial history reload (always runs on entry).
         #expect(await tracker.waitForCalls(1))
 
+        // First .connected → streaming.
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(manager.entryState == .streaming)
+
+        // Second .connected → reconnection, ring miss → forces new history reload.
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
 
         #expect(await tracker.waitForCalls(2))
@@ -1346,7 +1356,9 @@ struct ChatSessionManagerTests {
     /// fix working), catch-up runs and the slow history reload is cancelled.
     /// This validates that the pre-track fix provides the fast path.
     @MainActor
-    @Test func availableCurrentSeqRunsCatchUpAndCancelsHistoryReload() async {
+    /// First connect seeds seq from the server's currentSeq. History reload
+    /// runs independently and is never cancelled by the seq seeding.
+    @Test func availableCurrentSeqSeedsSeqAndHistoryReloadCompletes() async {
         let sessionId = "meta-fixed-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
@@ -1355,31 +1367,16 @@ struct ChatSessionManagerTests {
 
         let tracker = HistoryReloadTracker()
         manager._loadHistoryForTesting = { cachedCount, cachedLastId in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return nil }
             _ = await tracker.recordCall(cachedEventCount: cachedCount, cachedLastEventId: cachedLastId)
             return (eventCount: 20, lastEventId: "evt-20")
         }
 
-        // Fix working: inboundMeta has currentSeq.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 10),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
             return inboundMetaQueue.removeFirst()
-        }
-
-        manager._loadCatchUpForTesting = { _, _ in
-            APIClient.SessionEventsResponse(
-                events: [
-                    .init(seq: 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
-                    .init(seq: 10, message: .state(session: makeTestSession(id: sessionId, status: .ready))),
-                ],
-                currentSeq: 10,
-                session: makeTestSession(id: sessionId, status: .ready),
-                catchUpComplete: true
-            )
         }
 
         let connection = ServerConnection()
@@ -1394,11 +1391,10 @@ struct ChatSessionManagerTests {
         try? await Task.sleep(for: .milliseconds(50))
 
         streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
-        try? await Task.sleep(for: .milliseconds(150))
+        try? await Task.sleep(for: .milliseconds(200))
 
-        // Catch-up applied → history reload should be cancelled.
         let snapshot = await tracker.snapshot()
-        #expect(snapshot.calls.isEmpty, "Available currentSeq should run catch-up and cancel history reload")
+        #expect(snapshot.calls.count == 1, "History reload must complete on first connect")
         #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 10)
         #expect(manager.entryState == .streaming)
 
