@@ -1,6 +1,4 @@
-import { homedir } from "node:os";
-import { isAbsolute, relative } from "node:path";
-
+import { normalizePath } from "./git-utils.js";
 import type {
   GitFileStatus,
   GitStatus,
@@ -8,28 +6,6 @@ import type {
   WorkspaceReviewFile,
   WorkspaceReviewFilesResponse,
 } from "./types.js";
-
-function resolveHomePath(path: string): string {
-  return path.replace(/^~/, homedir());
-}
-
-function normalizeSessionPath(path: string, workspaceRoot: string | undefined): string {
-  let normalized = path.trim();
-  if (!normalized) return "";
-
-  while (normalized.startsWith("./")) {
-    normalized = normalized.slice(2);
-  }
-
-  if (workspaceRoot && isAbsolute(normalized)) {
-    const rel = relative(resolveHomePath(workspaceRoot), normalized);
-    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
-      normalized = rel;
-    }
-  }
-
-  return normalized.replace(/\\/g, "/");
-}
 
 function fileFlags(statusCode: string): {
   isStaged: boolean;
@@ -58,7 +34,7 @@ export function buildWorkspaceReviewFilesResponse(args: {
   const touchedPaths = new Set(
     (selectedSession?.changeStats?.changedFiles ?? [])
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => normalizeSessionPath(value, workspaceRoot))
+      .map((value) => normalizePath(value, workspaceRoot))
       .filter((value) => value.length > 0),
   );
 

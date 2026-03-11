@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+import { isPathWithinRoot, resolveHomePath } from "./git-utils.js";
 import {
   computeDiffLines,
   computeLineDiffStatsFromLines,
   type DiffLine as FlatDiffLine,
-} from "./overall-diff.js";
+} from "./diff-core.js";
 import type {
   WorkspaceReviewDiffHunk,
   WorkspaceReviewDiffLine,
@@ -43,16 +43,8 @@ type Token = {
   end: number;
 };
 
-function resolveDir(dir: string): string {
-  return dir.replace(/^~/, homedir());
-}
-
 function bufferLooksBinary(buffer: Buffer): boolean {
   return buffer.includes(0);
-}
-
-function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
-  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
 }
 
 function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
@@ -94,7 +86,7 @@ async function readHeadText(repoDir: string, reqPath: string): Promise<ReadTextR
 }
 
 async function readCurrentText(repoDir: string, reqPath: string): Promise<ReadTextResult> {
-  const resolvedRepoDir = resolveDir(repoDir);
+  const resolvedRepoDir = resolveHomePath(repoDir);
   const target = resolve(resolvedRepoDir, reqPath);
 
   try {
@@ -419,6 +411,18 @@ function buildHunks(lines: MutableReviewLine[]): WorkspaceReviewDiffHunk[] {
   });
 }
 
+/**
+ * Convert flat diff lines into numbered, word-highlighted hunks.
+ *
+ * Shared by both the git-based workspace review diff endpoint and the
+ * trace-based session overall-diff endpoint.
+ */
+export function buildDiffHunks(flatLines: FlatDiffLine[]): WorkspaceReviewDiffHunk[] {
+  const lines = numberDiffLines(flatLines);
+  applyWordLevelHighlights(lines);
+  return buildHunks(lines);
+}
+
 export async function buildWorkspaceReviewDiff(args: {
   workspaceId: string;
   workspaceRoot: string;
@@ -441,9 +445,7 @@ export async function buildWorkspaceReviewDiff(args: {
   }
 
   const flatLines = computeDiffLines(baseline.text, current.text);
-  const lines = numberDiffLines(flatLines);
-  applyWordLevelHighlights(lines);
-  const hunks = buildHunks(lines);
+  const hunks = buildDiffHunks(flatLines);
   const stats = computeLineDiffStatsFromLines(flatLines);
 
   return {
