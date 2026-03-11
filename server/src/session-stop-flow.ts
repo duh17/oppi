@@ -12,6 +12,8 @@ export interface SessionStopFlowCoordinatorDeps {
   stopCoordinator: SessionStopCoordinator;
   broadcast: (key: string, message: ServerMessage) => void;
   sendCommand: (key: string, command: Record<string, unknown>) => void;
+  /** Clear queued steering/follow-up messages and broadcast empty queue state. */
+  clearQueueOnAbort: (key: string) => void;
 }
 
 export class SessionStopFlowCoordinator {
@@ -39,6 +41,11 @@ export class SessionStopFlowCoordinator {
       if (!this.deps.stopCoordinator.beginPendingStop(key, active, "abort", "user")) {
         return;
       }
+
+      // Clear queued messages before aborting — matches TUI behavior.
+      // Without this, stale follow-up/steering messages survive the abort
+      // and leak into the next agent turn.
+      this.deps.clearQueueOnAbort(key);
 
       this.deps.sendCommand(key, { type: "abort" });
 
