@@ -14,7 +14,7 @@ struct SkillFileView: View {
     let skillName: String
     let filePath: String
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @State private var content: String?
     @State private var isLoading = true
     @State private var error: String?
@@ -60,7 +60,7 @@ struct SkillFileView: View {
     }
 
     private func load() async {
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             error = "Not connected"
             isLoading = false
             return

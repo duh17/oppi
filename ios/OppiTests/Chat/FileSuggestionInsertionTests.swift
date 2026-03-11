@@ -165,11 +165,11 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func clearFileSuggestionsEmptiesItems() {
         let conn = makeTestConnection()
-        conn.fileSuggestions = [
+        conn.chatState.fileSuggestions = [
             FileSuggestion(path: "README.md", isDirectory: false),
         ]
         conn.clearFileSuggestions()
-        #expect(conn.fileSuggestions.isEmpty)
+        #expect(conn.chatState.fileSuggestions.isEmpty)
     }
 
     @MainActor
@@ -178,10 +178,10 @@ struct FileSuggestionInsertionTests {
         let task = Task<Void, Never> { @MainActor in
             try? await Task.sleep(for: .seconds(60))
         }
-        conn.fileSuggestionTask = task
+        conn.chatState.fileSuggestionTask = task
         conn.clearFileSuggestions()
         #expect(task.isCancelled)
-        #expect(conn.fileSuggestionTask == nil)
+        #expect(conn.chatState.fileSuggestionTask == nil)
     }
 
     @MainActor
@@ -194,7 +194,7 @@ struct FileSuggestionInsertionTests {
         let oldTask = Task<Void, Never> { @MainActor in
             try? await Task.sleep(for: .seconds(60))
         }
-        conn.fileSuggestionTask = oldTask
+        conn.chatState.fileSuggestionTask = oldTask
 
         conn.fetchFileSuggestions(query: "src")
 
@@ -207,10 +207,10 @@ struct FileSuggestionInsertionTests {
         conn._sendMessageForTesting = { _ in }
 
         conn.fetchFileSuggestions(query: "first")
-        let task1 = conn.fileSuggestionTask
+        let task1 = conn.chatState.fileSuggestionTask
 
         conn.fetchFileSuggestions(query: "second")
-        let task2 = conn.fileSuggestionTask
+        let task2 = conn.chatState.fileSuggestionTask
 
         #expect(task1 != nil)
         #expect(task2 != nil)
@@ -232,6 +232,6 @@ struct FileSuggestionInsertionTests {
         // Brief wait — debounce task should be cancelled, no message sent.
         try? await Task.sleep(for: .milliseconds(250))
         #expect(sentMessages.isEmpty, "Cancelled task must not dispatch a network message")
-        #expect(conn.fileSuggestions.isEmpty)
+        #expect(conn.chatState.fileSuggestions.isEmpty)
     }
 }

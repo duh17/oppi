@@ -30,9 +30,9 @@ struct RestorationState: Codable {
             activeSessionId: connection.sessionStore.activeSessionId,
             activeServerId: coordinator.activeServerId,
             selectedTab: navigation.selectedTab.rawString,
-            composerDraft: connection.composerDraft,
-            scrollAnchorItemId: connection.scrollAnchorItemId,
-            wasNearBottom: connection.scrollWasNearBottom,
+            composerDraft: connection.chatState.composerDraft,
+            scrollAnchorItemId: connection.chatState.scrollAnchorItemId,
+            wasNearBottom: connection.chatState.scrollWasNearBottom,
             timestamp: Date()
         )
 

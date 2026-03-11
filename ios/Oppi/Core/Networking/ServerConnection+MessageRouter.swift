@@ -493,10 +493,10 @@ extension ServerConnection {
 
         if let levelStr = data?.objectValue?["level"]?.stringValue,
            let level = ThinkingLevel(rawValue: levelStr) {
-            thinkingLevel = level
+            chatState.thinkingLevel = level
         } else if command == "cycle_thinking_level" {
             // Server didn't return data — cycle locally
-            thinkingLevel = thinkingLevel.next
+            chatState.thinkingLevel = chatState.thinkingLevel.next
         }
     }
 
@@ -571,14 +571,14 @@ extension ServerConnection {
     // MARK: - Model Cache
 
     func prefetchModelsIfNeeded() {
-        guard !modelsCacheReady else { return }
-        modelPrefetchTask?.cancel()
-        modelPrefetchTask = Task { @MainActor [weak self] in
+        guard !chatState.modelsCacheReady else { return }
+        chatState.modelPrefetchTask?.cancel()
+        chatState.modelPrefetchTask = Task { @MainActor [weak self] in
             guard let self, let api = self.apiClient else { return }
             do {
                 let models = try await api.listModels()
-                self.cachedModels = models
-                self.modelsCacheReady = true
+                self.chatState.cachedModels = models
+                self.chatState.modelsCacheReady = true
             } catch {
                 logger.warning("Model prefetch failed: \(error.localizedDescription)")
             }
@@ -589,8 +589,8 @@ extension ServerConnection {
     func refreshModelCache() async {
         guard let api = apiClient else { return }
         do {
-            cachedModels = try await api.listModels()
-            modelsCacheReady = true
+            chatState.cachedModels = try await api.listModels()
+            chatState.modelsCacheReady = true
         } catch {
             logger.warning("Model cache refresh failed: \(error.localizedDescription)")
         }
@@ -599,8 +599,7 @@ extension ServerConnection {
     // periphery:ignore - API surface for model cache management
     /// Invalidate the model cache so next connect re-fetches.
     func invalidateModelCache() {
-        modelsCacheReady = false
-        cachedModels = []
+        chatState.resetModelCache()
     }
 
     // MARK: - Extension Timeout
