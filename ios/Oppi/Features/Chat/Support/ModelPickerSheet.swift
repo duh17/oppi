@@ -2,19 +2,20 @@ import SwiftUI
 
 /// Model picker sheet with provider grouping and context window info.
 ///
-/// Uses `connection.cachedModels` for instant open, with background refresh.
+/// Uses `chatState.cachedModels` for instant open, with background refresh.
 /// Recently-used models appear in a dedicated section at the top.
 struct ModelPickerSheet: View {
     let currentModel: String?
     let onSelect: (ModelInfo) -> Void
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ChatSessionState.self) private var chatState
     @Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
     private var recentIds: [String] { RecentModels.load() }
 
-    private var models: [ModelInfo] { connection.cachedModels }
+    private var models: [ModelInfo] { chatState.cachedModels }
 
     /// Full provider/id key for matching (delegates to policy to avoid double-prefix).
     private func fullId(_ model: ModelInfo) -> String {
@@ -52,7 +53,7 @@ struct ModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if models.isEmpty && !connection.modelsCacheReady {
+                if models.isEmpty && !chatState.modelsCacheReady {
                     ProgressView("Loading models…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if models.isEmpty {

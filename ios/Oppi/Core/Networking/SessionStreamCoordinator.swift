@@ -105,7 +105,7 @@ actor SessionStreamCoordinator {
         await MainActor.run {
             connection.activeSessionId = sessionId
             connection.toolCallCorrelator.reset()
-            connection.thinkingLevel = .medium
+            connection.chatState.thinkingLevel = .medium
             Task {
                 await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
             }

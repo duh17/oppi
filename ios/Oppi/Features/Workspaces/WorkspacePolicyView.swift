@@ -6,7 +6,7 @@ struct WorkspacePolicyView: View {
     let workspace: Workspace
     let onFallbackChanged: (PolicyFallbackDecision) -> Void
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
 
     @State private var fallbackDecision: PolicyFallbackDecision = .allow
     @State private var isUpdatingFallback = false
@@ -217,7 +217,7 @@ struct WorkspacePolicyView: View {
     }
 
     private func loadAll() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         isLoading = true
         defer { isLoading = false }
 
@@ -238,7 +238,7 @@ struct WorkspacePolicyView: View {
     }
 
     private func updateFallbackDecision(_ fallback: PolicyFallbackDecision) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         isUpdatingFallback = true
         defer { isUpdatingFallback = false }
@@ -261,7 +261,7 @@ struct WorkspacePolicyView: View {
     }
 
     private func updateRememberedRule(_ draft: RememberedRuleDraft) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         do {
             if let ruleId = draft.ruleId {
@@ -277,7 +277,7 @@ struct WorkspacePolicyView: View {
     }
 
     private func deleteRememberedRule(_ rule: PolicyRuleRecord) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         do {
             try await api.deletePolicyRule(ruleId: rule.id)

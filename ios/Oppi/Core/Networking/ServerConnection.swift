@@ -87,39 +87,12 @@ final class ServerConnection {
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
 
-    /// Composer draft text — saved/restored across background cycles.
-    var composerDraft: String?
-
-    /// Scroll position shuttle — written by ChatView, read by RestorationState.
-    /// `@ObservationIgnored` so scroll tracking doesn't trigger view re-evaluations.
-    @ObservationIgnored var scrollAnchorItemId: String?
-    @ObservationIgnored var scrollWasNearBottom: Bool = true
-
-    /// Current thinking level — synced from server session state on connect,
-    /// then updated by `cycle_thinking_level` / `set_thinking_level` command responses.
-    var thinkingLevel: ThinkingLevel = .medium
-
-    /// Cached slash command metadata for composer autocomplete.
-    var slashCommands: [SlashCommand] = []
-
-    /// Cached model list — populated eagerly on connect, survives sheet open/close.
-    var cachedModels: [ModelInfo] = []
-    /// Whether models have been fetched at least once this connection.
-    var modelsCacheReady = false
-    var slashCommandsCacheKey: String?
-    var slashCommandsRequestId: String?
-    var slashCommandsTask: Task<Void, Never>?
-
-    /// File suggestions for @file composer autocomplete.
-    var fileSuggestions: [FileSuggestion] = []
-    /// Active file suggestion request — cancelled on new query.
-    var fileSuggestionTask: Task<Void, Never>?
+    /// Per-connection chat UI state (composer, caches, thinking level).
+    /// Views observe this directly via `@Environment(ChatSessionState.self)`.
+    let chatState = ChatSessionState()
 
     /// Timer that auto-dismisses extension dialogs after their timeout expires.
     var extensionTimeoutTask: Task<Void, Never>?
-
-    /// Model prefetch task — eagerly loaded on connect.
-    var modelPrefetchTask: Task<Void, Never>?
 
     /// Deferred queue refresh retry when initial streamSession queue sync times out.
     var deferredQueueSyncTask: Task<Void, Never>?
@@ -803,12 +776,7 @@ final class ServerConnection {
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
         silenceWatchdog.stop()
-        slashCommandsTask?.cancel()
-        slashCommandsTask = nil
-        slashCommandsRequestId = nil
-        slashCommandsCacheKey = nil
-        slashCommands = []
-        clearFileSuggestions()
+        chatState.resetSessionState()
 
         syncNotificationSubscriptions()
 

@@ -25,7 +25,7 @@ struct WorkspaceReviewFileDetailView: View {
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
 
     @State private var selectedTab: DetailTab = .diff
@@ -256,7 +256,7 @@ struct WorkspaceReviewFileDetailView: View {
 
     private func createReviewSession(action: WorkspaceReviewSessionAction) async {
         guard launchActionInFlight == nil else { return }
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             launchError = "Server is offline."
             return
         }
@@ -286,7 +286,7 @@ struct WorkspaceReviewFileDetailView: View {
 
     private func loadDiff() async {
         guard !isLoading else { return }
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             error = "Server is offline."
             return
         }
