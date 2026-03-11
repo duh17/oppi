@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 
+import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "./workspace-review-diff.js";
 import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
@@ -83,14 +84,6 @@ function actionConfig(action: WorkspaceReviewSessionAction): ReviewActionConfig 
         ],
       };
   }
-}
-
-function normalizeRequestedPath(value: string): string {
-  let normalized = value.trim();
-  while (normalized.startsWith("./")) {
-    normalized = normalized.slice(2);
-  }
-  return normalized.replace(/\\/g, "/");
 }
 
 function formatFileSummary(file: WorkspaceReviewFile): string {
@@ -273,7 +266,7 @@ export async function prepareWorkspaceReviewSession(args: {
   });
 
   const uniquePaths = Array.from(
-    new Set(paths.map(normalizeRequestedPath).filter((value) => value.length > 0)),
+    new Set(paths.map((p) => normalizePath(p)).filter((value) => value.length > 0)),
   );
 
   if (uniquePaths.length === 0) {
@@ -281,7 +274,7 @@ export async function prepareWorkspaceReviewSession(args: {
   }
 
   const reviewFilesByPath = new Map(
-    review.files.map((file) => [normalizeRequestedPath(file.path), file]),
+    review.files.map((file) => [normalizePath(file.path), file] as const),
   );
   const requestedFiles: WorkspaceReviewFile[] = [];
   const missingPaths: string[] = [];
