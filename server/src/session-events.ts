@@ -51,6 +51,8 @@ export interface EventProcessorSessionState {
   toolNames: Map<string, string>;
   /** Last time a shell preview snapshot was sent per toolCallId (ms). */
   shellPreviewLastSent: Map<string, number>;
+  /** toolCallIds with active streaming arg viewport previews. */
+  streamingArgPreviews: Set<string>;
 }
 
 export interface SessionEventProcessorDeps {
@@ -80,6 +82,7 @@ export class SessionEventProcessor {
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,
       shellPreviewLastSent: active.shellPreviewLastSent,
+      streamingArgPreviews: active.streamingArgPreviews,
     };
   }
 
