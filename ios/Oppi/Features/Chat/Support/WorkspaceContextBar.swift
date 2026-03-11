@@ -19,7 +19,7 @@ struct WorkspaceContextBar: View {
     /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
     var onExpandedChanged: ((Bool) -> Void)?
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
 
     @State private var isExpanded = false
@@ -552,7 +552,7 @@ struct WorkspaceContextBar: View {
 
     private func launchSelection(_ action: WorkspaceReviewSessionAction) async {
         guard let workspaceId, !selectedPaths.isEmpty else { return }
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             launchError = "Server is offline."
             return
         }

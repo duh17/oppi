@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Fetches available themes from the server and lets the user import + apply them.
 struct ThemeImportView: View {
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @Environment(ThemeStore.self) private var themeStore
 
     @State private var remoteThemes: [RemoteThemeSummary] = []
@@ -67,7 +67,7 @@ struct ThemeImportView: View {
     }
 
     private func loadThemes() async {
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             error = "Not connected"
             isLoading = false
             return
@@ -82,7 +82,7 @@ struct ThemeImportView: View {
     }
 
     private func importTheme(_ summary: RemoteThemeSummary) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         importingName = summary.filename
         do {
             let theme = try await api.getTheme(name: summary.filename)

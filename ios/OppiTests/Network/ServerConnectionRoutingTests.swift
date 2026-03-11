@@ -269,19 +269,19 @@ struct ServerConnectionRoutingTests {
     @MainActor
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
         let conn = makeTestConnection()
-        #expect(conn.thinkingLevel == .medium)
+        #expect(conn.chatState.thinkingLevel == .medium)
 
         conn.handleServerMessage(
             .connected(session: makeTestSession(status: .ready, thinkingLevel: "medium")),
             sessionId: "s1"
         )
-        #expect(conn.thinkingLevel == .medium)
+        #expect(conn.chatState.thinkingLevel == .medium)
 
         conn.handleServerMessage(
             .state(session: makeTestSession(status: .ready, thinkingLevel: "high")),
             sessionId: "s1"
         )
-        #expect(conn.thinkingLevel == .high)
+        #expect(conn.chatState.thinkingLevel == .high)
     }
 
     @MainActor
@@ -344,8 +344,8 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        #expect(conn.slashCommands.count == 2)
-        #expect(conn.slashCommands.map(\.name) == ["compact", "skill:lint"])
+        #expect(conn.chatState.slashCommands.count == 2)
+        #expect(conn.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
     }
 
     @MainActor

@@ -29,15 +29,15 @@ extension ServerConnection {
     func syncThinkingLevel(from session: Session) {
         guard let levelStr = session.thinkingLevel,
               let level = ThinkingLevel(rawValue: levelStr),
-              thinkingLevel != level else { return }
-        thinkingLevel = level
+              chatState.thinkingLevel != level else { return }
+        chatState.thinkingLevel = level
     }
 
     // ── Slash Commands ──
 
     func scheduleSlashCommandsRefresh(for session: Session, force: Bool) {
-        slashCommandsTask?.cancel()
-        slashCommandsTask = Task { @MainActor [weak self] in
+        chatState.slashCommandsTask?.cancel()
+        chatState.slashCommandsTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.refreshSlashCommands(for: session, force: force)
         }
@@ -50,24 +50,24 @@ extension ServerConnection {
         error _: String?,
         sessionId: String
     ) {
-        if let expectedRequestId = slashCommandsRequestId,
+        if let expectedRequestId = chatState.slashCommandsRequestId,
            let requestId,
            requestId != expectedRequestId {
             return
         }
 
-        defer { slashCommandsRequestId = nil }
+        defer { chatState.slashCommandsRequestId = nil }
 
         guard success else {
             return
         }
 
-        slashCommands = Self.parseSlashCommands(from: data)
+        chatState.slashCommands = Self.parseSlashCommands(from: data)
 
         if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-            slashCommandsCacheKey = slashCommandCacheKey(for: session)
+            chatState.slashCommandsCacheKey = slashCommandCacheKey(for: session)
         } else {
-            slashCommandsCacheKey = nil
+            chatState.slashCommandsCacheKey = nil
         }
     }
 
@@ -102,18 +102,18 @@ extension ServerConnection {
     func refreshSlashCommands(for session: Session, force: Bool) async {
         let cacheKey = slashCommandCacheKey(for: session)
         if !force,
-           slashCommandsCacheKey == cacheKey,
-           !slashCommands.isEmpty {
+           chatState.slashCommandsCacheKey == cacheKey,
+           !chatState.slashCommands.isEmpty {
             return
         }
 
         let requestId = UUID().uuidString
-        slashCommandsRequestId = requestId
+        chatState.slashCommandsRequestId = requestId
 
         do {
             try await send(.getCommands(requestId: requestId))
         } catch {
-            slashCommandsRequestId = nil
+            chatState.slashCommandsRequestId = nil
         }
     }
 

@@ -63,7 +63,7 @@ struct RestorationStateTests {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
-        conn.composerDraft = "test draft"
+        conn.chatState.composerDraft = "test draft"
 
         let nav = AppNavigation()
         nav.selectedTab = .workspaces
@@ -166,8 +166,8 @@ struct RestorationStateTests {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
-        conn.scrollAnchorItemId = "msg-77"
-        conn.scrollWasNearBottom = false
+        conn.chatState.scrollAnchorItemId = "msg-77"
+        conn.chatState.scrollWasNearBottom = false
 
         let nav = AppNavigation()
         RestorationState.save(from: conn, coordinator: coordinator, navigation: nav)
@@ -187,8 +187,8 @@ struct RestorationStateTests {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
-        conn.scrollAnchorItemId = "msg-99"
-        conn.scrollWasNearBottom = true
+        conn.chatState.scrollAnchorItemId = "msg-99"
+        conn.chatState.scrollWasNearBottom = true
 
         let nav = AppNavigation()
         RestorationState.save(from: conn, coordinator: coordinator, navigation: nav)

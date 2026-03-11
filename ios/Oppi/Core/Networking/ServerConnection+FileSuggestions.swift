@@ -4,9 +4,9 @@ extension ServerConnection {
     private static let fileSuggestionDebounce: Duration = .milliseconds(180)
 
     func fetchFileSuggestions(query: String) {
-        fileSuggestionTask?.cancel()
+        chatState.fileSuggestionTask?.cancel()
 
-        fileSuggestionTask = Task { @MainActor [weak self] in
+        chatState.fileSuggestionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: Self.fileSuggestionDebounce)
             } catch {
@@ -29,18 +29,18 @@ extension ServerConnection {
                     return
                 }
 
-                self.fileSuggestions = FileSuggestionResult.from(data)?.items ?? []
+                self.chatState.fileSuggestions = FileSuggestionResult.from(data)?.items ?? []
             } catch {
                 if !Task.isCancelled {
-                    self.fileSuggestions = []
+                    self.chatState.fileSuggestions = []
                 }
             }
         }
     }
 
     func clearFileSuggestions() {
-        fileSuggestionTask?.cancel()
-        fileSuggestionTask = nil
-        fileSuggestions = []
+        chatState.fileSuggestionTask?.cancel()
+        chatState.fileSuggestionTask = nil
+        chatState.fileSuggestions = []
     }
 }

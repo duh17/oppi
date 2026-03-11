@@ -16,7 +16,8 @@ struct RemoteFileView: View {
     let sessionId: String
     let path: String
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
+    @Environment(SessionStore.self) private var sessionStore
     @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
@@ -85,7 +86,7 @@ struct RemoteFileView: View {
     }
 
     private func loadFile() async {
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             errorMessage = "Not connected to server"
             isLoading = false
             return
@@ -94,7 +95,7 @@ struct RemoteFileView: View {
         let resolvedWorkspaceId: String
         if !workspaceId.isEmpty {
             resolvedWorkspaceId = workspaceId
-        } else if let cachedWorkspaceId = connection.sessionStore.workspaceId(for: sessionId),
+        } else if let cachedWorkspaceId = sessionStore.workspaceId(for: sessionId),
                   !cachedWorkspaceId.isEmpty {
             resolvedWorkspaceId = cachedWorkspaceId
         } else {

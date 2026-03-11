@@ -84,28 +84,28 @@ struct ServerConnectionModelCommandsTests {
         var session = makeTestSession(thinkingLevel: "high")
 
         connection.syncThinkingLevel(from: session)
-        #expect(connection.thinkingLevel == .high)
+        #expect(connection.chatState.thinkingLevel == .high)
 
         session.thinkingLevel = "high"
         connection.syncThinkingLevel(from: session)
-        #expect(connection.thinkingLevel == .high)
+        #expect(connection.chatState.thinkingLevel == .high)
 
         session.thinkingLevel = "definitely_not_real"
         connection.syncThinkingLevel(from: session)
-        #expect(connection.thinkingLevel == .high)
+        #expect(connection.chatState.thinkingLevel == .high)
 
         session.thinkingLevel = nil
         connection.syncThinkingLevel(from: session)
-        #expect(connection.thinkingLevel == .high)
+        #expect(connection.chatState.thinkingLevel == .high)
     }
 
     @Test func refreshSlashCommandsSkipsWarmMatchingCache() async {
         let connection = makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
-        connection.slashCommands = [
+        connection.chatState.slashCommands = [
             SlashCommand(name: "compact", description: nil, source: .prompt)
         ]
-        connection.slashCommandsCacheKey = connection.slashCommandCacheKey(for: session)
+        connection.chatState.slashCommandsCacheKey = connection.slashCommandCacheKey(for: session)
 
         var sendCount = 0
         connection._sendMessageForTesting = { _ in
@@ -115,7 +115,7 @@ struct ServerConnectionModelCommandsTests {
         await connection.refreshSlashCommands(for: session, force: false)
 
         #expect(sendCount == 0)
-        #expect(connection.slashCommandsRequestId == nil)
+        #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
     @Test func refreshSlashCommandsSendsCommandAndTracksRequestId() async {
@@ -135,7 +135,7 @@ struct ServerConnectionModelCommandsTests {
             return
         }
         #expect(!(requestId ?? "").isEmpty)
-        #expect(connection.slashCommandsRequestId == requestId)
+        #expect(connection.chatState.slashCommandsRequestId == requestId)
     }
 
     @Test func refreshSlashCommandsClearsRequestIdWhenSendFails() async {
@@ -149,15 +149,15 @@ struct ServerConnectionModelCommandsTests {
 
         await connection.refreshSlashCommands(for: session, force: true)
 
-        #expect(connection.slashCommandsRequestId == nil)
+        #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
     @Test func handleSlashCommandsResultIgnoresMismatchedRequestId() {
         let connection = makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.sessionStore.upsert(session)
-        connection.slashCommandsRequestId = "expected"
-        connection.slashCommands = [
+        connection.chatState.slashCommandsRequestId = "expected"
+        connection.chatState.slashCommands = [
             SlashCommand(name: "existing", description: nil, source: .prompt)
         ]
 
@@ -169,15 +169,15 @@ struct ServerConnectionModelCommandsTests {
             sessionId: session.id
         )
 
-        #expect(connection.slashCommands.map(\.name) == ["existing"])
-        #expect(connection.slashCommandsRequestId == "expected")
+        #expect(connection.chatState.slashCommands.map(\.name) == ["existing"])
+        #expect(connection.chatState.slashCommandsRequestId == "expected")
     }
 
     @Test func handleSlashCommandsResultUpdatesCommandsAndCacheKey() {
         let connection = makeTestConnection()
         let session = makeTestSession(id: "s1", workspaceId: "w1")
         connection.sessionStore.upsert(session)
-        connection.slashCommandsRequestId = "expected"
+        connection.chatState.slashCommandsRequestId = "expected"
 
         connection.handleSlashCommandsResult(
             requestId: "expected",
@@ -187,15 +187,15 @@ struct ServerConnectionModelCommandsTests {
             sessionId: session.id
         )
 
-        #expect(connection.slashCommands.map(\.name) == ["compact", "skill:lint"])
-        #expect(connection.slashCommandsCacheKey == connection.slashCommandCacheKey(for: session))
-        #expect(connection.slashCommandsRequestId == nil)
+        #expect(connection.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
+        #expect(connection.chatState.slashCommandsCacheKey == connection.slashCommandCacheKey(for: session))
+        #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
     @Test func handleSlashCommandsFailureClearsOnlyRequestTracking() {
         let connection = makeTestConnection()
-        connection.slashCommandsRequestId = "expected"
-        connection.slashCommands = [SlashCommand(name: "existing", description: nil, source: .prompt)]
+        connection.chatState.slashCommandsRequestId = "expected"
+        connection.chatState.slashCommands = [SlashCommand(name: "existing", description: nil, source: .prompt)]
 
         connection.handleSlashCommandsResult(
             requestId: "expected",
@@ -205,8 +205,8 @@ struct ServerConnectionModelCommandsTests {
             sessionId: "missing"
         )
 
-        #expect(connection.slashCommands.map(\.name) == ["existing"])
-        #expect(connection.slashCommandsRequestId == nil)
+        #expect(connection.chatState.slashCommands.map(\.name) == ["existing"])
+        #expect(connection.chatState.slashCommandsRequestId == nil)
     }
 
     @Test func parseSlashCommandsDedupesCaseInsensitivelyAndSorts() {

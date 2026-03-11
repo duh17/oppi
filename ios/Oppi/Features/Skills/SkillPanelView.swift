@@ -10,11 +10,11 @@ struct SkillPanelView: View {
     /// Skill names enabled on the current workspace.
     let workspaceSkillNames: [String]
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.theme) private var theme
 
     private var allSkills: [SkillInfo] {
-        connection.workspaceStore.skills
+        workspaceStore.skills
     }
 
     private var enabledSkills: [SkillInfo] {

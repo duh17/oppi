@@ -11,7 +11,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 struct SkillDetailView: View {
     let skillName: String
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @State private var detail: SkillDetail?
     @State private var isLoading = true
     @State private var error: String?
@@ -119,7 +119,7 @@ struct SkillDetailView: View {
         }
 
         // Refresh from server
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             if detail == nil {
                 error = "Not connected"
                 isLoading = false

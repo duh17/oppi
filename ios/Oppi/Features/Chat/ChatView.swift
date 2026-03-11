@@ -5,6 +5,7 @@ struct ChatView: View {
     let sessionId: String
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ChatSessionState.self) private var chatState
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -207,9 +208,9 @@ struct ChatView: View {
             .onAppear {
                 sessionManager.markAppeared()
                 voiceInputManager.loadPreferences()
-                if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
+                if sessionManager.hasAppeared, let draft = chatState.composerDraft, !draft.isEmpty {
                     inputText = draft
-                    connection.composerDraft = nil
+                    chatState.composerDraft = nil
                 }
                 // Load initial git status for the workspace
                 if let wsId = session?.workspaceId, let api = connection.apiClient {
@@ -263,7 +264,7 @@ struct ChatView: View {
                 scrollController.cancel()
                 audioPlayer.stop()
                 let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                connection.composerDraft = draft.isEmpty ? nil : draft
+                chatState.composerDraft = draft.isEmpty ? nil : draft
                 Task {
                     await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
                 }
@@ -346,8 +347,8 @@ struct ChatView: View {
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
-                    slashCommands: connection.slashCommands,
-                    fileSuggestions: connection.fileSuggestions,
+                    slashCommands: chatState.slashCommands,
+                    fileSuggestions: chatState.fileSuggestions,
                     onFileSuggestionQuery: { query in
                         updateFileSuggestions(query: query)
                     },
@@ -371,7 +372,7 @@ struct ChatView: View {
                     actionRow: {
                         SessionToolbar(
                             session: session,
-                            thinkingLevel: connection.thinkingLevel,
+                            thinkingLevel: chatState.thinkingLevel,
                             onModelTap: { showModelPicker = true },
                             onThinkingSelect: { level in
                                 actionHandler.setThinking(
@@ -809,13 +810,13 @@ struct ChatView: View {
             pendingImages: $pendingImages,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
-            slashCommands: connection.slashCommands,
-            fileSuggestions: connection.fileSuggestions,
+            slashCommands: chatState.slashCommands,
+            fileSuggestions: chatState.fileSuggestions,
             onFileSuggestionQuery: { query in
                 updateFileSuggestions(query: query)
             },
             session: session,
-            thinkingLevel: connection.thinkingLevel,
+            thinkingLevel: chatState.thinkingLevel,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
             onSend: sendPrompt,
             onModelTap: { showModelPicker = true },

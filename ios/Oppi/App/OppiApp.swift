@@ -107,7 +107,10 @@ struct OppiApp: App {
         ContentView()
             .environment(coordinator)
             .environment(coordinator.activeConnection)
+            .environment(\.apiClient, coordinator.activeConnection.apiClient)
+            .environment(coordinator.activeConnection.chatState)
             .environment(coordinator.activeConnection.sessionStore)
+            .environment(coordinator.activeConnection.workspaceStore)
             .environment(coordinator.activeConnection.permissionStore)
             .environment(coordinator.activeConnection.reducer)
             .environment(coordinator.activeConnection.reducer.toolOutputStore)
@@ -631,7 +634,7 @@ struct OppiApp: App {
         if let restored {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
             connection.sessionStore.activeSessionId = restored.activeSessionId
-            connection.composerDraft = restored.composerDraft
+            connection.chatState.composerDraft = restored.composerDraft
         }
 
         // 3. Show cached data immediately (before any network calls)
