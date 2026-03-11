@@ -81,79 +81,6 @@ struct WorkspaceReviewModelsTests {
         #expect(WorkspaceReviewSessionAction.prepareCommit.fileMenuTitle == "Prepare commit for this file")
     }
 
-    @Test func historyBuilderExtractsEditAndWriteEntriesForMatchingPath() {
-        let trace: [TraceEvent] = [
-            TraceEvent(
-                id: "tool-1",
-                type: .toolCall,
-                timestamp: "2026-03-08T00:00:00Z",
-                text: nil,
-                tool: "functions.edit",
-                args: [
-                    "path": "./Sources/App.swift",
-                    "oldText": "let value = oldName\n",
-                    "newText": "let value = newName\n"
-                ],
-                output: nil,
-                toolCallId: nil,
-                toolName: nil,
-                isError: nil,
-                details: nil,
-                thinking: nil
-            ),
-            TraceEvent(
-                id: "tool-2",
-                type: .toolCall,
-                timestamp: "2026-03-08T00:00:01Z",
-                text: nil,
-                tool: "write",
-                args: [
-                    "path": "/Users/chenda/workspace/oppi/Sources/App.swift",
-                    "content": "line one\nline two\n"
-                ],
-                output: nil,
-                toolCallId: nil,
-                toolName: nil,
-                isError: nil,
-                details: nil,
-                thinking: nil
-            ),
-            TraceEvent(
-                id: "tool-3",
-                type: .toolCall,
-                timestamp: "2026-03-08T00:00:02Z",
-                text: nil,
-                tool: "write",
-                args: [
-                    "path": "README.md",
-                    "content": "ignore me\n"
-                ],
-                output: nil,
-                toolCallId: nil,
-                toolName: nil,
-                isError: nil,
-                details: nil,
-                thinking: nil
-            )
-        ]
-
-        let entries = WorkspaceReviewHistoryBuilder.buildEntries(trace: trace, path: "Sources/App.swift")
-
-        #expect(entries.count == 2)
-        #expect(entries.map(\.id) == ["tool-2", "tool-1"])
-        #expect(entries[0].kind == .write)
-        #expect(entries[0].addedLines == 3)
-        #expect(entries[1].kind == .edit)
-        #expect(entries[1].removedLines == 1)
-        #expect(entries[1].addedLines == 1)
-    }
-
-    @Test func historyBuilderMatchesAbsoluteAndRelativePaths() {
-        #expect(WorkspaceReviewHistoryBuilder.matchesPath("./Sources/App.swift", target: "Sources/App.swift"))
-        #expect(WorkspaceReviewHistoryBuilder.matchesPath("/tmp/project/Sources/App.swift", target: "Sources/App.swift"))
-        #expect(!WorkspaceReviewHistoryBuilder.matchesPath("Sources/Other.swift", target: "Sources/App.swift"))
-    }
-
     @Test func treePathCompareUsesDirectoryHierarchy() {
         let paths = [
             "Sources/Review/Row.swift",
@@ -178,6 +105,35 @@ struct WorkspaceReviewModelsTests {
         #expect("./Sources\\App.swift".localizedTreePathCompare(to: "Sources/App.swift/") == .orderedSame)
     }
 
+    @Test func contextPillDisplayTitleIsLastPathComponent() {
+        let summary = ContextSummary(kind: "file_diff", path: "Sources/Features/App.swift", addedLines: 3, removedLines: 1)
+        let pill = ContextPill(from: summary)
+        #expect(pill.displayTitle == "App.swift")
+    }
+
+    @Test func contextPillDisplaySubtitleShowsAddedAndRemoved() {
+        let summary = ContextSummary(kind: "file_diff", path: "README.md", addedLines: 5, removedLines: 2)
+        let pill = ContextPill(from: summary)
+        #expect(pill.displaySubtitle == "+5 -2")
+    }
+
+    @Test func contextPillDisplaySubtitleOmitsZeroCounts() {
+        let addedOnly = ContextPill(from: ContextSummary(kind: "file_diff", path: "a.swift", addedLines: 3, removedLines: 0))
+        #expect(addedOnly.displaySubtitle == "+3")
+
+        let removedOnly = ContextPill(from: ContextSummary(kind: "file_diff", path: "b.swift", addedLines: 0, removedLines: 4))
+        #expect(removedOnly.displaySubtitle == "-4")
+
+        let neither = ContextPill(from: ContextSummary(kind: "file_diff", path: "c.swift", addedLines: 0, removedLines: 0))
+        #expect(neither.displaySubtitle == nil)
+    }
+
+    @Test func contextPillUsesPathAsID() {
+        let summary = ContextSummary(kind: "file_diff", path: "Sources/App.swift", addedLines: 1, removedLines: 0)
+        let pill = ContextPill(from: summary)
+        #expect(pill.id == "Sources/App.swift")
+    }
+
     @Test func fileDetailPhaseTreatsInitialNilStateAsLoading() {
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: nil, error: nil) == .loading)
     }
@@ -190,7 +146,9 @@ struct WorkspaceReviewModelsTests {
             currentText: "new",
             addedLines: 1,
             removedLines: 1,
-            hunks: []
+            hunks: [],
+            revisionCount: nil,
+            cacheKey: nil
         )
 
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: "boom") == .loaded(diff))

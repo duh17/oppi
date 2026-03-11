@@ -776,54 +776,6 @@ struct APIClientTests {
         #expect(content == "print(\"hello\")")
     }
 
-    @Test func getSessionOverallDiffUsesWorkspaceScopedEndpointWhenWorkspaceProvided() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-            let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
-
-            #expect(request.url?.path == "/workspaces/w1/sessions/s1/overall-diff")
-            #expect(pathQuery == "Sources/App.swift")
-
-            return self.mockResponse(json: """
-            {
-              "path": "Sources/App.swift",
-              "revisionCount": 3,
-              "baselineText": "old",
-              "currentText": "new",
-              "diffLines": [
-                { "kind": "removed", "text": "old" },
-                { "kind": "added", "text": "new" }
-              ],
-              "addedLines": 10,
-              "removedLines": 4,
-              "cacheKey": "s1:Sources/App.swift:tc-3"
-            }
-            """)
-        }
-
-        let response = try await client.getSessionOverallDiff(
-            sessionId: "s1",
-            workspaceId: "w1",
-            path: "Sources/App.swift"
-        )
-
-        #expect(response.path == "Sources/App.swift")
-        #expect(response.revisionCount == 3)
-        #expect(response.baselineText == "old")
-        #expect(response.currentText == "new")
-        #expect(response.diffLines.count == 2)
-        #expect(response.diffLines[0].kind == .removed)
-        #expect(response.diffLines[0].text == "old")
-        #expect(response.diffLines[1].kind == .added)
-        #expect(response.diffLines[1].text == "new")
-        #expect(response.addedLines == 10)
-        #expect(response.removedLines == 4)
-        #expect(response.cacheKey == "s1:Sources/App.swift:tc-3")
-    }
-
     // MARK: - Permissions
 
     @Test func respondToPermissionUsesRestEndpoint() async throws {

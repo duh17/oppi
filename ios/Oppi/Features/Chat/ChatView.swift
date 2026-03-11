@@ -17,6 +17,7 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
+    @State private var contextPills: [ContextPill]
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
     @State private var showOutline = false
@@ -42,9 +43,11 @@ struct ChatView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
 
-    init(sessionId: String) {
+    init(sessionId: String, initialInputText: String = "", initialContextPills: [ContextPill] = []) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
+        _inputText = State(initialValue: initialInputText)
+        _contextPills = State(initialValue: initialContextPills)
     }
 
     private struct ForkRoute: Identifiable, Hashable {
@@ -334,6 +337,7 @@ struct ChatView: View {
                 ChatInputBar(
                     text: $inputText,
                     pendingImages: $pendingImages,
+                    contextPills: contextPills,
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: actionHandler.isSending,
@@ -620,6 +624,7 @@ struct ChatView: View {
             onDispatchStarted: {
                 inputText = ""
                 pendingImages = []
+                contextPills = []
                 // Scroll to bottom after sending
                 scrollRef.requestScrollToBottom()
             },

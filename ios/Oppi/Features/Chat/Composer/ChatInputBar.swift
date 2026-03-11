@@ -21,6 +21,7 @@ import UIKit
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
+    var contextPills: [ContextPill] = []
     let isBusy: Bool
     @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
@@ -245,6 +246,14 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var composerCapsule: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Context pill strip (display-only, review session context)
+            if !contextPills.isEmpty {
+                contextPillStrip
+                    .padding(.horizontal, composerHorizontalPadding)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+            }
+
             // Image strip inside capsule
             if !pendingImages.isEmpty {
                 imageStrip
@@ -398,6 +407,40 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .accessibilityIdentifier("chat.busyMode")
         .accessibilityLabel("Busy send mode")
+    }
+
+    private var contextPillStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(contextPills) { pill in
+                    contextPillView(pill)
+                }
+            }
+        }
+    }
+
+    private func contextPillView(_ pill: ContextPill) -> some View {
+        let icon = FileIcon.forPath(pill.path)
+        return HStack(spacing: 4) {
+            Image(systemName: icon.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(icon.color)
+
+            Text(pill.displayTitle)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .fixedSize()
+
+            if let subtitle = pill.displaySubtitle {
+                Text(subtitle)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.themeComment.opacity(0.1), in: Capsule())
     }
 
     private var imageStrip: some View {

@@ -8,7 +8,6 @@ struct WorkspaceStoppedSessionsSection: View {
     let lineageHint: (Session) -> String?
     let onResumeSession: (Session) -> Void
     let onDeleteSession: (Session) -> Void
-    let onReviewSession: (Session) -> Void
     let onImportLocal: (LocalSession) -> Void
 
     @Binding var expandedGroupIDs: Set<String>
@@ -106,13 +105,6 @@ struct WorkspaceStoppedSessionsSection: View {
                                 )
                             }
                             .listRowBackground(Color.themeBg)
-                            .contextMenu {
-                                if (session.changeStats?.filesChanged ?? 0) > 0 {
-                                    Button("Review touched files", systemImage: "list.bullet.rectangle.portrait") {
-                                        onReviewSession(session)
-                                    }
-                                }
-                            }
                             .swipeActions(edge: .leading) {
                                 Button {
                                     onResumeSession(session)

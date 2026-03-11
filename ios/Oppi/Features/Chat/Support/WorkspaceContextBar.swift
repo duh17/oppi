@@ -28,6 +28,7 @@ struct WorkspaceContextBar: View {
     @State private var selectedPaths: Set<String> = []
     @State private var launchActionInFlight: WorkspaceReviewSessionAction?
     @State private var launchError: String?
+    @State private var navigateToReview: ReviewSessionNavDestination?
 
     // Drag-select state
     @State private var rowFrames: [String: CGRect] = [:]
@@ -121,40 +122,45 @@ struct WorkspaceContextBar: View {
     // MARK: - Body
 
     var body: some View {
-        if isLoading && gitStatus == nil {
-            EmptyView()
-        } else if hasContent {
-            VStack(spacing: 0) {
-                collapsedBar
-                if isExpanded {
-                    expandedContent
+        Group {
+            if isLoading && gitStatus == nil {
+                EmptyView()
+            } else if hasContent {
+                VStack(spacing: 0) {
+                    collapsedBar
+                    if isExpanded {
+                        expandedContent
+                    }
+                }
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+                .sheet(item: $selectedFile) { file in
+                    fileDetailSheet(file: file)
+                }
+                .alert(
+                    "Review Error",
+                    isPresented: Binding(
+                        get: { launchError != nil },
+                        set: { if !$0 { launchError = nil } }
+                    )
+                ) {
+                    Button("OK", role: .cancel) { launchError = nil }
+                } message: {
+                    Text(launchError ?? "")
+                }
+                .onChange(of: collapseToken) {
+                    guard isExpanded else { return }
+                    collapseBar()
+                }
+                .onChange(of: isExpanded) { _, expanded in
+                    onExpandedChanged?(expanded)
                 }
             }
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
-            .padding(.top, 4)
-            .padding(.bottom, 2)
-            .sheet(item: $selectedFile) { file in
-                fileDetailSheet(file: file)
-            }
-            .alert(
-                "Review Error",
-                isPresented: Binding(
-                    get: { launchError != nil },
-                    set: { if !$0 { launchError = nil } }
-                )
-            ) {
-                Button("OK", role: .cancel) { launchError = nil }
-            } message: {
-                Text(launchError ?? "")
-            }
-            .onChange(of: collapseToken) {
-                guard isExpanded else { return }
-                collapseBar()
-            }
-            .onChange(of: isExpanded) { _, expanded in
-                onExpandedChanged?(expanded)
-            }
+        }
+        .navigationDestination(item: $navigateToReview) { dest in
+            ChatView(sessionId: dest.id, initialInputText: dest.inputText, initialContextPills: dest.pills)
         }
     }
 
@@ -334,14 +340,16 @@ struct WorkspaceContextBar: View {
                 .padding(.vertical, 6)
                 .coordinateSpace(name: "contextBarFileList")
                 .onPreferenceChange(RowFramePreferenceKey.self) { rowFrames = $0 }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 8, coordinateSpace: .named("contextBarFileList"))
-                        .onChanged { value in
-                            handleDragSelect(at: value.location)
-                        }
-                        .onEnded { _ in
-                            dragSelect.reset()
-                        }
+                .gesture(
+                    isSelecting
+                        ? DragGesture(minimumDistance: 8, coordinateSpace: .named("contextBarFileList"))
+                            .onChanged { value in
+                                handleDragSelect(at: value.location)
+                            }
+                            .onEnded { _ in
+                                dragSelect.reset()
+                            }
+                        : nil
                 )
             }
 
@@ -567,6 +575,12 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
+            let pills = response.contextSummary.map { ContextPill(from: $0) }
+            navigateToReview = ReviewSessionNavDestination(
+                id: response.session.id,
+                pills: pills,
+                inputText: response.visiblePrompt
+            )
         } catch {
             launchError = error.localizedDescription
         }
@@ -586,13 +600,10 @@ struct WorkspaceContextBar: View {
     // MARK: - Drag-select
 
     /// Process a drag position: select or deselect the row under the finger.
+    /// Only called when `isSelecting` is already true (gesture is conditionally attached).
     private func handleDragSelect(at location: CGPoint) {
-        guard let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
-
-        if !isSelecting {
-            withAnimation(.easeInOut(duration: 0.15)) { isSelecting = true }
-        }
-
+        guard isSelecting,
+              let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
         dragSelect.handleRow(path, selectedPaths: &selectedPaths)
     }
 

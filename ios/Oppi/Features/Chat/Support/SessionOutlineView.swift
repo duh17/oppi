@@ -39,42 +39,42 @@ struct SessionOutlineView: View {
     var body: some View {
         NavigationStack {
             outlinePane
-                .background(Color.themeBg)
-                .searchable(text: $searchText, prompt: "Search session timeline…")
-                .navigationTitle("Session Timeline")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+            .background(Color.themeBg)
+            .searchable(text: $searchText, prompt: "Search session timeline…")
+            .navigationTitle("Session Timeline")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task {
+                buildIndex()
+                applyFilter()
+            }
+            .onChange(of: searchText) { _, newValue in
+                searchDebounceTask?.cancel()
+                if newValue.isEmpty {
+                    // Clear search immediately for responsiveness.
+                    debouncedSearchText = ""
+                    applyFilter()
+                } else {
+                    searchDebounceTask = Task {
+                        try? await Task.sleep(for: .milliseconds(200))
+                        guard !Task.isCancelled else { return }
+                        debouncedSearchText = newValue
                     }
                 }
-                .task {
-                    buildIndex()
-                    applyFilter()
-                }
-                .onChange(of: searchText) { _, newValue in
-                    searchDebounceTask?.cancel()
-                    if newValue.isEmpty {
-                        // Clear search immediately for responsiveness.
-                        debouncedSearchText = ""
-                        applyFilter()
-                    } else {
-                        searchDebounceTask = Task {
-                            try? await Task.sleep(for: .milliseconds(200))
-                            guard !Task.isCancelled else { return }
-                            debouncedSearchText = newValue
-                        }
-                    }
-                }
-                .onChange(of: debouncedSearchText) { _, _ in
-                    applyFilter()
-                }
-                .onChange(of: filter) { _, _ in
-                    applyFilter()
-                }
-                .onDisappear {
-                    searchDebounceTask?.cancel()
-                }
+            }
+            .onChange(of: debouncedSearchText) { _, _ in
+                applyFilter()
+            }
+            .onChange(of: filter) { _, _ in
+                applyFilter()
+            }
+            .onDisappear {
+                searchDebounceTask?.cancel()
+            }
         }
     }
 
