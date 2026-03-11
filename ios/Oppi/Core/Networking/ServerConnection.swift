@@ -48,13 +48,11 @@ final class ServerConnection {
     var activeSessionId: String?
     let sessionStreamCoordinator = SessionStreamCoordinator()
 
-    /// Command correlation tracker — owns pending turn sends and command requests.
-    let commands = CommandTracker()
-    static let sendAckTimeoutDefault: Duration = .seconds(4)
-    static let turnSendRetryDelay: Duration = .milliseconds(250)
-    static let turnSendMaxAttempts = 2
-    static let turnSendRequiredStage: TurnAckStage = .dispatched
-    static let commandRequestTimeoutDefault: Duration = .seconds(8)
+    /// Send protocol — turn ack, command correlation, retry.
+    let sender = MessageSender()
+
+    /// Convenience accessor for command tracker (owned by sender).
+    var commands: CommandTracker { sender.commands }
     static let initialQueueSyncTimeout: Duration = .seconds(1)
     static let deferredQueueSyncTimeout: Duration = .seconds(3)
     static let deferredQueueSyncDelay: Duration = .milliseconds(250)
@@ -75,10 +73,16 @@ final class ServerConnection {
     }
 
     /// Test seam: override outbound send path without opening a real WebSocket.
-    var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
+    var _sendMessageForTesting: ((ClientMessage) async throws -> Void)? {
+        get { sender._sendMessageForTesting }
+        set { sender._sendMessageForTesting = newValue }
+    }
 
     /// Test seam: shorten ack timeout in integration-style tests.
-    var _sendAckTimeoutForTesting: Duration?
+    var _sendAckTimeoutForTesting: Duration? {
+        get { sender._sendAckTimeoutForTesting }
+        set { sender._sendAckTimeoutForTesting = newValue }
+    }
 
     /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
     var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
@@ -198,6 +202,7 @@ final class ServerConnection {
             credentials: credentials,
             preferredEndpoint: selection
         )
+        sender.wsClient = self.wsClient
 
         return true
     }
@@ -678,58 +683,8 @@ final class ServerConnection {
         return true
     }
 
-    func telemetryErrorKind(from error: Error) -> String {
-        if error is CommandRequestError {
-            return "command_request"
-        }
-
-        if error is WebSocketError {
-            return "websocket"
-        }
-
-        if error is URLError {
-            return "url"
-        }
-
-        if error is CancellationError {
-            return "cancelled"
-        }
-
-        return "other"
-    }
-
     func streamEndpointHostForMetrics() -> String {
         endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
-    }
-
-    private func recordMessageQueueAckMetric(
-        command: String,
-        startedAt: ContinuousClock.Instant,
-        status: String,
-        errorKind: String? = nil
-    ) {
-        let elapsedMs = Int((ContinuousClock.now - startedAt) / .milliseconds(1))
-        let metricCommand = command
-        let metricStatus = status
-        let metricErrorKind = errorKind
-        let metricSessionId = activeSessionId
-
-        Task.detached(priority: .utility) {
-            var tags: [String: String] = [
-                "command": metricCommand,
-                "status": metricStatus,
-            ]
-            if let metricErrorKind {
-                tags["error_kind"] = metricErrorKind
-            }
-            await ChatMetricsService.shared.record(
-                metric: .messageQueueAckMs,
-                value: Double(elapsedMs),
-                unit: .ms,
-                sessionId: metricSessionId,
-                tags: tags
-            )
-        }
     }
 
     /// Unsubscribe from a specific session.
@@ -767,6 +722,7 @@ final class ServerConnection {
         }
 
         activeSessionId = nil
+        sender.activeSessionId = nil
         Task {
             await sessionStreamCoordinator.noteStreamDisconnected()
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
@@ -792,104 +748,46 @@ final class ServerConnection {
         coalescer.flushNow()
     }
 
-    // MARK: - Actions
+    // MARK: - Actions (delegated to MessageSender)
 
-    /// Send a prompt to the connected session and await server acceptance.
-    ///
-    /// Uses request/response correlation (`requestId`) plus `clientTurnId`
-    /// idempotency so reconnect retries do not duplicate work.
-    func sendPrompt(
-        _ text: String,
-        images: [ImageAttachment]? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
-    ) async throws {
-        let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(
-            requestId: requestId,
-            clientTurnId: clientTurnId,
-            command: "prompt",
-            onAckStage: onAckStage
-        ) {
-            .prompt(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
-        }
+    func sendPrompt(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendPrompt(text, images: images, onAckStage: onAckStage)
     }
 
-    /// Send a steering message to a busy session and await acceptance.
-    func sendSteer(
-        _ text: String,
-        images: [ImageAttachment]? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
-    ) async throws {
-        let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
-        let startedAt = ContinuousClock.now
-
-        do {
-            try await sendTurnWithAck(
-                requestId: requestId,
-                clientTurnId: clientTurnId,
-                command: "steer",
-                onAckStage: onAckStage
-            ) {
-                .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
-            }
-            recordMessageQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok")
-        } catch {
-            recordMessageQueueAckMetric(
-                command: "steer",
-                startedAt: startedAt,
-                status: "error",
-                errorKind: telemetryErrorKind(from: error)
-            )
-            throw error
-        }
+    func sendSteer(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendSteer(text, images: images, onAckStage: onAckStage)
     }
 
-    /// Queue a follow-up message and await acceptance.
-    func sendFollowUp(
-        _ text: String,
-        images: [ImageAttachment]? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
-    ) async throws {
-        let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
-        let startedAt = ContinuousClock.now
-
-        do {
-            try await sendTurnWithAck(
-                requestId: requestId,
-                clientTurnId: clientTurnId,
-                command: "follow_up",
-                onAckStage: onAckStage
-            ) {
-                .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
-            }
-            recordMessageQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok")
-        } catch {
-            recordMessageQueueAckMetric(
-                command: "follow_up",
-                startedAt: startedAt,
-                status: "error",
-                errorKind: telemetryErrorKind(from: error)
-            )
-            throw error
-        }
+    func sendFollowUp(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendFollowUp(text, images: images, onAckStage: onAckStage)
     }
 
-    /// Abort the current turn. The session stays alive for the next prompt.
-    func sendStop() async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stop(), sessionId: activeSessionId)
+    func sendStop() async throws { try await sender.sendStop() }
+    func sendStopSession() async throws { try await sender.sendStopSession() }
+
+    func send(_ message: ClientMessage) async throws { try await sender.send(message) }
+
+    func requestState() async throws { try await sender.requestState() }
+
+    func requestMessageQueue(timeout: Duration = MessageSender.commandRequestTimeoutDefault) async throws {
+        try await sender.requestMessageQueue(timeout: timeout)
     }
 
-    /// Kill the session process entirely. Requires explicit user action.
-    func sendStopSession() async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stopSession(), sessionId: activeSessionId)
+    func setMessageQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem]) async throws {
+        try await sender.setMessageQueue(baseVersion: baseVersion, steering: steering, followUp: followUp)
     }
 
-    /// Respond to a permission request.
+    func sendCommandAwaitingResult(
+        command: String,
+        timeout: Duration = MessageSender.commandRequestTimeoutDefault,
+        message: (String) -> ClientMessage
+    ) async throws -> JSONValue? {
+        try await sender.sendCommandAwaitingResult(command: command, timeout: timeout, message: message)
+    }
+
+    func getForkMessages() async throws -> [ForkMessage] { try await sender.getForkMessages() }
+
+    /// Respond to a permission request (has store side effects — stays on ServerConnection).
     func respondToPermission(id: String, action: PermissionAction, scope: PermissionScope = .once, expiresInMs: Int? = nil) async throws {
         let tool = permissionStore.pending.first(where: { $0.id == id })?.tool ?? ""
         let normalizedChoice = PermissionApprovalPolicy.normalizedChoice(
@@ -897,8 +795,7 @@ final class ServerConnection {
             choice: PermissionResponseChoice(action: action, scope: scope, expiresInMs: expiresInMs)
         )
 
-        // permission_response is a stream-level command — no sessionId envelope needed
-        try await dispatchSend(
+        try await sender.dispatchSend(
             .permissionResponse(
                 id: id,
                 action: normalizedChoice.action,
@@ -910,9 +807,6 @@ final class ServerConnection {
 
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
-            // Only inject the resolved marker into the timeline if this permission
-            // belongs to the currently active session. Otherwise we'd pollute the
-            // wrong session's timeline (cross-session permission approval).
             if request.sessionId == activeSessionId {
                 reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
             }
@@ -923,7 +817,7 @@ final class ServerConnection {
         syncLiveActivityPermissions()
     }
 
-    /// Respond to an extension UI dialog.
+    /// Respond to an extension UI dialog (has UI side effects — stays on ServerConnection).
     func respondToExtensionUI(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled), sessionId: activeSessionId)
@@ -932,240 +826,14 @@ final class ServerConnection {
         extensionTimeoutTask = nil
     }
 
-    /// Request current state from server.
-    func requestState() async throws {
-        try await send(.getState())
-    }
-
-    /// Request latest message queue snapshot for the active session.
-    func requestMessageQueue(timeout: Duration = ServerConnection.commandRequestTimeoutDefault) async throws {
-        _ = try await sendCommandAwaitingResult(command: "get_queue", timeout: timeout) { requestId in
-            .getQueue(requestId: requestId)
-        }
-    }
-
-    /// Replace message queue using optimistic version locking.
-    func setMessageQueue(
-        baseVersion: Int,
-        steering: [MessageQueueDraftItem],
-        followUp: [MessageQueueDraftItem]
-    ) async throws {
-        _ = try await sendCommandAwaitingResult(command: "set_queue") { requestId in
-            .setQueue(
-                baseVersion: baseVersion,
-                steering: steering,
-                followUp: followUp,
-                requestId: requestId
-            )
-        }
-    }
-
-    /// Send any client message.
-    func send(_ message: ClientMessage) async throws {
-        try await dispatchSend(message)
-    }
-
-    /// Test seam: set active stream session without opening a real socket.
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
         activeSessionId = sessionId
+        sender.activeSessionId = sessionId
     }
 
-    private func dispatchSend(_ message: ClientMessage) async throws {
-        if let sendHook = _sendMessageForTesting {
-            try await sendHook(message)
-            return
-        }
-
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(message, sessionId: activeSessionId)
+    func telemetryErrorKind(from error: Error) -> String {
+        MessageSender.telemetryErrorKind(from: error)
     }
-
-    private func sendTurnWithAck(
-        requestId: String,
-        clientTurnId: String,
-        command: String,
-        onAckStage: ((TurnAckStage) -> Void)? = nil,
-        message: () -> ClientMessage
-    ) async throws {
-        if _sendMessageForTesting == nil, wsClient == nil {
-            throw WebSocketError.notConnected
-        }
-
-        let pending = PendingTurnSend(
-            command: command,
-            requestId: requestId,
-            clientTurnId: clientTurnId,
-            onAckStage: onAckStage
-        )
-        commands.registerTurnSend(pending)
-
-        var lastError: Error?
-
-        for attempt in 1...Self.turnSendMaxAttempts {
-            if attempt > 1 {
-                pending.resetWaiter()
-                try? await Task.sleep(for: Self.turnSendRetryDelay)
-            }
-
-            do {
-                try await dispatchSend(message())
-            } catch {
-                lastError = error
-                if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
-                    continue
-                }
-                pending.waiter.resolve(.failure(error))
-                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
-                throw error
-            }
-
-            do {
-                try await waitForSendAck(waiter: pending.waiter, command: command)
-
-                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
-                return
-            } catch {
-                lastError = error
-                if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
-                    continue
-                }
-                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
-                throw error
-            }
-        }
-
-        commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
-        throw lastError ?? SendAckError.timeout(command: command)
-    }
-
-    private func waitForSendAck(waiter: SendAckWaiter, command: String) async throws {
-        let timeout = _sendAckTimeoutForTesting ?? Self.sendAckTimeoutDefault
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try await waiter.wait()
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw SendAckError.timeout(command: command)
-            }
-
-            do {
-                try await group.next()
-                group.cancelAll()
-            } catch {
-                // CRITICAL: resolve waiter on timeout so task group can drain.
-                // waiter.wait() uses a CheckedContinuation that ignores task
-                // cancellation. Without explicit resolve, the waiter task blocks
-                // forever and the task group never finishes (2026-02-09 hang fix).
-                if let sendAckError = error as? SendAckError,
-                   case .timeout = sendAckError {
-                    waiter.resolve(.failure(sendAckError))
-                }
-                group.cancelAll()
-                throw error
-            }
-        }
-    }
-
-    func sendCommandAwaitingResult(
-        command: String,
-        timeout: Duration = ServerConnection.commandRequestTimeoutDefault,
-        message: (String) -> ClientMessage
-    ) async throws -> JSONValue? {
-        if _sendMessageForTesting == nil, wsClient == nil {
-            throw WebSocketError.notConnected
-        }
-
-        let requestId = UUID().uuidString
-        let pending = PendingCommand(command: command, requestId: requestId)
-        commands.registerCommand(pending)
-
-        do {
-            try await dispatchSend(message(requestId))
-        } catch {
-            commands.unregisterCommand(requestId: requestId)
-            pending.waiter.resolve(.failure(error))
-            throw error
-        }
-
-        do {
-            let response = try await waitForCommandResult(waiter: pending.waiter, command: command, timeout: timeout)
-            commands.unregisterCommand(requestId: requestId)
-            return response.data
-        } catch {
-            commands.unregisterCommand(requestId: requestId)
-            throw error
-        }
-    }
-
-    private func waitForCommandResult(
-        waiter: CommandResultWaiter,
-        command: String,
-        timeout: Duration
-    ) async throws -> CommandResultPayload {
-        try await withThrowingTaskGroup(of: CommandResultPayload.self) { group in
-            group.addTask {
-                try await waiter.wait()
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw CommandRequestError.timeout(command: command)
-            }
-
-            do {
-                guard let result = try await group.next() else {
-                    throw CommandRequestError.timeout(command: command)
-                }
-                group.cancelAll()
-                return result
-            } catch {
-                // Same continuation-drain guard as send acks.
-                if let cmdError = error as? CommandRequestError,
-                   case .timeout = cmdError {
-                    waiter.resolve(.failure(cmdError))
-                }
-                group.cancelAll()
-                throw error
-            }
-        }
-    }
-
-    func getForkMessages() async throws -> [ForkMessage] {
-        let data = try await sendCommandAwaitingResult(command: "get_fork_messages") { requestId in
-            .getForkMessages(requestId: requestId)
-        }
-
-        guard let values = data?.objectValue?["messages"]?.arrayValue else {
-            return []
-        }
-
-        return values.compactMap { value in
-            guard let object = value.objectValue else {
-                return nil
-            }
-
-            let entryId =
-                object["entryId"]?.stringValue
-                ?? object["id"]?.stringValue
-                ?? object["messageId"]?.stringValue
-
-            guard let entryId,
-                  !entryId.isEmpty else {
-                return nil
-            }
-
-            return ForkMessage(
-                entryId: entryId,
-                text: object["text"]?.stringValue ?? object["content"]?.stringValue ?? ""
-            )
-        }
-    }
-
-    // ── Model ──
-
-    // Model, thinking, slash commands, session commands, fork, and bash
-    // operations are in ServerConnection+ModelCommands.swift and
-    // ServerConnection+Fork.swift extensions.
 
     // MARK: - Reconnect State (used by ServerConnection+Refresh)
 
