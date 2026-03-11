@@ -51,7 +51,7 @@ extension ServerConnection {
             extensionToast = message
 
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
-            _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: Self.turnSendRequiredStage)
+            _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: MessageSender.turnSendRequiredStage)
 
         case .gitStatus(let workspaceId, let status):
             gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)

@@ -104,6 +104,7 @@ actor SessionStreamCoordinator {
 
         await MainActor.run {
             connection.activeSessionId = sessionId
+            connection.sender.activeSessionId = sessionId
             connection.toolCallCorrelator.reset()
             connection.chatState.thinkingLevel = .medium
             Task {
