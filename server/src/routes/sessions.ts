@@ -4,6 +4,7 @@ import { access, appendFile, mkdir, readFile, realpath, stat } from "node:fs/pro
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
+import { isPathWithinRoot } from "../git-utils.js";
 import {
   readSessionTrace,
   readSessionTraceByUuid,
@@ -17,7 +18,8 @@ import {
   reconstructBaselineFromCurrent,
   computeDiffLines,
   computeLineDiffStatsFromLines,
-} from "../overall-diff.js";
+} from "../diff-core.js";
+import { buildDiffHunks } from "../workspace-review-diff.js";
 import {
   invalidateLocalSessionsCache,
   validateLocalSessionPath,
@@ -616,17 +618,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const currentText = await readCurrentFileText(session, reqPath);
     const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
-    const diffLines = computeDiffLines(baselineText, currentText);
-    const stats = computeLineDiffStatsFromLines(diffLines);
+    const flatLines = computeDiffLines(baselineText, currentText);
+    const hunks = buildDiffHunks(flatLines);
+    const stats = computeLineDiffStatsFromLines(flatLines);
 
     helpers.json(res, {
+      workspaceId: session.workspaceId ?? "",
       path: reqPath,
-      revisionCount: mutations.length,
       baselineText,
       currentText,
-      diffLines,
       addedLines: stats.added,
       removedLines: stats.removed,
+      hunks,
+      revisionCount: mutations.length,
       cacheKey: `${sessionId}:${reqPath}:${mutations[mutations.length - 1]?.id ?? "none"}`,
     });
   }
@@ -886,10 +890,6 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
-  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
 }
 
 /** Minimal MIME type guesser for file serving. */
