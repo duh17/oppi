@@ -12,6 +12,8 @@
 
 import { EventEmitter } from "node:events";
 
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+
 import type {
   MessageQueueDraftItem,
   MessageQueueState,
@@ -65,6 +67,7 @@ export class SessionManager extends EventEmitter {
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
   private pendingPromptPreambles: Map<string, string> = new Map();
+  private pendingExtensionFactories: Map<string, ExtensionFactory[]> = new Map();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -107,6 +110,8 @@ export class SessionManager extends EventEmitter {
       stopSessionGraceMs: this.stopSessionGraceMs,
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
+      getAndClearPendingExtensionFactories: (sessionId) =>
+        this.getAndClearPendingExtensionFactories(sessionId),
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
@@ -326,6 +331,25 @@ export class SessionManager extends EventEmitter {
     }
 
     this.pendingPromptPreambles.set(sessionId, normalized);
+  }
+
+  /**
+   * Register extra extension factories to inject when a session starts.
+   * Consumed and cleared by SessionStartCoordinator during startSession.
+   */
+  setPendingExtensionFactories(sessionId: string, factories: ExtensionFactory[]): void {
+    if (factories.length === 0) {
+      this.pendingExtensionFactories.delete(sessionId);
+      return;
+    }
+    this.pendingExtensionFactories.set(sessionId, factories);
+  }
+
+  /** Consume and clear pending extension factories for a session. */
+  private getAndClearPendingExtensionFactories(sessionId: string): ExtensionFactory[] {
+    const factories = this.pendingExtensionFactories.get(sessionId);
+    this.pendingExtensionFactories.delete(sessionId);
+    return factories ?? [];
   }
 
   /**
