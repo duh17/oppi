@@ -10,7 +10,6 @@ import type {
   Session,
   Workspace,
   WorkspaceReviewDiffResponse,
-  WorkspaceReviewFilesResponse,
   WorkspaceReviewSessionResponse,
 } from "../src/types.js";
 
@@ -79,124 +78,6 @@ function makeSession(id: string, workspaceId = "w1", changedFiles: string[] = []
     },
   };
 }
-
-describe("GET /workspaces/:wid/review/files", () => {
-  it("returns git-backed review files with selected session annotations", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-"));
-
-    try {
-      gitIn(repoDir, "init -b main");
-      gitIn(repoDir, 'config user.email "test@test.com"');
-      gitIn(repoDir, 'config user.name "Test"');
-
-      writeFileSync(join(repoDir, "tracked.txt"), "hello\n", "utf8");
-      gitIn(repoDir, "add tracked.txt");
-      gitIn(repoDir, 'commit -m "initial commit"');
-
-      writeFileSync(join(repoDir, "tracked.txt"), "hello\nworld\n", "utf8");
-      writeFileSync(join(repoDir, "staged.txt"), "staged\n", "utf8");
-      gitIn(repoDir, "add staged.txt");
-      writeFileSync(join(repoDir, "untracked.txt"), "new\n", "utf8");
-
-      const session = makeSession("s1", "w1", [
-        "tracked.txt",
-        "./untracked.txt",
-        join(repoDir, "staged.txt"),
-      ]);
-
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: (sessionId: string) => (sessionId === "s1" ? session : undefined),
-        },
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
-      const res = makeResponse();
-
-      await routes.dispatch(
-        "GET",
-        "/workspaces/w1/review/files",
-        new URL("http://localhost/workspaces/w1/review/files?sessionId=s1"),
-        {} as never,
-        res as never,
-      );
-
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body) as WorkspaceReviewFilesResponse;
-
-      expect(body.workspaceId).toBe("w1");
-      expect(body.isGitRepo).toBe(true);
-      expect(body.branch).toBe("main");
-      expect(body.changedFileCount).toBe(3);
-      expect(body.stagedFileCount).toBe(1);
-      expect(body.unstagedFileCount).toBe(1);
-      expect(body.untrackedFileCount).toBe(1);
-      expect(body.selectedSessionId).toBe("s1");
-      expect(body.selectedSessionTouchedCount).toBe(3);
-
-      expect(body.files).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: "tracked.txt",
-            isStaged: false,
-            isUnstaged: true,
-            isUntracked: false,
-            selectedSessionTouched: true,
-          }),
-          expect.objectContaining({
-            path: "staged.txt",
-            isStaged: true,
-            isUnstaged: false,
-            isUntracked: false,
-            selectedSessionTouched: true,
-          }),
-          expect.objectContaining({
-            path: "untracked.txt",
-            isStaged: false,
-            isUnstaged: false,
-            isUntracked: true,
-            selectedSessionTouched: true,
-          }),
-        ]),
-      );
-    } finally {
-      rmSync(repoDir, { recursive: true, force: true });
-    }
-  });
-
-  it("returns 404 when the selected session is not in the workspace", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-"));
-
-    try {
-      const ctx = {
-        storage: {
-          getWorkspace: (workspaceId: string) =>
-            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
-          getSession: (sessionId: string) =>
-            sessionId === "s1" ? makeSession("s1", "other-workspace", ["file.txt"]) : undefined,
-        },
-      } as unknown as RouteContext;
-
-      const routes = new RouteHandler(ctx);
-      const res = makeResponse();
-
-      await routes.dispatch(
-        "GET",
-        "/workspaces/w1/review/files",
-        new URL("http://localhost/workspaces/w1/review/files?sessionId=s1"),
-        {} as never,
-        res as never,
-      );
-
-      expect(res.statusCode).toBe(404);
-      expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
-    } finally {
-      rmSync(repoDir, { recursive: true, force: true });
-    }
-  });
-});
 
 describe("GET /workspaces/:wid/review/diff", () => {
   it("returns baseline/current text and word-level spans", async () => {
@@ -364,10 +245,20 @@ describe("POST /workspaces/:wid/review/session", () => {
       expect(body.session.id).toBe("new-session");
       expect(savedSession?.workspaceId).toBe("w1");
       expect(savedSession?.workspaceName).toBe("workspace");
-      expect(startSession).toHaveBeenCalledWith("new-session", expect.objectContaining({ id: "w1" }));
-      expect(sendPrompt).toHaveBeenCalledWith("new-session", "Review these selected changes.");
+      expect(startSession).toHaveBeenCalledWith(
+        "new-session",
+        expect.objectContaining({ id: "w1" }),
+      );
+      // Phase 1: server no longer auto-prompts — iOS drives the prompt
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(body.visiblePrompt).toBe("Review these selected changes.");
+      expect(body.contextSummary).toEqual([
+        expect.objectContaining({ kind: "file_diff", path: "review.swift" }),
+      ]);
       expect(setPendingPromptPreamble).toHaveBeenCalledTimes(1);
-      expect(setPendingPromptPreamble.mock.calls[0]?.[1]).toContain("Continue from Oppi Workspace Review.");
+      expect(setPendingPromptPreamble.mock.calls[0]?.[1]).toContain(
+        "Continue from Oppi Workspace Review.",
+      );
       expect(setPendingPromptPreamble.mock.calls[0]?.[1]).toContain("review.swift");
       expect(setPendingPromptPreamble.mock.calls[0]?.[1]).toContain("+let value = newName");
     } finally {
@@ -416,3 +307,4 @@ describe("POST /workspaces/:wid/review/session", () => {
     }
   });
 });
+
