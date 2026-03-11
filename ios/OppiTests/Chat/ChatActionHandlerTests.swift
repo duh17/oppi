@@ -679,7 +679,12 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
+        // firstMessage is set on the session — the auto-title should use this,
+        // not the prompt text being sent.
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "please fix websocket reconnect state drift"
+        ))
         connection._setActiveSessionIdForTesting("s1")
         handler._generateSessionTitleForTesting = { _ in
             "Title: Fix websocket reconnect bug."
@@ -736,7 +741,10 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "debug reconnect flow"
+        ))
         connection._setActiveSessionIdForTesting("s1")
         handler._generateSessionTitleForTesting = { _ in
             "Title: Investigate websocket reconnect state drift after background foreground transitions now"
@@ -851,7 +859,10 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "write migration plan"
+        ))
         connection._setActiveSessionIdForTesting("s1")
 
         var titleGenerationCalls = 0
@@ -913,7 +924,10 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "implement loopback bridge for local process"
+        ))
         connection._setActiveSessionIdForTesting("s1")
 
         // Simulate the title generator being slow (the real on-device LLM takes ~1-2s)
@@ -969,6 +983,373 @@ struct ChatActionHandlerTests {
 
         #expect(setSessionNameValue == "Local process bridge")
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Local process bridge")
+    }
+
+    @MainActor
+    @Test func sendPromptAutoTitleUsesFirstMessageNotCurrentPrompt() async {
+        // Regression: when the ChatView is recreated (navigation away/back),
+        // the auto-title guard state is lost. A second prompt send would
+        // re-trigger title generation. The title must always be derived from
+        // session.firstMessage, not whatever the user typed on later turns.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        // Session has a firstMessage recorded but no name yet (simulates the
+        // scenario where the first auto-title attempt was cancelled by cleanup).
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 2,
+            firstMessage: "fix the websocket reconnect drift"
+        ))
+        connection._setActiveSessionIdForTesting("s1")
+
+        var generatedFromText: String?
+        handler._generateSessionTitleForTesting = { text in
+            generatedFromText = text
+            return "Fix Websocket Reconnect Drift"
+        }
+
+        var setSessionNameValue: String?
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setSessionNameValue = name
+            default:
+                break
+            }
+        }
+
+        // Send a DIFFERENT message (3rd turn) — auto-title should use
+        // firstMessage, not this text.
+        _ = handler.sendPrompt(
+            text: "also check the retry logic",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setSessionNameValue != nil }
+        }
+
+        // Title was generated from the session's first message, not the current prompt
+        #expect(generatedFromText == "fix the websocket reconnect drift")
+        #expect(setSessionNameValue == "Fix Websocket Reconnect Drift")
+    }
+
+    @MainActor
+    @Test func sendPromptAutoTitleSkipsWhenNoFirstMessage() async {
+        // When firstMessage is nil (e.g., server hasn't confirmed the first
+        // message yet), the auto-title should not attempt generation.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
+
+        var titleGenerationCalls = 0
+        handler._generateSessionTitleForTesting = { _ in
+            titleGenerationCalls += 1
+            return "Should not fire"
+        }
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "hello world",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        _ = await waitForTestCondition(timeoutMs: 800) { await MainActor.run { !handler.isSending } }
+        #expect(titleGenerationCalls == 0)
+    }
+
+    @MainActor
+    @Test func regressionHandlerRecreationAfterCleanupStillUsesFirstMessage() async {
+        // Reproduces the exact bug from session data: user sends first message,
+        // navigates away (cleanup), comes back (new handler), sends a different
+        // message. The old code would generate a title from the second message.
+        // Fixed: title always comes from session.firstMessage.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        // Session created with first message
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 1,
+            firstMessage: "in context view we shouldnt show these make sure add tests"
+        ))
+        connection._setActiveSessionIdForTesting("s1")
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                break
+            }
+        }
+
+        // --- handler1: user sent first message, then navigated away ---
+        let handler1 = ChatActionHandler()
+        handler1._generateSessionTitleForTesting = { _ in
+            // Simulate slow on-device model — won't finish before cleanup
+            try? await Task.sleep(for: .seconds(10))
+            return "Should never complete"
+        }
+
+        _ = handler1.sendPrompt(
+            text: "in context view we shouldnt show these make sure add tests",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+        // User navigates away — cleanup fires
+        handler1.cleanup()
+
+        // --- handler2: user comes back, sends a different message ---
+        let handler2 = ChatActionHandler()
+        var generatedFromText: String?
+        var setNameValue: String?
+
+        handler2._generateSessionTitleForTesting = { text in
+            generatedFromText = text
+            return "Hide Context View Items"
+        }
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setNameValue = name
+            default:
+                break
+            }
+        }
+
+        // Second prompt text is completely different from firstMessage
+        _ = handler2.sendPrompt(
+            text: "can you check if pi supports register tool on demand",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setNameValue != nil }
+        }
+
+        // Title was generated from firstMessage, not the second prompt
+        #expect(generatedFromText == "in context view we shouldnt show these make sure add tests")
+        #expect(setNameValue == "Hide Context View Items")
+    }
+
+    @MainActor
+    @Test func regressionCleanupDoesNotCancelPendingAutoTitleTask() async {
+        // Verifies that cleanup() lets pending auto-title tasks finish.
+        // The old code cancelled them, causing the title to never be set
+        // after navigation away from ChatView.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "fix timeline message ordering bug"
+        ))
+        connection._setActiveSessionIdForTesting("s1")
+
+        var setNameValue: String?
+        let titleReady = AsyncStream.makeStream(of: Void.self)
+
+        handler._generateSessionTitleForTesting = { _ in
+            // Wait until after cleanup fires, then return
+            for await _ in titleReady.stream { break }
+            return "Fix Timeline Message Ordering"
+        }
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setNameValue = name
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "fix timeline message ordering bug",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        // Cleanup fires (user navigated away)
+        handler.cleanup()
+
+        // Now let the title generator finish — it should NOT be cancelled
+        titleReady.continuation.yield()
+        titleReady.continuation.finish()
+
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setNameValue != nil }
+        }
+
+        #expect(setNameValue == "Fix Timeline Message Ordering")
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Fix Timeline Message Ordering")
+    }
+
+    @MainActor
+    @Test func regressionSecondHandlerSkipsWhenFirstHandlerAlreadySetName() async {
+        // After a successful auto-title, a recreated handler must not
+        // re-generate — the session.name guard blocks it.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        // Session already has a name from a previous auto-title
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: "Fix Timeline Bug", messageCount: 3,
+            firstMessage: "fix timeline message ordering bug"
+        ))
+        connection._setActiveSessionIdForTesting("s1")
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                break
+            }
+        }
+
+        // New handler (simulates ChatView recreation)
+        let handler = ChatActionHandler()
+        var titleGenCalls = 0
+        handler._generateSessionTitleForTesting = { _ in
+            titleGenCalls += 1
+            return "Should not apply"
+        }
+
+        _ = handler.sendPrompt(
+            text: "commit everything",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        _ = await waitForTestCondition(timeoutMs: 800) { await MainActor.run { !handler.isSending } }
+
+        #expect(titleGenCalls == 0)
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Fix Timeline Bug")
     }
 
     // MARK: - Rename
