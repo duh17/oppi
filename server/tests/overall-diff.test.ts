@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TraceEvent } from "../src/trace.js";
-import { collectFileMutations, computeDiffLines } from "../src/overall-diff.js";
+import { collectFileMutations, computeDiffLines } from "../src/diff-core.js";
 
 describe("overall-diff helpers", () => {
   it("collects edit/write mutations for the requested path", () => {
