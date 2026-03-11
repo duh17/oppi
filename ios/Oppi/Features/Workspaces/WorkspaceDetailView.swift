@@ -25,6 +25,7 @@ struct WorkspaceDetailView: View {
     @State private var policyFallback: PolicyFallbackDecision = .allow
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
+    @State private var contextBarHeight: CGFloat = 0
 
     private struct SessionLineageSummary {
         let parentSessionName: String?
@@ -92,7 +93,12 @@ struct WorkspaceDetailView: View {
                 let lhsAttn = !permissionStore.pending(for: lhs.id).isEmpty
                 let rhsAttn = !permissionStore.pending(for: rhs.id).isEmpty
                 if lhsAttn != rhsAttn { return lhsAttn }
-                return lhs.lastActivity > rhs.lastActivity
+                // Sort by last turn-ended date for stable ordering.
+                // Only agentEnd updates this — agentStart, stop events, etc. do not,
+                // preventing the list from constantly shuffling during parallel tool calling.
+                let lhsSort = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
+                let rhsSort = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
+                return lhsSort > rhsSort
             }
     }
 
@@ -148,21 +154,6 @@ struct WorkspaceDetailView: View {
 
     var body: some View {
         List {
-            if let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo, !gitStatus.isClean {
-                Section {
-                    WorkspaceContextBar(
-                        gitStatus: gitStatus,
-                        isLoading: false,
-                        appliesOuterHorizontalPadding: false,
-                        workspaceId: workspace.id,
-                        collapseToken: contextBarCollapseToken,
-                        onExpandedChanged: { contextBarExpanded = $0 }
-                    )
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                }
-            }
-
             if !activeSessions.isEmpty {
                 Section("Active") {
                     ForEach(activeSessions) { session in
@@ -229,11 +220,24 @@ struct WorkspaceDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { contextBarCollapseToken &+= 1 }
+            }
+        }
+        .overlay(alignment: .top) {
+            if let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo, !gitStatus.isClean {
+                WorkspaceContextBar(
+                    gitStatus: gitStatus,
+                    isLoading: false,
+                    workspaceId: workspace.id,
+                    collapseToken: contextBarCollapseToken,
+                    onExpandedChanged: { contextBarExpanded = $0 }
+                )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contextBarHeight = $0 }
             }
         }
         .navigationTitle(currentWorkspace.name)
