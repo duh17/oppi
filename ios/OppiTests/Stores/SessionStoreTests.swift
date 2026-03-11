@@ -243,3 +243,88 @@ struct SessionStorePartitioningTests {
         #expect(store.sessions[0].id == "newer")
     }
 }
+
+// MARK: - Turn-ended tracking (stable sort key)
+
+@Suite("SessionStore Turn-Ended Tracking")
+struct SessionStoreTurnEndedTests {
+
+    @MainActor
+    @Test func recordAndReadTurnEndedDate() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let date = Date(timeIntervalSince1970: 5000)
+        store.recordTurnEnded(sessionId: "s1", at: date)
+
+        #expect(store.turnEndedDate(for: "s1") == date)
+    }
+
+    @MainActor
+    @Test func turnEndedDateNilForUnknownSession() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        #expect(store.turnEndedDate(for: "missing") == nil)
+    }
+
+    @MainActor
+    @Test func turnEndedDatePartitionedByServer() {
+        let store = SessionStore()
+
+        store.switchServer(to: "srv1")
+        let date1 = Date(timeIntervalSince1970: 1000)
+        store.recordTurnEnded(sessionId: "s1", at: date1)
+
+        store.switchServer(to: "srv2")
+        let date2 = Date(timeIntervalSince1970: 2000)
+        store.recordTurnEnded(sessionId: "s1", at: date2)
+
+        // srv2 is active — should see srv2's date
+        #expect(store.turnEndedDate(for: "s1") == date2)
+
+        // Switch back — should see srv1's date
+        store.switchServer(to: "srv1")
+        #expect(store.turnEndedDate(for: "s1") == date1)
+    }
+
+    @MainActor
+    @Test func removeClearsTurnEndedDate() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "s1"))
+        store.recordTurnEnded(sessionId: "s1")
+
+        store.remove(id: "s1")
+        #expect(store.turnEndedDate(for: "s1") == nil)
+    }
+
+    @MainActor
+    @Test func removeServerClearsTurnEndedDates() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.recordTurnEnded(sessionId: "s1")
+        store.recordTurnEnded(sessionId: "s2")
+
+        store.switchServer(to: "srv2")
+        store.removeServer("srv1")
+
+        store.switchServer(to: "srv1")
+        #expect(store.turnEndedDate(for: "s1") == nil)
+        #expect(store.turnEndedDate(for: "s2") == nil)
+    }
+
+    @MainActor
+    @Test func laterTurnEndedOverwritesEarlier() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let early = Date(timeIntervalSince1970: 1000)
+        let late = Date(timeIntervalSince1970: 2000)
+
+        store.recordTurnEnded(sessionId: "s1", at: early)
+        store.recordTurnEnded(sessionId: "s1", at: late)
+
+        #expect(store.turnEndedDate(for: "s1") == late)
+    }
+}

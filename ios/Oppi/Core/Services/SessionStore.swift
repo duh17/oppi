@@ -23,6 +23,15 @@ final class SessionStore {
     /// The session the user is currently viewing/chatting with.
     var activeSessionId: String?
 
+    // ── Per-server turn-ended dates (stable sort key) ──
+
+    /// Tracks when each session last completed a turn (agentEnd).
+    /// Used for stable list sorting — unlike `lastActivity` which updates on
+    /// every lifecycle event, this only changes when an agent finishes a turn,
+    /// preventing the active session list from constantly reordering during
+    /// parallel multi-agent tool calling.
+    private var serverTurnEndedDates: [String: [String: Date]] = [:]
+
     // ── Per-server freshness tracking ──
 
     private var serverLastSyncAt: [String: Date] = [:]
@@ -92,12 +101,31 @@ final class SessionStore {
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         serverSessions.removeValue(forKey: serverId)
+        serverTurnEndedDates.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
         serverSyncFailed.removeValue(forKey: serverId)
         if activeServerId == serverId {
             activeServerId = nil
         }
+    }
+
+    // ── Turn-ended tracking (stable sort key) ──
+
+    /// Record that a session completed a turn (agentEnd).
+    /// Only this event updates the sort key — agentStart, stop events, etc. do not.
+    func recordTurnEnded(sessionId: String, at date: Date = Date()) {
+        let key = activeServerId ?? ""
+        var dates = serverTurnEndedDates[key] ?? [:]
+        dates[sessionId] = date
+        serverTurnEndedDates[key] = dates
+    }
+
+    /// The date the session last completed a turn, or nil if no turn has ended yet.
+    /// Views should fall back to `session.createdAt` when nil.
+    func turnEndedDate(for sessionId: String) -> Date? {
+        let key = activeServerId ?? ""
+        return serverTurnEndedDates[key]?[sessionId]
     }
 
     // ── Freshness (delegates to active server) ──
@@ -173,6 +201,8 @@ final class SessionStore {
         var list = sessions
         list.removeAll { $0.id == id }
         sessions = list
+        let key = activeServerId ?? ""
+        serverTurnEndedDates[key]?.removeValue(forKey: id)
         if activeSessionId == id {
             activeSessionId = nil
         }
