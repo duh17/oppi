@@ -138,6 +138,12 @@ enum ToolTimelineRowPresentationHelpers {
 
     /// Walk up the view hierarchy to find the enclosing UICollectionView and
     /// invalidate its layout so self-sizing cells get re-measured.
+    ///
+    /// Multiple calls targeting the same collection view within a single
+    /// runloop tick are coalesced into one `invalidateLayout + layoutIfNeeded`
+    /// pass.  This avoids redundant full-layout cascades when several async
+    /// blocks (e.g. from `installExpandedEmbeddedView` and the end-of-`apply`
+    /// expanding-transition path) land in the same dispatch drain.
     static func invalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
         var view: UIView? = sourceView.superview
         while let current = view {
@@ -151,10 +157,31 @@ enum ToolTimelineRowPresentationHelpers {
                 return
             }
 
-            invalidateCollectionViewLayout(collectionView)
+            scheduleCoalescedInvalidation(for: collectionView)
             return
         }
     }
+
+    // MARK: - Coalesced invalidation
+
+    /// Collection views that already have a coalesced invalidation pending.
+    /// Cleared after the async block fires.
+    private static var pendingCoalescedInvalidations: Set<ObjectIdentifier> = []
+
+    private static func scheduleCoalescedInvalidation(for collectionView: UICollectionView) {
+        let identifier = ObjectIdentifier(collectionView)
+        guard pendingCoalescedInvalidations.insert(identifier).inserted else {
+            // Already scheduled — this call will be covered by the pending pass.
+            return
+        }
+        DispatchQueue.main.async { [weak collectionView] in
+            pendingCoalescedInvalidations.remove(identifier)
+            guard let collectionView else { return }
+            invalidateCollectionViewLayout(collectionView)
+        }
+    }
+
+    // MARK: - Interaction-deferred invalidation
 
     private static var pendingInteractionInvalidations: Set<ObjectIdentifier> = []
 
