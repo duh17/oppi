@@ -175,7 +175,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         super.layoutSubviews()
         updateBubbleHeight(forWidth: bounds.width)
         syncFadeMaskFrame()
-        performAutoScrollIfNeeded()
     }
 
     // MARK: - Setup
@@ -387,6 +386,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                     renderSignature = signature
                 }
                 updateBubbleHeight(forWidth: bounds.width)
+                if needsTextUpdate, contentIsTruncated {
+                    ToolTimelineRowUIHelpers.followTail(
+                        in: scrollView,
+                        contentLabel: textLabel
+                    )
+                }
             }
         }
 
@@ -504,24 +509,29 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         scrollView.showsVerticalScrollIndicator = false
     }
 
-    private func performAutoScrollIfNeeded() {
-        guard !currentConfiguration.isDone,
-              contentIsTruncated,
-              scrollView.bounds.height > 0 else { return }
-
-        // Force the scroll view subtree to settle so contentSize reflects
-        // the latest text. Without this, contentSize can be stale when
-        // updateBubbleHeight() changed the constraint in the same pass.
-        scrollView.layoutIfNeeded()
-
-        let bottomY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
-        guard bottomY > 0, scrollView.contentOffset.y < bottomY - 1 else { return }
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        scrollView.contentOffset = CGPoint(x: 0, y: bottomY)
-        CATransaction.commit()
+    #if DEBUG
+    /// Whether the tail of the streaming content is visible in the viewport.
+    ///
+    /// Pure observation — does NOT trigger layout or auto-scroll. Reads
+    /// the state that `apply()` left behind. This is critical: if this
+    /// property called `layoutIfNeeded()`, it would propagate up the view
+    /// hierarchy, trigger `layoutSubviews()` → `performAutoScrollIfNeeded()`,
+    /// and mask bugs where `apply()` fails to drive auto-scroll.
+    ///
+    /// Returns `true` when:
+    /// - content is not truncated (everything visible), OR
+    /// - the scroll offset is positive (apply drove the scroll toward tail)
+    ///
+    /// Returns `true` for done state (no streaming to follow).
+    // periphery:ignore - used by StreamingAutoFollowTests via @testable import
+    var isShowingTailForTesting: Bool {
+        guard !currentConfiguration.isDone else { return true }
+        guard contentIsTruncated, scrollView.bounds.height > 0 else { return true }
+        // If content overflows, apply() must have driven the scroll.
+        // A positive offset proves auto-scroll happened.
+        return scrollView.contentOffset.y > 0
     }
+    #endif
 
     // MARK: - Full Screen
 

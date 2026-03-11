@@ -644,14 +644,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         expandedReadMediaContentView = view
 
-        // Ensure first-pass sizing converges before the collection view's next
-        // self-sizing cycle (important for hosted + async media paths).
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.setNeedsLayout()
-            self.layoutIfNeeded()
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-        }
+        // Coalesced invalidation defers the layout pass to the end of the
+        // current runloop tick, so all synchronous changes from the enclosing
+        // apply() settle before one single layoutIfNeeded fires.
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     // MARK: - Collapsed Image Preview
@@ -1007,6 +1004,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let wasCommandVisible = !commandContainer.isHidden
         let wasOutputVisible = !outputContainer.isHidden
 
+        // Reset follow-tail flags; render strategies will set them if needed.
+        outputNeedsFollowTail = false
+        expandedNeedsFollowTail = false
+
         // Reset gesture interception (specific cases disable it below)
         setExpandedContainerGestureInterceptionEnabled(true)
         currentInteractionPolicy = renderPlan.interactionPolicy
@@ -1176,11 +1177,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
 
         if isExpandingTransition, showExpandedContainer || showOutputContainer {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-            }
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
+
+        // Drive auto-scroll after containers are visible and have valid bounds.
+        flushPendingFollowTail()
 
         ToolTimelineRowDisplayState.applyStatusAppearance(
             isDone: configuration.isDone,
@@ -1286,7 +1287,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
         if visibility.showExpandedContainer {
-            setExpandedVerticalLockEnabled(true)
+            // During streaming, don't lock label height to the viewport.
+            // The label must grow beyond the viewport so followTail() can
+            // scroll the inner scroll view to show the latest content.
+            // On done, re-enable the lock for horizontal-scroll-only mode.
+            setExpandedVerticalLockEnabled(!isStreaming)
             updateExpandedLabelWidthIfNeeded()
         }
 
@@ -1342,16 +1347,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         // Markdown subviews are added synchronously but Auto Layout hasn't
         // measured them yet when preferredViewportHeight runs in the same
-        // cycle. Defer one layout invalidation only when markdown content
-        // actually changed (or mode switched into markdown). Re-invalidating
-        // every apply causes avoidable mid-gesture reflows and scroll snapback.
+        // cycle. Invalidation is coalesced — safe to call synchronously here;
+        // only fires once per runloop tick regardless of how many callsites
+        // request it.
         if didRerenderMarkdown || didEnterMarkdownLayout {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.setNeedsLayout()
-                self.layoutIfNeeded()
-                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-            }
+            setNeedsLayout()
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
 
         return visibility
@@ -1851,27 +1852,57 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         TimelineCopyFeedback.copy(text, feedbackView: feedbackView)
     }
 
+    /// Flags set by render strategies during apply(). Consumed at the end of
+    /// apply() after container visibility is established and bounds are valid.
+    private var outputNeedsFollowTail = false
+    private var expandedNeedsFollowTail = false
+
     private func scheduleOutputAutoScrollToBottomIfNeeded() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  self.outputShouldAutoFollow,
-                  !self.outputContainer.isHidden else {
-                return
-            }
-            ToolTimelineRowUIHelpers.scrollToBottom(self.outputScrollView, animated: false)
-        }
+        guard outputShouldAutoFollow else { return }
+        outputNeedsFollowTail = true
     }
 
     func scheduleExpandedAutoScrollToBottomIfNeeded() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  self.expandedShouldAutoFollow,
-                  !self.expandedContainer.isHidden else {
-                return
-            }
-            ToolTimelineRowUIHelpers.scrollToBottom(self.expandedScrollView, animated: false)
+        guard expandedShouldAutoFollow else { return }
+        expandedNeedsFollowTail = true
+    }
+
+    /// Called at the end of apply() after containers are visible and have bounds.
+    private func flushPendingFollowTail() {
+        if outputNeedsFollowTail, !outputContainer.isHidden {
+            ToolTimelineRowUIHelpers.followTail(
+                in: outputScrollView,
+                contentLabel: outputLabel
+            )
+            outputNeedsFollowTail = false
+        }
+        if expandedNeedsFollowTail, !expandedContainer.isHidden {
+            let label: UIView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
+            ToolTimelineRowUIHelpers.followTail(
+                in: expandedScrollView,
+                contentLabel: label
+            )
+            expandedNeedsFollowTail = false
         }
     }
+
+    #if DEBUG
+    /// Whether the tail of the expanded content is visible in the viewport.
+    ///
+    /// Used by tests to assert auto-follow behavior without coupling to
+    /// internal scroll offsets or dispatch timing.
+    // periphery:ignore - used by StreamingAutoFollowTests via @testable import
+    var isShowingExpandedTailForTesting: Bool {
+        guard expandedShouldAutoFollow,
+              !expandedContainer.isHidden,
+              expandedScrollView.bounds.height > 0 else {
+            return expandedContainer.isHidden || expandedShouldAutoFollow
+        }
+
+        expandedScrollView.layoutIfNeeded()
+        return ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
+    }
+    #endif
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if scrollView === outputScrollView {

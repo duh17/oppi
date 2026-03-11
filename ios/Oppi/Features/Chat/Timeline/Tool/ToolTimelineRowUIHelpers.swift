@@ -50,6 +50,22 @@ enum ToolTimelineRowUIHelpers {
         )
     }
 
+    /// Settle content size and scroll to bottom in one synchronous step.
+    ///
+    /// Call from `apply()` after setting text — never from `layoutSubviews()`.
+    /// UITextView doesn't always propagate intrinsic-size invalidation through
+    /// the content layout guide on the same run-loop pass as `.text=`, so we
+    /// explicitly invalidate, force layout, then scroll.
+    static func followTail(
+        in scrollView: UIScrollView,
+        contentLabel: UIView
+    ) {
+        contentLabel.invalidateIntrinsicContentSize()
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+        scrollToBottom(scrollView, animated: false)
+    }
+
     static func isNearBottom(_ scrollView: UIScrollView) -> Bool {
         let inset = scrollView.adjustedContentInset
         let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
