@@ -221,7 +221,7 @@ final class ChatSessionManager {
     }
 
     private func beginFreshContentLagMeasurement(hadCache: Bool) {
-        freshContentLagStartMs = ChatMetricsService.nowMs()
+        freshContentLagStartMs = ChatSessionTelemetry.nowMs()
         freshContentLagRecorded = false
         loadedFromCacheAtConnect = hadCache
     }
@@ -231,26 +231,15 @@ final class ChatSessionManager {
               let startedAt = freshContentLagStartMs else { return }
 
         freshContentLagRecorded = true
-        let durationMs = max(0, ChatMetricsService.nowMs() - startedAt)
-        let metricSessionId = sessionId
-        let cachedTag = loadedFromCacheAtConnect ? "1" : "0"
-        let metricWorkspaceId = workspaceId
-        let transportTag = observedTransportPath.rawValue
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .freshContentLagMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: metricSessionId,
-                workspaceId: metricWorkspaceId,
-                tags: [
-                    "reason": reason,
-                    "cache": cachedTag,
-                    "transport": transportTag,
-                ]
-            )
-        }
+        let durationMs = max(0, ChatSessionTelemetry.nowMs() - startedAt)
+        ChatSessionTelemetry.recordFreshContentLag(
+            durationMs: durationMs,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            reason: reason,
+            cached: loadedFromCacheAtConnect,
+            transport: observedTransportPath.rawValue
+        )
     }
 
     // MARK: - Lifecycle
@@ -314,48 +303,35 @@ final class ChatSessionManager {
         transitionTo(.loadingCache)
 
         // Show cached timeline immediately (before network).
-        let cacheLoadStartMs = ChatMetricsService.nowMs()
+        let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
         let cached = await TimelineCache.shared.loadTrace(sessionId)
-        let cacheLoadDurationMs = max(0, ChatMetricsService.nowMs() - cacheLoadStartMs)
+        let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
         if let cached {
             latestTraceSignature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
         } else {
             latestTraceSignature = nil
         }
 
-        let metricSessionId = sessionId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .cacheLoadMs,
-                value: Double(cacheLoadDurationMs),
-                unit: .ms,
-                sessionId: metricSessionId,
-                tags: [
-                    "hit": cached != nil ? "1" : "0",
-                    "events": String(cached?.eventCount ?? 0),
-                ]
-            )
-        }
+        ChatSessionTelemetry.recordCacheLoad(
+            durationMs: cacheLoadDurationMs,
+            sessionId: sessionId,
+            hit: cached != nil,
+            eventCount: cached?.eventCount ?? 0
+        )
 
         if let cached, !cached.events.isEmpty {
             loadedFromCacheAtConnect = true
-            let reducerLoadStartMs = ChatMetricsService.nowMs()
+            let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
             reducer.loadSession(cached.events)
-            let reducerLoadDurationMs = max(0, ChatMetricsService.nowMs() - reducerLoadStartMs)
+            let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
 
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .reducerLoadMs,
-                    value: Double(reducerLoadDurationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    tags: [
-                        "source": "cache",
-                        "events": String(cached.eventCount),
-                        "items": String(await MainActor.run { reducer.items.count }),
-                    ]
-                )
-            }
+            ChatSessionTelemetry.recordReducerLoad(
+                durationMs: reducerLoadDurationMs,
+                sessionId: sessionId,
+                source: "cache",
+                eventCount: cached.eventCount,
+                itemCount: reducer.items.count
+            )
 
             let footprint = SentryService.currentFootprintMB()
             ClientLog.info("Memory", "Session loaded (cache)", metadata: [
@@ -388,7 +364,7 @@ final class ChatSessionManager {
             return
         }
 
-        let wsOpenStartMs = ChatMetricsService.nowMs()
+        let wsOpenStartMs = ChatSessionTelemetry.nowMs()
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
             transitionTo(.disconnected(reason: .fatalError))
@@ -445,19 +421,12 @@ final class ChatSessionManager {
                     let transportTag = connection.transportPath.rawValue
 
                     if let receivedAtMs = inboundMeta?.receivedAtMs {
-                        let dispatchLagMs = max(0, ChatMetricsService.nowMs() - receivedAtMs)
-                        let dispatchMetricSessionId = sessionId
-                        Task.detached(priority: .utility) {
-                            await ChatMetricsService.shared.record(
-                                metric: .connectedDispatchMs,
-                                value: Double(dispatchLagMs),
-                                unit: .ms,
-                                sessionId: dispatchMetricSessionId,
-                                tags: [
-                                    "transport": transportTag,
-                                ]
-                            )
-                        }
+                        let dispatchLagMs = max(0, ChatSessionTelemetry.nowMs() - receivedAtMs)
+                        ChatSessionTelemetry.recordConnectedDispatchLag(
+                            lagMs: dispatchLagMs,
+                            sessionId: sessionId,
+                            transport: transportTag
+                        )
 
                         if dispatchLagMs >= 1_000 {
                             ClientLog.error(
@@ -474,19 +443,12 @@ final class ChatSessionManager {
 
                     // Record time from WS open to first .connected message.
                     if !hasReceivedConnected {
-                        let wsConnectDurationMs = max(0, ChatMetricsService.nowMs() - wsOpenStartMs)
-                        let wsMetricSessionId = sessionId
-                        Task.detached(priority: .utility) {
-                            await ChatMetricsService.shared.record(
-                                metric: .wsConnectMs,
-                                value: Double(wsConnectDurationMs),
-                                unit: .ms,
-                                sessionId: wsMetricSessionId,
-                                tags: [
-                                    "transport": transportTag,
-                                ]
-                            )
-                        }
+                        let wsConnectDurationMs = max(0, ChatSessionTelemetry.nowMs() - wsOpenStartMs)
+                        ChatSessionTelemetry.recordWsConnect(
+                            durationMs: wsConnectDurationMs,
+                            sessionId: sessionId,
+                            transport: transportTag
+                        )
                     }
 
                     // Seed seq tracking from the server's current position.
@@ -563,7 +525,7 @@ final class ChatSessionManager {
                    command == "prompt" || command == "steer" || command == "follow_up",
                    pendingTTFTContext == nil {
                     pendingTTFTContext = PendingTTFTContext(
-                        startedAtMs: ChatMetricsService.nowMs(),
+                        startedAtMs: ChatSessionTelemetry.nowMs(),
                         tags: ttftModelTags(from: sessionStore)
                     )
                 }
@@ -575,19 +537,12 @@ final class ChatSessionManager {
                 if isTTFTCompletionSignal(message),
                    let pendingTTFTContext {
                     self.pendingTTFTContext = nil
-                    let nowMs = ChatMetricsService.nowMs()
-                    let ttftMs = max(0, nowMs - pendingTTFTContext.startedAtMs)
-                    let metricSessionId = sessionId
-                    let ttftTags = pendingTTFTContext.tags
-                    Task.detached(priority: .utility) {
-                        await ChatMetricsService.shared.record(
-                            metric: .ttftMs,
-                            value: Double(ttftMs),
-                            unit: .ms,
-                            sessionId: metricSessionId,
-                            tags: ttftTags
-                        )
-                    }
+                    let ttftMs = max(0, ChatSessionTelemetry.nowMs() - pendingTTFTContext.startedAtMs)
+                    ChatSessionTelemetry.recordTTFT(
+                        durationMs: ttftMs,
+                        sessionId: sessionId,
+                        tags: pendingTTFTContext.tags
+                    )
                 }
 
             case .idle, .loadingCache, .stopped, .disconnected:
@@ -759,20 +714,11 @@ final class ChatSessionManager {
     ) async -> CatchUpOutcome {
         guard generation == connectionGeneration else { return .noGap }
 
-        let catchupStartMs = ChatMetricsService.nowMs()
-        let metricSessionId = sessionId
+        let catchupStartMs = ChatSessionTelemetry.nowMs()
 
         let recordCatchupMs = { (result: String) in
-            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .catchupMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    tags: ["result": result]
-                )
-            }
+            let durationMs = max(0, ChatSessionTelemetry.nowMs() - catchupStartMs)
+            ChatSessionTelemetry.recordCatchup(durationMs: durationMs, sessionId: self.sessionId, result: result)
         }
 
         let decision = await connection.sessionStreamCoordinator.catchUpDecision(
@@ -849,27 +795,12 @@ final class ChatSessionManager {
                     sessionStore: sessionStore,
                     cachedSignature: nil
                 )
-                let ringMissSessionId = sessionId
-                Task.detached(priority: .utility) {
-                    await ChatMetricsService.shared.record(
-                        metric: .catchupRingMiss,
-                        value: 1,
-                        unit: .count,
-                        sessionId: ringMissSessionId
-                    )
-                }
+                ChatSessionTelemetry.recordCatchupRingMiss(sessionId: sessionId, missed: true)
                 recordCatchupMs("ring_miss")
                 return .fullReloadScheduled
             }
 
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .catchupRingMiss,
-                    value: 0,
-                    unit: .count,
-                    sessionId: self.sessionId
-                )
-            }
+            ChatSessionTelemetry.recordCatchupRingMiss(sessionId: sessionId, missed: false)
 
             var appliedCatchUp = false
             for event in response.events {
@@ -926,8 +857,7 @@ final class ChatSessionManager {
             return nil
         }
 
-        let loadStartedMs = ChatMetricsService.nowMs()
-        let metricSessionId = sessionId
+        let loadStartedMs = ChatSessionTelemetry.nowMs()
 
         do {
             let session: Session
@@ -975,25 +905,17 @@ final class ChatSessionManager {
                         log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
                         freshnessReason = "history_deferred"
                     } else {
-                        let reducerStartMs = ChatMetricsService.nowMs()
+                        let reducerStartMs = ChatSessionTelemetry.nowMs()
                         reducer.loadSession(trace)
-                        let reducerDurationMs = max(0, ChatMetricsService.nowMs() - reducerStartMs)
+                        let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
 
-                        let reducerMetricSessionId = self.sessionId
-                        let reducerItemCount = reducer.items.count
-                        Task.detached(priority: .utility) {
-                            await ChatMetricsService.shared.record(
-                                metric: .reducerLoadMs,
-                                value: Double(reducerDurationMs),
-                                unit: .ms,
-                                sessionId: reducerMetricSessionId,
-                                tags: [
-                                    "source": "history",
-                                    "events": String(trace.count),
-                                    "items": String(reducerItemCount),
-                                ]
-                            )
-                        }
+                        ChatSessionTelemetry.recordReducerLoad(
+                            durationMs: reducerDurationMs,
+                            sessionId: self.sessionId,
+                            source: "history",
+                            eventCount: trace.count,
+                            itemCount: reducer.items.count
+                        )
 
                         needsInitialScroll = true
                         let footprint = SentryService.currentFootprintMB()
@@ -1016,17 +938,13 @@ final class ChatSessionManager {
                 await TimelineCache.shared.saveTrace(self.sessionId, events: trace)
             }
 
-            let durationMs = max(0, ChatMetricsService.nowMs() - loadStartedMs)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .fullReloadMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    workspaceId: workspaceId,
-                    tags: ["traceEvents": String(trace.count)]
-                )
-            }
+            let durationMs = max(0, ChatSessionTelemetry.nowMs() - loadStartedMs)
+            ChatSessionTelemetry.recordFullReload(
+                durationMs: durationMs,
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                traceEventCount: trace.count
+            )
 
             return freshSignature
         } catch {
