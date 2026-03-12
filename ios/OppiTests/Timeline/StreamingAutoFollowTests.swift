@@ -114,42 +114,40 @@ struct ThinkingStreamingTailVisibilityTests {
 @MainActor
 struct ToolRowStreamingAutoFollowCallbackTests {
 
-    /// Code strategy must fire scroll callback on each streaming growth.
-    @Test("code strategy fires scroll callback on each streaming growth")
-    func codeStrategyCallbackOnEachGrowth() {
+    /// Code strategy must declare followTail on each streaming growth.
+    @Test("code strategy declares followTail on each streaming growth")
+    func codeStrategyFollowTailOnEachGrowth() {
         var state = makeCodeState()
-        var scrollCount = 0
 
-        renderCode("line 1\n", streaming: true, visible: false, state: &state) { scrollCount += 1 }
-        #expect(scrollCount == 1)
+        let r1 = renderCode("line 1\n", streaming: true, visible: false, state: &state)
+        #expect(r1.scrollBehavior == .followTail)
 
-        renderCode("line 1\nline 2\nline 3\n", streaming: true, visible: true, state: &state) { scrollCount += 1 }
-        #expect(scrollCount == 2)
+        let r2 = renderCode("line 1\nline 2\nline 3\n", streaming: true, visible: true, state: &state)
+        #expect(r2.scrollBehavior == .followTail)
 
-        renderCode("line 1\nline 2\nline 3\nline 4\nline 5\n", streaming: true, visible: true, state: &state) { scrollCount += 1 }
-        #expect(scrollCount == 3)
+        let r3 = renderCode("line 1\nline 2\nline 3\nline 4\nline 5\n", streaming: true, visible: true, state: &state)
+        #expect(r3.scrollBehavior == .followTail)
     }
 
-    /// Diff strategy must fire scroll callback on each streaming growth.
-    @Test("diff strategy fires scroll callback on each streaming growth")
-    func diffStrategyCallbackOnEachGrowth() {
+    /// Diff strategy must declare followTail on each streaming growth.
+    @Test("diff strategy declares followTail on each streaming growth")
+    func diffStrategyFollowTailOnEachGrowth() {
         var state = makeDiffState()
-        var scrollCount = 0
 
         let lines1: [DiffLine] = [
             DiffLine(kind: .context, text: "line 1"),
             DiffLine(kind: .added, text: "added"),
             DiffLine(kind: .context, text: "line 2"),
         ]
-        renderDiff(lines1, streaming: true, visible: false, state: &state) { scrollCount += 1 }
-        #expect(scrollCount == 1)
+        let r1 = renderDiff(lines1, streaming: true, visible: false, state: &state)
+        #expect(r1.scrollBehavior == .followTail)
 
         let lines2 = lines1 + [
             DiffLine(kind: .added, text: "another"),
             DiffLine(kind: .context, text: "line 3"),
         ]
-        renderDiff(lines2, streaming: true, visible: true, state: &state) { scrollCount += 1 }
-        #expect(scrollCount == 2)
+        let r2 = renderDiff(lines2, streaming: true, visible: true, state: &state)
+        #expect(r2.scrollBehavior == .followTail)
     }
 
     // MARK: - Code helpers
@@ -166,31 +164,30 @@ struct ToolRowStreamingAutoFollowCallbackTests {
         CodeState(label: UITextView(), scrollView: UIScrollView())
     }
 
+    @discardableResult
     private func renderCode(
         _ text: String,
         streaming: Bool,
         visible: Bool,
-        state: inout CodeState,
-        onScroll: @escaping () -> Void
-    ) {
-        _ = ToolRowCodeRenderStrategy.render(
+        state: inout CodeState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowCodeRenderStrategy.render(
             text: text,
             language: nil,
             startLine: 1,
             isStreaming: streaming,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.text,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.text,
+            previousAutoFollow: state.autoFollow,
             isCurrentModeCode: state.signature != nil,
-            wasExpandedVisible: visible,
-            showExpandedLabel: {},
-            setModeCode: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            wasExpandedVisible: visible
         )
+        state.signature = result.renderSignature
+        state.text = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 
     // MARK: - Diff helpers
@@ -207,30 +204,29 @@ struct ToolRowStreamingAutoFollowCallbackTests {
         DiffState(label: UITextView(), scrollView: UIScrollView())
     }
 
+    @discardableResult
     private func renderDiff(
         _ lines: [DiffLine],
         streaming: Bool,
         visible: Bool,
-        state: inout DiffState,
-        onScroll: @escaping () -> Void
-    ) {
-        _ = ToolRowDiffRenderStrategy.render(
+        state: inout DiffState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowDiffRenderStrategy.render(
             lines: lines,
             path: "file.swift",
             isStreaming: streaming,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.text,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.text,
+            previousAutoFollow: state.autoFollow,
             isCurrentModeDiff: state.signature != nil,
-            wasExpandedVisible: visible,
-            showExpandedLabel: {},
-            setModeDiff: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            wasExpandedVisible: visible
         )
+        state.signature = result.renderSignature
+        state.text = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 }
 

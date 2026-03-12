@@ -7,29 +7,19 @@ struct ToolRowMarkdownRenderStrategy {
         isStreaming: Bool,
         expandedMarkdownView: AssistantMarkdownContentView,
         expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
+        previousSignature: Int?,
+        previousRenderedText: String?,
+        previousAutoFollow: Bool,
         wasExpandedVisible: Bool,
         isUsingMarkdownLayout: Bool,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
-        textSelectionEnabled: Bool,
-        showExpandedMarkdown: () -> Void,
-        setModeText: () -> Void,
-        updateExpandedLabelWidthIfNeeded: () -> Void,
-        showExpandedViewport: () -> Void,
-        scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> ToolRowRenderVisibility {
+        textSelectionEnabled: Bool
+    ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text, isStreaming: isStreaming)
-        let shouldRerender = signature != expandedRenderSignature
+        let shouldRerender = signature != previousSignature
             || !isUsingMarkdownLayout
-        let previousRenderedText = expandedRenderedText
 
-        showExpandedMarkdown()
-
-        expandedRenderedText = text
-        updateExpandedLabelWidthIfNeeded()
         expandedMarkdownView.apply(configuration: .init(
             content: text,
             isStreaming: isStreaming,
@@ -38,30 +28,41 @@ struct ToolRowMarkdownRenderStrategy {
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext
         ))
-        if shouldRerender {
-            expandedRenderSignature = signature
-        }
 
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        setModeText()
-        showExpandedViewport()
-
-        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+        let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
             shouldRerender: shouldRerender,
             wasExpandedVisible: wasExpandedVisible,
             previousRenderedText: previousRenderedText,
             currentDisplayText: text,
-            expandedShouldAutoFollow: &expandedShouldAutoFollow,
-            expandedScrollView: expandedScrollView,
-            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+            currentAutoFollow: previousAutoFollow
         )
 
-        return ToolRowRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let scrollBehavior: ExpandedRenderOutput.ScrollBehavior
+        if shouldRerender {
+            if autoFollow {
+                scrollBehavior = .followTail
+            } else if !isStreaming {
+                scrollBehavior = .resetToTop
+            } else {
+                scrollBehavior = .preserve
+            }
+        } else {
+            scrollBehavior = .preserve
+        }
+
+        return ExpandedRenderOutput(
+            renderSignature: shouldRerender ? signature : previousSignature,
+            renderedText: text,
+            shouldAutoFollow: autoFollow,
+            surface: .markdown,
+            viewportMode: .text,
+            verticalLock: false,
+            scrollBehavior: scrollBehavior,
+            lineBreakMode: .byCharWrapping,
+            horizontalScroll: false,
+            deferredHighlight: nil,
+            invalidateLayout: shouldRerender || !isUsingMarkdownLayout
         )
     }
 }

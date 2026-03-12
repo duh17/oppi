@@ -66,20 +66,45 @@ enum ToolTimelineRowUIHelpers {
         scrollToBottom(scrollView, animated: false)
     }
 
-    /// Unified auto-follow logic for expanded tool content (code, diff, text).
+    /// Pure computation of auto-follow state after a render pass.
     ///
-    /// Determines whether to enable/disable auto-follow and whether to scroll
-    /// after a render pass. All three expanded strategies had near-identical
-    /// implementations with one accidental difference: diff disabled auto-follow
-    /// on non-continuation content during streaming (should re-enable for cell
-    /// reuse, like code and text do).
+    /// Used by strategies that return `ExpandedRenderOutput` — they call this
+    /// to determine the new auto-follow flag without side effects.
     ///
     /// Rules:
     /// - First render while streaming: enable
     /// - Streaming continuation: preserve current state (user scroll respected)
     /// - Cell reuse during streaming (non-continuation rerender): re-enable
     /// - Done: disable
-    /// - After rerender: follow tail if enabled, reset to top if done
+    static func computeAutoFollow(
+        isStreaming: Bool,
+        shouldRerender: Bool,
+        wasExpandedVisible: Bool,
+        previousRenderedText: String?,
+        currentDisplayText: String,
+        currentAutoFollow: Bool
+    ) -> Bool {
+        let isStreamingContinuation = previousRenderedText.map {
+            !$0.isEmpty && currentDisplayText.hasPrefix($0)
+        } ?? false
+
+        if isStreaming {
+            if !wasExpandedVisible || previousRenderedText == nil {
+                return true
+            } else if !isStreamingContinuation, shouldRerender {
+                return true
+            }
+            return currentAutoFollow
+        } else {
+            return false
+        }
+    }
+
+    /// Unified auto-follow logic for expanded tool content (code, diff, text).
+    ///
+    /// Determines whether to enable/disable auto-follow and whether to scroll
+    /// after a render pass. Delegates to `computeAutoFollow` for the pure
+    /// state computation, then applies the scroll side effects.
     static func applyExpandedAutoFollow(
         isStreaming: Bool,
         shouldRerender: Bool,
@@ -90,21 +115,14 @@ enum ToolTimelineRowUIHelpers {
         expandedScrollView: UIScrollView,
         scheduleFollowTail: () -> Void
     ) {
-        let isStreamingContinuation = previousRenderedText.map {
-            !$0.isEmpty && currentDisplayText.hasPrefix($0)
-        } ?? false
-
-        if isStreaming {
-            if !wasExpandedVisible || previousRenderedText == nil {
-                expandedShouldAutoFollow = true
-            } else if !isStreamingContinuation, shouldRerender {
-                // Non-continuation content during streaming = cell reuse.
-                expandedShouldAutoFollow = true
-            }
-            // Otherwise preserve current auto-follow state (user may have scrolled up).
-        } else {
-            expandedShouldAutoFollow = false
-        }
+        expandedShouldAutoFollow = computeAutoFollow(
+            isStreaming: isStreaming,
+            shouldRerender: shouldRerender,
+            wasExpandedVisible: wasExpandedVisible,
+            previousRenderedText: previousRenderedText,
+            currentDisplayText: currentDisplayText,
+            currentAutoFollow: expandedShouldAutoFollow
+        )
 
         if shouldRerender {
             if expandedShouldAutoFollow {

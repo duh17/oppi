@@ -1467,16 +1467,15 @@ private enum RoutedExpandedMode: Equatable {
 
 @MainActor
 private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> RoutedExpandedMode {
-    ToolTimelineRowExpandedModeRouter.route(
-        expandedContent: content,
-        renderBash: { _, _, _ in .bash },
-        renderDiff: { _, _ in .diff },
-        renderCode: { _, _, _ in .code },
-        renderMarkdown: { _ in .markdown },
-        renderPlot: { _, _ in .plot },
-        renderReadMedia: { _, _, _ in .readMedia },
-        renderText: { _, _ in .text }
-    )
+    switch content {
+    case .bash:                   return .bash
+    case .diff:                   return .diff
+    case .code:                   return .code
+    case .markdown:               return .markdown
+    case .plot:                   return .plot
+    case .readMedia:              return .readMedia
+    case .status, .text:          return .text
+    }
 }
 
 private func makeToolConfiguration(

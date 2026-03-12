@@ -5,43 +5,35 @@ struct ToolRowPlotRenderStrategy {
     static func render(
         spec: PlotChartSpec,
         fallbackText: String?,
-        expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
+        previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
         hasExpandedPlotContentView: Bool,
-        showExpandedHostedView: () -> Void,
-        installExpandedPlotView: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Void,
-        setModeText: () -> Void,
-        showExpandedViewport: () -> Void
-    ) -> ToolRowRenderVisibility {
+        installExpandedPlotView: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Void
+    ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.plotSignature(
             spec: spec,
             fallbackText: fallbackText
         )
-        let shouldReinstall = signature != expandedRenderSignature
+        let shouldReinstall = signature != previousSignature
             || !isUsingReadMediaLayout
             || !hasExpandedPlotContentView
 
-        showExpandedHostedView()
-        expandedRenderedText = fallbackText
         if shouldReinstall {
             installExpandedPlotView(spec, fallbackText)
-            expandedRenderSignature = signature
         }
 
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        setModeText()
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldReinstall { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
-
-        return ToolRowRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        return ExpandedRenderOutput(
+            renderSignature: shouldReinstall ? signature : previousSignature,
+            renderedText: fallbackText,
+            shouldAutoFollow: false,
+            surface: .hostedView,
+            viewportMode: .text,
+            verticalLock: false,
+            scrollBehavior: shouldReinstall ? .resetToTop : .preserve,
+            lineBreakMode: .byCharWrapping,
+            horizontalScroll: false,
+            deferredHighlight: nil,
+            invalidateLayout: false
         )
     }
 }
