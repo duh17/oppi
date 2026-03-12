@@ -4,6 +4,7 @@ server/dist/
 
 # iOS
 ios/build/
+ios/docs/
 ios/*.xcodeproj/
 ios/OppiMac/
 ios/OppiMacTests/
@@ -45,6 +46,8 @@ session-traces/
 *.tsbuildinfo
 *.tgz
 .DS_Store
+*.ips
+node_modules/
 server/coverage/
 
 # Screen recordings (large, accidental commits)
