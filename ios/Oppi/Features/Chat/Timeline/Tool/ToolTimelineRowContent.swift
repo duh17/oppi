@@ -1229,7 +1229,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
             selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
             selectedTextSourceContext: markdownSelectionEnabled
-                ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
+                ? selectedTextSessionId.flatMap { sessionId in
+                    ToolTimelineRowSelectedTextSupport.sourceContext(
+                        surface: .expandedMarkdown,
+                        expandedContent: .markdown(text: text),
+                        sessionId: sessionId,
+                        sourceLabel: currentConfiguration.title,
+                        expandedLabelText: nil
+                    )
+                }
                 : nil,
             textSelectionEnabled: markdownSelectionEnabled,
             showExpandedMarkdown: showExpandedMarkdown,
@@ -1380,120 +1388,63 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showExpandedContainer: Bool,
         expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     ) {
-        let commandSelectionEnabled = showCommandContainer
-            && plan.interactionSpec.commandSelectionEnabled
-            && selectedTextSourceContext(for: commandLabel, expandedContent: expandedContent) != nil
-        commandLabel.isSelectable = commandSelectionEnabled
-        commandDoubleTapGesture.isEnabled = !commandSelectionEnabled
-        commandSingleTapBlocker.isEnabled = !commandSelectionEnabled
+        let hasSession = selectedTextPiRouter != nil && selectedTextSessionId != nil
+        let hasExpandedContext = hasSession && {
+            guard let sessionId = selectedTextSessionId else { return false }
+            return ToolTimelineRowSelectedTextSupport.sourceContext(
+                surface: .expandedLabel,
+                expandedContent: expandedContent,
+                sessionId: sessionId,
+                sourceLabel: currentConfiguration.title,
+                expandedLabelText: expandedLabel.text ?? expandedLabel.attributedText?.string
+            ) != nil
+        }()
 
-        let outputSelectionEnabled = showOutputContainer
-            && plan.interactionSpec.outputSelectionEnabled
-            && selectedTextSourceContext(for: outputLabel, expandedContent: expandedContent) != nil
-        outputLabel.isSelectable = outputSelectionEnabled
-        outputDoubleTapGesture.isEnabled = !outputSelectionEnabled
-        outputSingleTapBlocker.isEnabled = !outputSelectionEnabled
+        let flags = ToolTimelineRowSelectedTextSupport.selectionFlags(
+            spec: plan.interactionSpec,
+            showCommand: showCommandContainer,
+            showOutput: showOutputContainer,
+            showExpanded: showExpandedContainer,
+            hasCommandContext: hasSession,
+            hasOutputContext: hasSession,
+            hasExpandedContext: hasExpandedContext,
+            hasMarkdownContext: hasSession,
+            isMarkdownLayout: expandedUsesMarkdownLayout,
+            isReadMediaLayout: expandedUsesReadMediaLayout
+        )
 
-        let expandedSelectionEnabled = showExpandedContainer
-            && !expandedUsesReadMediaLayout
-            && plan.interactionSpec.expandedLabelSelectionEnabled
-            && selectedTextSourceContext(for: expandedLabel, expandedContent: expandedContent) != nil
-        expandedLabel.isSelectable = expandedSelectionEnabled
+        commandLabel.isSelectable = flags.commandSelectable
+        commandDoubleTapGesture.isEnabled = !flags.commandSelectable
+        commandSingleTapBlocker.isEnabled = !flags.commandSelectable
 
-        let markdownSelectionEnabled = showExpandedContainer
-            && expandedUsesMarkdownLayout
-            && plan.interactionSpec.markdownSelectionEnabled
-            && selectedTextPiRouter != nil
-            && selectedTextSessionId != nil
+        outputLabel.isSelectable = flags.outputSelectable
+        outputDoubleTapGesture.isEnabled = !flags.outputSelectable
+        outputSingleTapBlocker.isEnabled = !flags.outputSelectable
 
-        if markdownSelectionEnabled || expandedSelectionEnabled {
+        expandedLabel.isSelectable = flags.expandedLabelSelectable
+
+        if flags.disableGestureInterception {
             setExpandedContainerTapCopyGestureEnabled(false)
             expandedPinchGesture.isEnabled = false
         }
     }
 
-    private func selectedTextSourceContext(
-        for textView: UITextView,
-        expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil
-    ) -> SelectedTextSourceContext? {
-        guard selectedTextPiRouter != nil,
-              let sessionId = selectedTextSessionId else {
+    private func resolveSelectedTextSourceContext(for textView: UITextView) -> SelectedTextSourceContext? {
+        guard let sessionId = selectedTextSessionId,
+              selectedTextPiRouter != nil else {
             return nil
         }
-
-        if textView === commandLabel {
-            return SelectedTextSourceContext(
-                sessionId: sessionId,
-                surface: .toolCommand,
-                sourceLabel: currentConfiguration.title
-            )
-        }
-
-        if textView === outputLabel {
-            return SelectedTextSourceContext(
-                sessionId: sessionId,
-                surface: .toolOutput,
-                sourceLabel: currentConfiguration.title
-            )
-        }
-
-        guard textView === expandedLabel,
-              let expandedContent else {
-            return nil
-        }
-
-        switch expandedContent {
-        case .code(_, let language, let startLine, let filePath):
-            let lineRange: ClosedRange<Int>?
-            if let startLine {
-                let lineCount = max(1, (expandedLabel.text ?? expandedLabel.attributedText?.string ?? "").components(separatedBy: "\n").count)
-                lineRange = startLine...(startLine + lineCount - 1)
-            } else {
-                lineRange = nil
-            }
-            return SelectedTextSourceContext(
-                sessionId: sessionId,
-                surface: .toolExpandedText,
-                sourceLabel: currentConfiguration.title,
-                filePath: filePath,
-                lineRange: lineRange,
-                languageHint: language?.displayName
-            )
-
-        case .diff(_, let path):
-            return SelectedTextSourceContext(
-                sessionId: sessionId,
-                surface: .toolExpandedText,
-                sourceLabel: currentConfiguration.title,
-                filePath: path
-            )
-
-        case .text(_, let language):
-            return SelectedTextSourceContext(
-                sessionId: sessionId,
-                surface: .toolExpandedText,
-                sourceLabel: currentConfiguration.title,
-                languageHint: language?.displayName
-            )
-
-        case .bash, .markdown, .plot, .readMedia, .status:
-            return nil
-        }
-    }
-
-    private func expandedMarkdownSelectedTextSourceContext(
-        for content: ToolPresentationBuilder.ToolExpandedContent
-    ) -> SelectedTextSourceContext? {
-        guard selectedTextPiRouter != nil,
-              let sessionId = selectedTextSessionId else {
-            return nil
-        }
-
-        guard case .markdown = content else { return nil }
-        return SelectedTextSourceContext(
+        let surface: ToolTimelineRowSelectedTextSupport.Surface
+        if textView === commandLabel { surface = .command }
+        else if textView === outputLabel { surface = .output }
+        else if textView === expandedLabel { surface = .expandedLabel }
+        else { return nil }
+        return ToolTimelineRowSelectedTextSupport.sourceContext(
+            surface: surface,
+            expandedContent: currentConfiguration.expandedContent,
             sessionId: sessionId,
-            surface: .toolExpandedText,
-            sourceLabel: currentConfiguration.title
+            sourceLabel: currentConfiguration.title,
+            expandedLabelText: expandedLabel.text ?? expandedLabel.attributedText?.string
         )
     }
 
@@ -1844,7 +1795,7 @@ extension ToolTimelineRowContentView: UITextViewDelegate {
             range: range,
             suggestedActions: suggestedActions,
             router: selectedTextPiRouter,
-            sourceContext: selectedTextSourceContext(for: textView, expandedContent: currentConfiguration.expandedContent)
+            sourceContext: resolveSelectedTextSourceContext(for: textView)
         )
     }
 }
