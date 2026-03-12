@@ -56,8 +56,15 @@ export interface SessionChangeStats {
   changedFilesOverflow?: number;
   /** Best-effort aggregate line additions (from edit/write args). */
   addedLines: number;
-  /** Best-effort aggregate line removals (from edit args). */
+  /** Best-effort aggregate line removals (from edit/write args). */
   removedLines: number;
+  /**
+   * @internal Per-file line count tracking for accurate write deltas.
+   * Maps file path → last known line count so repeated writes to the same
+   * file compute a delta instead of counting the full content as added.
+   * Persisted to disk but ignored by iOS (unknown Codable keys are skipped).
+   */
+  _fileLineCounts?: Record<string, number>;
 }
 
 export interface Session {

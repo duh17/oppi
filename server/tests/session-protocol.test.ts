@@ -393,7 +393,7 @@ describe("session-protocol state mutation helpers", () => {
       newText: "line1\nline2\nline3",
     });
 
-    expect(session.changeStats).toEqual({
+    expect(session.changeStats).toMatchObject({
       mutatingToolCalls: 2,
       filesChanged: 1,
       changedFiles: ["src/a.ts"],
