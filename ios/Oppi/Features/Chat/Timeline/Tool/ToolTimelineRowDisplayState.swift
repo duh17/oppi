@@ -97,42 +97,6 @@ enum ToolTimelineRowDisplayState {
         return showPreview
     }
 
-    static func resetCommandState(
-        commandLabel: UITextView,
-        commandRenderSignature: inout Int?
-    ) {
-        commandLabel.attributedText = nil
-        commandLabel.text = nil
-        commandLabel.textColor = UIColor(Color.themeFg)
-        commandRenderSignature = nil
-    }
-
-    static func resetOutputState(
-        outputLabel: UITextView,
-        outputScrollView: UIScrollView,
-        outputViewportHeightConstraint: NSLayoutConstraint?,
-        outputColor: UIColor,
-        outputUsesUnwrappedLayout: inout Bool,
-        outputRenderedText: inout String?,
-        outputRenderSignature: inout Int?,
-        outputUsesViewport: inout Bool,
-        outputShouldAutoFollow: inout Bool
-    ) {
-        outputLabel.attributedText = nil
-        outputLabel.text = nil
-        outputLabel.textColor = outputColor
-        outputLabel.textContainer.lineBreakMode = .byCharWrapping
-        outputScrollView.alwaysBounceHorizontal = false
-        outputScrollView.showsHorizontalScrollIndicator = false
-        outputUsesUnwrappedLayout = false
-        outputRenderedText = nil
-        outputRenderSignature = nil
-        outputViewportHeightConstraint?.isActive = false
-        outputUsesViewport = false
-        outputShouldAutoFollow = true
-        ToolTimelineRowUIHelpers.resetScrollPosition(outputScrollView)
-    }
-
     static func applyContainerVisibility(
         _ container: UIView,
         shouldShow: Bool,

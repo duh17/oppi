@@ -10,7 +10,7 @@ extension ToolTimelineRowContentView {
     }
 
     func performOutputActivation() {
-        performOutputFullScreenOrCopy(feedbackView: outputContainer)
+        performOutputFullScreenOrCopy(feedbackView: bashToolRowView.outputContainer)
     }
 
     func performExpandedActivation() {

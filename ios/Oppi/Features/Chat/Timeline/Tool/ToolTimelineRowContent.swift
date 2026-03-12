@@ -72,7 +72,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
     private static let maxValidHeight: CGFloat = 10_000
-    private static let minOutputViewportHeight: CGFloat = 56
+    static let minOutputViewportHeight: CGFloat = 56
     private static let minDiffViewportHeight: CGFloat = 68
     private static let maxOutputViewportHeight: CGFloat = 620
     private static let maxDiffViewportHeight: CGFloat = 760
@@ -147,11 +147,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let trailingLabel = UILabel()
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
-    private let commandContainer = UIView()
-    private let commandLabel = UITextView()
-    let outputContainer = UIView()
-    private let outputScrollView = HorizontalPanPassthroughScrollView()
-    private let outputLabel = UITextView()
+    let bashToolRowView = BashToolRowView()
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
@@ -162,12 +158,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let imagePreviewImageView = UIImageView()
     private let borderView = UIView()
 
+    // MARK: - Mirror-reflection forwarding for test compatibility
+    // These lazy stored properties alias BashToolRowView's internal surfaces.
+    // Stored (not computed) so Mirror(reflecting: self).children finds them by name.
+
+    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
+    private lazy var commandContainer: UIView = bashToolRowView.commandContainer
+    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
+    private lazy var outputContainer: UIView = bashToolRowView.outputContainer
+    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
+    private lazy var outputScrollView: HorizontalPanPassthroughScrollView = bashToolRowView.outputScrollView
+    // periphery:ignore - selected-text delegate + ToolRowContentViewTests
+    private lazy var commandLabel: UITextView = bashToolRowView.commandLabel
+    // periphery:ignore - selected-text delegate
+    private lazy var outputLabel: UITextView = bashToolRowView.outputLabel
+
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
-    private var outputViewportHeightConstraint: NSLayoutConstraint?
-    private var outputLabelWidthConstraint: NSLayoutConstraint?
-    private var outputLabelHeightLockConstraint: NSLayoutConstraint?
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
     private var expandedLabelHeightLockConstraint: NSLayoutConstraint?
@@ -178,15 +186,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var toolWidthConstraint: NSLayoutConstraint?
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
-    private var outputShouldAutoFollow = true
     var expandedShouldAutoFollow = true
-    private var outputUsesViewport = false
-    private var outputUsesUnwrappedLayout = false
-    var outputRenderedText: String? {
-        didSet { outputWidthEstimateCache.invalidate(); outputViewportHeightCache.invalidate() }
-    }
-    private var commandRenderSignature: Int?
-    var outputRenderSignature: Int?
     var expandedRenderSignature: Int?
     private var expandedUsesViewport = false
     var expandedUsesMarkdownLayout = false
@@ -201,9 +201,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedRenderedText: String? {
         didSet { expandedWidthEstimateCache.invalidate(); expandedViewportHeightCache.invalidate() }
     }
-    private var outputWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
     private var expandedWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
-    private var outputViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
     private let fullScreenTerminalStream: TerminalTraceStream
@@ -319,7 +317,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        updateOutputLabelWidthIfNeeded()
+        bashToolRowView.updateOutputLabelWidthIfNeeded()
         updateExpandedLabelWidthIfNeeded()
         updateExpandedMarkdownWidthIfNeeded()
         updateExpandedReadMediaWidthIfNeeded()
@@ -331,23 +329,26 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateViewportHeightsIfNeeded() {
         let isStreaming = !currentConfiguration.isDone
 
-        if outputUsesViewport,
-           let outputViewportHeightConstraint {
+        if bashToolRowView.outputUsesViewport,
+           let outputViewportHeightConstraint = bashToolRowView.outputViewportHeightConstraint {
             let mode: ViewportMode = .output
             if isStreaming {
-                // Fixed viewport during streaming — only contentOffset moves inside.
                 outputViewportHeightConstraint.constant = streamingConstrainedHeight(for: mode)
             } else {
                 outputViewportHeightConstraint.constant = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
-                    cache: &outputViewportHeightCache,
-                    signature: outputRenderSignature,
-                    widthBucket: Int(outputContainer.bounds.width.rounded()),
+                    cache: &bashToolRowView.outputViewportHeightCache,
+                    signature: bashToolRowView.outputRenderSignature,
+                    widthBucket: Int(bashToolRowView.outputContainer.bounds.width.rounded()),
                     mode: mode,
-                    inputBytes: outputRenderedText?.utf8.count ?? 0,
+                    inputBytes: bashToolRowView.outputRenderedText?.utf8.count ?? 0,
                     profile: currentOutputViewportProfile,
                     availableHeight: availableViewportHeight(for: mode)
                 ) {
-                    preferredViewportHeight(for: outputLabel, in: outputContainer, mode: mode)
+                    self.preferredViewportHeight(
+                        for: self.bashToolRowView.outputLabel,
+                        in: self.bashToolRowView.outputContainer,
+                        mode: mode
+                    )
                 }
             }
         }
@@ -396,31 +397,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return max(mode.minHeight, min(Self.streamingViewportHeight, available))
     }
 
-    private func updateOutputLabelWidthIfNeeded() {
-        guard let outputLabelWidthConstraint else { return }
-
-        if outputUsesUnwrappedLayout,
-           let outputRenderedText {
-            outputLabelWidthConstraint.priority = .required
-            outputLabelWidthConstraint.constant = outputLabelWidthConstant(for: outputRenderedText)
-        } else {
-            // First self-sizing pass can see frameLayoutGuide width=0.
-            // Keep wrapped-text width at high (not required) priority so
-            // systemLayoutSizeFitting can inject a temporary fitting width.
-            outputLabelWidthConstraint.priority = .defaultHigh
-            outputLabelWidthConstraint.constant = -12
-        }
-    }
-
-    private func outputLabelWidthConstant(for renderedText: String) -> CGFloat {
-        ToolTimelineRowLayoutPerformance.monospaceWidthConstant(
-            frameWidth: max(1, outputScrollView.bounds.width),
-            renderedText: renderedText,
-            cache: &outputWidthEstimateCache,
-            metricMode: "output"
-        )
-    }
-
     func updateExpandedLabelWidthIfNeeded() {
         guard let expandedLabelWidthConstraint else { return }
 
@@ -463,17 +439,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaWidthConstraint.constant = -12
     }
 
-    private func setOutputVerticalLockEnabled(_ enabled: Bool) {
-        outputLabelHeightLockConstraint?.isActive = enabled
-    }
-
     func setExpandedVerticalLockEnabled(_ enabled: Bool) {
         expandedLabelHeightLockConstraint?.isActive = enabled
     }
 
     private var currentOutputViewportProfile: ToolTimelineRowViewportProfile? {
-        guard outputUsesViewport else { return nil }
-        return ToolTimelineRowViewportProfile(kind: .bashOutput, text: outputRenderedText)
+        guard bashToolRowView.outputUsesViewport else { return nil }
+        return ToolTimelineRowViewportProfile(kind: .bashOutput, text: bashToolRowView.outputRenderedText)
     }
 
     private var currentExpandedViewportProfile: ToolTimelineRowViewportProfile? {
@@ -534,8 +506,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             // Width constraint is relative to frameLayoutGuide width.
             width = max(1, frameWidth + widthConstraint.constant)
         } else if mode == .output,
-                  outputUsesUnwrappedLayout,
-                  let widthConstraint = outputLabelWidthConstraint,
+                  bashToolRowView.outputUsesUnwrappedLayout,
+                  let widthConstraint = bashToolRowView.outputLabelWidthConstraint,
                   widthConstraint.constant > 1 {
             let frameWidth = outputScrollView.bounds.width > 10
                 ? outputScrollView.bounds.width
@@ -816,16 +788,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             trailingLabel: trailingLabel
         )
         ToolTimelineRowViewStyler.stylePreviewLabel(previewLabel)
-        ToolTimelineRowViewStyler.styleCommand(
-            commandContainer: commandContainer,
-            commandLabel: commandLabel
-        )
-        ToolTimelineRowViewStyler.styleOutput(
-            outputContainer: outputContainer,
-            outputScrollView: outputScrollView,
-            outputLabel: outputLabel,
-            delegate: self
-        )
         ToolTimelineRowViewStyler.styleExpanded(
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
@@ -835,6 +797,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             delegate: self
         )
 
+        // Bash views (commandLabel/outputLabel) are styled by BashToolRowView.
+        // Set UITextViewDelegate here for selected-text edit-menu integration.
         commandLabel.delegate = self
         outputLabel.delegate = self
         expandedLabel.delegate = self
@@ -862,9 +826,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             )
         )
 
-        commandContainer.addSubview(commandLabel)
-        outputContainer.addSubview(outputScrollView)
-        outputScrollView.addSubview(outputLabel)
         expandedContainer.addSubview(expandedScrollView)
         expandedScrollView.addSubview(expandedSurfaceHostView)
         expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
@@ -872,10 +833,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
-        bodyStack.addArrangedSubview(commandContainer)
-        bodyStack.addArrangedSubview(outputContainer)
+        bodyStack.addArrangedSubview(bashToolRowView)
         bodyStack.addArrangedSubview(expandedContainer)
 
+        // Gesture recognizers for bash containers (accessed via lazy vars).
         commandContainer.isUserInteractionEnabled = true
         outputContainer.isUserInteractionEnabled = true
         expandedContainer.isUserInteractionEnabled = true
@@ -907,11 +868,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             titleLabel: titleLabel,
             trailingStack: trailingStack,
             bodyStack: bodyStack,
-            commandContainer: commandContainer,
-            commandLabel: commandLabel,
-            outputContainer: outputContainer,
-            outputScrollView: outputScrollView,
-            outputLabel: outputLabel,
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
             expandedSurfaceHostView: expandedSurfaceHostView,
@@ -920,7 +876,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedReadMediaContainer: expandedReadMediaContainer,
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView,
-            minOutputViewportHeight: Self.minOutputViewportHeight,
             minDiffViewportHeight: Self.minDiffViewportHeight,
             collapsedImagePreviewHeight: Self.collapsedImagePreviewHeight
         )
@@ -929,14 +884,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         toolWidthConstraint = layout.toolWidth
         titleLeadingToStatusConstraint = layout.titleLeadingToStatus
         titleLeadingToToolConstraint = layout.titleLeadingToTool
-        outputLabelWidthConstraint = layout.outputLabelWidth
-        outputLabelHeightLockConstraint = layout.outputLabelHeightLock
         expandedLabelWidthConstraint = layout.expandedLabelWidth
         expandedLabelHeightLockConstraint = layout.expandedLabelHeightLock
         expandedMarkdownWidthConstraint = layout.expandedMarkdownWidth
         expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
         imagePreviewHeightConstraint = layout.imagePreviewHeight
-        outputViewportHeightConstraint = layout.outputViewportHeight
         expandedViewportHeightConstraint = layout.expandedViewportHeight
 
         // During the first self-sizing measurement pass, scroll view frame
@@ -1005,7 +957,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let wasOutputVisible = !outputContainer.isHidden
 
         // Reset follow-tail flags; render strategies will set them if needed.
-        outputNeedsFollowTail = false
         expandedNeedsFollowTail = false
 
         // Reset gesture interception (specific cases disable it below)
@@ -1097,10 +1048,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
 
         if !showCommandContainer {
-            ToolTimelineRowDisplayState.resetCommandState(
-                commandLabel: commandLabel,
-                commandRenderSignature: &commandRenderSignature
-            )
+            bashToolRowView.resetCommandState()
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
             commandContainer,
@@ -1110,38 +1058,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
 
         if !showOutputContainer {
-            // Do not pass stored properties by `inout` directly here.
-            // resetOutputState() programmatically updates contentOffset, which
-            // synchronously triggers scrollViewDidScroll and can re-enter
-            // outputShouldAutoFollow mutation while inout access is active.
-            var localOutputUsesUnwrappedLayout = outputUsesUnwrappedLayout
-            var localOutputRenderedText = outputRenderedText
-            var localOutputRenderSignature = outputRenderSignature
-            var localOutputUsesViewport = outputUsesViewport
-            var localOutputShouldAutoFollow = outputShouldAutoFollow
-
-            ToolTimelineRowDisplayState.resetOutputState(
-                outputLabel: outputLabel,
-                outputScrollView: outputScrollView,
-                outputViewportHeightConstraint: outputViewportHeightConstraint,
-                outputColor: outputColor,
-                outputUsesUnwrappedLayout: &localOutputUsesUnwrappedLayout,
-                outputRenderedText: &localOutputRenderedText,
-                outputRenderSignature: &localOutputRenderSignature,
-                outputUsesViewport: &localOutputUsesViewport,
-                outputShouldAutoFollow: &localOutputShouldAutoFollow
-            )
-
-            outputUsesUnwrappedLayout = localOutputUsesUnwrappedLayout
-            outputRenderedText = localOutputRenderedText
-            outputRenderSignature = localOutputRenderSignature
-            outputUsesViewport = localOutputUsesViewport
-            outputShouldAutoFollow = localOutputShouldAutoFollow
-
-            updateOutputLabelWidthIfNeeded()
+            // resetOutputState() resets contentOffset, which synchronously triggers
+            // scrollViewDidScroll inside BashToolRowView — no exclusivity hazard
+            // since all state is now internal to BashToolRowView.
+            bashToolRowView.resetOutputState(outputColor: outputColor)
+            bashToolRowView.updateOutputLabelWidthIfNeeded()
             outputScrollView.isScrollEnabled = false
-            setOutputVerticalLockEnabled(false)
+            bashToolRowView.setOutputVerticalLockEnabled(false)
         }
+        // Also hide the bash container when neither command nor output shows.
+        bashToolRowView.isHidden = !showCommandContainer && !showOutputContainer
         ToolTimelineRowDisplayState.applyContainerVisibility(
             outputContainer,
             shouldShow: showOutputContainer,
@@ -1200,56 +1126,34 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         wasOutputVisible: Bool
     ) -> ExpandedRenderVisibility {
         cancelDeferredCodeHighlight()
+        hideExpandedContainer(outputColor: outputColor)
 
-        var localCommandRenderSignature = commandRenderSignature
-        var localOutputRenderSignature = outputRenderSignature
-        var localOutputRenderedText = outputRenderedText
-        var localOutputUsesUnwrappedLayout = outputUsesUnwrappedLayout
-        var localOutputUsesViewport = outputUsesViewport
-        var localOutputShouldAutoFollow = outputShouldAutoFollow
-        var outputDidTextChange = false
-
-        let visibility = ToolRowBashRenderStrategy.render(
+        let input = BashRenderInput(
             command: command,
             output: output,
             unwrapped: unwrapped,
             isError: configuration.isError,
-            isStreaming: !configuration.isDone,
+            isStreaming: !configuration.isDone
+        )
+        let result = bashToolRowView.apply(
+            input: input,
             outputColor: outputColor,
             commandTextColor: UIColor(Color.themeFg),
-            wasOutputVisible: wasOutputVisible,
-            commandLabel: commandLabel,
-            outputLabel: outputLabel,
-            outputScrollView: outputScrollView,
-            commandRenderSignature: &localCommandRenderSignature,
-            outputRenderSignature: &localOutputRenderSignature,
-            outputRenderedText: &localOutputRenderedText,
-            outputUsesUnwrappedLayout: &localOutputUsesUnwrappedLayout,
-            outputUsesViewport: &localOutputUsesViewport,
-            outputShouldAutoFollow: &localOutputShouldAutoFollow,
-            outputDidTextChange: &outputDidTextChange,
-            outputViewportHeightConstraint: outputViewportHeightConstraint,
-            hideExpandedContainer: { self.hideExpandedContainer(outputColor: outputColor) }
+            wasOutputVisible: wasOutputVisible
         )
 
-        commandRenderSignature = localCommandRenderSignature
-        outputRenderSignature = localOutputRenderSignature
-        outputRenderedText = localOutputRenderedText
-        outputUsesUnwrappedLayout = localOutputUsesUnwrappedLayout
-        outputUsesViewport = localOutputUsesViewport
-        outputShouldAutoFollow = localOutputShouldAutoFollow
-
-        if visibility.showOutputContainer {
-            setOutputVerticalLockEnabled(localOutputUsesUnwrappedLayout)
-            updateOutputLabelWidthIfNeeded()
+        if result.showOutput {
+            bashToolRowView.setOutputVerticalLockEnabled(bashToolRowView.outputUsesUnwrappedLayout)
+            bashToolRowView.updateOutputLabelWidthIfNeeded()
         } else {
-            setOutputVerticalLockEnabled(false)
-        }
-        if outputDidTextChange {
-            scheduleOutputAutoScrollToBottomIfNeeded()
+            bashToolRowView.setOutputVerticalLockEnabled(false)
         }
 
-        return visibility
+        return ToolRowRenderVisibility(
+            showExpandedContainer: false,
+            showCommandContainer: result.showCommand,
+            showOutputContainer: result.showOutput
+        )
     }
 
     private func renderExpandedDiffMode(
@@ -1612,10 +1516,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputScrollView.alwaysBounceHorizontal = spec.allowsHorizontalScroll
             outputScrollView.showsHorizontalScrollIndicator = spec.allowsHorizontalScroll
             outputScrollView.isScrollEnabled = unwrapped
-            setOutputVerticalLockEnabled(unwrapped)
+            bashToolRowView.setOutputVerticalLockEnabled(unwrapped)
         } else {
             outputScrollView.isScrollEnabled = false
-            setOutputVerticalLockEnabled(false)
+            bashToolRowView.setOutputVerticalLockEnabled(false)
         }
     }
 
@@ -1664,7 +1568,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     @objc private func handleCommandDoubleTap() {
         guard let text = commandCopyText else { return }
-        copy(text: text, feedbackView: commandContainer)
+        copy(text: text, feedbackView: bashToolRowView.commandContainer)
     }
 
     @objc private func handleImagePreviewTap() {
@@ -1854,13 +1758,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Flags set by render strategies during apply(). Consumed at the end of
     /// apply() after container visibility is established and bounds are valid.
-    private var outputNeedsFollowTail = false
     private var expandedNeedsFollowTail = false
-
-    private func scheduleOutputAutoScrollToBottomIfNeeded() {
-        guard outputShouldAutoFollow else { return }
-        outputNeedsFollowTail = true
-    }
 
     func scheduleExpandedAutoScrollToBottomIfNeeded() {
         guard expandedShouldAutoFollow else { return }
@@ -1869,13 +1767,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Called at the end of apply() after containers are visible and have bounds.
     private func flushPendingFollowTail() {
-        if outputNeedsFollowTail, !outputContainer.isHidden {
-            ToolTimelineRowUIHelpers.followTail(
-                in: outputScrollView,
-                contentLabel: outputLabel
-            )
-            outputNeedsFollowTail = false
-        }
+        bashToolRowView.flushFollowTail()
         if expandedNeedsFollowTail, !expandedContainer.isHidden {
             let label: UIView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
             ToolTimelineRowUIHelpers.followTail(
@@ -1905,15 +1797,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     #endif
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        if scrollView === outputScrollView {
-            if outputLabelHeightLockConstraint?.isActive == true {
-                let lockedY = -outputScrollView.adjustedContentInset.top
-                if abs(outputScrollView.contentOffset.y - lockedY) > 0.5 {
-                    outputScrollView.contentOffset.y = lockedY
-                }
-            }
-            outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(outputScrollView)
-        } else if scrollView === expandedScrollView {
+        // outputScrollView scroll events are handled by BashToolRowView (its own delegate).
+        if scrollView === expandedScrollView {
             if expandedLabelHeightLockConstraint?.isActive == true {
                 let lockedY = -expandedScrollView.adjustedContentInset.top
                 if abs(expandedScrollView.contentOffset.y - lockedY) > 0.5 {

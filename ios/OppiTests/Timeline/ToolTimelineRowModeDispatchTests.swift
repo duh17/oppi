@@ -111,8 +111,9 @@ struct ToolTimelineRowModeDispatchTests {
             _ = fittedSize(for: view, width: 360)
 
             let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
-            let commandContainer = try #require(privateView(named: "commandContainer", in: view))
-            let outputContainer = try #require(privateView(named: "outputContainer", in: view))
+            // bash containers are inside BashToolRowView; access directly
+            let commandContainer: UIView = view.bashToolRowView.commandContainer
+            let outputContainer: UIView = view.bashToolRowView.outputContainer
 
             #expect(
                 expandedContainer.isHidden == !testCase.expected.expanded,
@@ -258,7 +259,8 @@ struct ToolTimelineRowModeDispatchTests {
             isExpanded: true
         ))
         _ = fittedSize(for: bashWrapped, width: 360)
-        let wrappedOutputScroll = try #require(privateScrollView(named: "outputScrollView", in: bashWrapped))
+        // outputScrollView is inside BashToolRowView; access directly
+        let wrappedOutputScroll = bashWrapped.bashToolRowView.outputScrollView
         #expect(!wrappedOutputScroll.isScrollEnabled)
 
         let bashUnwrapped = ToolTimelineRowContentView(configuration: makeToolConfiguration(
@@ -267,7 +269,7 @@ struct ToolTimelineRowModeDispatchTests {
             isExpanded: true
         ))
         _ = fittedSize(for: bashUnwrapped, width: 360)
-        let unwrappedOutputScroll = try #require(privateScrollView(named: "outputScrollView", in: bashUnwrapped))
+        let unwrappedOutputScroll = bashUnwrapped.bashToolRowView.outputScrollView
         #expect(unwrappedOutputScroll.isScrollEnabled)
     }
 
@@ -373,7 +375,8 @@ struct ToolTimelineRowModeDispatchTests {
         ))
         _ = fittedSize(for: bashView, width: 360)
 
-        let output = try #require(privateScrollView(named: "outputScrollView", in: bashView))
+        // outputScrollView is inside BashToolRowView; access directly
+        let output = bashView.bashToolRowView.outputScrollView
         #expect(output is HorizontalPanPassthroughScrollView)
     }
 
@@ -434,7 +437,8 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: initial)
         _ = fittedSize(for: view, width: 360)
 
-        let outputScrollView = try #require(privateScrollView(named: "outputScrollView", in: view))
+        // outputScrollView is inside BashToolRowView; access directly
+        let outputScrollView = view.bashToolRowView.outputScrollView
         outputScrollView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
 
         // Reconfiguring to empty output triggers resetOutputState(), which
