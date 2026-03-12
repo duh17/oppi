@@ -1138,7 +1138,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let result = bashToolRowView.apply(
             input: input,
             outputColor: outputColor,
-            commandTextColor: UIColor(Color.themeFg),
             wasOutputVisible: wasOutputVisible
         )
 
