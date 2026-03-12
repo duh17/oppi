@@ -66,6 +66,55 @@ enum ToolTimelineRowUIHelpers {
         scrollToBottom(scrollView, animated: false)
     }
 
+    /// Unified auto-follow logic for expanded tool content (code, diff, text).
+    ///
+    /// Determines whether to enable/disable auto-follow and whether to scroll
+    /// after a render pass. All three expanded strategies had near-identical
+    /// implementations with one accidental difference: diff disabled auto-follow
+    /// on non-continuation content during streaming (should re-enable for cell
+    /// reuse, like code and text do).
+    ///
+    /// Rules:
+    /// - First render while streaming: enable
+    /// - Streaming continuation: preserve current state (user scroll respected)
+    /// - Cell reuse during streaming (non-continuation rerender): re-enable
+    /// - Done: disable
+    /// - After rerender: follow tail if enabled, reset to top if done
+    static func applyExpandedAutoFollow(
+        isStreaming: Bool,
+        shouldRerender: Bool,
+        wasExpandedVisible: Bool,
+        previousRenderedText: String?,
+        currentDisplayText: String,
+        expandedShouldAutoFollow: inout Bool,
+        expandedScrollView: UIScrollView,
+        scheduleFollowTail: () -> Void
+    ) {
+        let isStreamingContinuation = previousRenderedText.map {
+            !$0.isEmpty && currentDisplayText.hasPrefix($0)
+        } ?? false
+
+        if isStreaming {
+            if !wasExpandedVisible || previousRenderedText == nil {
+                expandedShouldAutoFollow = true
+            } else if !isStreamingContinuation, shouldRerender {
+                // Non-continuation content during streaming = cell reuse.
+                expandedShouldAutoFollow = true
+            }
+            // Otherwise preserve current auto-follow state (user may have scrolled up).
+        } else {
+            expandedShouldAutoFollow = false
+        }
+
+        if shouldRerender {
+            if expandedShouldAutoFollow {
+                scheduleFollowTail()
+            } else if !isStreaming {
+                resetScrollPosition(expandedScrollView)
+            }
+        }
+    }
+
     static func isNearBottom(_ scrollView: UIScrollView) -> Bool {
         let inset = scrollView.adjustedContentInset
         let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
