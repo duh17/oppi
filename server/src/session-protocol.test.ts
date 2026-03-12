@@ -250,6 +250,51 @@ describe("updateSessionChangeStats", () => {
     expect(session.changeStats!.changedFiles).toEqual(["/tmp/a.ts"]);
   });
 
+  it("computes delta for repeated writes to the same file", () => {
+    const session = makeSession();
+    // First write: new file with 5 lines
+    updateSessionChangeStats(session, "write", {
+      path: "/tmp/a.ts",
+      content: "a\nb\nc\nd\ne",
+    });
+    expect(session.changeStats!.addedLines).toBe(5);
+    expect(session.changeStats!.removedLines).toBe(0);
+
+    // Second write: rewrite with 3 lines (2 removed)
+    updateSessionChangeStats(session, "write", {
+      path: "/tmp/a.ts",
+      content: "x\ny\nz",
+    });
+    expect(session.changeStats!.addedLines).toBe(5); // no new adds
+    expect(session.changeStats!.removedLines).toBe(2); // 5 → 3
+  });
+
+  it("computes delta for write after edit on same file", () => {
+    const session = makeSession();
+    // Write 3-line file
+    updateSessionChangeStats(session, "write", {
+      path: "/tmp/a.ts",
+      content: "a\nb\nc",
+    });
+    expect(session.changeStats!.addedLines).toBe(3);
+
+    // Edit adds 2 lines (1 → 3 replacement)
+    updateSessionChangeStats(session, "edit", {
+      path: "/tmp/a.ts",
+      oldText: "b",
+      newText: "b1\nb2\nb3",
+    });
+    expect(session.changeStats!.addedLines).toBe(5); // 3 + 2
+
+    // Rewrite the file (now tracked as 5 lines) with 6 lines
+    updateSessionChangeStats(session, "write", {
+      path: "/tmp/a.ts",
+      content: "1\n2\n3\n4\n5\n6",
+    });
+    expect(session.changeStats!.addedLines).toBe(6); // 5 + 1
+    expect(session.changeStats!.removedLines).toBe(0);
+  });
+
   it("is case-insensitive for tool name", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "Write", { path: "/a.ts", content: "x" });
@@ -331,6 +376,76 @@ describe("updateSessionChangeStats", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "write", { path: "/a.ts", content: "" });
     expect(session.changeStats!.addedLines).toBe(0);
+  });
+
+  // Regression: before the fix, every write counted full content as added lines.
+  // A typical agent session with rewrites would show +3,897 -30 when the real
+  // diff was +595 -1,321.  This test reproduces the pattern: create files, edit
+  // them, then rewrite them.  The old code would report +1,270 added / -2 removed.
+  // The correct numbers are +310 added / -92 removed.
+  it("realistic multi-file session does not inflate line counts on rewrites", () => {
+    const session = makeSession();
+    const lines = (n: number): string =>
+      Array.from({ length: n }, (_, i) => `line ${i}`).join("\n");
+
+    // 1. Agent creates component.tsx (200 lines)
+    updateSessionChangeStats(session, "write", { path: "/src/component.tsx", content: lines(200) });
+
+    // 2. Agent creates test.ts (100 lines)
+    updateSessionChangeStats(session, "write", { path: "/src/test.ts", content: lines(100) });
+
+    // 3. Agent edits component.tsx: replace 10 lines with 8 (net -2)
+    updateSessionChangeStats(session, "edit", {
+      path: "/src/component.tsx",
+      oldText: lines(10),
+      newText: lines(8),
+    });
+
+    // 4. Agent rewrites component.tsx after refactor (now tracked as 198 lines → 210 lines)
+    updateSessionChangeStats(session, "write", { path: "/src/component.tsx", content: lines(210) });
+
+    // 5. Agent rewrites test.ts to match new API (100 → 90 lines, shrunk)
+    updateSessionChangeStats(session, "write", { path: "/src/test.ts", content: lines(90) });
+
+    // Expected:
+    //   component.tsx: +200 (create) -2 (edit) +12 (rewrite 198→210) = +210 net
+    //   test.ts:       +100 (create) -10 (rewrite 100→90)            = +90 net
+    //   Total:         +312 added, -12 removed
+    //
+    // OLD behavior would have been: +200 + 100 + 0 + 210 + 90 = +600 added, -2 removed
+    expect(session.changeStats!.addedLines).toBe(312);
+    expect(session.changeStats!.removedLines).toBe(12);
+    expect(session.changeStats!.filesChanged).toBe(2);
+    expect(session.changeStats!.mutatingToolCalls).toBe(5);
+  });
+
+  it("edit to untracked file does not create phantom file line count", () => {
+    const session = makeSession();
+    // Edit a file that was never written through our tracking (e.g. pre-existing)
+    updateSessionChangeStats(session, "edit", {
+      path: "/src/existing.ts",
+      oldText: "old\nstuff",
+      newText: "new\nstuff\nhere",
+    });
+    expect(session.changeStats!.addedLines).toBe(1);
+    expect(session.changeStats!.removedLines).toBe(0);
+
+    // A subsequent write to the same file should count full content as added
+    // since we never tracked it via write (edit-only files have no baseline)
+    updateSessionChangeStats(session, "write", { path: "/src/existing.ts", content: "a\nb\nc" });
+    expect(session.changeStats!.addedLines).toBe(4); // 1 + 3
+  });
+
+  it("_fileLineCounts survives session round-trip through JSON", () => {
+    const session = makeSession();
+    updateSessionChangeStats(session, "write", { path: "/a.ts", content: "x\ny\nz" });
+
+    // Simulate persist + reload (JSON round-trip)
+    const reloaded = JSON.parse(JSON.stringify(session)) as typeof session;
+
+    // Continue accumulating on the reloaded session
+    updateSessionChangeStats(reloaded, "write", { path: "/a.ts", content: "x\ny\nz\nw" });
+    expect(reloaded.changeStats!.addedLines).toBe(4); // 3 + 1 (not 3 + 4)
   });
 });
 

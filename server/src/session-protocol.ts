@@ -783,7 +783,10 @@ export function updateSessionChangeStats(
     }
   }
 
-  const { added, removed } = estimateLineDelta(toolName, rawArgs);
+  const fileLineCounts: Record<string, number> = existing?._fileLineCounts
+    ? { ...existing._fileLineCounts }
+    : {};
+  const { added, removed } = estimateLineDelta(toolName, rawArgs, path, fileLineCounts);
   stats.addedLines += added;
   stats.removedLines += removed;
 
@@ -794,6 +797,7 @@ export function updateSessionChangeStats(
     ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),
     addedLines: stats.addedLines,
     removedLines: stats.removedLines,
+    _fileLineCounts: fileLineCounts,
   };
 }
 
@@ -812,7 +816,19 @@ function extractChangedFilePath(rawArgs: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function estimateLineDelta(toolName: string, rawArgs: unknown): { added: number; removed: number } {
+/**
+ * Estimate line additions/removals for a write or edit tool call.
+ *
+ * `fileLineCounts` tracks per-file line counts across calls so that repeated
+ * writes to the same file compute a delta instead of counting every line as
+ * added.  The map is mutated in place (caller persists it on changeStats).
+ */
+function estimateLineDelta(
+  toolName: string,
+  rawArgs: unknown,
+  filePath: string | null,
+  fileLineCounts: Record<string, number>,
+): { added: number; removed: number } {
   if (!rawArgs || typeof rawArgs !== "object") {
     return { added: 0, removed: 0 };
   }
@@ -824,9 +840,22 @@ function estimateLineDelta(toolName: string, rawArgs: unknown): { added: number;
     if (content.length === 0) {
       return { added: 0, removed: 0 };
     }
-    return { added: countLines(content), removed: 0 };
+
+    const newLines = countLines(content);
+    const previousLines = filePath !== null ? (fileLineCounts[filePath] ?? 0) : 0;
+
+    // Update tracked count for this file
+    if (filePath !== null) {
+      fileLineCounts[filePath] = newLines;
+    }
+
+    return {
+      added: Math.max(0, newLines - previousLines),
+      removed: Math.max(0, previousLines - newLines),
+    };
   }
 
+  // edit tool
   const oldText = typeof args.oldText === "string" ? args.oldText : "";
   const newText = typeof args.newText === "string" ? args.newText : "";
   if (oldText.length === 0 && newText.length === 0) {
@@ -835,10 +864,16 @@ function estimateLineDelta(toolName: string, rawArgs: unknown): { added: number;
 
   const oldLines = countLines(oldText);
   const newLines = countLines(newText);
+  const lineDelta = newLines - oldLines;
+
+  // Update tracked count so subsequent writes to this file are accurate
+  if (filePath !== null && filePath in fileLineCounts) {
+    fileLineCounts[filePath] = Math.max(0, fileLineCounts[filePath] + lineDelta);
+  }
 
   return {
-    added: Math.max(0, newLines - oldLines),
-    removed: Math.max(0, oldLines - newLines),
+    added: Math.max(0, lineDelta),
+    removed: Math.max(0, -lineDelta),
   };
 }
 
