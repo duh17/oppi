@@ -60,7 +60,7 @@ enum StreamingRenderPolicy {
         case none
     }
 
-    // MARK: - Thresholds (mirrored from ExpandedToolRowView)
+    // MARK: - Thresholds (mirrored from ToolRowCodeRenderStrategy)
 
     /// Line count at which known-language code defers highlighting.
     static let deferredHighlightLineThreshold = 80
@@ -125,7 +125,7 @@ enum StreamingRenderPolicy {
         return .full
     }
 
-    /// Code-specific tier logic, mirroring `ExpandedToolRowView.shouldDeferHighlight`.
+    /// Code-specific tier logic, mirroring `ToolRowCodeRenderStrategy.shouldDeferHighlight`.
     private static func codeTier(
         languageCategory: CodeLanguageCategory,
         byteCount: Int,
@@ -249,7 +249,7 @@ enum StreamingRenderPolicy {
 
     // MARK: - Content Profile
 
-    /// Content size profile, matching `ExpandedToolRowView.HighlightProfile`.
+    /// Content size profile, matching `ToolRowCodeRenderStrategy.HighlightProfile`.
     struct ContentProfile: Sendable, Equatable {
         let byteCount: Int
         let lineCount: Int

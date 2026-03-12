@@ -110,7 +110,7 @@ struct ToolTimelineRowModeDispatchTests {
 
             _ = fittedSize(for: view, width: 360)
 
-            let expandedContainer = view.expandedContainer
+            let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
             // bash containers are inside BashToolRowView; access directly
             let commandContainer: UIView = view.bashToolRowView.commandContainer
             let outputContainer: UIView = view.bashToolRowView.outputContainer
@@ -235,7 +235,7 @@ struct ToolTimelineRowModeDispatchTests {
         ))
         _ = fittedSize(for: markdownView, width: 360)
 
-        let markdownScrollView = markdownView.expandedScrollView
+        let markdownScrollView = try #require(privateScrollView(named: "expandedScrollView", in: markdownView))
         #expect(!markdownScrollView.isScrollEnabled)
 
         let codeView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
@@ -250,7 +250,7 @@ struct ToolTimelineRowModeDispatchTests {
         ))
         _ = fittedSize(for: codeView, width: 360)
 
-        let codeScrollView = codeView.expandedScrollView
+        let codeScrollView = try #require(privateScrollView(named: "expandedScrollView", in: codeView))
         #expect(codeScrollView.isScrollEnabled)
 
         let bashWrapped = ToolTimelineRowContentView(configuration: makeToolConfiguration(
@@ -280,7 +280,7 @@ struct ToolTimelineRowModeDispatchTests {
             isExpanded: true
         ))
         _ = fittedSize(for: markdownView, width: 360)
-        let markdownScrollView = markdownView.expandedScrollView
+        let markdownScrollView = try #require(privateScrollView(named: "expandedScrollView", in: markdownView))
         let markdownDoubleTap = try #require(markdownScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
             $0.numberOfTapsRequired == 2
         })
@@ -292,7 +292,7 @@ struct ToolTimelineRowModeDispatchTests {
             isExpanded: true
         ))
         _ = fittedSize(for: textView, width: 360)
-        let textScrollView = textView.expandedScrollView
+        let textScrollView = try #require(privateScrollView(named: "expandedScrollView", in: textView))
         let textDoubleTap = try #require(textScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
             $0.numberOfTapsRequired == 2
         })
@@ -315,7 +315,7 @@ struct ToolTimelineRowModeDispatchTests {
             isExpanded: true
         ))
         _ = fittedSize(for: plotView, width: 360)
-        let plotScrollView = plotView.expandedScrollView
+        let plotScrollView = try #require(privateScrollView(named: "expandedScrollView", in: plotView))
         let plotDoubleTap = try #require(plotScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
             $0.numberOfTapsRequired == 2
         })
@@ -332,7 +332,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: markdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
         let innerTextViews = timelineAllTextViews(in: markdownView)
         #expect(!innerTextViews.isEmpty, "Expected markdown text views")
 
@@ -361,7 +361,7 @@ struct ToolTimelineRowModeDispatchTests {
         ))
         _ = fittedSize(for: codeView, width: 360)
 
-        let expanded = codeView.expandedScrollView
+        let expanded = try #require(privateScrollView(named: "expandedScrollView", in: codeView))
         #expect(expanded is HorizontalPanPassthroughScrollView)
 
         let bashView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
@@ -395,7 +395,7 @@ struct ToolTimelineRowModeDispatchTests {
 
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = view.expandedLabel
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(rendered.contains("extension result line 1"))
         #expect(rendered.contains("extension result line 3"))
@@ -412,11 +412,11 @@ struct ToolTimelineRowModeDispatchTests {
 
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = view.expandedLabel
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(rendered.contains("EXT-1"))
 
-        let expandedScrollView = view.expandedScrollView
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         #expect(!expandedScrollView.alwaysBounceHorizontal)
         #expect(!expandedScrollView.showsHorizontalScrollIndicator)
     }
@@ -469,7 +469,9 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
 
         // Verify markdown view has content after phase 1
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(
             !markdownStack.arrangedSubviews.isEmpty,
@@ -493,7 +495,7 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
 
         // The diff text view must have attributed text.
-        let expandedLabel = view.expandedLabel
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let attributedText = try #require(expandedLabel.attributedText)
         #expect(attributedText.length > 0)
         #expect(attributedText.string.contains("let new = true"))
@@ -520,7 +522,9 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: markdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(!markdownStack.arrangedSubviews.isEmpty)
 
@@ -538,7 +542,7 @@ struct ToolTimelineRowModeDispatchTests {
         view.configuration = codeConfig
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = view.expandedLabel
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let attributedText = try #require(expandedLabel.attributedText)
         #expect(attributedText.string.contains("struct App"))
 
@@ -559,7 +563,9 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: markdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(!markdownStack.arrangedSubviews.isEmpty)
 
@@ -642,20 +648,27 @@ struct ToolTimelineRowModeDispatchTests {
             isStreaming: false
         )
 
-        // Use ExpandedToolRowView directly to test deferred highlight.
-        // Apply code to set up internal state (signature, mode, rendered text).
-        let expandedView = ExpandedToolRowView()
-        _ = expandedView.apply(
-            input: ExpandedRenderInput(
-                mode: .code(text: text, language: .swift, startLine: 1),
-                isStreaming: false,
-                outputColor: .white
-            ),
-            wasExpandedVisible: false
-        )
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: text, language: .swift, startLine: 1, filePath: "Large.swift"),
+            isExpanded: false
+        ))
 
-        // Verify a deferred highlight was scheduled
-        #expect(expandedView.expandedCodeDeferredHighlightSignature == signature)
+        let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
+        #expect(expandedContainer.isHidden)
+
+        view.expandedRenderSignature = signature
+        view.expandedViewportMode = .code
+        view.expandedRenderedText = text
+        expandedLabel.text = text
+
+        view.scheduleDeferredCodeHighlightIfNeeded(.init(
+            text: text,
+            language: .swift,
+            startLine: 1,
+            signature: signature
+        ))
 
         let deadline = Date().addingTimeInterval(1.5)
         while ToolRowRenderCache.get(signature: signature) == nil && Date() < deadline {
@@ -663,15 +676,15 @@ struct ToolTimelineRowModeDispatchTests {
         }
         drainMainQueue()
 
-        let attributed = try #require(expandedView.expandedLabel.attributedText)
+        let attributed = try #require(expandedLabel.attributedText)
         #expect(attributed.string.contains("│"))
         #expect(ToolRowRenderCache.get(signature: signature) != nil)
     }
 
     @Test func deferredCodeHighlightReappliesAfterTransientModeMismatch() async throws {
         ToolRowRenderCache.evictAll()
-        ExpandedToolRowView.deferredCodeHighlightDelayForTesting = .milliseconds(120)
-        defer { ExpandedToolRowView.deferredCodeHighlightDelayForTesting = nil }
+        ToolTimelineRowContentView.deferredCodeHighlightDelayForTesting = .milliseconds(120)
+        defer { ToolTimelineRowContentView.deferredCodeHighlightDelayForTesting = nil }
 
         let text = (1...24)
             .map { index in
@@ -693,21 +706,13 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: configuration)
         _ = fittedSize(for: view, width: 360)
 
-        let expandedLabel = view.expandedToolRowView.expandedLabel
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let initialRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(initialRendered == text)
         #expect(!initialRendered.contains("│"))
 
-        // Simulate a transient mode mismatch while deferred highlighting is in
-        // flight by switching to a different mode (text), which changes
-        // expandedViewportMode away from .code.
-        let textConfig = makeToolConfiguration(
-            toolNamePrefix: "remember",
-            expandedContent: .text(text: "transient", language: nil),
-            isExpanded: true
-        )
-        view.configuration = textConfig
-        _ = fittedSize(for: view, width: 360)
+        // Simulate a transient mode mismatch while deferred highlighting is in flight.
+        view.expandedViewportMode = .none
 
         let deadline = Date().addingTimeInterval(2.0)
         while ToolRowRenderCache.get(signature: signature) == nil && Date() < deadline {
@@ -719,9 +724,11 @@ struct ToolTimelineRowModeDispatchTests {
         drainMainQueue()
 
         #expect(ToolRowRenderCache.get(signature: signature) != nil)
+        let plainRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(!plainRendered.contains("│"), "Transient mismatch should leave the first pass plain")
 
-        // Reapplying the original configuration should consume the warmed cache
-        // instead of getting stuck forever on the plain-text first paint.
+        // Reapplying the same configuration should consume the warmed cache instead
+        // of getting stuck forever on the plain-text first paint.
         view.configuration = configuration
         _ = fittedSize(for: view, width: 360)
         drainMainQueue()
@@ -752,7 +759,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required, "Code mode should set required width")
         #expect(widthConstraint.constant > 1, "Code mode should have positive width delta")
 
@@ -789,7 +796,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: diffConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required, "Diff mode should set required width")
 
         // Reuse for extension text mode.
@@ -819,7 +826,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required)
 
         let extensionJSONConfig = makeToolConfiguration(
@@ -847,7 +854,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let expandedContainer = view.expandedContainer
+        let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
         #expect(!expandedContainer.isHidden)
 
         // Reuse for extension markdown.
@@ -861,10 +868,10 @@ struct ToolTimelineRowModeDispatchTests {
 
         #expect(!expandedContainer.isHidden, "Expanded container should remain visible for extension markdown")
 
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
         #expect(!markdownView.isHidden, "Markdown view should be visible for extension markdown")
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view))
         #expect(label.isHidden, "Label should be hidden in markdown mode")
     }
 
@@ -880,7 +887,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required)
 
         // Reuse for plot (hosted view)
@@ -925,7 +932,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let scrollView = view.expandedScrollView
+        let scrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         #expect(scrollView.alwaysBounceHorizontal)
 
         // Reuse for extension markdown.
@@ -951,7 +958,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: mdConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let scrollView = view.expandedScrollView
+        let scrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         #expect(!scrollView.alwaysBounceVertical)
         #expect(!scrollView.bounces, "Markdown expanded scroll should not rubber-band vertically")
     }
@@ -966,7 +973,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: extensionMarkdownConfig)
         _ = fittedSize(for: view, width: 360)
 
-        let markdownView = view.expandedToolRowView.expandedMarkdownView
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
         let innerScrollViews = timelineAllScrollViews(in: markdownView)
         #expect(!innerScrollViews.isEmpty, "Expected markdown text/cell scroll views")
 
@@ -1028,11 +1035,11 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
         drainMainQueue()
 
-        let expandedScrollView = view.expandedScrollView
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         let visualOffset = expandedScrollView.contentOffset.y + expandedScrollView.adjustedContentInset.top
         #expect(visualOffset < 1.0, "Done text tools should open at top; got visual offset \(visualOffset)")
 
-        let shouldAutoFollow = view.expandedShouldAutoFollow
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
         #expect(!shouldAutoFollow, "Done text tools should not auto-follow after first render")
     }
 
@@ -1061,7 +1068,7 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
         drainMainQueue()
 
-        let shouldAutoFollow = view.expandedShouldAutoFollow
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
         #expect(shouldAutoFollow, "Streaming text should keep auto-follow enabled")
     }
 
@@ -1090,7 +1097,7 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
         drainMainQueue(passes: 6)
 
-        let expandedScrollView = view.expandedScrollView
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         ToolTimelineRowUIHelpers.scrollToBottom(expandedScrollView, animated: false)
         drainMainQueue(passes: 2)
 
@@ -1101,7 +1108,7 @@ struct ToolTimelineRowModeDispatchTests {
         let visualOffset = expandedScrollView.contentOffset.y + expandedScrollView.adjustedContentInset.top
         #expect(visualOffset < 1.0, "Done text reuse should reset to top; got visual offset \(visualOffset)")
 
-        let shouldAutoFollow = view.expandedShouldAutoFollow
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
         #expect(!shouldAutoFollow, "Done text reuse should disable auto-follow")
     }
 
@@ -1119,7 +1126,7 @@ struct ToolTimelineRowModeDispatchTests {
         )
 
         let view = ToolTimelineRowContentView(configuration: config)
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
 
         #expect(widthConstraint.priority == .required)
         #expect(
@@ -1140,7 +1147,7 @@ struct ToolTimelineRowModeDispatchTests {
         )
 
         let view = ToolTimelineRowContentView(configuration: config)
-        let widthConstraint = view.expandedToolRowView.expandedLabelWidthConstraint!
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
 
         #expect(widthConstraint.priority == .required)
         #expect(
@@ -1189,7 +1196,9 @@ struct ToolTimelineRowModeDispatchTests {
 
         view.configuration = expandedRemember
 
-        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
         #expect(viewportConstraint.isActive)
         #expect(
             viewportConstraint.constant < 120,
@@ -1227,7 +1236,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("struct App"))
         // No line number gutter during streaming (cheap path)
@@ -1248,7 +1257,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("struct App"))
         // Line number gutter present when done (full quality path)
@@ -1275,7 +1284,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let streamingRendered = label.attributedText?.string ?? label.text ?? ""
         #expect(!streamingRendered.contains("│"), "Streaming should not have line numbers")
 
@@ -1306,7 +1315,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("- let old = false"), "Streaming diff should show - prefix")
         #expect(rendered.contains("+ let old = true"), "Streaming diff should show + prefix")
@@ -1330,7 +1339,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("let old = false"))
         #expect(rendered.contains("let old = true"))
@@ -1361,7 +1370,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let label = view.expandedLabel
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let streamingRendered = label.attributedText?.string ?? label.text ?? ""
         #expect(!streamingRendered.contains("▎"), "Streaming diff should not have gutter markers")
 
@@ -1389,7 +1398,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let autoFollow = view.expandedShouldAutoFollow
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
         #expect(autoFollow, "Streaming code should enable auto-follow")
     }
 
@@ -1406,7 +1415,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: done)
         _ = fittedSize(for: view, width: 360)
 
-        let autoFollow = view.expandedShouldAutoFollow
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
         #expect(!autoFollow, "Done code should disable auto-follow")
     }
 
@@ -1424,7 +1433,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: streaming)
         _ = fittedSize(for: view, width: 360)
 
-        let autoFollow = view.expandedShouldAutoFollow
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
         #expect(autoFollow, "Streaming diff should enable auto-follow")
     }
 
@@ -1441,7 +1450,7 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: done)
         _ = fittedSize(for: view, width: 360)
 
-        let autoFollow = view.expandedShouldAutoFollow
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
         #expect(!autoFollow, "Done diff should disable auto-follow")
     }
 }

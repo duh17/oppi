@@ -70,7 +70,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class ToolTimelineRowContentView: UIView, UIContentView {
+final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
     private static let maxValidHeight: CGFloat = 10_000
     static let minOutputViewportHeight: CGFloat = 56
     private static let minDiffViewportHeight: CGFloat = 68
@@ -148,13 +148,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
     let bashToolRowView = BashToolRowView()
-    let expandedToolRowView = ExpandedToolRowView()
-
-    // MARK: - Forwarding properties for ExpandedToolRowView surfaces
-
-    var expandedContainer: UIView { expandedToolRowView.expandedContainer }
-    var expandedScrollView: HorizontalPanPassthroughScrollView { expandedToolRowView.expandedScrollView }
-    var expandedLabel: UITextView { expandedToolRowView.expandedLabel }
+    let expandedContainer = UIView()
+    let expandedScrollView = HorizontalPanPassthroughScrollView()
+    private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
+    let expandedLabel = UITextView()
+    private let expandedMarkdownView = AssistantMarkdownContentView()
+    private let expandedReadMediaContainer = UIView()
     private let imagePreviewContainer = UIView()
     private let imagePreviewImageView = UIImageView()
     private let borderView = UIView()
@@ -177,52 +176,34 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
+    private var expandedViewportHeightConstraint: NSLayoutConstraint?
+    private var expandedLabelWidthConstraint: NSLayoutConstraint?
+    private var expandedLabelHeightLockConstraint: NSLayoutConstraint?
+    private var expandedMarkdownWidthConstraint: NSLayoutConstraint?
+    private var expandedReadMediaWidthConstraint: NSLayoutConstraint?
     private var imagePreviewHeightConstraint: NSLayoutConstraint?
     private var toolLeadingConstraint: NSLayoutConstraint?
     private var toolWidthConstraint: NSLayoutConstraint?
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
+    var expandedShouldAutoFollow = true
+    var expandedRenderSignature: Int?
+    private var expandedUsesViewport = false
+    var expandedUsesMarkdownLayout = false
+    var expandedUsesReadMediaLayout = false
+    private var expandedReadMediaContentView: UIView?
     /// Tracks which base64 image is currently being decoded / displayed.
     private var imagePreviewDecodedKey: String?
     private var imagePreviewDecodeTask: Task<Void, Never>?
-    private var expandedPinchDidTriggerFullScreen = false
-
-    // MARK: - Forwarding state for ExpandedToolRowView
-
-    var expandedShouldAutoFollow: Bool {
-        get { expandedToolRowView.expandedShouldAutoFollow }
-        set { expandedToolRowView.expandedShouldAutoFollow = newValue }
-    }
-
-    var expandedRenderSignature: Int? {
-        get { expandedToolRowView.expandedRenderSignature }
-    }
-
-    var expandedUsesMarkdownLayout: Bool {
-        get { expandedToolRowView.expandedUsesMarkdownLayout }
-    }
-
-    var expandedUsesReadMediaLayout: Bool {
-        get { expandedToolRowView.expandedUsesReadMediaLayout }
-    }
-
-    var expandedCodeDeferredHighlightSignature: Int? {
-        get { expandedToolRowView.expandedCodeDeferredHighlightSignature }
-        set { expandedToolRowView.expandedCodeDeferredHighlightSignature = newValue }
-    }
-
-    var expandedCodeDeferredHighlightTask: Task<Void, Never>? {
-        get { expandedToolRowView.expandedCodeDeferredHighlightTask }
-        set { expandedToolRowView.expandedCodeDeferredHighlightTask = newValue }
-    }
-
-    var expandedViewportMode: ExpandedViewportMode {
-        get { expandedToolRowView.expandedViewportMode }
-    }
-
+    var expandedCodeDeferredHighlightSignature: Int?
+    var expandedCodeDeferredHighlightTask: Task<Void, Never>?
+    var expandedViewportMode: ExpandedViewportMode = .none
     var expandedRenderedText: String? {
-        get { expandedToolRowView.expandedRenderedText }
+        didSet { expandedWidthEstimateCache.invalidate(); expandedViewportHeightCache.invalidate() }
     }
+    private var expandedWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
+    private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
+    private var expandedPinchDidTriggerFullScreen = false
     private let fullScreenTerminalStream: TerminalTraceStream
     private let fullScreenSourceStream: SourceTraceStream
 
@@ -302,6 +283,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
     deinit {
         imagePreviewDecodeTask?.cancel()
+        expandedCodeDeferredHighlightTask?.cancel()
     }
 
     var configuration: UIContentConfiguration {
@@ -336,9 +318,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     override func layoutSubviews() {
         super.layoutSubviews()
         bashToolRowView.updateOutputLabelWidthIfNeeded()
-        expandedToolRowView.updateExpandedLabelWidthIfNeeded()
-        expandedToolRowView.updateExpandedMarkdownWidthIfNeeded()
-        expandedToolRowView.updateExpandedReadMediaWidthIfNeeded()
+        updateExpandedLabelWidthIfNeeded()
+        updateExpandedMarkdownWidthIfNeeded()
+        updateExpandedReadMediaWidthIfNeeded()
         updateViewportHeightsIfNeeded()
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
@@ -371,8 +353,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             }
         }
 
-        if let expandedViewportHeightConstraint = expandedToolRowView.expandedViewportHeightConstraint,
-           expandedViewportHeightConstraint.isActive {
+        if expandedUsesViewport,
+           let expandedViewportHeightConstraint {
             if isStreaming {
                 let mode: ViewportMode = switch expandedViewportMode {
                 case .diff: .expandedDiff
@@ -387,20 +369,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
                 case .code: .expandedCode
                 case .text, .none: .expandedText
                 }
-                let contentView = expandedToolRowView.expandedContentView
+                let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
+                    : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
                 let widthBucket = Int(expandedContainer.bounds.width.rounded())
                 let signature = expandedRenderSignature
 
                 let preferredHeight = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
-                    cache: &expandedToolRowView.expandedViewportHeightCache,
+                    cache: &expandedViewportHeightCache,
                     signature: signature,
                     widthBucket: widthBucket,
                     mode: mode,
                     inputBytes: expandedRenderedText?.utf8.count ?? 0,
-                    profile: expandedToolRowView.currentExpandedViewportProfile,
+                    profile: currentExpandedViewportProfile,
                     availableHeight: availableViewportHeight(for: mode)
                 ) {
-                    self.preferredViewportHeight(for: contentView, in: self.expandedContainer, mode: mode)
+                    preferredViewportHeight(for: expandedContentView, in: expandedContainer, mode: mode)
                 }
 
                 expandedViewportHeightConstraint.constant = preferredHeight
@@ -414,13 +397,74 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         return max(mode.minHeight, min(Self.streamingViewportHeight, available))
     }
 
+    func updateExpandedLabelWidthIfNeeded() {
+        guard let expandedLabelWidthConstraint else { return }
+
+        switch expandedViewportMode {
+        case .diff, .code:
+            // Horizontal-scroll modes need a hard width to keep lines unwrapped.
+            expandedLabelWidthConstraint.priority = .required
+            guard let expandedRenderedText else { return }
+            expandedLabelWidthConstraint.constant = expandedLabelWidthConstant(for: expandedRenderedText)
+
+        case .text, .none:
+            // Wrapped text modes can arrive before frameLayoutGuide has a real
+            // width. Keep this at high priority so fitting width can win.
+            expandedLabelWidthConstraint.priority = .defaultHigh
+            expandedLabelWidthConstraint.constant = -12
+        }
+    }
+
+    private func expandedLabelWidthConstant(for renderedText: String) -> CGFloat {
+        let metricMode: String = switch expandedViewportMode {
+        case .code: "expanded.code"
+        case .diff: "expanded.diff"
+        case .text, .none: "expanded.text"
+        }
+        return ToolTimelineRowLayoutPerformance.monospaceWidthConstant(
+            frameWidth: max(1, expandedScrollView.bounds.width),
+            renderedText: renderedText,
+            cache: &expandedWidthEstimateCache,
+            metricMode: metricMode
+        )
+    }
+
+    private func updateExpandedMarkdownWidthIfNeeded() {
+        guard let expandedMarkdownWidthConstraint else { return }
+        expandedMarkdownWidthConstraint.constant = -12
+    }
+
+    private func updateExpandedReadMediaWidthIfNeeded() {
+        guard let expandedReadMediaWidthConstraint else { return }
+        expandedReadMediaWidthConstraint.constant = -12
+    }
+
     func setExpandedVerticalLockEnabled(_ enabled: Bool) {
-        expandedToolRowView.setExpandedVerticalLockEnabled(enabled)
+        expandedLabelHeightLockConstraint?.isActive = enabled
     }
 
     private var currentOutputViewportProfile: ToolTimelineRowViewportProfile? {
         guard bashToolRowView.outputUsesViewport else { return nil }
         return ToolTimelineRowViewportProfile(kind: .bashOutput, text: bashToolRowView.outputRenderedText)
+    }
+
+    private var currentExpandedViewportProfile: ToolTimelineRowViewportProfile? {
+        guard expandedUsesViewport else { return nil }
+
+        let kind: ToolTimelineRowViewportKind
+        if expandedUsesMarkdownLayout {
+            kind = .markdown
+        } else if expandedUsesReadMediaLayout {
+            kind = expandedReadMediaContentView is NativeExpandedPlotView ? .plot : .readMedia
+        } else {
+            kind = switch expandedViewportMode {
+            case .diff: .diff
+            case .code: .code
+            case .text, .none: .text
+            }
+        }
+
+        return ToolTimelineRowViewportProfile(kind: kind, text: expandedRenderedText)
     }
 
     private func availableViewportHeight(for mode: ViewportMode) -> CGFloat {
@@ -454,7 +498,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         // than the real rendered content.
         let width: CGFloat
         if mode == .expandedDiff || mode == .expandedCode,
-           let widthConstraint = expandedToolRowView.expandedLabelWidthConstraint,
+           let widthConstraint = expandedLabelWidthConstraint,
            widthConstraint.constant > 1 {
             let frameWidth = expandedScrollView.bounds.width > 10
                 ? expandedScrollView.bounds.width
@@ -519,7 +563,65 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         return CGSize(width: width, height: height)
     }
 
+    private func installExpandedReadMediaView(
+        output: String,
+        isError: Bool,
+        filePath: String?,
+        startLine: Int
+    ) {
+        let native: NativeExpandedReadMediaView
+        if let existing = expandedReadMediaContentView as? NativeExpandedReadMediaView {
+            native = existing
+        } else {
+            clearExpandedReadMediaView()
+            native = NativeExpandedReadMediaView()
+            installExpandedEmbeddedView(native)
+        }
 
+        native.apply(
+            output: output,
+            isError: isError,
+            filePath: filePath,
+            startLine: startLine,
+            themeID: ThemeRuntimeState.currentThemeID()
+        )
+    }
+
+    private func installExpandedPlotView(spec: PlotChartSpec, fallbackText: String?) {
+        let native: NativeExpandedPlotView
+        if let existing = expandedReadMediaContentView as? NativeExpandedPlotView {
+            native = existing
+        } else {
+            clearExpandedReadMediaView()
+            native = NativeExpandedPlotView()
+            installExpandedEmbeddedView(native)
+        }
+
+        native.apply(
+            spec: spec,
+            fallbackText: fallbackText,
+            themeID: ThemeRuntimeState.currentThemeID()
+        )
+    }
+
+    private func installExpandedEmbeddedView(_ view: UIView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        expandedReadMediaContainer.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: expandedReadMediaContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: expandedReadMediaContainer.trailingAnchor),
+            view.topAnchor.constraint(equalTo: expandedReadMediaContainer.topAnchor),
+            view.bottomAnchor.constraint(equalTo: expandedReadMediaContainer.bottomAnchor),
+        ])
+
+        expandedReadMediaContentView = view
+
+        // Coalesced invalidation defers the layout pass to the end of the
+        // current runloop tick, so all synchronous changes from the enclosing
+        // apply() settle before one single layoutIfNeeded fires.
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+    }
 
     // MARK: - Collapsed Image Preview
 
@@ -560,9 +662,112 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    private func clearExpandedReadMediaView() {
+        expandedReadMediaContentView?.removeFromSuperview()
+        expandedReadMediaContentView = nil
+    }
+
+    /// Reset the markdown view so it no longer contributes intrinsic size.
+    ///
+    /// Called when switching away from markdown mode. The markdown view's
+    /// constraints still bind to the scroll view's content layout guide,
+    /// so stale content would conflict with the active view's constraints.
+    /// Uses `clearContent()` instead of `apply(configuration:)` to bypass
+    /// the equality guard and cache pipeline for guaranteed cleanup.
+    private func clearExpandedMarkdownContent() {
+        expandedMarkdownView.clearContent()
+    }
+
+    // MARK: - Expanded Content Helpers
+
+    /// Prepare for label-based expanded content (diff, code, plain text).
+    func showExpandedLabel() {
+        expandedSurfaceHostView.activateSurfaceView(expandedLabel)
+        expandedMarkdownView.isHidden = true
+        expandedLabel.isHidden = false
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+        // Clear stale markdown content to prevent constraint conflicts.
+        // All three expanded subviews pin to the same contentLayoutGuide
+        // edges at required priority. If the markdown view retains content
+        // from a previous cell reuse cycle, its intrinsic height conflicts
+        // with the label's, and Auto Layout may zero out the label frame.
+        clearExpandedMarkdownContent()
+    }
+
+    /// Prepare for markdown expanded content.
+    private func showExpandedMarkdown() {
+        expandedSurfaceHostView.activateSurfaceView(expandedMarkdownView)
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = false
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = true
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+        // Reset the label width constraint from code/diff mode (required priority,
+        // large constant) to the default wrapped-text state. The hidden label's
+        // constraints still participate in layout and can force the shared
+        // contentLayoutGuide wider than the markdown view expects, enabling
+        // unintended horizontal scrolling and scroll-gesture conflicts.
+        expandedLabelWidthConstraint?.priority = .defaultHigh
+        expandedLabelWidthConstraint?.constant = -12
+    }
+
+    /// Prepare for embedded expanded content.
+    private func showExpandedHostedView() {
+        expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = true
+        expandedReadMediaContainer.isHidden = false
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = true
+        clearExpandedMarkdownContent()
+        // Reset the label width constraint from code/diff mode to prevent
+        // the hidden label from dominating contentLayoutGuide width.
+        expandedLabelWidthConstraint?.priority = .defaultHigh
+        expandedLabelWidthConstraint?.constant = -12
+        updateExpandedReadMediaWidthIfNeeded()
+        setExpandedContainerGestureInterceptionEnabled(false)
+    }
+
+    /// Activate the expanded viewport height constraint.
+    func showExpandedViewport() {
+        expandedViewportHeightConstraint?.isActive = true
+        expandedUsesViewport = true
+    }
+
     /// Reset expanded container to hidden/default state.
     private func hideExpandedContainer(outputColor: UIColor) {
-        expandedToolRowView.reset(outputColor: outputColor)
+        cancelDeferredCodeHighlight()
+        expandedSurfaceHostView.clearActiveSurface()
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.textColor = outputColor
+        expandedLabel.textContainer.lineBreakMode = .byCharWrapping
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = true
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+        expandedScrollView.alwaysBounceHorizontal = false
+        expandedScrollView.showsHorizontalScrollIndicator = false
+        expandedScrollView.isScrollEnabled = false
+        setExpandedVerticalLockEnabled(false)
+        expandedViewportMode = .none
+        expandedRenderedText = nil
+        expandedRenderSignature = nil
+        updateExpandedLabelWidthIfNeeded()
+        expandedViewportHeightConstraint?.isActive = false
+        expandedUsesViewport = false
+        expandedShouldAutoFollow = true
+        ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
     }
 
     private func setupViews() {
@@ -583,16 +788,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             trailingLabel: trailingLabel
         )
         ToolTimelineRowViewStyler.stylePreviewLabel(previewLabel)
-        // Expanded views are styled by ExpandedToolRowView.
-        // Set UITextViewDelegate here for selected-text edit-menu integration.
-        // UIScrollViewDelegate is handled by ExpandedToolRowView.
-        expandedLabel.delegate = self
-        expandedToolRowView.hostView = self
+        ToolTimelineRowViewStyler.styleExpanded(
+            expandedContainer: expandedContainer,
+            expandedScrollView: expandedScrollView,
+            expandedLabel: expandedLabel,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedReadMediaContainer: expandedReadMediaContainer,
+            delegate: self
+        )
 
         // Bash views (commandLabel/outputLabel) are styled by BashToolRowView.
         // Set UITextViewDelegate here for selected-text edit-menu integration.
         commandLabel.delegate = self
         outputLabel.delegate = self
+        expandedLabel.delegate = self
 
         ToolTimelineRowViewStyler.styleImagePreview(
             imagePreviewContainer: imagePreviewContainer,
@@ -618,10 +827,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         )
 
         expandedContainer.addSubview(expandedScrollView)
-        expandedScrollView.addSubview(expandedToolRowView.expandedSurfaceHostView)
-        expandedToolRowView.expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
-        expandedToolRowView.expandedSurfaceHostView.prepareSurfaceView(expandedToolRowView.expandedMarkdownView)
-        expandedToolRowView.expandedSurfaceHostView.prepareSurfaceView(expandedToolRowView.expandedReadMediaContainer)
+        expandedScrollView.addSubview(expandedSurfaceHostView)
+        expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
+        expandedSurfaceHostView.prepareSurfaceView(expandedMarkdownView)
+        expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(bashToolRowView)
@@ -661,10 +870,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             bodyStack: bodyStack,
             expandedContainer: expandedContainer,
             expandedScrollView: expandedScrollView,
-            expandedSurfaceHostView: expandedToolRowView.expandedSurfaceHostView,
+            expandedSurfaceHostView: expandedSurfaceHostView,
             expandedLabel: expandedLabel,
-            expandedMarkdownView: expandedToolRowView.expandedMarkdownView,
-            expandedReadMediaContainer: expandedToolRowView.expandedReadMediaContainer,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedReadMediaContainer: expandedReadMediaContainer,
             imagePreviewContainer: imagePreviewContainer,
             imagePreviewImageView: imagePreviewImageView,
             minDiffViewportHeight: Self.minDiffViewportHeight,
@@ -675,15 +884,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         toolWidthConstraint = layout.toolWidth
         titleLeadingToStatusConstraint = layout.titleLeadingToStatus
         titleLeadingToToolConstraint = layout.titleLeadingToTool
+        expandedLabelWidthConstraint = layout.expandedLabelWidth
+        expandedLabelHeightLockConstraint = layout.expandedLabelHeightLock
+        expandedMarkdownWidthConstraint = layout.expandedMarkdownWidth
+        expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
         imagePreviewHeightConstraint = layout.imagePreviewHeight
+        expandedViewportHeightConstraint = layout.expandedViewportHeight
 
-        expandedToolRowView.installConstraints(
-            expandedLabelWidth: layout.expandedLabelWidth,
-            expandedLabelHeightLock: layout.expandedLabelHeightLock,
-            expandedMarkdownWidth: layout.expandedMarkdownWidth,
-            expandedReadMediaWidth: layout.expandedReadMediaWidth,
-            expandedViewportHeight: layout.expandedViewportHeight
-        )
+        // During the first self-sizing measurement pass, scroll view frame
+        // layout guides can still report width=0. Keep markdown/hosted width
+        // constraints below required priority so systemLayoutSizeFitting can
+        // provide a temporary fitting width instead of measuring at 0px.
+        expandedMarkdownWidthConstraint?.priority = .defaultHigh
+        expandedReadMediaWidthConstraint?.priority = .defaultHigh
 
         NSLayoutConstraint.activate(layout.all)
     }
@@ -758,98 +971,69 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
         if configuration.isExpanded, let expandedContent = configuration.expandedContent {
             activeExpandedContent = expandedContent
+            let visibility = ToolTimelineRowExpandedModeRouter.route(
+                expandedContent: expandedContent,
+                renderBash: { command, output, unwrapped in
+                    self.renderExpandedBashMode(
+                        command: command,
+                        output: output,
+                        unwrapped: unwrapped,
+                        configuration: configuration,
+                        outputColor: outputColor,
+                        wasOutputVisible: wasOutputVisible
+                    )
+                },
+                renderDiff: { lines, path in
+                    self.renderExpandedDiffMode(
+                        lines: lines,
+                        path: path,
+                        isStreaming: !configuration.isDone,
+                        wasExpandedVisible: wasExpandedVisible
+                    )
+                },
+                renderCode: { text, language, startLine in
+                    self.renderExpandedCodeMode(
+                        text: text,
+                        language: language,
+                        startLine: startLine,
+                        isStreaming: !configuration.isDone,
+                        wasExpandedVisible: wasExpandedVisible
+                    )
+                },
+                renderMarkdown: { text in
+                    self.renderExpandedMarkdownMode(
+                        text: text,
+                        isStreaming: !configuration.isDone,
+                        wasExpandedVisible: wasExpandedVisible,
+                        isDone: configuration.isDone,
+                        markdownSelectionEnabled: renderPlan.interactionSpec.markdownSelectionEnabled
+                    )
+                },
+                renderPlot: { spec, fallbackText in
+                    self.renderExpandedPlotMode(spec: spec, fallbackText: fallbackText)
+                },
+                renderReadMedia: { output, filePath, startLine in
+                    self.renderExpandedReadMediaMode(
+                        output: output,
+                        filePath: filePath,
+                        startLine: startLine,
+                        isError: configuration.isError
+                    )
+                },
+                renderText: { text, language in
+                    self.renderExpandedTextMode(
+                        text: text,
+                        language: language,
+                        configuration: configuration,
+                        outputColor: outputColor,
+                        wasExpandedVisible: wasExpandedVisible
+                    )
+                }
+            )
 
-            switch expandedContent {
-            case .bash(let command, let output, let unwrapped):
-                let visibility = renderExpandedBashMode(
-                    command: command,
-                    output: output,
-                    unwrapped: unwrapped,
-                    configuration: configuration,
-                    outputColor: outputColor,
-                    wasOutputVisible: wasOutputVisible
-                )
-                showExpandedContainer = visibility.showExpandedContainer
-                showCommandContainer = visibility.showCommandContainer
-                showOutputContainer = visibility.showOutputContainer
-
-            case .diff(let lines, let path):
-                let mode: ExpandedRenderMode = .diff(lines: lines, path: path)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-
-            case .code(let text, let language, let startLine, _):
-                let mode: ExpandedRenderMode = .code(text: text, language: language, startLine: startLine)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-
-            case .markdown(let text):
-                let markdownSelectionEnabled = renderPlan.interactionSpec.markdownSelectionEnabled
-                let mode: ExpandedRenderMode = .markdown(
-                    text: text,
-                    isDone: configuration.isDone,
-                    markdownSelectionEnabled: markdownSelectionEnabled,
-                    selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
-                    selectedTextSourceContext: markdownSelectionEnabled
-                        ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
-                        : nil
-                )
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-
-            case .plot(let spec, let fallbackText):
-                let mode: ExpandedRenderMode = .plot(spec: spec, fallbackText: fallbackText)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-                // Hosted views disable gesture interception
-                setExpandedContainerGestureInterceptionEnabled(false)
-
-            case .readMedia(let output, let filePath, let startLine):
-                let mode: ExpandedRenderMode = .readMedia(output: output, filePath: filePath, startLine: startLine, isError: configuration.isError)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-                // Hosted views disable gesture interception
-                setExpandedContainerGestureInterceptionEnabled(false)
-
-            case .status(let message):
-                let mode: ExpandedRenderMode = .text(text: message, language: nil, isError: false)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-
-            case .text(let text, let language):
-                let mode: ExpandedRenderMode = .text(text: text, language: language, isError: configuration.isError)
-                let result = expandedToolRowView.apply(
-                    input: ExpandedRenderInput(mode: mode, isStreaming: !configuration.isDone, outputColor: outputColor),
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                showExpandedContainer = result.showExpandedContainer
-            }
-
-            // Propagate follow-tail and layout invalidation from expanded view
-            expandedNeedsFollowTail = expandedToolRowView.needsFollowTail
-            if expandedToolRowView.needsLayoutInvalidation {
-                expandedToolRowView.needsLayoutInvalidation = false
-                setNeedsLayout()
-                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
-            }
+            showExpandedContainer = visibility.showExpandedContainer
+            showCommandContainer = visibility.showCommandContainer
+            showOutputContainer = visibility.showOutputContainer
         }
 
         // Hide containers that aren't needed by the active content
@@ -941,7 +1125,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         outputColor: UIColor,
         wasOutputVisible: Bool
     ) -> ExpandedRenderVisibility {
-        expandedToolRowView.cancelDeferredCodeHighlight()
+        cancelDeferredCodeHighlight()
         hideExpandedContainer(outputColor: outputColor)
 
         let input = BashRenderInput(
@@ -971,7 +1155,225 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         )
     }
 
+    private func renderExpandedDiffMode(
+        lines: [DiffLine],
+        path: String?,
+        isStreaming: Bool,
+        wasExpandedVisible: Bool
+    ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
 
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolRowDiffRenderStrategy.render(
+            lines: lines,
+            path: path,
+            isStreaming: isStreaming,
+            expandedLabel: expandedLabel,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isCurrentModeDiff: expandedViewportMode == .diff,
+            wasExpandedVisible: wasExpandedVisible,
+            showExpandedLabel: showExpandedLabel,
+            setModeDiff: { self.expandedViewportMode = .diff },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        if visibility.showExpandedContainer {
+            // During streaming, don't lock label height to the viewport.
+            // The label must grow beyond the viewport so followTail() can
+            // scroll the inner scroll view to show the latest content.
+            // On done, re-enable the lock for horizontal-scroll-only mode.
+            setExpandedVerticalLockEnabled(!isStreaming)
+            updateExpandedLabelWidthIfNeeded()
+        }
+
+        return visibility
+    }
+
+    private func renderExpandedMarkdownMode(
+        text: String,
+        isStreaming: Bool,
+        wasExpandedVisible: Bool,
+        isDone: Bool,
+        markdownSelectionEnabled: Bool
+    ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
+        let previousExpandedRenderSignature = expandedRenderSignature
+        let wasUsingMarkdownLayout = expandedUsesMarkdownLayout
+
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolRowMarkdownRenderStrategy.render(
+            text: text,
+            isStreaming: isStreaming,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            wasExpandedVisible: wasExpandedVisible,
+            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+            shouldAutoFollowOnFirstRender: !isDone,
+            selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
+            selectedTextSourceContext: markdownSelectionEnabled
+                ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
+                : nil,
+            textSelectionEnabled: markdownSelectionEnabled,
+            showExpandedMarkdown: showExpandedMarkdown,
+            setModeText: { self.expandedViewportMode = .text },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
+
+        let didRerenderMarkdown = localExpandedRenderSignature != previousExpandedRenderSignature
+        let didEnterMarkdownLayout = !wasUsingMarkdownLayout && expandedUsesMarkdownLayout
+
+        // Markdown subviews are added synchronously but Auto Layout hasn't
+        // measured them yet when preferredViewportHeight runs in the same
+        // cycle. Invalidation is coalesced — safe to call synchronously here;
+        // only fires once per runloop tick regardless of how many callsites
+        // request it.
+        if didRerenderMarkdown || didEnterMarkdownLayout {
+            setNeedsLayout()
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+
+        return visibility
+    }
+
+    private func renderExpandedPlotMode(
+        spec: PlotChartSpec,
+        fallbackText: String?
+    ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolRowPlotRenderStrategy.render(
+            spec: spec,
+            fallbackText: fallbackText,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView,
+            showExpandedHostedView: showExpandedHostedView,
+            installExpandedPlotView: installExpandedPlotView(spec:fallbackText:),
+            setModeText: { self.expandedViewportMode = .text },
+            showExpandedViewport: showExpandedViewport
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
+
+        return visibility
+    }
+
+    private func renderExpandedReadMediaMode(
+        output: String,
+        filePath: String?,
+        startLine: Int,
+        isError: Bool
+    ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolRowReadMediaRenderStrategy.render(
+            output: output,
+            filePath: filePath,
+            startLine: startLine,
+            isError: isError,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+            showExpandedHostedView: showExpandedHostedView,
+            installExpandedReadMediaView: installExpandedReadMediaView(output:isError:filePath:startLine:),
+            setModeText: { self.expandedViewportMode = .text },
+            showExpandedViewport: showExpandedViewport
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
+
+        return visibility
+    }
+
+    private func renderExpandedTextMode(
+        text: String,
+        language: SyntaxLanguage?,
+        configuration: ToolTimelineRowConfiguration,
+        outputColor: UIColor,
+        wasExpandedVisible: Bool
+    ) -> ExpandedRenderVisibility {
+        cancelDeferredCodeHighlight()
+
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolRowTextRenderStrategy.render(
+            text: text,
+            language: language,
+            isError: configuration.isError,
+            isStreaming: !configuration.isDone,
+            outputColor: outputColor,
+            expandedLabel: expandedLabel,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            wasExpandedVisible: wasExpandedVisible,
+            isCurrentModeText: expandedViewportMode == .text,
+            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            shouldAutoFollowOnFirstRender: !configuration.isDone,
+            showExpandedLabel: showExpandedLabel,
+            setModeText: { self.expandedViewportMode = .text },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
+
+        return visibility
+    }
 
     private func updateSelectedTextIntegration(
         plan: ToolRowRenderPlan,
@@ -1145,12 +1547,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
     // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
     var activeExpandedSurfaceKindForTesting: ActiveExpandedSurfaceKindForTesting {
-        switch expandedToolRowView.expandedSurfaceHostView.activeView {
+        switch expandedSurfaceHostView.activeView {
         case expandedLabel:
             .label
-        case expandedToolRowView.expandedMarkdownView:
+        case expandedMarkdownView:
             .markdown
-        case expandedToolRowView.expandedReadMediaContainer:
+        case expandedReadMediaContainer:
             .hosted
         default:
             .none
@@ -1357,12 +1759,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     /// apply() after container visibility is established and bounds are valid.
     private var expandedNeedsFollowTail = false
 
+    func scheduleExpandedAutoScrollToBottomIfNeeded() {
+        guard expandedShouldAutoFollow else { return }
+        expandedNeedsFollowTail = true
+    }
+
     /// Called at the end of apply() after containers are visible and have bounds.
     private func flushPendingFollowTail() {
         bashToolRowView.flushFollowTail()
         if expandedNeedsFollowTail, !expandedContainer.isHidden {
-            let label: UIView = expandedUsesMarkdownLayout
-                ? expandedToolRowView.expandedMarkdownView : expandedLabel
+            let label: UIView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
             ToolTimelineRowUIHelpers.followTail(
                 in: expandedScrollView,
                 contentLabel: label
@@ -1389,7 +1795,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     }
     #endif
 
-    // UIScrollViewDelegate for expandedScrollView is handled by ExpandedToolRowView.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // outputScrollView scroll events are handled by BashToolRowView (its own delegate).
+        if scrollView === expandedScrollView {
+            if expandedLabelHeightLockConstraint?.isActive == true {
+                let lockedY = -expandedScrollView.adjustedContentInset.top
+                if abs(expandedScrollView.contentOffset.y - lockedY) > 0.5 {
+                    expandedScrollView.contentOffset.y = lockedY
+                }
+            }
+            expandedShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
+        }
+    }
 
     private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
         guard let symbolName = ToolTimelineRowUIHelpers.toolSymbolName(for: toolNamePrefix),
