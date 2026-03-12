@@ -3,7 +3,7 @@ import UIKit
 
 // MARK: - BashRenderInput
 
-struct BashRenderInput: Equatable {
+struct BashRenderInput {
     let command: String?
     let output: String?
     let unwrapped: Bool
@@ -29,9 +29,7 @@ struct BashRenderResult {
 ///
 /// UIView subviews (`commandContainer`, `outputContainer`, `commandLabel`,
 /// `outputScrollView`, `outputLabel`) are exposed as `let` so the parent can
-/// attach gestures, context menu interactions, and selected-text delegates,
-/// and so Mirror-based test reflection continues to find them by name via
-/// the forwarding lazy vars on `ToolTimelineRowContentView`.
+/// attach gestures, context menu interactions, and selected-text delegates.
 @MainActor
 final class BashToolRowView: UIView, UIScrollViewDelegate {
 
@@ -118,7 +116,6 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     func apply(
         input: BashRenderInput,
         outputColor: UIColor,
-        commandTextColor: UIColor,
         wasOutputVisible: Bool
     ) -> BashRenderResult {
         var showCommand = false
@@ -140,7 +137,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 } else {
                     commandLabel.attributedText = nil
                     commandLabel.text = displayCmd
-                    commandLabel.textColor = commandTextColor
+                    commandLabel.textColor = UIColor(Color.themeFg)
                 }
                 ChatTimelinePerf.recordRenderStrategy(
                     mode: "bash.command",
@@ -404,6 +401,18 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     // MARK: - Setup
 
+    private func configureTerminalTextView(_ tv: UITextView) {
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        tv.isEditable = false
+        tv.isScrollEnabled = false
+        tv.isSelectable = false
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.lineBreakMode = .byCharWrapping
+        tv.backgroundColor = .clear
+    }
+
     private func setupViews() {
         // MARK: Command container — terminal prompt style
 
@@ -414,15 +423,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         commandContainer.layer.borderColor = UIColor(Color.themeBlue.opacity(0.35)).cgColor
         commandContainer.isHidden = true
 
-        commandLabel.translatesAutoresizingMaskIntoConstraints = false
-        commandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        commandLabel.isEditable = false
-        commandLabel.isScrollEnabled = false
-        commandLabel.isSelectable = false
-        commandLabel.textContainerInset = .zero
-        commandLabel.textContainer.lineFragmentPadding = 0
-        commandLabel.textContainer.lineBreakMode = .byCharWrapping
-        commandLabel.backgroundColor = .clear
+        configureTerminalTextView(commandLabel)
         commandLabel.textColor = UIColor(Color.themeFg)
 
         // MARK: Output container — dark terminal pane
@@ -445,15 +446,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputScrollView.showsHorizontalScrollIndicator = false
         outputScrollView.delegate = self
 
-        outputLabel.translatesAutoresizingMaskIntoConstraints = false
-        outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputLabel.isEditable = false
-        outputLabel.isScrollEnabled = false
-        outputLabel.isSelectable = false
-        outputLabel.textContainerInset = .zero
-        outputLabel.textContainer.lineFragmentPadding = 0
-        outputLabel.textContainer.lineBreakMode = .byCharWrapping
-        outputLabel.backgroundColor = .clear
+        configureTerminalTextView(outputLabel)
         outputLabel.textColor = UIColor(Color.themeFg)
 
         // MARK: Hierarchy
