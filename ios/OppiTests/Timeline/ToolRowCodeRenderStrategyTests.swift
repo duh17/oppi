@@ -17,7 +17,7 @@ struct ToolRowCodeRenderStrategyTests {
 
         let result = render(text: text, language: .swift)
 
-        #expect(result.deferredHighlight != nil)
+        #expect(result.deferredHighlightSignature != nil)
         #expect(result.label.text == text)
         #expect(!(result.label.text ?? "").contains("│"))
     }
@@ -34,7 +34,7 @@ struct ToolRowCodeRenderStrategyTests {
 
         let result = render(text: text, language: .swift)
 
-        #expect(result.deferredHighlight != nil)
+        #expect(result.deferredHighlightSignature != nil)
         #expect(result.label.text == text)
     }
 
@@ -45,7 +45,7 @@ struct ToolRowCodeRenderStrategyTests {
         let text = "struct App {\n    let name: String\n}"
         let result = render(text: text, language: .swift)
 
-        #expect(result.deferredHighlight == nil)
+        #expect(result.deferredHighlightSignature == nil)
         let attributed = result.label.attributedText
         #expect(attributed != nil)
         #expect(attributed?.string.contains("│") == true)
@@ -55,34 +55,17 @@ struct ToolRowCodeRenderStrategyTests {
         text: String,
         language: SyntaxLanguage?
     ) -> (
-        deferredHighlight: ToolRowCodeRenderStrategy.DeferredHighlight?,
+        deferredHighlightSignature: Int?,
         label: UITextView
     ) {
-        let label = UITextView()
-        let scrollView = UIScrollView()
-        var signature: Int?
-        var renderedText: String?
-        var autoFollow = false
-
-        let result = ToolRowCodeRenderStrategy.render(
-            text: text,
-            language: language,
-            startLine: 1,
+        let view = ExpandedToolRowView()
+        let input = ExpandedRenderInput(
+            mode: .code(text: text, language: language, startLine: 1),
             isStreaming: false,
-            expandedLabel: label,
-            expandedScrollView: scrollView,
-            expandedRenderSignature: &signature,
-            expandedRenderedText: &renderedText,
-            expandedShouldAutoFollow: &autoFollow,
-            isCurrentModeCode: false,
-            wasExpandedVisible: false,
-            showExpandedLabel: {},
-            setModeCode: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: {}
+            outputColor: .white
         )
+        _ = view.apply(input: input, wasExpandedVisible: false)
 
-        return (result.deferredHighlight, label)
+        return (view.expandedCodeDeferredHighlightSignature, view.expandedLabel)
     }
 }

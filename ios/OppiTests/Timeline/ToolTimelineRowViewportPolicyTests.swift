@@ -105,9 +105,7 @@ struct ToolTimelineRowViewportPolicyTests {
         let view = ToolTimelineRowContentView(configuration: config)
         let size = fittedTimelineSize(for: view, width: 360)
 
-        let viewportConstraint = try #require(
-            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
-        )
+        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
         #expect(viewportConstraint.isActive)
         #expect(viewportConstraint.constant == 420)
         #expect(size.height < 700, "Large expanded code should stay bounded; got \(size.height)")
@@ -134,9 +132,7 @@ struct ToolTimelineRowViewportPolicyTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 360)
 
-        let viewportConstraint = try #require(
-            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
-        )
+        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
         #expect(viewportConstraint.isActive)
         #expect(
             viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight,
@@ -162,9 +158,7 @@ struct ToolTimelineRowViewportPolicyTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 360)
 
-        let viewportConstraint = try #require(
-            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
-        )
+        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
         #expect(viewportConstraint.isActive)
         #expect(
             viewportConstraint.constant == 420,
@@ -216,9 +210,7 @@ struct ToolTimelineRowViewportPolicyTests {
         let view = ToolTimelineRowContentView(configuration: streamingConfig)
         _ = fittedTimelineSize(for: view, width: 360)
 
-        let viewportConstraint = try #require(
-            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
-        )
+        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
         #expect(viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight)
 
         // Transition to done
@@ -261,9 +253,7 @@ struct ToolTimelineRowViewportPolicyTests {
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
-        let viewportConstraint = try #require(
-            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
-        )
+        let viewportConstraint = view.expandedToolRowView.expandedViewportHeightConstraint!
         let heightAfterSmall = viewportConstraint.constant
 
         // Grow to medium
