@@ -1227,7 +1227,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
             wasExpandedVisible: wasExpandedVisible,
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-            shouldAutoFollowOnFirstRender: !isDone,
             selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
             selectedTextSourceContext: markdownSelectionEnabled
                 ? expandedMarkdownSelectedTextSourceContext(for: .markdown(text: text))
@@ -1359,7 +1358,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isCurrentModeText: expandedViewportMode == .text,
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
             isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-            shouldAutoFollowOnFirstRender: !configuration.isDone,
             showExpandedLabel: showExpandedLabel,
             setModeText: { self.expandedViewportMode = .text },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,

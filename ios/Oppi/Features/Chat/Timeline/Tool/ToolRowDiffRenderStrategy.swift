@@ -78,28 +78,16 @@ struct ToolRowDiffRenderStrategy {
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
 
-        let currentRenderedText = expandedRenderedText ?? ""
-        let isStreamingContinuation = previousRenderedText.map {
-            !$0.isEmpty && currentRenderedText.hasPrefix($0)
-        } ?? false
-
-        if isStreaming {
-            if !wasExpandedVisible || previousRenderedText == nil {
-                expandedShouldAutoFollow = true
-            } else if !isStreamingContinuation {
-                expandedShouldAutoFollow = false
-            }
-        } else {
-            expandedShouldAutoFollow = false
-        }
-
-        if shouldRerender {
-            if expandedShouldAutoFollow {
-                scheduleExpandedAutoScrollToBottomIfNeeded()
-            } else if !isStreaming {
-                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-            }
-        }
+        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+            isStreaming: isStreaming,
+            shouldRerender: shouldRerender,
+            wasExpandedVisible: wasExpandedVisible,
+            previousRenderedText: previousRenderedText,
+            currentDisplayText: expandedRenderedText ?? "",
+            expandedShouldAutoFollow: &expandedShouldAutoFollow,
+            expandedScrollView: expandedScrollView,
+            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
 
         return ToolRowRenderVisibility(
             showExpandedContainer: true,

@@ -119,29 +119,16 @@ struct ToolRowCodeRenderStrategy {
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
 
-        let isStreamingContinuation = previousRenderedText.map {
-            !$0.isEmpty && displayText.hasPrefix($0)
-        } ?? false
-
-        if isStreaming {
-            if !wasExpandedVisible || previousRenderedText == nil {
-                expandedShouldAutoFollow = true
-            } else if !isStreamingContinuation, shouldRerender {
-                // Non-continuation content during streaming means cell reuse —
-                // re-enable auto-follow for the new tool's content.
-                expandedShouldAutoFollow = true
-            }
-        } else {
-            expandedShouldAutoFollow = false
-        }
-
-        if shouldRerender {
-            if expandedShouldAutoFollow {
-                scheduleExpandedAutoScrollToBottomIfNeeded()
-            } else if !isStreaming {
-                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-            }
-        }
+        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+            isStreaming: isStreaming,
+            shouldRerender: shouldRerender,
+            wasExpandedVisible: wasExpandedVisible,
+            previousRenderedText: previousRenderedText,
+            currentDisplayText: displayText,
+            expandedShouldAutoFollow: &expandedShouldAutoFollow,
+            expandedScrollView: expandedScrollView,
+            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
 
         return RenderResult(
             visibility: ToolRowRenderVisibility(

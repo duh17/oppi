@@ -213,7 +213,6 @@ struct WriteToolTextAutoFollowTests {
             isCurrentModeText: state.signature != nil,
             isUsingMarkdownLayout: false,
             isUsingReadMediaLayout: false,
-            shouldAutoFollowOnFirstRender: streaming,
             showExpandedLabel: {},
             setModeText: {},
             updateExpandedLabelWidthIfNeeded: {},
