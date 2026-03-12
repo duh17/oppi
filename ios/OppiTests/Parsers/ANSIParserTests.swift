@@ -118,4 +118,99 @@ struct ANSIParserTests {
         #expect(ANSIParser.strip("").isEmpty)
         #expect(ANSIParser.attributedString(from: "").string.isEmpty)
     }
+
+    // MARK: - Background colors
+
+    @Test("background color 41 (red) is emitted as .backgroundColor attribute")
+    func bgColorRed() {
+        // ESC[41;37m = red bg + white fg
+        let input = "\u{1B}[41;37m ERROR \u{1B}[0m"
+        let result = ANSIParser.attributedString(from: input)
+        #expect(result.string.trimmingCharacters(in: .whitespaces) == "ERROR")
+
+        let ns = result.string as NSString
+        let range = ns.range(of: "ERROR")
+        guard range.location != NSNotFound else {
+            Issue.record("ERROR token not found in attributed string")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? UIColor
+        #expect(bg != nil, "Expected .backgroundColor attribute for code 41")
+
+        let fg = result.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
+        #expect(fg != nil, "Expected .foregroundColor attribute for code 37")
+    }
+
+    @Test("background color 49 resets to nil")
+    func bgColorReset() {
+        let input = "\u{1B}[41mred bg\u{1B}[49m default bg\u{1B}[0m"
+        let result = ANSIParser.attributedString(from: input)
+        #expect(result.string.contains("red bg"))
+        #expect(result.string.contains("default bg"))
+
+        let ns = result.string as NSString
+        let defaultRange = ns.range(of: "default bg")
+        guard defaultRange.location != NSNotFound else {
+            Issue.record("'default bg' not found")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: defaultRange.location, effectiveRange: nil)
+        #expect(bg == nil, "Expected no .backgroundColor after code 49 reset")
+    }
+
+    @Test("background color 46 (cyan) is mapped to a theme color")
+    func bgColorCyan() {
+        let input = "\u{1B}[46m cyan section \u{1B}[0m"
+        let result = ANSIParser.attributedString(from: input)
+        let ns = result.string as NSString
+        let range = ns.range(of: "cyan section")
+        guard range.location != NSNotFound else {
+            Issue.record("'cyan section' not found")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? UIColor
+        #expect(bg != nil, "Expected .backgroundColor for code 46")
+    }
+
+    @Test("reset code 0 clears both fg and bg")
+    func resetClearsBoth() {
+        let input = "\u{1B}[41;31m colored \u{1B}[0m plain"
+        let result = ANSIParser.attributedString(from: input)
+        let ns = result.string as NSString
+        let plainRange = ns.range(of: "plain")
+        guard plainRange.location != NSNotFound else {
+            Issue.record("'plain' not found")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: plainRange.location, effectiveRange: nil)
+        #expect(bg == nil, "Expected no .backgroundColor after reset")
+    }
+
+    @Test("256-color background 48;5;n renders as .backgroundColor")
+    func bgColor256() {
+        let input = "\u{1B}[48;5;196m red-ish \u{1B}[0m"
+        let result = ANSIParser.attributedString(from: input)
+        let ns = result.string as NSString
+        let range = ns.range(of: "red-ish")
+        guard range.location != NSNotFound else {
+            Issue.record("'red-ish' not found")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? UIColor
+        #expect(bg != nil, "Expected .backgroundColor for 256-color bg code")
+    }
+
+    @Test("RGB background 48;2;r;g;b renders as .backgroundColor")
+    func bgColorRGB() {
+        let input = "\u{1B}[48;2;255;0;128m magenta-bg \u{1B}[0m"
+        let result = ANSIParser.attributedString(from: input)
+        let ns = result.string as NSString
+        let range = ns.range(of: "magenta-bg")
+        guard range.location != NSNotFound else {
+            Issue.record("'magenta-bg' not found")
+            return
+        }
+        let bg = result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? UIColor
+        #expect(bg != nil, "Expected .backgroundColor for RGB bg code")
+    }
 }
