@@ -22,7 +22,6 @@ struct BashToolRowViewTests {
         let result = view.apply(
             input: input,
             outputColor: .white,
-            commandTextColor: .white,
             wasOutputVisible: false
         )
         #expect(result.showCommand)
@@ -44,7 +43,6 @@ struct BashToolRowViewTests {
         let result = view.apply(
             input: input,
             outputColor: .white,
-            commandTextColor: .white,
             wasOutputVisible: false
         )
         #expect(!result.showCommand)
@@ -61,7 +59,7 @@ struct BashToolRowViewTests {
             command: nil, output: nil, unwrapped: false, isError: false, isStreaming: false
         )
         let result = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         #expect(!result.showCommand)
         #expect(!result.showOutput)
@@ -78,7 +76,7 @@ struct BashToolRowViewTests {
             isStreaming: false
         )
         _ = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         #expect(view.outputLabel.textContainer.lineBreakMode == .byClipping)
         #expect(view.outputScrollView.showsHorizontalScrollIndicator)
@@ -95,7 +93,7 @@ struct BashToolRowViewTests {
             isStreaming: false
         )
         _ = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         #expect(view.outputLabel.textContainer.lineBreakMode == .byCharWrapping)
         #expect(!view.outputScrollView.showsHorizontalScrollIndicator)
@@ -112,7 +110,7 @@ struct BashToolRowViewTests {
             isStreaming: false
         )
         _ = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         // Error mode sets a non-default (red-tinted) background on outputContainer.
         let bg = view.outputContainer.backgroundColor
@@ -130,7 +128,7 @@ struct BashToolRowViewTests {
             isStreaming: false
         )
         _ = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         #expect(view.outputContainer.backgroundColor == UIColor(Color.themeBgDark))
     }
@@ -148,7 +146,7 @@ struct BashToolRowViewTests {
             isStreaming: false
         )
         _ = view.apply(
-            input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false
+            input: input, outputColor: .white, wasOutputVisible: false
         )
         #expect(view.outputRenderSignature != nil)
 
@@ -171,7 +169,7 @@ struct BashToolRowViewTests {
             command: nil, output: "line1\n", unwrapped: false, isError: false, isStreaming: true
         )
         _ = view.apply(
-            input: input1, outputColor: outputColor, commandTextColor: .white, wasOutputVisible: false
+            input: input1, outputColor: outputColor, wasOutputVisible: false
         )
         let text1 = view.outputLabel.text ?? ""
         #expect(text1.contains("line1"))
@@ -181,7 +179,7 @@ struct BashToolRowViewTests {
             command: nil, output: "line1\nline2\n", unwrapped: false, isError: false, isStreaming: true
         )
         _ = view.apply(
-            input: input2, outputColor: outputColor, commandTextColor: .white, wasOutputVisible: true
+            input: input2, outputColor: outputColor, wasOutputVisible: true
         )
         let text2 = view.outputLabel.text ?? view.outputLabel.attributedText?.string ?? ""
         #expect(text2.contains("line1"))
@@ -195,7 +193,7 @@ struct BashToolRowViewTests {
         let stream = BashRenderInput(
             command: nil, output: "old output", unwrapped: false, isError: false, isStreaming: true
         )
-        _ = view.apply(input: stream, outputColor: .white, commandTextColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: stream, outputColor: .white, wasOutputVisible: false)
 
         view.resetOutputState(outputColor: .white)
 
@@ -203,7 +201,7 @@ struct BashToolRowViewTests {
         let fresh = BashRenderInput(
             command: nil, output: "new output", unwrapped: false, isError: false, isStreaming: true
         )
-        _ = view.apply(input: fresh, outputColor: .white, commandTextColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: fresh, outputColor: .white, wasOutputVisible: false)
         let text = view.outputLabel.text ?? view.outputLabel.attributedText?.string ?? ""
         #expect(!text.contains("old output"))
         #expect(text.contains("new output"))
@@ -217,10 +215,10 @@ struct BashToolRowViewTests {
         let input = BashRenderInput(
             command: "ls -la", output: nil, unwrapped: false, isError: false, isStreaming: false
         )
-        _ = view.apply(input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
         let firstAttr = try #require(view.commandLabel.attributedText)
 
-        _ = view.apply(input: input, outputColor: .white, commandTextColor: .white, wasOutputVisible: false)
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
         let secondAttr = try #require(view.commandLabel.attributedText)
 
         // Same attributed string object (no rerender means same reference)
