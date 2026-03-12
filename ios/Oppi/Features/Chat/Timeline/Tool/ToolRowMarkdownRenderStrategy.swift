@@ -12,7 +12,6 @@ struct ToolRowMarkdownRenderStrategy {
         expandedShouldAutoFollow: inout Bool,
         wasExpandedVisible: Bool,
         isUsingMarkdownLayout: Bool,
-        shouldAutoFollowOnFirstRender: Bool,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?,
         textSelectionEnabled: Bool,
@@ -48,23 +47,16 @@ struct ToolRowMarkdownRenderStrategy {
         setModeText()
         showExpandedViewport()
 
-        let isStreamingContinuation = previousRenderedText.map { !$0.isEmpty && text.hasPrefix($0) } ?? false
-
-        if !wasExpandedVisible {
-            expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
-        } else if !shouldAutoFollowOnFirstRender,
-                  shouldRerender,
-                  !isStreamingContinuation {
-            expandedShouldAutoFollow = false
-        }
-
-        if shouldRerender {
-            if expandedShouldAutoFollow {
-                scheduleExpandedAutoScrollToBottomIfNeeded()
-            } else {
-                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-            }
-        }
+        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+            isStreaming: isStreaming,
+            shouldRerender: shouldRerender,
+            wasExpandedVisible: wasExpandedVisible,
+            previousRenderedText: previousRenderedText,
+            currentDisplayText: text,
+            expandedShouldAutoFollow: &expandedShouldAutoFollow,
+            expandedScrollView: expandedScrollView,
+            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
 
         return ToolRowRenderVisibility(
             showExpandedContainer: true,
