@@ -47,17 +47,14 @@ struct CodeRenderAutoFollowTests {
         #expect(state.autoFollow == false)
     }
 
-    @Test("auto-follow triggers scroll callback")
-    func autoFollowTriggersScrollCallback() {
+    @Test("auto-follow triggers followTail scroll behavior")
+    func autoFollowTriggersFollowTail() {
         var state = CodeRenderState()
-        var scrollCount = 0
-        _ = renderCode("line1\n", isStreaming: true, wasVisible: false, state: &state,
-                        onScroll: { scrollCount += 1 })
-        #expect(scrollCount == 1)
+        let result1 = renderCode("line1\n", isStreaming: true, wasVisible: false, state: &state)
+        #expect(result1.scrollBehavior == .followTail)
 
-        _ = renderCode("line1\nline2\n", isStreaming: true, wasVisible: true, state: &state,
-                        onScroll: { scrollCount += 1 })
-        #expect(scrollCount == 2)
+        let result2 = renderCode("line1\nline2\n", isStreaming: true, wasVisible: true, state: &state)
+        #expect(result2.scrollBehavior == .followTail)
     }
 
     // MARK: - Helpers
@@ -80,27 +77,25 @@ struct CodeRenderAutoFollowTests {
         _ text: String,
         isStreaming: Bool,
         wasVisible: Bool,
-        state: inout CodeRenderState,
-        onScroll: @escaping () -> Void = {}
-    ) -> ToolRowCodeRenderStrategy.RenderResult {
-        ToolRowCodeRenderStrategy.render(
+        state: inout CodeRenderState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowCodeRenderStrategy.render(
             text: text,
             language: nil,
             startLine: 1,
             isStreaming: isStreaming,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.renderedText,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.renderedText,
+            previousAutoFollow: state.autoFollow,
             isCurrentModeCode: state.signature != nil,
-            wasExpandedVisible: wasVisible,
-            showExpandedLabel: {},
-            setModeCode: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            wasExpandedVisible: wasVisible
         )
+        state.signature = result.renderSignature
+        state.renderedText = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 }
 
@@ -149,17 +144,14 @@ struct TextRenderAutoFollowTests {
         #expect(state.autoFollow == false)
     }
 
-    @Test("auto-follow triggers scroll callback")
-    func autoFollowTriggersScrollCallback() {
+    @Test("auto-follow triggers followTail scroll behavior")
+    func autoFollowTriggersFollowTail() {
         var state = TextRenderState()
-        var scrollCount = 0
-        _ = renderText("line1\n", isStreaming: true, wasVisible: false, state: &state,
-                        onScroll: { scrollCount += 1 })
-        #expect(scrollCount == 1)
+        let result1 = renderText("line1\n", isStreaming: true, wasVisible: false, state: &state)
+        #expect(result1.scrollBehavior == .followTail)
 
-        _ = renderText("line1\nline2\n", isStreaming: true, wasVisible: true, state: &state,
-                        onScroll: { scrollCount += 1 })
-        #expect(scrollCount == 2)
+        let result2 = renderText("line1\nline2\n", isStreaming: true, wasVisible: true, state: &state)
+        #expect(result2.scrollBehavior == .followTail)
     }
 
     // MARK: - Helpers
@@ -182,10 +174,9 @@ struct TextRenderAutoFollowTests {
         _ text: String,
         isStreaming: Bool,
         wasVisible: Bool,
-        state: inout TextRenderState,
-        onScroll: @escaping () -> Void = {}
-    ) -> ToolRowRenderVisibility {
-        ToolRowTextRenderStrategy.render(
+        state: inout TextRenderState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowTextRenderStrategy.render(
             text: text,
             language: nil,
             isError: false,
@@ -193,18 +184,17 @@ struct TextRenderAutoFollowTests {
             outputColor: .white,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.renderedText,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.renderedText,
+            previousAutoFollow: state.autoFollow,
             wasExpandedVisible: wasVisible,
             isCurrentModeText: state.signature != nil,
             isUsingMarkdownLayout: false,
-            isUsingReadMediaLayout: false,
-            showExpandedLabel: {},
-            setModeText: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            isUsingReadMediaLayout: false
         )
+        state.signature = result.renderSignature
+        state.renderedText = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 }

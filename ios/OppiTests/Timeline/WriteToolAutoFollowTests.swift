@@ -20,47 +20,35 @@ struct WriteToolCodeAutoFollowTests {
     @Test("auto-follow fires on each streaming growth")
     func autoFollowFiresOnEachGrowth() {
         var state = makeCodeState()
-        var scrollCount = 0
 
         // First chunk — auto-follow should activate
-        renderWriteCode("import Foundation\n", streaming: true, visible: false, state: &state) {
-            scrollCount += 1
-        }
-        #expect(scrollCount == 1, "First chunk should trigger scroll")
+        let r1 = renderWriteCode("import Foundation\n", streaming: true, visible: false, state: &state)
+        #expect(r1.scrollBehavior == .followTail, "First chunk should trigger followTail")
         #expect(state.autoFollow == true, "Auto-follow should be enabled after first chunk")
 
         // Second chunk — continuation growth
         let text2 = "import Foundation\n\nstruct Writer {\n"
-        renderWriteCode(text2, streaming: true, visible: true, state: &state) {
-            scrollCount += 1
-        }
-        #expect(scrollCount == 2, "Second chunk should trigger scroll")
+        let r2 = renderWriteCode(text2, streaming: true, visible: true, state: &state)
+        #expect(r2.scrollBehavior == .followTail, "Second chunk should trigger followTail")
         #expect(state.autoFollow == true, "Auto-follow should remain enabled during streaming")
 
         // Third chunk — more growth
         let text3 = text2 + "    func write() {\n        print(\"hello\")\n    }\n}\n"
-        renderWriteCode(text3, streaming: true, visible: true, state: &state) {
-            scrollCount += 1
-        }
-        #expect(scrollCount == 3, "Third chunk should trigger scroll")
+        let r3 = renderWriteCode(text3, streaming: true, visible: true, state: &state)
+        #expect(r3.scrollBehavior == .followTail, "Third chunk should trigger followTail")
         #expect(state.autoFollow == true, "Auto-follow should remain enabled during streaming")
     }
 
     @Test("auto-follow disabled on done transition")
     func autoFollowDisabledOnDone() {
         var state = makeCodeState()
-        var scrollCount = 0
 
-        renderWriteCode("import Foundation\n", streaming: true, visible: false, state: &state) {
-            scrollCount += 1
-        }
+        _ = renderWriteCode("import Foundation\n", streaming: true, visible: false, state: &state)
         #expect(state.autoFollow == true)
 
         // Tool completes
         let finalText = "import Foundation\n\nstruct Writer {}\n"
-        renderWriteCode(finalText, streaming: false, visible: true, state: &state) {
-            scrollCount += 1
-        }
+        _ = renderWriteCode(finalText, streaming: false, visible: true, state: &state)
         #expect(state.autoFollow == false, "Auto-follow should be disabled when done")
     }
 
@@ -69,11 +57,11 @@ struct WriteToolCodeAutoFollowTests {
         var state = makeCodeState()
 
         // Previous tool's done content (cell reuse)
-        renderWriteCode("old file content\n", streaming: false, visible: false, state: &state) {}
+        _ = renderWriteCode("old file content\n", streaming: false, visible: false, state: &state)
         #expect(state.autoFollow == false)
 
         // New write tool starts streaming
-        renderWriteCode("new content\n", streaming: true, visible: true, state: &state) {}
+        _ = renderWriteCode("new content\n", streaming: true, visible: true, state: &state)
         #expect(state.autoFollow == true, "Cell reuse should re-enable auto-follow for new streaming tool")
     }
 
@@ -96,31 +84,30 @@ struct WriteToolCodeAutoFollowTests {
         CodeState()
     }
 
+    @discardableResult
     private func renderWriteCode(
         _ text: String,
         streaming: Bool,
         visible: Bool,
-        state: inout CodeState,
-        onScroll: @escaping () -> Void
-    ) {
-        _ = ToolRowCodeRenderStrategy.render(
+        state: inout CodeState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowCodeRenderStrategy.render(
             text: text,
             language: .swift,
             startLine: 1,
             isStreaming: streaming,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.text,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.text,
+            previousAutoFollow: state.autoFollow,
             isCurrentModeCode: state.signature != nil,
-            wasExpandedVisible: visible,
-            showExpandedLabel: {},
-            setModeCode: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            wasExpandedVisible: visible
         )
+        state.signature = result.renderSignature
+        state.text = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 }
 
@@ -135,18 +122,13 @@ struct WriteToolTextAutoFollowTests {
     @Test("auto-follow fires on each streaming growth via text path")
     func autoFollowFiresOnEachGrowth() {
         var state = makeTextState()
-        var scrollCount = 0
 
-        renderWriteText("line 1\n", streaming: true, visible: false, state: &state) {
-            scrollCount += 1
-        }
-        #expect(scrollCount == 1)
+        let r1 = renderWriteText("line 1\n", streaming: true, visible: false, state: &state)
+        #expect(r1.scrollBehavior == .followTail)
         #expect(state.autoFollow == true)
 
-        renderWriteText("line 1\nline 2\nline 3\n", streaming: true, visible: true, state: &state) {
-            scrollCount += 1
-        }
-        #expect(scrollCount == 2)
+        let r2 = renderWriteText("line 1\nline 2\nline 3\n", streaming: true, visible: true, state: &state)
+        #expect(r2.scrollBehavior == .followTail)
         #expect(state.autoFollow == true)
     }
 
@@ -154,10 +136,10 @@ struct WriteToolTextAutoFollowTests {
     func autoFollowDisabledOnDone() {
         var state = makeTextState()
 
-        renderWriteText("content\n", streaming: true, visible: false, state: &state) {}
+        _ = renderWriteText("content\n", streaming: true, visible: false, state: &state)
         #expect(state.autoFollow == true)
 
-        renderWriteText("content\nfinal\n", streaming: false, visible: true, state: &state) {}
+        _ = renderWriteText("content\nfinal\n", streaming: false, visible: true, state: &state)
         #expect(state.autoFollow == false)
     }
 
@@ -165,10 +147,10 @@ struct WriteToolTextAutoFollowTests {
     func cellReuseDuringStreamingReenables() {
         var state = makeTextState()
 
-        renderWriteText("old content", streaming: false, visible: false, state: &state) {}
+        _ = renderWriteText("old content", streaming: false, visible: false, state: &state)
         #expect(state.autoFollow == false)
 
-        renderWriteText("new streaming content\n", streaming: true, visible: true, state: &state) {}
+        _ = renderWriteText("new streaming content\n", streaming: true, visible: true, state: &state)
         #expect(state.autoFollow == true)
     }
 
@@ -191,14 +173,14 @@ struct WriteToolTextAutoFollowTests {
         TextState()
     }
 
+    @discardableResult
     private func renderWriteText(
         _ text: String,
         streaming: Bool,
         visible: Bool,
-        state: inout TextState,
-        onScroll: @escaping () -> Void
-    ) {
-        _ = ToolRowTextRenderStrategy.render(
+        state: inout TextState
+    ) -> ExpandedRenderOutput {
+        let result = ToolRowTextRenderStrategy.render(
             text: text,
             language: nil,
             isError: false,
@@ -206,19 +188,18 @@ struct WriteToolTextAutoFollowTests {
             outputColor: .white,
             expandedLabel: state.label,
             expandedScrollView: state.scrollView,
-            expandedRenderSignature: &state.signature,
-            expandedRenderedText: &state.text,
-            expandedShouldAutoFollow: &state.autoFollow,
+            previousSignature: state.signature,
+            previousRenderedText: state.text,
+            previousAutoFollow: state.autoFollow,
             wasExpandedVisible: visible,
             isCurrentModeText: state.signature != nil,
             isUsingMarkdownLayout: false,
-            isUsingReadMediaLayout: false,
-            showExpandedLabel: {},
-            setModeText: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: onScroll
+            isUsingReadMediaLayout: false
         )
+        state.signature = result.renderSignature
+        state.text = result.renderedText
+        state.autoFollow = result.shouldAutoFollow
+        return result
     }
 }
 

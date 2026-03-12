@@ -8,26 +8,21 @@ struct ToolRowDiffRenderStrategy {
         isStreaming: Bool,
         expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
+        previousSignature: Int?,
+        previousRenderedText: String?,
+        previousAutoFollow: Bool,
         isCurrentModeDiff: Bool,
-        wasExpandedVisible: Bool,
-        showExpandedLabel: () -> Void,
-        setModeDiff: () -> Void,
-        updateExpandedLabelWidthIfNeeded: () -> Void,
-        showExpandedViewport: () -> Void,
-        scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> ToolRowRenderVisibility {
+        wasExpandedVisible: Bool
+    ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.diffSignature(
             lines: lines, path: path, isStreaming: isStreaming
         )
-        let shouldRerender = signature != expandedRenderSignature
+        let shouldRerender = signature != previousSignature
             || !isCurrentModeDiff
             || (expandedLabel.attributedText == nil && expandedLabel.text == nil)
-        let previousRenderedText = expandedRenderedText
 
-        showExpandedLabel()
+        var renderedText = previousRenderedText
+
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
             let inputBytes = lines.reduce(0) { $0 + $1.text.utf8.count }
@@ -50,17 +45,17 @@ struct ToolRowDiffRenderStrategy {
                 expandedLabel.text = plainDiff
                 expandedLabel.textColor = UIColor(.themeFg)
                 expandedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
-                expandedRenderedText = plainDiff
+                renderedText = plainDiff
             } else if let cached = ToolRowRenderCache.get(signature: signature) {
                 expandedLabel.text = nil
                 expandedLabel.attributedText = cached
-                expandedRenderedText = cached.string
+                renderedText = cached.string
             } else {
                 let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
                 ToolRowRenderCache.set(signature: signature, attributed: diffText)
                 expandedLabel.text = nil
                 expandedLabel.attributedText = diffText
-                expandedRenderedText = diffText.string
+                renderedText = diffText.string
             }
             ChatTimelinePerf.recordRenderStrategy(
                 mode: tier == .cheap ? "diff.stream" : "diff.highlight",
@@ -68,31 +63,42 @@ struct ToolRowDiffRenderStrategy {
                 inputBytes: inputBytes,
                 language: path.flatMap { ToolRowTextRenderer.diffLanguage(for: $0)?.displayName }
             )
-            expandedRenderSignature = signature
         }
 
-        expandedLabel.textContainer.lineBreakMode = .byClipping
-        expandedScrollView.alwaysBounceHorizontal = true
-        expandedScrollView.showsHorizontalScrollIndicator = true
-        setModeDiff()
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-
-        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+        let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
             shouldRerender: shouldRerender,
             wasExpandedVisible: wasExpandedVisible,
             previousRenderedText: previousRenderedText,
-            currentDisplayText: expandedRenderedText ?? "",
-            expandedShouldAutoFollow: &expandedShouldAutoFollow,
-            expandedScrollView: expandedScrollView,
-            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+            currentDisplayText: renderedText ?? "",
+            currentAutoFollow: previousAutoFollow
         )
 
-        return ToolRowRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let scrollBehavior: ExpandedRenderOutput.ScrollBehavior
+        if shouldRerender {
+            if autoFollow {
+                scrollBehavior = .followTail
+            } else if !isStreaming {
+                scrollBehavior = .resetToTop
+            } else {
+                scrollBehavior = .preserve
+            }
+        } else {
+            scrollBehavior = .preserve
+        }
+
+        return ExpandedRenderOutput(
+            renderSignature: shouldRerender ? signature : previousSignature,
+            renderedText: renderedText,
+            shouldAutoFollow: autoFollow,
+            surface: .label,
+            viewportMode: .diff,
+            verticalLock: !isStreaming,
+            scrollBehavior: scrollBehavior,
+            lineBreakMode: .byClipping,
+            horizontalScroll: true,
+            deferredHighlight: nil,
+            invalidateLayout: false
         )
     }
 }

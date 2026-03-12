@@ -10,19 +10,14 @@ struct ToolRowTextRenderStrategy {
         outputColor: UIColor,
         expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
+        previousSignature: Int?,
+        previousRenderedText: String?,
+        previousAutoFollow: Bool,
         wasExpandedVisible: Bool,
         isCurrentModeText: Bool,
         isUsingMarkdownLayout: Bool,
-        isUsingReadMediaLayout: Bool,
-        showExpandedLabel: () -> Void,
-        setModeText: () -> Void,
-        updateExpandedLabelWidthIfNeeded: () -> Void,
-        showExpandedViewport: () -> Void,
-        scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> ToolRowRenderVisibility {
+        isUsingReadMediaLayout: Bool
+    ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let signature = ToolTimelineRowRenderMetrics.textSignature(
             displayText: displayText,
@@ -30,14 +25,14 @@ struct ToolRowTextRenderStrategy {
             isError: isError,
             isStreaming: isStreaming
         )
-        let shouldRerender = signature != expandedRenderSignature
+        let shouldRerender = signature != previousSignature
             || !isCurrentModeText
             || isUsingMarkdownLayout
             || isUsingReadMediaLayout
             || (expandedLabel.attributedText == nil && expandedLabel.text == nil)
-        let previousRenderedText = expandedRenderedText
 
-        showExpandedLabel()
+        var renderedText = previousRenderedText
+
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
             let tier = StreamingRenderPolicy.tier(
@@ -89,32 +84,43 @@ struct ToolRowTextRenderStrategy {
                 to: expandedLabel,
                 plainTextColor: outputColor
             )
-            expandedRenderedText = presentation.attributedText?.string ?? presentation.plainText ?? ""
-            expandedRenderSignature = signature
+            renderedText = presentation.attributedText?.string ?? presentation.plainText ?? ""
         }
 
-        expandedLabel.textContainer.lineBreakMode = .byCharWrapping
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        setModeText()
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-
-        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+        let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
             shouldRerender: shouldRerender,
             wasExpandedVisible: wasExpandedVisible,
             previousRenderedText: previousRenderedText,
             currentDisplayText: displayText,
-            expandedShouldAutoFollow: &expandedShouldAutoFollow,
-            expandedScrollView: expandedScrollView,
-            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+            currentAutoFollow: previousAutoFollow
         )
 
-        return ToolRowRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let scrollBehavior: ExpandedRenderOutput.ScrollBehavior
+        if shouldRerender {
+            if autoFollow {
+                scrollBehavior = .followTail
+            } else if !isStreaming {
+                scrollBehavior = .resetToTop
+            } else {
+                scrollBehavior = .preserve
+            }
+        } else {
+            scrollBehavior = .preserve
+        }
+
+        return ExpandedRenderOutput(
+            renderSignature: shouldRerender ? signature : previousSignature,
+            renderedText: renderedText,
+            shouldAutoFollow: autoFollow,
+            surface: .label,
+            viewportMode: .text,
+            verticalLock: false,
+            scrollBehavior: scrollBehavior,
+            lineBreakMode: .byCharWrapping,
+            horizontalScroll: false,
+            deferredHighlight: nil,
+            invalidateLayout: false
         )
     }
 }
