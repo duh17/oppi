@@ -17,7 +17,6 @@ struct ToolRowTextRenderStrategy {
         isCurrentModeText: Bool,
         isUsingMarkdownLayout: Bool,
         isUsingReadMediaLayout: Bool,
-        shouldAutoFollowOnFirstRender: Bool,
         showExpandedLabel: () -> Void,
         setModeText: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
@@ -101,27 +100,16 @@ struct ToolRowTextRenderStrategy {
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
 
-        let isStreamingContinuation = previousRenderedText.map { !$0.isEmpty && displayText.hasPrefix($0) } ?? false
-
-        if !wasExpandedVisible {
-            expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
-        } else if shouldAutoFollowOnFirstRender,
-                  shouldRerender,
-                  !isStreamingContinuation {
-            // Streaming but content isn't a continuation — cell reuse.
-            expandedShouldAutoFollow = true
-        } else if !shouldAutoFollowOnFirstRender {
-            // Streaming finished — stop following.
-            expandedShouldAutoFollow = false
-        }
-
-        if shouldRerender {
-            if expandedShouldAutoFollow {
-                scheduleExpandedAutoScrollToBottomIfNeeded()
-            } else {
-                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-            }
-        }
+        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+            isStreaming: isStreaming,
+            shouldRerender: shouldRerender,
+            wasExpandedVisible: wasExpandedVisible,
+            previousRenderedText: previousRenderedText,
+            currentDisplayText: displayText,
+            expandedShouldAutoFollow: &expandedShouldAutoFollow,
+            expandedScrollView: expandedScrollView,
+            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+        )
 
         return ToolRowRenderVisibility(
             showExpandedContainer: true,

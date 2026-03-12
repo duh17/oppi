@@ -200,7 +200,6 @@ struct TextRenderAutoFollowTests {
             isCurrentModeText: state.signature != nil,
             isUsingMarkdownLayout: false,
             isUsingReadMediaLayout: false,
-            shouldAutoFollowOnFirstRender: isStreaming,
             showExpandedLabel: {},
             setModeText: {},
             updateExpandedLabelWidthIfNeeded: {},
