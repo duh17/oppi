@@ -3,13 +3,6 @@ import UIKit
 
 @MainActor
 struct ToolRowCodeRenderStrategy {
-    /// Result of a render call. `deferredHighlight` is non-nil when the strategy
-    /// showed plain text and needs the caller to schedule async highlighting.
-    struct RenderResult {
-        let visibility: ToolRowRenderVisibility
-        let deferredHighlight: DeferredHighlight?
-    }
-
     struct DeferredHighlight: Sendable {
         let text: String
         let language: SyntaxLanguage
@@ -24,17 +17,12 @@ struct ToolRowCodeRenderStrategy {
         isStreaming: Bool,
         expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
+        previousSignature: Int?,
+        previousRenderedText: String?,
+        previousAutoFollow: Bool,
         isCurrentModeCode: Bool,
-        wasExpandedVisible: Bool,
-        showExpandedLabel: () -> Void,
-        setModeCode: () -> Void,
-        updateExpandedLabelWidthIfNeeded: () -> Void,
-        showExpandedViewport: () -> Void,
-        scheduleExpandedAutoScrollToBottomIfNeeded: () -> Void
-    ) -> RenderResult {
+        wasExpandedVisible: Bool
+    ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
         let signature = ToolTimelineRowRenderMetrics.codeSignature(
@@ -43,22 +31,15 @@ struct ToolRowCodeRenderStrategy {
             startLine: resolvedStartLine,
             isStreaming: isStreaming
         )
-        // If a deferred highlight task cached the final attributed result but
-        // couldn't apply it due to a transient mode/signature mismatch, the
-        // label can be left showing the raw source text for the same signature.
-        // UITextView may synthesize a plain attributedText even when we set
-        // only `.text`, so detect the cheap first-paint state by comparing the
-        // currently rendered string with the raw display text.
         let currentRenderedString = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         let needsNonStreamingUpgrade = !isStreaming && currentRenderedString == displayText
-        let shouldRerender = signature != expandedRenderSignature
+        let shouldRerender = signature != previousSignature
             || !isCurrentModeCode
             || needsNonStreamingUpgrade
-        let previousRenderedText = expandedRenderedText
 
         var deferred: DeferredHighlight?
+        var renderedText = previousRenderedText
 
-        showExpandedLabel()
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
             let profile = StreamingRenderPolicy.ContentProfile.from(text: displayText)
@@ -80,9 +61,6 @@ struct ToolRowCodeRenderStrategy {
                     expandedLabel.text = nil
                     expandedLabel.attributedText = cached
                 } else if tier == .deferred {
-                    // Large uncached file: show the cheapest possible first paint
-                    // (plain monospace text, no line-number gutter), then upgrade
-                    // to highlighted + numbered code asynchronously.
                     applyPlainText(displayText, to: expandedLabel)
                     deferred = DeferredHighlight(
                         text: displayText,
@@ -108,35 +86,43 @@ struct ToolRowCodeRenderStrategy {
                 inputBytes: displayText.utf8.count,
                 language: language?.displayName
             )
-            expandedRenderedText = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
-            expandedRenderSignature = signature
+            renderedText = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         }
 
-        expandedLabel.textContainer.lineBreakMode = .byClipping
-        expandedScrollView.alwaysBounceHorizontal = true
-        expandedScrollView.showsHorizontalScrollIndicator = true
-        setModeCode()
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-
-        ToolTimelineRowUIHelpers.applyExpandedAutoFollow(
+        let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
             isStreaming: isStreaming,
             shouldRerender: shouldRerender,
             wasExpandedVisible: wasExpandedVisible,
             previousRenderedText: previousRenderedText,
             currentDisplayText: displayText,
-            expandedShouldAutoFollow: &expandedShouldAutoFollow,
-            expandedScrollView: expandedScrollView,
-            scheduleFollowTail: scheduleExpandedAutoScrollToBottomIfNeeded
+            currentAutoFollow: previousAutoFollow
         )
 
-        return RenderResult(
-            visibility: ToolRowRenderVisibility(
-                showExpandedContainer: true,
-                showCommandContainer: false,
-                showOutputContainer: false
-            ),
-            deferredHighlight: deferred
+        let scrollBehavior: ExpandedRenderOutput.ScrollBehavior
+        if shouldRerender {
+            if autoFollow {
+                scrollBehavior = .followTail
+            } else if !isStreaming {
+                scrollBehavior = .resetToTop
+            } else {
+                scrollBehavior = .preserve
+            }
+        } else {
+            scrollBehavior = .preserve
+        }
+
+        return ExpandedRenderOutput(
+            renderSignature: shouldRerender ? signature : previousSignature,
+            renderedText: renderedText,
+            shouldAutoFollow: autoFollow,
+            surface: .label,
+            viewportMode: .code,
+            verticalLock: !isStreaming,
+            scrollBehavior: scrollBehavior,
+            lineBreakMode: .byClipping,
+            horizontalScroll: true,
+            deferredHighlight: deferred,
+            invalidateLayout: false
         )
     }
 

@@ -901,8 +901,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         NSLayoutConstraint.activate(layout.all)
     }
 
-    private typealias ExpandedRenderVisibility = ToolRowRenderVisibility
-
     private func apply(configuration: ToolTimelineRowConfiguration) {
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
@@ -971,69 +969,46 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if configuration.isExpanded, let expandedContent = configuration.expandedContent {
             activeExpandedContent = expandedContent
-            let visibility = ToolTimelineRowExpandedModeRouter.route(
-                expandedContent: expandedContent,
-                renderBash: { command, output, unwrapped in
-                    self.renderExpandedBashMode(
-                        command: command,
-                        output: output,
-                        unwrapped: unwrapped,
-                        configuration: configuration,
-                        outputColor: outputColor,
-                        wasOutputVisible: wasOutputVisible
-                    )
-                },
-                renderDiff: { lines, path in
-                    self.renderExpandedDiffMode(
-                        lines: lines,
-                        path: path,
-                        isStreaming: !configuration.isDone,
-                        wasExpandedVisible: wasExpandedVisible
-                    )
-                },
-                renderCode: { text, language, startLine in
-                    self.renderExpandedCodeMode(
-                        text: text,
-                        language: language,
-                        startLine: startLine,
-                        isStreaming: !configuration.isDone,
-                        wasExpandedVisible: wasExpandedVisible
-                    )
-                },
-                renderMarkdown: { text in
-                    self.renderExpandedMarkdownMode(
-                        text: text,
-                        isStreaming: !configuration.isDone,
-                        wasExpandedVisible: wasExpandedVisible,
-                        isDone: configuration.isDone,
-                        markdownSelectionEnabled: renderPlan.interactionSpec.markdownSelectionEnabled
-                    )
-                },
-                renderPlot: { spec, fallbackText in
-                    self.renderExpandedPlotMode(spec: spec, fallbackText: fallbackText)
-                },
-                renderReadMedia: { output, filePath, startLine in
-                    self.renderExpandedReadMediaMode(
-                        output: output,
-                        filePath: filePath,
-                        startLine: startLine,
-                        isError: configuration.isError
-                    )
-                },
-                renderText: { text, language in
-                    self.renderExpandedTextMode(
-                        text: text,
-                        language: language,
-                        configuration: configuration,
-                        outputColor: outputColor,
-                        wasExpandedVisible: wasExpandedVisible
-                    )
-                }
-            )
 
-            showExpandedContainer = visibility.showExpandedContainer
-            showCommandContainer = visibility.showCommandContainer
-            showOutputContainer = visibility.showOutputContainer
+            if case .bash(let command, let output, let unwrapped) = expandedContent {
+                // Bash mode: uses command/output containers, not expanded container.
+                cancelDeferredCodeHighlight()
+                hideExpandedContainer(outputColor: outputColor)
+
+                let input = BashRenderInput(
+                    command: command,
+                    output: output,
+                    unwrapped: unwrapped,
+                    isError: configuration.isError,
+                    isStreaming: !configuration.isDone
+                )
+                let result = bashToolRowView.apply(
+                    input: input,
+                    outputColor: outputColor,
+                    wasOutputVisible: wasOutputVisible
+                )
+
+                if result.showOutput {
+                    bashToolRowView.setOutputVerticalLockEnabled(bashToolRowView.outputUsesUnwrappedLayout)
+                    bashToolRowView.updateOutputLabelWidthIfNeeded()
+                } else {
+                    bashToolRowView.setOutputVerticalLockEnabled(false)
+                }
+
+                showCommandContainer = result.showCommand
+                showOutputContainer = result.showOutput
+            } else {
+                // All non-bash modes use the expanded container.
+                let output = makeExpandedRenderOutput(
+                    expandedContent: expandedContent,
+                    configuration: configuration,
+                    renderPlan: renderPlan,
+                    outputColor: outputColor,
+                    wasExpandedVisible: wasExpandedVisible
+                )
+                applyExpandedRenderOutput(output)
+                showExpandedContainer = true
+            }
         }
 
         // Hide containers that aren't needed by the active content
@@ -1117,268 +1092,174 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
-    private func renderExpandedBashMode(
-        command: String?,
-        output: String?,
-        unwrapped: Bool,
+    // MARK: - Expanded render dispatch + apply
+
+    private func makeExpandedRenderOutput(
+        expandedContent: ToolPresentationBuilder.ToolExpandedContent,
         configuration: ToolTimelineRowConfiguration,
+        renderPlan: ToolRowRenderPlan,
         outputColor: UIColor,
-        wasOutputVisible: Bool
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
-        hideExpandedContainer(outputColor: outputColor)
-
-        let input = BashRenderInput(
-            command: command,
-            output: output,
-            unwrapped: unwrapped,
-            isError: configuration.isError,
-            isStreaming: !configuration.isDone
-        )
-        let result = bashToolRowView.apply(
-            input: input,
-            outputColor: outputColor,
-            wasOutputVisible: wasOutputVisible
-        )
-
-        if result.showOutput {
-            bashToolRowView.setOutputVerticalLockEnabled(bashToolRowView.outputUsesUnwrappedLayout)
-            bashToolRowView.updateOutputLabelWidthIfNeeded()
-        } else {
-            bashToolRowView.setOutputVerticalLockEnabled(false)
-        }
-
-        return ToolRowRenderVisibility(
-            showExpandedContainer: false,
-            showCommandContainer: result.showCommand,
-            showOutputContainer: result.showOutput
-        )
-    }
-
-    private func renderExpandedDiffMode(
-        lines: [DiffLine],
-        path: String?,
-        isStreaming: Bool,
         wasExpandedVisible: Bool
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
+    ) -> ExpandedRenderOutput {
+        let isStreaming = !configuration.isDone
 
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+        switch expandedContent {
+        case .bash:
+            // Bash is handled inline in apply() — should never reach here.
+            fatalError("Bash mode must not route through makeExpandedRenderOutput")
 
-        let visibility = ToolRowDiffRenderStrategy.render(
-            lines: lines,
-            path: path,
-            isStreaming: isStreaming,
-            expandedLabel: expandedLabel,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            isCurrentModeDiff: expandedViewportMode == .diff,
-            wasExpandedVisible: wasExpandedVisible,
-            showExpandedLabel: showExpandedLabel,
-            setModeDiff: { self.expandedViewportMode = .diff },
-            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport,
-            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
-        )
+        case .diff(let lines, let path):
+            return ToolRowDiffRenderStrategy.render(
+                lines: lines,
+                path: path,
+                isStreaming: isStreaming,
+                expandedLabel: expandedLabel,
+                expandedScrollView: expandedScrollView,
+                previousSignature: expandedRenderSignature,
+                previousRenderedText: expandedRenderedText,
+                previousAutoFollow: expandedShouldAutoFollow,
+                isCurrentModeDiff: expandedViewportMode == .diff,
+                wasExpandedVisible: wasExpandedVisible
+            )
 
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        case .code(let text, let language, let startLine, _):
+            return ToolRowCodeRenderStrategy.render(
+                text: text,
+                language: language,
+                startLine: startLine,
+                isStreaming: isStreaming,
+                expandedLabel: expandedLabel,
+                expandedScrollView: expandedScrollView,
+                previousSignature: expandedRenderSignature,
+                previousRenderedText: expandedRenderedText,
+                previousAutoFollow: expandedShouldAutoFollow,
+                isCurrentModeCode: expandedViewportMode == .code,
+                wasExpandedVisible: wasExpandedVisible
+            )
 
-        if visibility.showExpandedContainer {
-            // During streaming, don't lock label height to the viewport.
-            // The label must grow beyond the viewport so followTail() can
-            // scroll the inner scroll view to show the latest content.
-            // On done, re-enable the lock for horizontal-scroll-only mode.
-            setExpandedVerticalLockEnabled(!isStreaming)
-            updateExpandedLabelWidthIfNeeded()
+        case .markdown(let text):
+            let markdownSelectionEnabled = renderPlan.interactionSpec.markdownSelectionEnabled
+            return ToolRowMarkdownRenderStrategy.render(
+                text: text,
+                isStreaming: isStreaming,
+                expandedMarkdownView: expandedMarkdownView,
+                expandedScrollView: expandedScrollView,
+                previousSignature: expandedRenderSignature,
+                previousRenderedText: expandedRenderedText,
+                previousAutoFollow: expandedShouldAutoFollow,
+                wasExpandedVisible: wasExpandedVisible,
+                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
+                selectedTextSourceContext: markdownSelectionEnabled
+                    ? selectedTextSessionId.flatMap { sessionId in
+                        ToolTimelineRowSelectedTextSupport.sourceContext(
+                            surface: .expandedMarkdown,
+                            expandedContent: .markdown(text: text),
+                            sessionId: sessionId,
+                            sourceLabel: configuration.title,
+                            expandedLabelText: nil
+                        )
+                    }
+                    : nil,
+                textSelectionEnabled: markdownSelectionEnabled
+            )
+
+        case .plot(let spec, let fallbackText):
+            return ToolRowPlotRenderStrategy.render(
+                spec: spec,
+                fallbackText: fallbackText,
+                previousSignature: expandedRenderSignature,
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView,
+                installExpandedPlotView: installExpandedPlotView(spec:fallbackText:)
+            )
+
+        case .readMedia(let output, let filePath, let startLine):
+            return ToolRowReadMediaRenderStrategy.render(
+                output: output,
+                filePath: filePath,
+                startLine: startLine,
+                isError: configuration.isError,
+                previousSignature: expandedRenderSignature,
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+                installExpandedReadMediaView: installExpandedReadMediaView(output:isError:filePath:startLine:)
+            )
+
+        case .status(let message):
+            return ToolRowTextRenderStrategy.render(
+                text: message,
+                language: nil,
+                isError: configuration.isError,
+                isStreaming: isStreaming,
+                outputColor: outputColor,
+                expandedLabel: expandedLabel,
+                expandedScrollView: expandedScrollView,
+                previousSignature: expandedRenderSignature,
+                previousRenderedText: expandedRenderedText,
+                previousAutoFollow: expandedShouldAutoFollow,
+                wasExpandedVisible: wasExpandedVisible,
+                isCurrentModeText: expandedViewportMode == .text,
+                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout
+            )
+
+        case .text(let text, let language):
+            return ToolRowTextRenderStrategy.render(
+                text: text,
+                language: language,
+                isError: configuration.isError,
+                isStreaming: isStreaming,
+                outputColor: outputColor,
+                expandedLabel: expandedLabel,
+                expandedScrollView: expandedScrollView,
+                previousSignature: expandedRenderSignature,
+                previousRenderedText: expandedRenderedText,
+                previousAutoFollow: expandedShouldAutoFollow,
+                wasExpandedVisible: wasExpandedVisible,
+                isCurrentModeText: expandedViewportMode == .text,
+                isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout
+            )
         }
-
-        return visibility
     }
 
-    private func renderExpandedMarkdownMode(
-        text: String,
-        isStreaming: Bool,
-        wasExpandedVisible: Bool,
-        isDone: Bool,
-        markdownSelectionEnabled: Bool
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
+    private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput) {
+        switch output.surface {
+        case .label:     showExpandedLabel()
+        case .markdown:  showExpandedMarkdown()
+        case .hostedView: showExpandedHostedView()
+        }
 
-        let previousExpandedRenderSignature = expandedRenderSignature
-        let wasUsingMarkdownLayout = expandedUsesMarkdownLayout
+        expandedRenderSignature = output.renderSignature
+        expandedRenderedText = output.renderedText
+        expandedShouldAutoFollow = output.shouldAutoFollow
+        expandedViewportMode = output.viewportMode
 
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+        expandedLabel.textContainer.lineBreakMode = output.lineBreakMode
+        expandedScrollView.alwaysBounceHorizontal = output.horizontalScroll
+        expandedScrollView.showsHorizontalScrollIndicator = output.horizontalScroll
 
-        let visibility = ToolRowMarkdownRenderStrategy.render(
-            text: text,
-            isStreaming: isStreaming,
-            expandedMarkdownView: expandedMarkdownView,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            wasExpandedVisible: wasExpandedVisible,
-            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-            selectedTextPiRouter: markdownSelectionEnabled ? selectedTextPiRouter : nil,
-            selectedTextSourceContext: markdownSelectionEnabled
-                ? selectedTextSessionId.flatMap { sessionId in
-                    ToolTimelineRowSelectedTextSupport.sourceContext(
-                        surface: .expandedMarkdown,
-                        expandedContent: .markdown(text: text),
-                        sessionId: sessionId,
-                        sourceLabel: currentConfiguration.title,
-                        expandedLabelText: nil
-                    )
-                }
-                : nil,
-            textSelectionEnabled: markdownSelectionEnabled,
-            showExpandedMarkdown: showExpandedMarkdown,
-            setModeText: { self.expandedViewportMode = .text },
-            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport,
-            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
-        )
+        setExpandedVerticalLockEnabled(output.verticalLock)
+        updateExpandedLabelWidthIfNeeded()
+        showExpandedViewport()
 
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-        setExpandedVerticalLockEnabled(false)
+        if let deferred = output.deferredHighlight {
+            scheduleDeferredCodeHighlightIfNeeded(deferred)
+        } else {
+            cancelDeferredCodeHighlight()
+        }
 
-        let didRerenderMarkdown = localExpandedRenderSignature != previousExpandedRenderSignature
-        let didEnterMarkdownLayout = !wasUsingMarkdownLayout && expandedUsesMarkdownLayout
+        switch output.scrollBehavior {
+        case .followTail: scheduleExpandedAutoScrollToBottomIfNeeded()
+        case .resetToTop: ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
+        case .preserve: break
+        }
 
-        // Markdown subviews are added synchronously but Auto Layout hasn't
-        // measured them yet when preferredViewportHeight runs in the same
-        // cycle. Invalidation is coalesced — safe to call synchronously here;
-        // only fires once per runloop tick regardless of how many callsites
-        // request it.
-        if didRerenderMarkdown || didEnterMarkdownLayout {
+        if output.invalidateLayout {
             setNeedsLayout()
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
-
-        return visibility
-    }
-
-    private func renderExpandedPlotMode(
-        spec: PlotChartSpec,
-        fallbackText: String?
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
-
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
-
-        let visibility = ToolRowPlotRenderStrategy.render(
-            spec: spec,
-            fallbackText: fallbackText,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-            hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView,
-            showExpandedHostedView: showExpandedHostedView,
-            installExpandedPlotView: installExpandedPlotView(spec:fallbackText:),
-            setModeText: { self.expandedViewportMode = .text },
-            showExpandedViewport: showExpandedViewport
-        )
-
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-        setExpandedVerticalLockEnabled(false)
-
-        return visibility
-    }
-
-    private func renderExpandedReadMediaMode(
-        output: String,
-        filePath: String?,
-        startLine: Int,
-        isError: Bool
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
-
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
-
-        let visibility = ToolRowReadMediaRenderStrategy.render(
-            output: output,
-            filePath: filePath,
-            startLine: startLine,
-            isError: isError,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-            hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
-            showExpandedHostedView: showExpandedHostedView,
-            installExpandedReadMediaView: installExpandedReadMediaView(output:isError:filePath:startLine:),
-            setModeText: { self.expandedViewportMode = .text },
-            showExpandedViewport: showExpandedViewport
-        )
-
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-        setExpandedVerticalLockEnabled(false)
-
-        return visibility
-    }
-
-    private func renderExpandedTextMode(
-        text: String,
-        language: SyntaxLanguage?,
-        configuration: ToolTimelineRowConfiguration,
-        outputColor: UIColor,
-        wasExpandedVisible: Bool
-    ) -> ExpandedRenderVisibility {
-        cancelDeferredCodeHighlight()
-
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
-
-        let visibility = ToolRowTextRenderStrategy.render(
-            text: text,
-            language: language,
-            isError: configuration.isError,
-            isStreaming: !configuration.isDone,
-            outputColor: outputColor,
-            expandedLabel: expandedLabel,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            wasExpandedVisible: wasExpandedVisible,
-            isCurrentModeText: expandedViewportMode == .text,
-            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-            showExpandedLabel: showExpandedLabel,
-            setModeText: { self.expandedViewportMode = .text },
-            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
-            showExpandedViewport: showExpandedViewport,
-            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
-        )
-
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-        setExpandedVerticalLockEnabled(false)
-
-        return visibility
     }
 
     private func updateSelectedTextIntegration(

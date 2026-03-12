@@ -60,29 +60,21 @@ struct ToolRowCodeRenderStrategyTests {
     ) {
         let label = UITextView()
         let scrollView = UIScrollView()
-        var signature: Int?
-        var renderedText: String?
-        var autoFollow = false
 
-        let result = ToolRowCodeRenderStrategy.render(
+        let output = ToolRowCodeRenderStrategy.render(
             text: text,
             language: language,
             startLine: 1,
             isStreaming: false,
             expandedLabel: label,
             expandedScrollView: scrollView,
-            expandedRenderSignature: &signature,
-            expandedRenderedText: &renderedText,
-            expandedShouldAutoFollow: &autoFollow,
+            previousSignature: nil,
+            previousRenderedText: nil,
+            previousAutoFollow: false,
             isCurrentModeCode: false,
-            wasExpandedVisible: false,
-            showExpandedLabel: {},
-            setModeCode: {},
-            updateExpandedLabelWidthIfNeeded: {},
-            showExpandedViewport: {},
-            scheduleExpandedAutoScrollToBottomIfNeeded: {}
+            wasExpandedVisible: false
         )
 
-        return (result.deferredHighlight, label)
+        return (output.deferredHighlight, label)
     }
 }
