@@ -185,8 +185,9 @@ struct ToolTimelineRowViewportPolicyTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 360)
 
+        // outputViewportHeightConstraint is inside BashToolRowView; access directly
         let viewportConstraint = try #require(
-            privateConstraint(named: "outputViewportHeightConstraint", in: view)
+            view.bashToolRowView.outputViewportHeightConstraint
         )
         #expect(viewportConstraint.isActive)
         #expect(

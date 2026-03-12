@@ -77,61 +77,6 @@ enum ToolTimelineRowViewStyler {
         previewLabel.numberOfLines = 3
     }
 
-    static func styleCommand(
-        commandContainer: UIView,
-        commandLabel: UITextView
-    ) {
-        commandContainer.layer.cornerRadius = 6
-        commandContainer.backgroundColor = UIColor(Color.themeBgHighlight.opacity(0.9))
-        commandContainer.layer.borderWidth = 1
-        commandContainer.layer.borderColor = UIColor(Color.themeBlue.opacity(0.35)).cgColor
-
-        commandLabel.translatesAutoresizingMaskIntoConstraints = false
-        commandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        commandLabel.isEditable = false
-        commandLabel.isScrollEnabled = false
-        commandLabel.isSelectable = false
-        commandLabel.textContainerInset = .zero
-        commandLabel.textContainer.lineFragmentPadding = 0
-        commandLabel.textContainer.lineBreakMode = .byCharWrapping
-        commandLabel.backgroundColor = .clear
-        commandLabel.textColor = UIColor(Color.themeFg)
-    }
-
-    static func styleOutput(
-        outputContainer: UIView,
-        outputScrollView: UIScrollView,
-        outputLabel: UITextView,
-        delegate: UIScrollViewDelegate
-    ) {
-        outputContainer.layer.cornerRadius = 6
-        outputContainer.layer.masksToBounds = true
-        outputContainer.backgroundColor = UIColor(Color.themeBgDark)
-        outputContainer.layer.borderWidth = 1
-        outputContainer.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
-
-        outputScrollView.translatesAutoresizingMaskIntoConstraints = false
-        outputScrollView.alwaysBounceVertical = false
-        outputScrollView.alwaysBounceHorizontal = false
-        outputScrollView.bounces = false
-        outputScrollView.isDirectionalLockEnabled = true
-        outputScrollView.isScrollEnabled = false
-        outputScrollView.showsVerticalScrollIndicator = true
-        outputScrollView.showsHorizontalScrollIndicator = false
-        outputScrollView.delegate = delegate
-
-        outputLabel.translatesAutoresizingMaskIntoConstraints = false
-        outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputLabel.isEditable = false
-        outputLabel.isScrollEnabled = false
-        outputLabel.isSelectable = false
-        outputLabel.textContainerInset = .zero
-        outputLabel.textContainer.lineFragmentPadding = 0
-        outputLabel.textContainer.lineBreakMode = .byCharWrapping
-        outputLabel.backgroundColor = .clear
-        outputLabel.textColor = UIColor(Color.themeFg)
-    }
-
     static func styleExpanded(
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
