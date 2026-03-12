@@ -44,6 +44,9 @@ enum ANSIParser {
                 if state.underline {
                     attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
                 }
+                if let bgColor = state.backgroundUIColor {
+                    attrs[.backgroundColor] = bgColor
+                }
                 result.append(NSAttributedString(string: str, attributes: attrs))
 
             case .sgr(let codes):
@@ -127,6 +130,7 @@ private struct SGRState {
     var italic = false
     var underline = false
     var foregroundUIColor: UIColor?
+    var backgroundUIColor: UIColor?
 
     func uiFont(base: UIFont) -> UIFont {
         if !bold && !italic { return base }
@@ -154,7 +158,7 @@ private struct SGRState {
             switch code {
             case 0: // Reset
                 bold = false; dim = false; italic = false
-                underline = false; foregroundUIColor = nil
+                underline = false; foregroundUIColor = nil; backgroundUIColor = nil
 
             case 1: bold = true
             case 2: dim = true
@@ -164,8 +168,9 @@ private struct SGRState {
             case 23: italic = false
             case 24: underline = false
             case 39: foregroundUIColor = nil // default fg
+            case 49: backgroundUIColor = nil // default bg
 
-            // Standard colors (30-37)
+            // Standard fg colors (30-37)
             case 30: foregroundUIColor = UIColor(Color.themeFgDim)       // black → dim
             case 31: foregroundUIColor = UIColor(Color.themeRed)
             case 32: foregroundUIColor = UIColor(Color.themeGreen)
@@ -175,7 +180,7 @@ private struct SGRState {
             case 36: foregroundUIColor = UIColor(Color.themeCyan)
             case 37: foregroundUIColor = UIColor(Color.themeFg)           // white → fg
 
-            // Bright colors (90-97)
+            // Bright fg colors (90-97)
             case 90: foregroundUIColor = UIColor(Color.themeComment)      // bright black → comment
             case 91: foregroundUIColor = UIColor(Color.themeRed)
             case 92: foregroundUIColor = UIColor(Color.themeGreen)
@@ -185,7 +190,27 @@ private struct SGRState {
             case 96: foregroundUIColor = UIColor(Color.themeCyan)
             case 97: foregroundUIColor = UIColor(Color.themeFg)
 
-            // 256-color: 38;5;n
+            // Standard bg colors (40-47)
+            case 40: backgroundUIColor = UIColor(Color.themeFgDim.opacity(0.35))  // black bg
+            case 41: backgroundUIColor = UIColor(Color.themeRed.opacity(0.55))
+            case 42: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.45))
+            case 43: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.45))
+            case 44: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.45))
+            case 45: backgroundUIColor = UIColor(Color.themePurple.opacity(0.45))
+            case 46: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.40))
+            case 47: backgroundUIColor = UIColor(Color.themeFg.opacity(0.20))    // white bg
+
+            // Bright bg colors (100-107)
+            case 100: backgroundUIColor = UIColor(Color.themeComment.opacity(0.30))
+            case 101: backgroundUIColor = UIColor(Color.themeRed.opacity(0.65))
+            case 102: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.55))
+            case 103: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.55))
+            case 104: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.55))
+            case 105: backgroundUIColor = UIColor(Color.themePurple.opacity(0.55))
+            case 106: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.50))
+            case 107: backgroundUIColor = UIColor(Color.themeFg.opacity(0.30))
+
+            // 256-color fg: 38;5;n  /  rgb fg: 38;2;r;g;b
             case 38:
                 if i + 1 < codes.count, codes[i + 1] == 5, i + 2 < codes.count {
                     foregroundUIColor = color256(codes[i + 2])
@@ -201,7 +226,22 @@ private struct SGRState {
                     i += 4
                 }
 
-            default: break // ignore background, blink, etc.
+            // 256-color bg: 48;5;n  /  rgb bg: 48;2;r;g;b
+            case 48:
+                if i + 1 < codes.count, codes[i + 1] == 5, i + 2 < codes.count {
+                    backgroundUIColor = color256(codes[i + 2])
+                    i += 2
+                } else if i + 1 < codes.count, codes[i + 1] == 2, i + 4 < codes.count {
+                    backgroundUIColor = UIColor(
+                        red: CGFloat(codes[i + 2]) / 255,
+                        green: CGFloat(codes[i + 3]) / 255,
+                        blue: CGFloat(codes[i + 4]) / 255,
+                        alpha: 1
+                    )
+                    i += 4
+                }
+
+            default: break // ignore blink, reverse, etc.
             }
             i += 1
         }
