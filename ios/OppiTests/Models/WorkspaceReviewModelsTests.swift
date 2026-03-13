@@ -134,6 +134,41 @@ struct WorkspaceReviewModelsTests {
         #expect(pill.id == "Sources/App.swift")
     }
 
+    @Test func contextPillToReviewFilePreservesPathAndLineCounts() {
+        let pill = ContextPill(from: ContextSummary(
+            kind: "file_diff", path: "Sources/App.swift", addedLines: 10, removedLines: 3
+        ))
+        let file = pill.toReviewFile()
+
+        #expect(file.path == "Sources/App.swift")
+        #expect(file.addedLines == 10)
+        #expect(file.removedLines == 3)
+        #expect(file.status == "M")
+        #expect(file.isUnstaged)
+        #expect(!file.isStaged)
+        #expect(!file.isUntracked)
+        #expect(file.selectedSessionTouched)
+    }
+
+    @Test func contextPillToReviewFileNilsZeroLineCounts() {
+        let pill = ContextPill(from: ContextSummary(
+            kind: "file_diff", path: "empty.txt", addedLines: 0, removedLines: 0
+        ))
+        let file = pill.toReviewFile()
+
+        #expect(file.addedLines == nil)
+        #expect(file.removedLines == nil)
+    }
+
+    @Test func contextPillToReviewFileUsesPathAsID() {
+        let pill = ContextPill(from: ContextSummary(
+            kind: "file_diff", path: "Sources/Foo.swift", addedLines: 1, removedLines: 0
+        ))
+        let file = pill.toReviewFile()
+
+        #expect(file.id == "Sources/Foo.swift")
+    }
+
     @Test func fileDetailPhaseTreatsInitialNilStateAsLoading() {
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: nil, error: nil) == .loading)
     }
