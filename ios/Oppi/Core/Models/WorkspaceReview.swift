@@ -144,6 +144,22 @@ struct ContextPill: Identifiable, Sendable, Equatable, Hashable {
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
+
+    /// Synthesize a review file for presenting the diff detail sheet.
+    /// Context pills come from the review bundle where the file is already known
+    /// to be modified, so "M" is the correct default status.
+    func toReviewFile() -> WorkspaceReviewFile {
+        WorkspaceReviewFile(
+            path: path,
+            status: "M",
+            addedLines: addedLines > 0 ? addedLines : nil,
+            removedLines: removedLines > 0 ? removedLines : nil,
+            isStaged: false,
+            isUnstaged: true,
+            isUntracked: false,
+            selectedSessionTouched: true
+        )
+    }
 }
 
 /// Navigation destination for a created review session, carrying pill context
