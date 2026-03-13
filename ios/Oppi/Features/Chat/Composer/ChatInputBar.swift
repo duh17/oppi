@@ -22,6 +22,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
     var contextPills: [ContextPill] = []
+    var onContextPillTap: ((ContextPill) -> Void)?
     let isBusy: Bool
     @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
@@ -421,7 +422,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private func contextPillView(_ pill: ContextPill) -> some View {
         let icon = FileIcon.forPath(pill.path)
-        return HStack(spacing: 4) {
+        let label = HStack(spacing: 4) {
             Image(systemName: icon.symbolName)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(icon.color)
@@ -441,6 +442,15 @@ struct ChatInputBar<ActionRow: View>: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(.themeComment.opacity(0.1), in: Capsule())
+
+        return Group {
+            if let onContextPillTap {
+                Button { onContextPillTap(pill) } label: { label }
+                    .buttonStyle(.plain)
+            } else {
+                label
+            }
+        }
     }
 
     private var imageStrip: some View {

@@ -43,6 +43,7 @@ struct ChatView: View {
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
+    @State private var contextPillDetailFile: WorkspaceReviewFile?
 
     init(sessionId: String, initialInputText: String = "", initialContextPills: [ContextPill] = []) {
         self.sessionId = sessionId
@@ -171,6 +172,9 @@ struct ChatView: View {
             .sheet(isPresented: $showOutline) { outlineSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
+            .sheet(item: $contextPillDetailFile) { file in
+                contextPillDetailSheet(file: file)
+            }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
@@ -339,6 +343,9 @@ struct ChatView: View {
                     text: $inputText,
                     pendingImages: $pendingImages,
                     contextPills: contextPills,
+                    onContextPillTap: session?.workspaceId != nil ? { pill in
+                        contextPillDetailFile = pill.toReviewFile()
+                    } : nil,
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: actionHandler.isSending,
@@ -729,6 +736,25 @@ struct ChatView: View {
 #endif
 
     // MARK: - Sheets & Alerts
+
+    @ViewBuilder
+    private func contextPillDetailSheet(file: WorkspaceReviewFile) -> some View {
+        if let workspaceId = session?.workspaceId {
+            NavigationStack {
+                WorkspaceReviewFileDetailView(
+                    workspaceId: workspaceId,
+                    selectedSessionId: sessionId,
+                    file: file
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { contextPillDetailFile = nil }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
 
     private var outlineSheet: some View {
         SessionOutlineView(
