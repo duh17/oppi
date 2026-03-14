@@ -42,7 +42,17 @@ export interface ExtensionErrorEvent {
   error?: string;
 }
 
-export type SessionBackendEvent = AgentSessionEvent | ExtensionUIRequestEvent | ExtensionErrorEvent;
+/** Emitted when SdkBackend.prompt() rejects (e.g. expired OAuth, network). */
+export interface PromptErrorEvent {
+  type: "prompt_error";
+  error: string;
+}
+
+export type SessionBackendEvent =
+  | AgentSessionEvent
+  | ExtensionUIRequestEvent
+  | ExtensionErrorEvent
+  | PromptErrorEvent;
 
 export interface PiStateSnapshot {
   sessionFile?: string;

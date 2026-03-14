@@ -76,6 +76,16 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
+    if (data.type === "prompt_error") {
+      console.error("[pi] prompt error", {
+        sessionId: active.session.id,
+        error: data.error,
+      });
+      this.deps.broadcast(key, { type: "error", error: data.error });
+      this.deps.resetIdleTimer(key);
+      return;
+    }
+
     const event = data;
 
     if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(event.type)) {

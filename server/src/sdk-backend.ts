@@ -498,9 +498,9 @@ export class SdkBackend {
         streamingBehavior: opts?.streamingBehavior,
       })
       .catch((err) => {
-        console.error("[sdk] prompt error", {
-          error: err,
-        });
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error("[sdk] prompt error", { error: err });
+        this.emitEvent({ type: "prompt_error", error: errorMessage });
       });
   }
 
