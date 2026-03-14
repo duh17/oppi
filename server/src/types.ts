@@ -65,6 +65,13 @@ export interface SessionChangeStats {
    * Persisted to disk but ignored by iOS (unknown Codable keys are skipped).
    */
   _fileLineCounts?: Record<string, number>;
+  /**
+   * @internal Paths of files first created (written from scratch) in this session.
+   * For these files, line removals from edits reduce addedLines instead of
+   * incrementing removedLines, because the pre-session baseline is 0 — you
+   * can't "remove" lines that never existed.
+   */
+  _sessionCreatedFiles?: string[];
 }
 
 export interface Session {
@@ -383,6 +390,58 @@ export interface WorkspaceReviewSessionResponse {
   session: Session;
   visiblePrompt: string;
   contextSummary: ContextSummary[];
+}
+
+// ─── Annotations ───
+
+export type AnnotationSide = "old" | "new" | "file";
+export type AnnotationAuthor = "human" | "agent";
+export type AnnotationSeverity = "info" | "warn" | "error";
+export type AnnotationResolution = "pending" | "accepted" | "rejected";
+
+export interface DiffAnnotation {
+  id: string;
+  workspaceId: string;
+  path: string;
+  side: AnnotationSide;
+  startLine: number | null;
+  endLine: number | null;
+  body: string;
+  author: AnnotationAuthor;
+  sessionId: string | null;
+  severity: AnnotationSeverity | null;
+  resolution: AnnotationResolution;
+  attachments?: ImageAttachment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ImageAttachment {
+  data: string;
+  mimeType: string;
+}
+
+export interface CreateAnnotationRequest {
+  path: string;
+  side: AnnotationSide;
+  startLine: number | null;
+  endLine?: number | null;
+  body: string;
+  author: AnnotationAuthor;
+  sessionId?: string | null;
+  severity?: AnnotationSeverity | null;
+  attachments?: ImageAttachment[];
+}
+
+export interface UpdateAnnotationRequest {
+  body?: string;
+  resolution?: AnnotationResolution;
+  severity?: AnnotationSeverity | null;
+}
+
+export interface AnnotationsResponse {
+  workspaceId: string;
+  annotations: DiffAnnotation[];
 }
 
 // ─── Local Sessions ───
