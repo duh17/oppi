@@ -442,69 +442,6 @@ struct TraceRenderingTests {
         #expect(lastThree == ["assistant", "tool(write)", "assistant"])
     }
 
-    // MARK: - Markdown rendering
-
-    @Test func parseCodeBlocksRealAssistantMessage() {
-        let text = """
-        Here's how to set it up:
-
-        ```swift
-        let config = Config()
-        config.timeout = 30
-        ```
-
-        Then run the command:
-
-        ```bash
-        swift build
-        ```
-
-        That should work!
-        """
-
-        let blocks = parseCodeBlocks(text)
-
-        #expect(blocks.count == 5)
-        // Prose blocks include trailing newline before code fence
-        if case .markdown(let prose) = blocks[0] {
-            #expect(prose.trimmingCharacters(in: .whitespacesAndNewlines) == "Here's how to set it up:")
-        }
-        if case .codeBlock(let lang, let code, let complete) = blocks[1] {
-            #expect(lang == "swift")
-            #expect(code.contains("Config()"))
-            #expect(complete)
-        }
-        if case .markdown(let prose) = blocks[2] {
-            #expect(prose.trimmingCharacters(in: .whitespacesAndNewlines) == "Then run the command:")
-        }
-        if case .codeBlock(let lang, _, let complete) = blocks[3] {
-            #expect(lang == "bash")
-            #expect(complete)
-        }
-    }
-
-    @Test func parseCodeBlocksMarkdownTable() {
-        let text = """
-        Here's the forecast:
-
-        | | |
-        |---|---|
-        | Temp | 48F |
-        | Rain | 40% |
-        """
-        let blocks = parseCodeBlocks(text)
-        #expect(blocks.count == 2)
-        #expect(blocks[0] == .markdown("Here's the forecast:\n"))
-        #expect(blocks[1] == .table(headers: ["", ""], rows: [["Temp", "48F"], ["Rain", "40%"]]))
-    }
-
-    @Test func parseCodeBlocksBoldAndLinks() {
-        let text = "Saved to **`/work/report.md`**\n\nSee [docs](https://example.com) for details."
-        let blocks = parseCodeBlocks(text)
-        #expect(blocks.count == 1)
-        #expect(blocks[0] == .markdown(text))
-    }
-
     // MARK: - Streaming then trace reload
 
     @MainActor

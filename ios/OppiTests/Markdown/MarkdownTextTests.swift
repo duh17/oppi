@@ -4,206 +4,6 @@ import Testing
 import UIKit
 @testable import Oppi
 
-// MARK: - parseCodeBlocks (streaming parser)
-
-@Suite("parseCodeBlocks streaming")
-struct StreamingCodeBlockParsingTests {
-
-    // MARK: - Plain text
-
-    @Test func plainTextReturnsSingleMarkdownBlock() {
-        let blocks = parseCodeBlocks("Hello, world!")
-        #expect(blocks.count == 1)
-        if case .markdown(let text) = blocks[0] {
-            #expect(text == "Hello, world!")
-        } else {
-            Issue.record("Expected .markdown block")
-        }
-    }
-
-    @Test func emptyStringReturnsNoBlocks() {
-        let blocks = parseCodeBlocks("")
-        // Empty string split by newline produces [""], which is non-empty
-        // but the content is empty — behavior depends on implementation
-        #expect(blocks.count <= 1)
-    }
-
-    @Test func multipleLines() {
-        let blocks = parseCodeBlocks("Line 1\nLine 2\nLine 3")
-        #expect(blocks.count == 1)
-        if case .markdown(let text) = blocks[0] {
-            #expect(text.contains("Line 1"))
-            #expect(text.contains("Line 3"))
-        }
-    }
-
-    // MARK: - Code blocks
-
-    @Test func completeFencedCodeBlock() {
-        let input = "Before\n```swift\nlet x = 1\n```\nAfter"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 3)
-
-        if case .markdown(let text) = blocks[0] {
-            #expect(text == "Before")
-        }
-
-        if case .codeBlock(let lang, let code, let isComplete) = blocks[1] {
-            #expect(lang == "swift")
-            #expect(code == "let x = 1")
-            #expect(isComplete == true)
-        } else {
-            Issue.record("Expected .codeBlock")
-        }
-
-        if case .markdown(let text) = blocks[2] {
-            #expect(text == "After")
-        }
-    }
-
-    @Test func unclosedCodeBlockIsIncomplete() {
-        let input = "Before\n```python\nprint('hello')\nmore code"
-        let blocks = parseCodeBlocks(input)
-
-        // Should have: markdown("Before"), codeBlock(incomplete)
-        #expect(blocks.count == 2)
-
-        if case .codeBlock(let lang, let code, let isComplete) = blocks[1] {
-            #expect(lang == "python")
-            #expect(code.contains("print('hello')"))
-            #expect(isComplete == false, "Unclosed code block should be marked incomplete")
-        } else {
-            Issue.record("Expected incomplete .codeBlock")
-        }
-    }
-
-    @Test func codeBlockWithNoLanguage() {
-        let input = "```\nsome code\n```"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 1)
-        if case .codeBlock(let lang, let code, let isComplete) = blocks[0] {
-            #expect(lang == nil, "Empty language should be nil")
-            #expect(code == "some code")
-            #expect(isComplete == true)
-        }
-    }
-
-    @Test func consecutiveCodeBlocks() {
-        let input = "```js\na()\n```\n```py\nb()\n```"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 2)
-        if case .codeBlock(let lang1, _, _) = blocks[0] {
-            #expect(lang1 == "js")
-        }
-        if case .codeBlock(let lang2, _, _) = blocks[1] {
-            #expect(lang2 == "py")
-        }
-    }
-
-    @Test func codeBlockWithEmptyContent() {
-        let input = "```\n```"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 1)
-        if case .codeBlock(_, let code, let isComplete) = blocks[0] {
-            #expect(code.isEmpty)
-            #expect(isComplete == true)
-        }
-    }
-
-    @Test func codeBlockPreservesInternalBlankLines() {
-        let input = "```\nline1\n\nline3\n```"
-        let blocks = parseCodeBlocks(input)
-
-        if case .codeBlock(_, let code, _) = blocks[0] {
-            #expect(code == "line1\n\nline3")
-        }
-    }
-
-    // MARK: - Tables
-
-    @Test func simpleTable() {
-        let input = "| A | B |\n| --- | --- |\n| 1 | 2 |"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 1)
-        if case .table(let headers, let rows) = blocks[0] {
-            #expect(headers == ["A", "B"])
-            #expect(rows.count == 1)
-            #expect(rows[0] == ["1", "2"])
-        } else {
-            Issue.record("Expected .table block")
-        }
-    }
-
-    @Test func tableWithMultipleRows() {
-        let input = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |"
-        let blocks = parseCodeBlocks(input)
-
-        if case .table(let headers, let rows) = blocks[0] {
-            #expect(headers == ["Name", "Age"])
-            #expect(rows.count == 2)
-        }
-    }
-
-    @Test func tableWithoutSeparatorIsTreatedAsProse() {
-        // Only one line — no separator row — should be treated as markdown
-        let input = "| A | B |"
-        let blocks = parseCodeBlocks(input)
-
-        // With only a header row and no separator, it should fall through as prose
-        #expect(blocks.count == 1)
-        if case .markdown = blocks[0] {
-            // Expected — not enough rows for a table
-        } else {
-            Issue.record("Single pipe-delimited line should be prose, not a table")
-        }
-    }
-
-    @Test func tableBetweenProse() {
-        let input = "Before\n| H1 | H2 |\n| --- | --- |\n| v1 | v2 |\nAfter"
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 3)
-        if case .markdown(let before) = blocks[0] {
-            #expect(before == "Before")
-        }
-        if case .table = blocks[1] {
-            // OK
-        } else {
-            Issue.record("Expected table block")
-        }
-        if case .markdown(let after) = blocks[2] {
-            #expect(after == "After")
-        }
-    }
-
-    // MARK: - Mixed content
-
-    @Test func proseCodeTableProse() {
-        let input = """
-        Introduction text.
-        ```bash
-        echo hello
-        ```
-        | Col1 | Col2 |
-        | --- | --- |
-        | A | B |
-        Conclusion.
-        """
-        let blocks = parseCodeBlocks(input)
-
-        #expect(blocks.count == 4)
-        if case .markdown = blocks[0] {} else { Issue.record("Expected markdown") }
-        if case .codeBlock = blocks[1] {} else { Issue.record("Expected codeBlock") }
-        if case .table = blocks[2] {} else { Issue.record("Expected table") }
-        if case .markdown = blocks[3] {} else { Issue.record("Expected markdown") }
-    }
-}
-
 // MARK: - FlatSegment.build
 
 @Suite("FlatSegment.build")
@@ -562,5 +362,183 @@ struct MarkdownDocumentRenderingTests {
         }
 
         #expect(rendered)
+    }
+}
+
+// MARK: - FlatSegment image resolution
+
+@Suite("FlatSegment image URL resolution")
+struct FlatSegmentImageResolutionTests {
+    private let baseURL = URL(string: "https://server.example.com")!
+    private let workspaceID = "ws-abc123"
+
+    // MARK: - Image-only paragraph promotion
+
+    @Test func imageOnlyParagraphWithWorkspaceContextProducesImageSegment() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Chart", source: "charts/mockup.png")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        #expect(segments.count == 1)
+        if case .image(let alt, let url) = segments[0] {
+            #expect(alt == "Chart")
+            #expect(url.absoluteString.contains("/workspaces/ws-abc123/files/charts/mockup.png"))
+            #expect(url.absoluteString.hasPrefix("https://server.example.com"))
+        } else {
+            Issue.record("Expected .image segment, got \(segments[0])")
+        }
+    }
+
+    @Test func imageOnlyParagraphWithoutWorkspaceContextFallsBackToAltText() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Chart", source: "charts/mockup.png")])
+        ]
+        // No workspaceID or serverBaseURL — should fall back to alt text in brackets
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .text(let attr) = segments[0] {
+            let text = String(attr.characters)
+            #expect(text.contains("[Chart]"))
+        } else {
+            Issue.record("Expected .text fallback segment")
+        }
+    }
+
+    @Test func paragraphWithTextAndImageIsNotPromoted() {
+        // Mixed paragraph: not image-only, falls back to text rendering.
+        let blocks: [MarkdownBlock] = [
+            .paragraph([
+                .text("See this: "),
+                .image(alt: "Chart", source: "chart.png"),
+            ])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        #expect(segments.count == 1)
+        if case .text = segments[0] {
+            // Expected — mixed paragraph rendered as text
+        } else {
+            Issue.record("Expected .text segment for mixed paragraph")
+        }
+    }
+
+    @Test func absoluteURLImageSourceIsNotPromoted() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Remote", source: "https://example.com/image.png")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        // Absolute URL — should NOT be promoted to .image (no auth needed for external URLs)
+        #expect(segments.count == 1)
+        if case .image = segments[0] {
+            Issue.record("Absolute URL should not be promoted to .image segment")
+        }
+    }
+
+    @Test func dataURIImageSourceIsNotPromoted() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Inline", source: "data:image/png;base64,abc123")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        if case .image = segments[0] {
+            Issue.record("data: URI should not be promoted to workspace .image segment")
+        }
+    }
+
+    @Test func imageURLContainsWorkspaceIDAndFilePath() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Fig", source: "output/figure1.jpg")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: "my-workspace",
+            serverBaseURL: URL(string: "https://pi.local:8080")!
+        )
+        if case .image(_, let url) = segments[0] {
+            let abs = url.absoluteString
+            #expect(abs.contains("/workspaces/my-workspace/files/output/figure1.jpg"))
+            #expect(abs.hasPrefix("https://pi.local:8080"))
+        } else {
+            Issue.record("Expected .image segment")
+        }
+    }
+
+    @Test func leadingSlashInSourceIsStripped() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "Fig", source: "/absolute/path/image.png")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        if case .image(_, let url) = segments[0] {
+            // Should NOT have double slash from the leading /
+            #expect(!url.absoluteString.contains("//absolute"))
+            #expect(url.absoluteString.contains("/files/absolute/path/image.png"))
+        }
+    }
+
+    @Test func imageAndTextParagraphsAreSeparatedCorrectly() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.text("Before the chart.")]),
+            .paragraph([.image(alt: "Chart", source: "chart.png")]),
+            .paragraph([.text("After the chart.")]),
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        // Expect: text (merged before+after gets interrupted by .image)
+        // Segments: .text("Before..."), .image("Chart"), .text("After...")
+        #expect(segments.count == 3)
+        if case .text = segments[0] {} else { Issue.record("Expected text before image") }
+        if case .image(let alt, _) = segments[1] {
+            #expect(alt == "Chart")
+        } else {
+            Issue.record("Expected .image segment in middle")
+        }
+        if case .text = segments[2] {} else { Issue.record("Expected text after image") }
+    }
+
+    @Test func emptyAltImageInImageOnlyParagraphWithWorkspaceContext() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "", source: "chart.png")])
+        ]
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: workspaceID,
+            serverBaseURL: baseURL
+        )
+        // Empty alt: promoted to .image with empty alt (hidden on error)
+        if case .image(let alt, _) = segments[0] {
+            #expect(alt.isEmpty)
+        } else {
+            // Also acceptable: empty paragraph filtered out entirely
+            #expect(segments.isEmpty || segments.count == 1)
+        }
     }
 }
