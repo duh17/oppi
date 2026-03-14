@@ -51,7 +51,20 @@ struct ToolRowDiffRenderStrategy {
                 expandedLabel.attributedText = cached
                 renderedText = cached.string
             } else {
-                let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
+                // Unified diff renderer: convert DiffLines → hunks with word spans → attributed string
+                let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+                let diffText: NSAttributedString
+                if hunks.isEmpty {
+                    diffText = NSAttributedString(
+                        string: "No textual changes",
+                        attributes: [
+                            .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                            .foregroundColor: UIColor(.themeComment),
+                        ]
+                    )
+                } else {
+                    diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: path ?? "diff.txt")
+                }
                 ToolRowRenderCache.set(signature: signature, attributed: diffText)
                 expandedLabel.text = nil
                 expandedLabel.attributedText = diffText
@@ -98,7 +111,8 @@ struct ToolRowDiffRenderStrategy {
             lineBreakMode: .byClipping,
             horizontalScroll: true,
             deferredHighlight: nil,
-            invalidateLayout: false
+            invalidateLayout: false,
+            installAction: .none
         )
     }
 }

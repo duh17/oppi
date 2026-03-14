@@ -16,6 +16,7 @@ import type {
   Workspace,
   WorkspaceReviewSessionResponse,
 } from "../types.js";
+import { createReviewAnnotateFactory } from "../review-annotate-extension.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
 import {
   prepareWorkspaceReviewSession,
@@ -397,6 +398,14 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     try {
       ctx.sessions.setPendingPromptPreamble(session.id, launch.preamble);
+
+      // Inject review_annotate tool so the agent can create inline annotations
+      if (workspace.hostMount) {
+        ctx.sessions.setPendingExtensionFactories(session.id, [
+          createReviewAnnotateFactory(wsId, workspace.hostMount, session.id),
+        ]);
+      }
+
       await ctx.sessions.startSession(session.id, workspace);
     } catch (error) {
       await ctx.sessions.stopSession(session.id).catch(() => {});
