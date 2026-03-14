@@ -247,11 +247,14 @@ private struct MarkdownFileView: View {
                         Text(content)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.themeFg)
+                            .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                     } else {
-                        MarkdownText(content)
+                        MarkdownContentViewWrapper(
+                            content: content,
+                            textSelectionEnabled: inlineSelectionEnabled
+                        )
                     }
                 }
-                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -278,8 +281,11 @@ private struct MarkdownFileView: View {
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.themeFg)
                 } else {
-                    MarkdownText(content, plainTextFallbackThreshold: nil)
-                        .allowsFullScreenExpansion(false)
+                    MarkdownContentViewWrapper(
+                        content: content,
+                        plainTextFallbackThreshold: nil
+                    )
+                    .allowsFullScreenExpansion(false)
                 }
             }
             .textSelection(.enabled)
@@ -315,7 +321,10 @@ private struct FullScreenMarkdownView: View {
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(.themeFg)
                     } else {
-                        MarkdownText(content, plainTextFallbackThreshold: nil)
+                        MarkdownContentViewWrapper(
+                            content: content,
+                            plainTextFallbackThreshold: nil
+                        )
                     }
                 }
                 .textSelection(.enabled)

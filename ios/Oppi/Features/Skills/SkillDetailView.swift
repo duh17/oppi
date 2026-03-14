@@ -75,8 +75,11 @@ struct SkillDetailView: View {
     private func markdownSection(_ content: String) -> some View {
         if !content.isEmpty {
             Divider()
-            MarkdownText(content, plainTextFallbackThreshold: nil)
-                .allowsFullScreenExpansion(false)
+            MarkdownContentViewWrapper(
+                content: content,
+                plainTextFallbackThreshold: nil
+            )
+            .allowsFullScreenExpansion(false)
         }
     }
 
