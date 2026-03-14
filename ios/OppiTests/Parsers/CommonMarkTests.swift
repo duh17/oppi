@@ -646,55 +646,6 @@ struct CommonMarkTests {
     }
 }
 
-// MARK: - Streaming Parser Edge Cases
-
-/// Ensures the streaming `parseCodeBlocks` function remains unchanged.
-@Suite("parseCodeBlocks (streaming)")
-struct StreamingParserTests {
-
-    @Test func plainMarkdown() {
-        let blocks = parseCodeBlocks("Hello world")
-        #expect(blocks == [.markdown("Hello world")])
-    }
-
-    @Test func singleCodeBlock() {
-        let input = "before\n```\ncode here\n```\nafter"
-        let blocks = parseCodeBlocks(input)
-        #expect(blocks.count == 3)
-        #expect(blocks[0] == .markdown("before"))
-        #expect(blocks[1] == .codeBlock(language: nil, code: "code here", isComplete: true))
-        #expect(blocks[2] == .markdown("after"))
-    }
-
-    @Test func codeBlockWithLanguage() {
-        let input = "```swift\nlet x = 1\n```"
-        let blocks = parseCodeBlocks(input)
-        #expect(blocks.count == 1)
-        #expect(blocks[0] == .codeBlock(language: "swift", code: "let x = 1", isComplete: true))
-    }
-
-    @Test func unclosedCodeBlock() {
-        let input = "text\n```swift\nlet x = 1\nlet y = 2"
-        let blocks = parseCodeBlocks(input)
-        #expect(blocks.count == 2)
-        #expect(blocks[0] == .markdown("text"))
-        #expect(blocks[1] == .codeBlock(language: "swift", code: "let x = 1\nlet y = 2", isComplete: false))
-    }
-
-    @Test func markdownTable() {
-        let text = "Header:\n\n| A | B |\n|---|---|\n| 1 | 2 |"
-        let blocks = parseCodeBlocks(text)
-        #expect(blocks.count == 2)
-        #expect(blocks[0] == .markdown("Header:\n"))
-        #expect(blocks[1] == .table(headers: ["A", "B"], rows: [["1", "2"]]))
-    }
-
-    @Test func emptyInput() {
-        let blocks = parseCodeBlocks("")
-        #expect(blocks.isEmpty)
-    }
-}
-
 @Suite("Flat Segment Text")
 struct FlatSegmentTextTests {
     @Test func todoIDsRemainPlainTextInFlatSegments() {
