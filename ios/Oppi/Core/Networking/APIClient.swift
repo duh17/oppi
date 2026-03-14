@@ -394,6 +394,64 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceReviewSessionResponse.self, from: data)
     }
 
+    // MARK: - Annotations
+
+    /// Fetch annotations for a workspace, optionally filtered by file path or session.
+    func getAnnotations(
+        workspaceId: String,
+        path: String? = nil,
+        sessionId: String? = nil
+    ) async throws -> AnnotationsResponse {
+        var route = "/workspaces/\(workspaceId)/annotations"
+        var queryParts: [String] = []
+        if let path, !path.isEmpty {
+            queryParts.append("path=\(try encodeQueryPath(path))")
+        }
+        if let sessionId, !sessionId.isEmpty {
+            queryParts.append("sessionId=\(sessionId)")
+        }
+        if !queryParts.isEmpty {
+            route += "?" + queryParts.joined(separator: "&")
+        }
+        let data = try await get(route)
+        return try JSONDecoder().decode(AnnotationsResponse.self, from: data)
+    }
+
+    /// Create a new annotation on a diff line.
+    func createAnnotation(
+        workspaceId: String,
+        body: CreateAnnotationBody
+    ) async throws -> DiffAnnotation {
+        struct Response: Decodable { let annotation: DiffAnnotation }
+        let data = try await post("/workspaces/\(workspaceId)/annotations", body: body)
+        return try JSONDecoder().decode(Response.self, from: data).annotation
+    }
+
+    /// Update an annotation's body, resolution, or severity.
+    func updateAnnotation(
+        workspaceId: String,
+        annotationId: String,
+        body: UpdateAnnotationBody
+    ) async throws -> DiffAnnotation {
+        struct Response: Decodable { let annotation: DiffAnnotation }
+        let (data, response) = try await request(
+            "PATCH",
+            path: "/workspaces/\(workspaceId)/annotations/\(annotationId)",
+            body: body
+        )
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(Response.self, from: data).annotation
+    }
+
+    /// Delete an annotation.
+    func deleteAnnotation(workspaceId: String, annotationId: String) async throws {
+        let (_, response) = try await request(
+            "DELETE",
+            path: "/workspaces/\(workspaceId)/annotations/\(annotationId)"
+        )
+        try checkStatus(response, data: Data())
+    }
+
     // MARK: - Safety Policy
 
     /// Get the global default fallback action when no rule matches.
@@ -673,6 +731,14 @@ actor APIClient {
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
+    }
+
+    /// Fetch a workspace file by path (images, etc.) from the workspace file endpoint.
+    ///
+    /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
+    /// Returns raw `Data` so the caller can decode as `UIImage`.
+    func fetchWorkspaceFile(workspaceID: String, path: String) async throws -> Data {
+        return try await get("/workspaces/\(workspaceID)/files/\(path)")
     }
 
     // MARK: - Device Token

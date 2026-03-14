@@ -224,13 +224,21 @@ struct WorkspaceReviewDiffSpan: Codable, Sendable, Equatable {
 
 enum WorkspaceReviewDiffHunkBuilder {
     private static let contextLines = 3
+    private static let maxTokenDiffCells = 40_000
 
     static func buildHunks(oldText: String, newText: String) -> [WorkspaceReviewDiffHunk] {
         buildHunks(from: DiffEngine.compute(old: oldText, new: newText))
     }
 
-    static func buildHunks(from lines: [DiffLine]) -> [WorkspaceReviewDiffHunk] {
-        let numberedLines = number(lines)
+    /// Build hunks from diff lines, optionally computing word-level change spans.
+    ///
+    /// When `withWordSpans` is true (default), pairs of removed/added lines
+    /// within each change group get intra-line highlighting via token LCS.
+    static func buildHunks(from lines: [DiffLine], withWordSpans: Bool = true) -> [WorkspaceReviewDiffHunk] {
+        var numberedLines = number(lines)
+        if withWordSpans {
+            applyWordLevelHighlights(&numberedLines)
+        }
         guard !numberedLines.isEmpty else { return [] }
 
         var changeWindows: [(start: Int, end: Int)] = []
@@ -321,6 +329,333 @@ enum WorkspaceReviewDiffHunkBuilder {
             }
         }
     }
+
+    // MARK: - Word-Level Span Computation
+
+    /// Walk change groups (contiguous removed+added runs) and compute word-level
+    /// spans for each removed/added pair using token LCS.
+    private static func applyWordLevelHighlights(_ lines: inout [WorkspaceReviewDiffLine]) {
+        var index = 0
+
+        while index < lines.count {
+            guard lines[index].kind != .context else {
+                index += 1
+                continue
+            }
+
+            // Collect contiguous change group
+            var removed: [Int] = []
+            var added: [Int] = []
+            var cursor = index
+
+            while cursor < lines.count, lines[cursor].kind != .context {
+                if lines[cursor].kind == .removed { removed.append(cursor) }
+                if lines[cursor].kind == .added { added.append(cursor) }
+                cursor += 1
+            }
+
+            // Pair removed/added lines and compute word spans
+            let pairCount = min(removed.count, added.count)
+            for pairIndex in 0..<pairCount {
+                let ri = removed[pairIndex]
+                let ai = added[pairIndex]
+                let spans = computeWordSpans(oldText: lines[ri].text, newText: lines[ai].text)
+
+                if !spans.old.isEmpty {
+                    lines[ri] = lines[ri].withSpans(spans.old)
+                }
+                if !spans.new.isEmpty {
+                    lines[ai] = lines[ai].withSpans(spans.new)
+                }
+            }
+
+            index = cursor
+        }
+    }
+
+    // MARK: - Token Diff
+
+    private struct Token {
+        let value: String
+        let start: Int
+        let end: Int
+    }
+
+    /// Tokenize text into words, whitespace runs, and punctuation groups.
+    private static func tokenize(_ text: String) -> [Token] {
+        guard !text.isEmpty else { return [] }
+
+        var tokens: [Token] = []
+        let scalars = text.unicodeScalars
+        var index = scalars.startIndex
+
+        while index < scalars.endIndex {
+            let start = scalars.distance(from: scalars.startIndex, to: index)
+            let startScalar = scalars[index]
+
+            if startScalar.properties.isWhitespace {
+                // Whitespace run
+                var end = scalars.index(after: index)
+                while end < scalars.endIndex, scalars[end].properties.isWhitespace {
+                    end = scalars.index(after: end)
+                }
+                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let value = String(scalars[index..<end])
+                tokens.append(Token(value: value, start: start, end: endOffset))
+                index = end
+            } else if startScalar.properties.isAlphabetic
+                || startScalar.properties.numericType != nil
+                || startScalar == "_"
+            {
+                // Word (letters, digits, underscores)
+                var end = scalars.index(after: index)
+                while end < scalars.endIndex {
+                    let s = scalars[end]
+                    if s.properties.isAlphabetic || s.properties.numericType != nil || s == "_" {
+                        end = scalars.index(after: end)
+                    } else {
+                        break
+                    }
+                }
+                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let value = String(scalars[index..<end])
+                tokens.append(Token(value: value, start: start, end: endOffset))
+                index = end
+            } else {
+                // Punctuation / operator group
+                var end = scalars.index(after: index)
+                while end < scalars.endIndex {
+                    let s = scalars[end]
+                    if !s.properties.isWhitespace
+                        && !s.properties.isAlphabetic
+                        && s.properties.numericType == nil
+                        && s != "_"
+                    {
+                        end = scalars.index(after: end)
+                    } else {
+                        break
+                    }
+                }
+                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let value = String(scalars[index..<end])
+                tokens.append(Token(value: value, start: start, end: endOffset))
+                index = end
+            }
+        }
+
+        return tokens
+    }
+
+    /// Compute word-level change spans between two lines using token LCS.
+    private static func computeWordSpans(
+        oldText: String,
+        newText: String
+    ) -> (old: [WorkspaceReviewDiffSpan], new: [WorkspaceReviewDiffSpan]) {
+        guard oldText != newText else { return ([], []) }
+
+        let oldTokens = tokenize(oldText)
+        let newTokens = tokenize(newText)
+
+        let cellCount = oldTokens.count * newTokens.count
+        if cellCount > maxTokenDiffCells {
+            return (
+                old: fullLineSpan(oldText),
+                new: fullLineSpan(newText)
+            )
+        }
+
+        let m = oldTokens.count
+        let n = newTokens.count
+
+        // Build LCS table
+        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
+        for i in 0..<m {
+            for j in 0..<n {
+                if oldTokens[i].value == newTokens[j].value {
+                    dp[i + 1][j + 1] = dp[i][j] + 1
+                } else {
+                    dp[i + 1][j + 1] = max(dp[i][j + 1], dp[i + 1][j])
+                }
+            }
+        }
+
+        // Backtrace to find non-matching tokens
+        var oldSpans: [WorkspaceReviewDiffSpan] = []
+        var newSpans: [WorkspaceReviewDiffSpan] = []
+        var i = m, j = n
+
+        while i > 0 || j > 0 {
+            if i > 0, j > 0, oldTokens[i - 1].value == newTokens[j - 1].value {
+                i -= 1; j -= 1
+                continue
+            }
+
+            let left = j > 0 ? dp[i][j - 1] : 0
+            let up = i > 0 ? dp[i - 1][j] : 0
+
+            if j > 0, i == 0 || left >= up {
+                let token = newTokens[j - 1]
+                newSpans.append(WorkspaceReviewDiffSpan(start: token.start, end: token.end, kind: .changed))
+                j -= 1
+            } else {
+                let token = oldTokens[i - 1]
+                oldSpans.append(WorkspaceReviewDiffSpan(start: token.start, end: token.end, kind: .changed))
+                i -= 1
+            }
+        }
+
+        return (
+            old: mergeSpans(oldSpans.reversed()),
+            new: mergeSpans(newSpans.reversed())
+        )
+    }
+
+    private static func fullLineSpan(_ text: String) -> [WorkspaceReviewDiffSpan] {
+        text.isEmpty ? [] : [WorkspaceReviewDiffSpan(start: 0, end: text.count, kind: .changed)]
+    }
+
+    private static func mergeSpans(_ spans: [WorkspaceReviewDiffSpan]) -> [WorkspaceReviewDiffSpan] {
+        guard spans.count > 1 else { return spans }
+
+        var merged: [WorkspaceReviewDiffSpan] = [spans[0]]
+        for i in 1..<spans.count {
+            let span = spans[i]
+            let lastIndex = merged.count - 1
+            if merged[lastIndex].end >= span.start {
+                merged[lastIndex] = WorkspaceReviewDiffSpan(
+                    start: merged[lastIndex].start,
+                    end: max(merged[lastIndex].end, span.end),
+                    kind: .changed
+                )
+            } else {
+                merged.append(span)
+            }
+        }
+        return merged
+    }
 }
 
+private extension WorkspaceReviewDiffLine {
+    /// Create a copy with spans replaced.
+    func withSpans(_ spans: [WorkspaceReviewDiffSpan]) -> Self {
+        WorkspaceReviewDiffLine(kind: kind, text: text, oldLine: oldLine, newLine: newLine, spans: spans)
+    }
+}
 
+// MARK: - Annotations
+
+enum AnnotationSide: String, Codable, Sendable {
+    case old
+    case new
+    case file
+}
+
+enum AnnotationAuthor: String, Codable, Sendable {
+    case human
+    case agent
+
+    var isAgent: Bool { self == .agent }
+    var isHuman: Bool { self == .human }
+
+    var displayLabel: String {
+        switch self {
+        case .human: return "You"
+        case .agent: return "Agent"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .human: return "person.fill"
+        case .agent: return "cpu"
+        }
+    }
+}
+
+enum AnnotationSeverity: String, Codable, Sendable {
+    case info
+    case warn
+    case error
+
+    var displayLabel: String {
+        switch self {
+        case .info: return "Info"
+        case .warn: return "Warning"
+        case .error: return "Error"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .info: return "info.circle"
+        case .warn: return "exclamationmark.triangle"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+enum AnnotationResolution: String, Codable, Sendable {
+    case pending
+    case accepted
+    case rejected
+
+    var isPending: Bool { self == .pending }
+    var isResolved: Bool { self != .pending }
+}
+
+struct AnnotationImageAttachment: Codable, Sendable, Equatable {
+    let data: String
+    let mimeType: String
+}
+
+struct DiffAnnotation: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let workspaceId: String
+    let path: String
+    let side: AnnotationSide
+    let startLine: Int?
+    let endLine: Int?
+    let body: String
+    let author: AnnotationAuthor
+    let sessionId: String?
+    let severity: AnnotationSeverity?
+    let resolution: AnnotationResolution
+    let attachments: [AnnotationImageAttachment]?
+    let createdAt: Double
+    let updatedAt: Double
+
+    /// The primary line number for anchoring in the diff view.
+    var anchorLine: Int? { startLine }
+
+    /// True when the annotation targets a whole file, not a specific line.
+    var isFileLevel: Bool { side == .file }
+}
+
+struct AnnotationsResponse: Codable, Sendable {
+    let workspaceId: String
+    let annotations: [DiffAnnotation]
+}
+
+struct CreateAnnotationBody: Encodable, Sendable {
+    let path: String
+    let side: AnnotationSide
+    let startLine: Int?
+    let endLine: Int?
+    let body: String
+    let author: AnnotationAuthor
+    let sessionId: String?
+    let severity: AnnotationSeverity?
+    let attachments: [AnnotationImageAttachment]?
+}
+
+struct UpdateAnnotationBody: Encodable, Sendable {
+    let body: String?
+    let resolution: AnnotationResolution?
+    let severity: AnnotationSeverity?
+
+    init(body: String? = nil, resolution: AnnotationResolution? = nil, severity: AnnotationSeverity? = nil) {
+        self.body = body
+        self.resolution = resolution
+        self.severity = severity
+    }
+}

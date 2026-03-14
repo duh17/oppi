@@ -218,6 +218,7 @@ describe("POST /workspaces/:wid/review/session", () => {
         },
         sessions: {
           setPendingPromptPreamble,
+          setPendingExtensionFactories: vi.fn(),
           startSession,
           sendPrompt,
           getActiveSession,

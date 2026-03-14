@@ -233,7 +233,8 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
-        let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: filePath)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath ?? "diff.txt")
         diffTextView.attributedText = diffText
 
         let measured = diffText.boundingRect(
