@@ -59,7 +59,30 @@ final class MessageSender {
         }
 
         guard let wsClient else { throw WebSocketError.notConnected }
+
+        // Session-scoped messages require a valid activeSessionId.
+        // During the reconnect gap (disconnectSession clears it, streamSession
+        // re-sets it), messages sent without session scope reach the server but
+        // can't be routed — the server silently drops them, no ack arrives,
+        // and the user waits for the full ack timeout with no feedback.
+        // Fail fast so the error handler can restore the text immediately.
+        if activeSessionId == nil, !Self.isSessionLevelCommand(message) {
+            logger.error("SEND blocked: activeSessionId is nil for session-scoped \(String(describing: message).prefix(40), privacy: .public)")
+            throw WebSocketError.notConnected
+        }
+
         try await wsClient.send(message, sessionId: activeSessionId)
+    }
+
+    /// Returns true for messages that don't require a session envelope
+    /// (subscribe, unsubscribe, permission responses).
+    private static func isSessionLevelCommand(_ message: ClientMessage) -> Bool {
+        switch message {
+        case .subscribe, .unsubscribe, .permissionResponse:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Turn Send with Ack
@@ -76,8 +99,12 @@ final class MessageSender {
         onAckStage: ((TurnAckStage) -> Void)? = nil,
         message: () -> ClientMessage
     ) async throws {
-        if _sendMessageForTesting == nil, wsClient == nil {
-            throw WebSocketError.notConnected
+        if _sendMessageForTesting == nil {
+            guard wsClient != nil else { throw WebSocketError.notConnected }
+            guard activeSessionId != nil else {
+                logger.error("SEND \(command, privacy: .public) blocked: no active session (reconnect gap)")
+                throw WebSocketError.notConnected
+            }
         }
 
         let pending = PendingTurnSend(
@@ -94,6 +121,15 @@ final class MessageSender {
             if attempt > 1 {
                 pending.resetWaiter()
                 try? await Task.sleep(for: Self.turnSendRetryDelay)
+
+                // Re-check after sleep: activeSessionId may have been cleared
+                // by disconnectSession() during the retry delay.
+                if _sendMessageForTesting == nil, activeSessionId == nil {
+                    let error = WebSocketError.notConnected
+                    pending.waiter.resolve(.failure(error))
+                    commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+                    throw error
+                }
             }
 
             do {
