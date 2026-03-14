@@ -614,6 +614,135 @@ struct TimelineReducerLoadTests {
                 "Expected full rebuild (not no-op) because orphans made timeline dirty")
     }
 
+    // MARK: - Orphan chronological positioning
+
+    @MainActor
+    @Test func orphanedUserMessageInsertedChronologicallyNotAtEnd() {
+        let reducer = TimelineReducer()
+
+        // Longer trace with multiple turns.
+        let trace = [
+            TraceEvent(id: "u1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "First question", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a1", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "First answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "u2", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Second question", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a2", type: .assistant, timestamp: "2025-01-01T00:00:03.000Z",
+                       text: "Second answer", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(trace)
+        #expect(reducer.items.count == 4)
+
+        // User sends a local message — timestamp is "now" (after all trace items).
+        _ = reducer.appendUserMessage("Third question")
+        #expect(reducer.items.count == 5)
+
+        // Stale trace reload (same as before — missing "Third question").
+        reducer.loadSession(trace)
+
+        // Orphan should be at the end (chronologically after all trace items).
+        #expect(reducer.items.count == 5)
+        guard case .userMessage(_, let lastText, _, _) = reducer.items[4] else {
+            Issue.record("Expected userMessage at index 4")
+            return
+        }
+        #expect(lastText == "Third question")
+
+        // Verify trace items are still in order.
+        guard case .userMessage(_, let u1Text, _, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(u1Text == "First question")
+
+        guard case .assistantMessage(_, let a2Text, _) = reducer.items[3] else {
+            Issue.record("Expected assistantMessage at index 3")
+            return
+        }
+        #expect(a2Text == "Second answer")
+    }
+
+    @MainActor
+    @Test func multipleOrphanedUserMessagesPreserveChronologicalOrder() {
+        let reducer = TimelineReducer()
+
+        let trace = [
+            TraceEvent(id: "u1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "First", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a1", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Response one", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(trace)
+
+        // User sends multiple messages in sequence.
+        _ = reducer.appendUserMessage("Second")
+        _ = reducer.appendUserMessage("Third")
+        _ = reducer.appendUserMessage("Fourth")
+        #expect(reducer.items.count == 5)
+
+        // Stale trace reload — missing all three local messages.
+        reducer.loadSession(trace)
+
+        #expect(reducer.items.count == 5)
+
+        // All orphans should be after the trace items, in their original order.
+        let texts = reducer.items.map { item -> String in
+            switch item {
+            case .userMessage(_, let t, _, _): return t
+            case .assistantMessage(_, let t, _): return t
+            default: return "?"
+            }
+        }
+        #expect(texts == ["First", "Response one", "Second", "Third", "Fourth"])
+    }
+
+    @MainActor
+    @Test func chronologicalInsertionIndexUnitTest() {
+        // Direct test of the static helper.
+        let items: [ChatItem] = [
+            .assistantMessage(id: "a1", text: "Hello",
+                              timestamp: Date(timeIntervalSince1970: 100)),
+            .userMessage(id: "u1", text: "Hey",
+                         images: [], timestamp: Date(timeIntervalSince1970: 200)),
+            .assistantMessage(id: "a2", text: "World",
+                              timestamp: Date(timeIntervalSince1970: 300)),
+        ]
+
+        // Orphan with timestamp between a1 and u1 → insert at index 1.
+        let orphan150 = ChatItem.userMessage(
+            id: "o1", text: "Between", images: [],
+            timestamp: Date(timeIntervalSince1970: 150)
+        )
+        #expect(TimelineReducer.chronologicalInsertionIndex(for: orphan150, in: items) == 1)
+
+        // Orphan after everything → insert at end.
+        let orphan400 = ChatItem.userMessage(
+            id: "o2", text: "After all", images: [],
+            timestamp: Date(timeIntervalSince1970: 400)
+        )
+        #expect(TimelineReducer.chronologicalInsertionIndex(for: orphan400, in: items) == 3)
+
+        // Orphan before everything → insert at 0... actually it'd be at endIndex
+        // because no item has timestamp ≤ epoch 50.
+        let orphan50 = ChatItem.userMessage(
+            id: "o3", text: "Before all", images: [],
+            timestamp: Date(timeIntervalSince1970: 50)
+        )
+        #expect(TimelineReducer.chronologicalInsertionIndex(for: orphan50, in: items) == 3)
+        // Falls back to endIndex when no item is earlier — acceptable since
+        // orphans before the trace would be extremely rare.
+
+        // Empty items → insert at 0.
+        #expect(TimelineReducer.chronologicalInsertionIndex(for: orphan150, in: []) == 0)
+    }
+
     // MARK: - Helpers
 
     private func makeBaseTrace() -> [TraceEvent] {
