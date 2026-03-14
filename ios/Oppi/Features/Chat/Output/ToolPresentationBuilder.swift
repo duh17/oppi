@@ -446,6 +446,12 @@ enum ToolPresentationBuilder {
                 )
                 content = resolved.content
                 copyOutput = resolved.copyOutput
+                // While streaming, downgrade markdown to plain text — the full
+                // CommonMark renderer is too expensive to run on every delta.
+                // Matches built-in tool behavior (expandedStreamingFileContent).
+                if !isDone, case .markdown(let text) = content {
+                    content = .text(text: text, language: nil)
+                }
             }
         }
 
