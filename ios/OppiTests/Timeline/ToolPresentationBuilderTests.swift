@@ -665,6 +665,63 @@ struct ToolPresentationBuilderTests {
         #expect(text == markdown)
     }
 
+    @Test("extension streaming downgrades markdown to plain text")
+    func extensionStreamingDowngradesMarkdown() {
+        let markdown = """
+        ## Related
+
+        - server/src/types.ts
+        - ios/Oppi/Features/Chat
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-streaming-md", tool: "todo",
+            argsSummary: "create \"Expand plot extension\"",
+            outputPreview: markdown,
+            isError: false, isDone: false,
+            context: emptyContext(
+                expanded: ["t-streaming-md"],
+                fullOutput: markdown
+            )
+        )
+
+        // While streaming, markdown-like output should be plain text, not rendered markdown.
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content for streaming extension with markdown output, got \(String(describing: config.expandedContent))")
+            return
+        }
+        #expect(text == markdown)
+        #expect(language == nil)
+    }
+
+    @Test("extension done renders markdown normally")
+    func extensionDoneRendersMarkdown() {
+        let markdown = """
+        ## Related
+
+        - server/src/types.ts
+        - ios/Oppi/Features/Chat
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-done-md", tool: "todo",
+            argsSummary: "create \"Expand plot extension\"",
+            outputPreview: markdown,
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["t-done-md"],
+                fullOutput: markdown
+            )
+        )
+
+        // When done, the same content should render as markdown.
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content for done extension with markdown output")
+            return
+        }
+        #expect(text == markdown)
+    }
+
     @Test("extension expanded honors code presentation hints")
     func extensionExpandedCodeHint() {
         let code = "func extensionMode() -> String {\n    \"ok\"\n}"
