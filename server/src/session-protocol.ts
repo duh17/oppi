@@ -773,7 +773,8 @@ export function updateSessionChangeStats(
   stats.mutatingToolCalls += 1;
 
   const path = extractChangedFilePath(rawArgs);
-  if (path && !stats.changedFiles.includes(path)) {
+  const wasAlreadyTracked = path ? stats.changedFiles.includes(path) : false;
+  if (path && !wasAlreadyTracked) {
     stats.filesChanged += 1;
 
     if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
@@ -786,9 +787,27 @@ export function updateSessionChangeStats(
   const fileLineCounts: Record<string, number> = existing?._fileLineCounts
     ? { ...existing._fileLineCounts }
     : {};
-  const { added, removed } = estimateLineDelta(toolName, rawArgs, path, fileLineCounts);
+  const sessionCreatedFiles = new Set<string>(existing?._sessionCreatedFiles ?? []);
+  const { added, removed, isNewFile } = estimateLineDelta(toolName, rawArgs, path, fileLineCounts);
+
+  // Track files first created in this session.  Only mark as created if
+  // this is the first write (previousLines=0) AND the file wasn't already
+  // touched by a prior edit (which proves it pre-existed).
+  if (isNewFile && path && !wasAlreadyTracked) {
+    sessionCreatedFiles.add(path);
+  }
+
+  // For files created in this session, "removed" lines should reduce
+  // addedLines instead of incrementing removedLines.  From the pre-session
+  // baseline the file didn't exist — you can't remove lines that were never
+  // there.  Without this, writing a 568-line file then editing it 3 lines
+  // shorter shows (+568, -3) instead of the correct (+565, -0).
+  if (path && sessionCreatedFiles.has(path) && removed > 0) {
+    stats.addedLines = Math.max(0, stats.addedLines - removed);
+  } else {
+    stats.removedLines += removed;
+  }
   stats.addedLines += added;
-  stats.removedLines += removed;
 
   session.changeStats = {
     mutatingToolCalls: stats.mutatingToolCalls,
@@ -798,6 +817,7 @@ export function updateSessionChangeStats(
     addedLines: stats.addedLines,
     removedLines: stats.removedLines,
     _fileLineCounts: fileLineCounts,
+    _sessionCreatedFiles: [...sessionCreatedFiles],
   };
 }
 
@@ -828,9 +848,9 @@ function estimateLineDelta(
   rawArgs: unknown,
   filePath: string | null,
   fileLineCounts: Record<string, number>,
-): { added: number; removed: number } {
+): { added: number; removed: number; isNewFile: boolean } {
   if (!rawArgs || typeof rawArgs !== "object") {
-    return { added: 0, removed: 0 };
+    return { added: 0, removed: 0, isNewFile: false };
   }
 
   const args = rawArgs as Record<string, unknown>;
@@ -838,11 +858,12 @@ function estimateLineDelta(
   if (toolName === "write") {
     const content = typeof args.content === "string" ? args.content : "";
     if (content.length === 0) {
-      return { added: 0, removed: 0 };
+      return { added: 0, removed: 0, isNewFile: false };
     }
 
     const newLines = countLines(content);
     const previousLines = filePath !== null ? (fileLineCounts[filePath] ?? 0) : 0;
+    const isNewFile = previousLines === 0;
 
     // Update tracked count for this file
     if (filePath !== null) {
@@ -852,6 +873,7 @@ function estimateLineDelta(
     return {
       added: Math.max(0, newLines - previousLines),
       removed: Math.max(0, previousLines - newLines),
+      isNewFile,
     };
   }
 
@@ -859,7 +881,7 @@ function estimateLineDelta(
   const oldText = typeof args.oldText === "string" ? args.oldText : "";
   const newText = typeof args.newText === "string" ? args.newText : "";
   if (oldText.length === 0 && newText.length === 0) {
-    return { added: 0, removed: 0 };
+    return { added: 0, removed: 0, isNewFile: false };
   }
 
   const oldLines = countLines(oldText);
@@ -874,6 +896,7 @@ function estimateLineDelta(
   return {
     added: Math.max(0, lineDelta),
     removed: Math.max(0, -lineDelta),
+    isNewFile: false,
   };
 }
 
