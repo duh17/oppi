@@ -8,7 +8,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveHomePath } from "./git-utils.js";
@@ -158,6 +158,27 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     }
   }
 
+  // Count lines for untracked files.
+  // git diff HEAD --numstat only covers tracked files, so untracked ("??")
+  // files show addedLines=null in the file list and their lines are missing
+  // from the totals. This makes the workspace bar say "+38 -2" when there's
+  // also a brand-new 565-line file. Count them so the totals are accurate.
+  const untrackedPaths = files
+    .filter((f) => f.status === "??" && !numstatMap.has(f.path))
+    .map((f) => f.path);
+
+  if (untrackedPaths.length > 0) {
+    const untrackedLineCounts = await countUntrackedFileLines(resolved, untrackedPaths);
+    for (const file of files) {
+      const lines = file.status === "??" ? untrackedLineCounts.get(file.path) : undefined;
+      if (lines !== undefined) {
+        file.addedLines = lines;
+        file.removedLines = 0;
+        totalAdded += lines;
+      }
+    }
+  }
+
   // Ahead/behind
   let ahead: number | null = null;
   let behind: number | null = null;
@@ -213,4 +234,47 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     lastCommitDate,
     recentCommits,
   };
+}
+
+// ─── Untracked file line counting ───
+
+/** Max file size to read for line counting (256 KB). Skip larger files. */
+const UNTRACKED_LINE_COUNT_MAX_BYTES = 256 * 1024;
+
+/**
+ * Count lines in untracked files so their additions appear in the totals.
+ *
+ * Reads each file synchronously (fast for small files, capped at 256 KB).
+ * Returns a map from relative path to line count. Binary or oversized files
+ * are silently skipped (they'll keep addedLines=null in the response).
+ */
+function countUntrackedFileLines(
+  repoRoot: string,
+  relativePaths: string[],
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+
+  for (const relPath of relativePaths) {
+    try {
+      const fullPath = join(repoRoot, relPath);
+      const stat = statSync(fullPath);
+      if (!stat.isFile() || stat.size > UNTRACKED_LINE_COUNT_MAX_BYTES || stat.size === 0) {
+        continue;
+      }
+
+      const content = readFileSync(fullPath, "utf-8");
+
+      // Skip likely-binary files (NUL byte in the first 8 KB, same heuristic as git)
+      if (content.slice(0, 8192).includes("\0")) {
+        continue;
+      }
+
+      const lineCount = content.split("\n").length;
+      result.set(relPath, lineCount);
+    } catch {
+      // File vanished or unreadable — skip silently
+    }
+  }
+
+  return Promise.resolve(result);
 }
