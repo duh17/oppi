@@ -3,5 +3,5 @@
   "project": ["src/**/*.ts"],
   "ignore": ["src/qrcode-terminal.d.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@mariozechner/pi-ai"]
+  "ignoreDependencies": ["@mariozechner/pi-ai", "@sinclair/typebox"]
 }
