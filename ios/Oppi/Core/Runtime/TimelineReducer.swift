@@ -248,12 +248,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
         }
 
-        // Re-append orphaned user messages so they survive the rebuild.
-        // These appear at the tail (most recent) since they were sent after
-        // the trace snapshot was taken.
+        // Re-insert orphaned user messages at their chronological position.
+        // The old code blindly appended orphans at the tail, which broke
+        // interleaving when a stale trace caused multiple user messages to
+        // be classified as orphans — they'd all stack at the bottom instead
+        // of sitting between the assistant turns they belong to.
         for orphan in orphanedUserMessages {
-            items.append(orphan)
-            indexAppend(orphan)
+            let insertIdx = Self.chronologicalInsertionIndex(for: orphan, in: items)
+            items.insert(orphan, at: insertIdx)
         }
 
         loadedTraceEventIDs = events.map(\.id)
@@ -1182,6 +1184,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Register a newly appended item in the index.
     private func indexAppend(_ item: ChatItem) {
         itemIndex.indexAppend(item, itemCount: items.count)
+    }
+
+    // MARK: - Orphan Positioning
+
+    /// Find the chronologically correct insertion index for an orphaned
+    /// user message within the rebuilt items array.
+    ///
+    /// Scans backward for the last item whose timestamp is ≤ the orphan's.
+    /// Items without timestamps (tools, thinking, system events) are skipped;
+    /// the orphan lands after the nearest preceding timestamped item (typically
+    /// the assistant message it was responding to). Falls back to the end
+    /// when no earlier timestamped item exists.
+    static func chronologicalInsertionIndex(for orphan: ChatItem, in items: [ChatItem]) -> Int {
+        guard let orphanTs = orphan.timestamp else {
+            return items.endIndex
+        }
+
+        for i in stride(from: items.count - 1, through: 0, by: -1) {
+            if let itemTs = items[i].timestamp, itemTs <= orphanTs {
+                return i + 1
+            }
+        }
+
+        return items.endIndex
     }
 
     // MARK: - Image Extraction
