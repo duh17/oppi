@@ -194,9 +194,27 @@ private struct PlotChartContainerView: View {
             ForEach(spec.marks) { mark in
                 markContent(mark)
             }
+            if let annotations = spec.annotations {
+                ForEach(annotations) { annotation in
+                    PointMark(
+                        x: .value("x", annotation.x),
+                        y: .value("y", annotation.y)
+                    )
+                    .opacity(0)
+                    .annotation(position: annotationPosition(annotation.anchor)) {
+                        Text(annotation.text)
+                            .font(.caption2)
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+            }
         }
         .chartLegend(renderPolicy.legendVisible ? .visible : .hidden)
         .chartYScale(domain: .automatic(reversed: spec.yAxis.invert ? true : nil))
+        .applyColorScale(spec.colorScale)
         .chartXAxisLabel(spec.xAxis.label ?? "")
         .chartYAxisLabel(spec.yAxis.label ?? "")
         .chartXAxis {
@@ -369,7 +387,21 @@ private struct PlotChartContainerView: View {
 
     @ChartContentBuilder
     private func areaMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
-        if !spec.columnIsNumeric(mark.x) {
+        // Range area: yStart + yEnd define a band
+        if mark.yStart != nil, mark.yEnd != nil {
+            ForEach(spec.rows) { row in
+                if let x = row.number(for: mark.x),
+                   let yStart = row.number(for: mark.yStart),
+                   let yEnd = row.number(for: mark.yEnd) {
+                    AreaMark(
+                        x: .value(mark.x ?? "x", x),
+                        yStart: .value(mark.yStart ?? "yStart", yStart),
+                        yEnd: .value(mark.yEnd ?? "yEnd", yEnd)
+                    )
+                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else if !spec.columnIsNumeric(mark.x) {
             ForEach(spec.rows) { row in
                 if let x = row.seriesLabel(for: mark.x),
                    let y = row.number(for: mark.y) {
@@ -508,6 +540,59 @@ private struct PlotChartContainerView: View {
             return label
         }
         return mark.id
+    }
+
+    private func annotationPosition(_ anchor: PlotChartSpec.Annotation.AnnotationAnchor) -> AnnotationPosition {
+        switch anchor {
+        case .top: return .top
+        case .bottom: return .bottom
+        case .leading: return .leading
+        case .trailing: return .trailing
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func applyColorScale(_ colorScale: [String: String]?) -> some View {
+        if let colorScale, !colorScale.isEmpty {
+            let domain = Array(colorScale.keys.sorted())
+            let colors: [Color] = domain.map { key in
+                Color(hex: colorScale[key] ?? "#888888")
+            }
+            self.chartForegroundStyleScale(domain: domain, range: colors)
+        } else {
+            self
+        }
+    }
+}
+
+private extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        var rgb: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&rgb)
+
+        switch hex.count {
+        case 3:
+            let r = Double((rgb >> 8) & 0xF) / 15
+            let g = Double((rgb >> 4) & 0xF) / 15
+            let b = Double(rgb & 0xF) / 15
+            self.init(red: r, green: g, blue: b)
+        case 6:
+            let r = Double((rgb >> 16) & 0xFF) / 255
+            let g = Double((rgb >> 8) & 0xFF) / 255
+            let b = Double(rgb & 0xFF) / 255
+            self.init(red: r, green: g, blue: b)
+        case 8:
+            let r = Double((rgb >> 24) & 0xFF) / 255
+            let g = Double((rgb >> 16) & 0xFF) / 255
+            let b = Double((rgb >> 8) & 0xFF) / 255
+            let a = Double(rgb & 0xFF) / 255
+            self.init(red: r, green: g, blue: b, opacity: a)
+        default:
+            self.init(red: 0.5, green: 0.5, blue: 0.5)
+        }
     }
 }
 
