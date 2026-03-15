@@ -120,9 +120,10 @@ struct ToolRowCodeRenderStrategy {
             verticalLock: !isStreaming,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byClipping,
-            horizontalScroll: true,
+            horizontalScroll: !isStreaming,
             deferredHighlight: deferred,
-            invalidateLayout: false
+            invalidateLayout: false,
+            installAction: .none
         )
     }
 

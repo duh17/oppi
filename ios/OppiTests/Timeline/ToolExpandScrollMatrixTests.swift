@@ -122,7 +122,7 @@ struct ToolExpandScrollMatrixTests {
             fixture.harness.coordinator.toolRowConfiguration(itemID: toolCase.targetItemID, item: item)
         )
         let expandedContent = try #require(config.expandedContent)
-        let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent)
+        let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent, isDone: config.isDone)
 
         #expect(policy.supportsFullScreenPreview == toolCase.expectedSupportsFullScreenPreview)
 
