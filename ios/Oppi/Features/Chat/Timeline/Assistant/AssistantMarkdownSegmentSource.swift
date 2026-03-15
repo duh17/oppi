@@ -33,7 +33,11 @@ final class AssistantMarkdownSegmentSource {
         }
 
         if !config.isStreaming,
-           let cached = MarkdownSegmentCache.shared.get(content, themeID: config.themeID) {
+           let cached = MarkdownSegmentCache.shared.get(
+               content,
+               themeID: config.themeID,
+               workspaceID: config.workspaceID
+           ) {
             return cached
         }
 
@@ -44,7 +48,12 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMark(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
-        let segments = FlatSegment.build(from: blocks, themeID: config.themeID)
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: config.themeID,
+            workspaceID: config.workspaceID,
+            serverBaseURL: config.serverBaseURL
+        )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
         MarkdownStreamingPerf.record(
@@ -55,7 +64,12 @@ final class AssistantMarkdownSegmentSource {
             isStreaming: false
         )
 
-        MarkdownSegmentCache.shared.set(content, themeID: config.themeID, segments: segments)
+        MarkdownSegmentCache.shared.set(
+            content,
+            themeID: config.themeID,
+            workspaceID: config.workspaceID,
+            segments: segments
+        )
         return segments
     }
 
@@ -81,6 +95,8 @@ final class AssistantMarkdownSegmentSource {
     ) -> [FlatSegment] {
         let content = config.content
         let themeID = config.themeID
+        let workspaceID = config.workspaceID
+        let serverBaseURL = config.serverBaseURL
         let contentUTF8 = content.utf8
 
         if let state = streamingState,
@@ -106,10 +122,20 @@ final class AssistantMarkdownSegmentSource {
                 if state.themeID == themeID {
                     prefixSegments = state.prefixSegments
                 } else {
-                    prefixSegments = FlatSegment.build(from: state.prefixBlocks, themeID: themeID)
+                    prefixSegments = FlatSegment.build(
+                        from: state.prefixBlocks,
+                        themeID: themeID,
+                        workspaceID: workspaceID,
+                        serverBaseURL: serverBaseURL
+                    )
                 }
 
-                let tailSegments = FlatSegment.build(from: tailBlocks, themeID: themeID)
+                let tailSegments = FlatSegment.build(
+                    from: tailBlocks,
+                    themeID: themeID,
+                    workspaceID: workspaceID,
+                    serverBaseURL: serverBaseURL
+                )
                 let buildEnd = MarkdownStreamingPerf.timestampNs()
                 let segments = mergeSegments(prefix: prefixSegments, tail: tailSegments)
 
@@ -129,7 +155,9 @@ final class AssistantMarkdownSegmentSource {
                         let tailFinalizedBlocks = Array(tailBlocks.dropLast())
                         let tailFinalizedSegments = FlatSegment.build(
                             from: tailFinalizedBlocks,
-                            themeID: themeID
+                            themeID: themeID,
+                            workspaceID: workspaceID,
+                            serverBaseURL: serverBaseURL
                         )
                         let newPrefixSegments = mergeSegments(
                             prefix: prefixSegments,
@@ -163,7 +191,12 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let (allBlocks, lastBlockLine) = parseCommonMarkWithLastLine(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
-        let segments = FlatSegment.build(from: allBlocks, themeID: themeID)
+        let segments = FlatSegment.build(
+            from: allBlocks,
+            themeID: themeID,
+            workspaceID: workspaceID,
+            serverBaseURL: serverBaseURL
+        )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
         MarkdownStreamingPerf.record(
@@ -179,7 +212,9 @@ final class AssistantMarkdownSegmentSource {
             contentUTF8: contentUTF8,
             allBlocks: allBlocks,
             lastBlockLine: lastBlockLine,
-            themeID: themeID
+            themeID: themeID,
+            workspaceID: workspaceID,
+            serverBaseURL: serverBaseURL
         )
 
         return segments
@@ -190,7 +225,9 @@ final class AssistantMarkdownSegmentSource {
         contentUTF8: String.UTF8View,
         allBlocks: [MarkdownBlock],
         lastBlockLine: Int,
-        themeID: ThemeID
+        themeID: ThemeID,
+        workspaceID: String?,
+        serverBaseURL: URL?
     ) {
         guard allBlocks.count >= 2, lastBlockLine > 1 else {
             streamingState = nil
@@ -204,7 +241,12 @@ final class AssistantMarkdownSegmentSource {
         }
 
         let prefixBlocks = Array(allBlocks.dropLast())
-        let prefixSegments = FlatSegment.build(from: prefixBlocks, themeID: themeID)
+        let prefixSegments = FlatSegment.build(
+            from: prefixBlocks,
+            themeID: themeID,
+            workspaceID: workspaceID,
+            serverBaseURL: serverBaseURL
+        )
 
         streamingState = StreamingParseState(
             prefixUTF8ByteCount: byteOffset,

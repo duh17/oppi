@@ -12,6 +12,12 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let themeID: ThemeID
     let selectedTextPiRouter: SelectedTextPiActionRouter?
     let selectedTextSourceContext: SelectedTextSourceContext?
+    /// Workspace context for resolving markdown image paths.
+    let workspaceID: String?
+    let serverBaseURL: URL?
+    /// Closure for fetching a workspace file by path. Wraps `APIClient.fetchWorkspaceFile`
+    /// at the caller site so view-layer files stay decoupled from `APIClient` directly.
+    let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
     init(
         text: String,
@@ -20,7 +26,10 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         onFork: (() -> Void)?,
         themeID: ThemeID,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSourceContext: SelectedTextSourceContext? = nil
+        selectedTextSourceContext: SelectedTextSourceContext? = nil,
+        workspaceID: String? = nil,
+        serverBaseURL: URL? = nil,
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -29,6 +38,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.themeID = themeID
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.workspaceID = workspaceID
+        self.serverBaseURL = serverBaseURL
+        self.fetchWorkspaceFile = fetchWorkspaceFile
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -154,12 +166,15 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         // doesn't create visual gaps above the π icon.
         let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.apply(configuration: .init(
             content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: configuration.themeID,
             selectedTextPiRouter: configuration.selectedTextPiRouter,
-            selectedTextSourceContext: configuration.selectedTextSourceContext
+            selectedTextSourceContext: configuration.selectedTextSourceContext,
+            workspaceID: configuration.workspaceID,
+            serverBaseURL: configuration.serverBaseURL
         ))
     }
 

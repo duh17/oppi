@@ -20,6 +20,9 @@ final class AssistantMarkdownContentView: UIView {
         let plainTextFallbackThreshold: Int?
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let selectedTextSourceContext: SelectedTextSourceContext?
+        /// Workspace context for resolving inline image paths.
+        let workspaceID: String?
+        let serverBaseURL: URL?
 
         init(
             content: String,
@@ -28,7 +31,9 @@ final class AssistantMarkdownContentView: UIView {
             textSelectionEnabled: Bool = true,
             plainTextFallbackThreshold: Int? = Self.defaultPlainTextFallbackThreshold,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-            selectedTextSourceContext: SelectedTextSourceContext? = nil
+            selectedTextSourceContext: SelectedTextSourceContext? = nil,
+            workspaceID: String? = nil,
+            serverBaseURL: URL? = nil
         ) {
             self.content = content
             self.isStreaming = isStreaming
@@ -37,6 +42,8 @@ final class AssistantMarkdownContentView: UIView {
             self.plainTextFallbackThreshold = plainTextFallbackThreshold
             self.selectedTextPiRouter = selectedTextPiRouter
             self.selectedTextSourceContext = selectedTextSourceContext
+            self.workspaceID = workspaceID
+            self.serverBaseURL = serverBaseURL
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -47,6 +54,8 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.plainTextFallbackThreshold == rhs.plainTextFallbackThreshold
                 && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
+                && lhs.workspaceID == rhs.workspaceID
+                && lhs.serverBaseURL == rhs.serverBaseURL
         }
     }
 
@@ -66,6 +75,13 @@ final class AssistantMarkdownContentView: UIView {
     )
 
     private var currentConfig: Configuration?
+
+    /// Closure for fetching workspace files (for inline markdown images).
+    /// Wraps `APIClient.fetchWorkspaceFile` at the injection site, keeping this
+    /// view file decoupled from `APIClient` directly.
+    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? {
+        didSet { segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
