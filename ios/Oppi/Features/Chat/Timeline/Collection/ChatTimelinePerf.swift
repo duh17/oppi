@@ -370,7 +370,11 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
-        // Emit cell_configure_ms for all row types to telemetry pipeline.
+        // Only emit to telemetry for non-trivial configures (≥1ms).
+        // Sub-millisecond configures are the common case and the Task.detached
+        // allocation adds overhead that exceeds the measurement itself.
+        guard durationMs >= 1 else { return }
+
         let sid = activeSessionId
         Task.detached(priority: .utility) {
             var tags: [String: String] = ["row_type": rowType]
