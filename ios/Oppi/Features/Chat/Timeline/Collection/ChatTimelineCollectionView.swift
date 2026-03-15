@@ -497,6 +497,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentIDs = applyPlan.nextIDs
             currentItemByID = applyPlan.nextItemByID
 
+            // Enable passive anchoring before snapshot apply so layout passes
+            // during reconfigure preserve scroll position for detached users.
+            // When attached (near bottom), anchoring is off so auto-scroll and
+            // passive bottom-pinning work without interference.
+            if let anchoredCV = collectionView as? AnchoredCollectionView {
+                anchoredCV.isDetachedFromBottom = !(scrollController?.isCurrentlyNearBottom ?? true)
+            }
+
             TimelineSnapshotApplier.applySnapshot(
                 dataSource: dataSource,
                 nextIDs: applyPlan.nextIDs,
