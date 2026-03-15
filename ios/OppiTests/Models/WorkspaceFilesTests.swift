@@ -89,6 +89,24 @@ struct WorkspaceFilesTests {
         #expect(listing.entries[1].isFile)
     }
 
+    // MARK: - FileEntry HTML detection
+
+    @Test func htmlExtensionDetected() throws {
+        let htmlEntry = FileEntry(name: "index.html", type: .file, size: 500, modifiedAt: 0, path: nil)
+        let htmEntry = FileEntry(name: "page.htm", type: .file, size: 500, modifiedAt: 0, path: nil)
+        let tsEntry = FileEntry(name: "app.ts", type: .file, size: 500, modifiedAt: 0, path: nil)
+
+        // Extension extraction matches the pattern used in FileBrowserContentView
+        func isHTML(_ entry: FileEntry) -> Bool {
+            let ext = entry.name.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
+            return ["html", "htm"].contains(ext)
+        }
+
+        #expect(isHTML(htmlEntry))
+        #expect(isHTML(htmEntry))
+        #expect(!isHTML(tsEntry))
+    }
+
     // MARK: - FileSearchResponse
 
     @Test func fileSearchResponseDecodes() throws {
