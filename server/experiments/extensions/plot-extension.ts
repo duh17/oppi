@@ -108,6 +108,26 @@ const plotSpecSchema = Type.Object({
     }),
   ),
   renderHints: Type.Optional(renderHintsSchema),
+  colorScale: Type.Optional(
+    Type.Record(Type.String(), Type.String(), {
+      description: 'Map series names to hex colors, e.g. { "keep": "#22C55E", "crash": "#EF4444" }',
+    }),
+  ),
+  annotations: Type.Optional(
+    Type.Array(
+      Type.Object({
+        x: Type.Number({ description: "X coordinate of the annotation" }),
+        y: Type.Number({ description: "Y coordinate of the annotation" }),
+        text: Type.String({ description: "Annotation label (max 80 chars)" }),
+        anchor: Type.Optional(
+          StringEnum(["top", "bottom", "leading", "trailing"] as const, {
+            description: "Position relative to the point. Default: top",
+          }),
+        ),
+      }),
+      { maxItems: 10 },
+    ),
+  ),
   height: Type.Optional(
     Type.Number({ minimum: PLOT_SPEC_HEIGHT_MIN, maximum: PLOT_SPEC_HEIGHT_MAX }),
   ),

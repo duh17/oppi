@@ -744,3 +744,131 @@ struct PlotRenderPolicyTests {
         return spec
     }
 }
+
+@Suite("PlotChartSpec colorScale")
+struct PlotChartSpecColorScaleTests {
+    @Test("parses colorScale from spec")
+    func parsesColorScale() {
+        let spec = makeSpec(overrides: [
+            "colorScale": .object([
+                "keep": .string("#00FF00"),
+                "crash": .string("#FF0000"),
+            ]),
+        ])
+        #expect(spec.colorScale != nil)
+        #expect(spec.colorScale?["keep"] == "#00FF00")
+        #expect(spec.colorScale?["crash"] == "#FF0000")
+    }
+
+    @Test("nil when colorScale missing")
+    func nilWhenMissing() {
+        let spec = makeSpec(overrides: [:])
+        #expect(spec.colorScale == nil)
+    }
+
+    @Test("nil when colorScale empty")
+    func nilWhenEmpty() {
+        let spec = makeSpec(overrides: ["colorScale": .object([:])])
+        #expect(spec.colorScale == nil)
+    }
+
+    private func makeSpec(overrides: [String: JSONValue]) -> PlotChartSpec {
+        var specObject: [String: JSONValue] = [
+            "dataset": .object([
+                "rows": .array([
+                    .object(["x": .number(1), "y": .number(10)]),
+                ]),
+            ]),
+            "marks": .array([
+                .object(["type": .string("line"), "x": .string("x"), "y": .string("y")]),
+            ]),
+        ]
+        for (key, value) in overrides {
+            specObject[key] = value
+        }
+        let args: [String: JSONValue] = ["spec": .object(specObject)]
+        return PlotChartSpec.fromPlotArgs(args)!
+    }
+}
+
+@Suite("PlotChartSpec annotations")
+struct PlotChartSpecAnnotationTests {
+    @Test("parses annotations array")
+    func parsesAnnotations() {
+        let spec = makeSpec(overrides: [
+            "annotations": .array([
+                .object([
+                    "x": .number(5),
+                    "y": .number(42.3),
+                    "text": .string("Best run"),
+                    "anchor": .string("top"),
+                ]),
+                .object([
+                    "x": .number(1),
+                    "y": .number(60),
+                    "text": .string("Baseline"),
+                ]),
+            ]),
+        ])
+        #expect(spec.annotations != nil)
+        #expect(spec.annotations?.count == 2)
+        #expect(spec.annotations?[0].text == "Best run")
+        #expect(spec.annotations?[0].anchor == .top)
+        #expect(spec.annotations?[1].text == "Baseline")
+        #expect(spec.annotations?[1].anchor == .top) // default
+    }
+
+    @Test("nil when annotations missing")
+    func nilWhenMissing() {
+        let spec = makeSpec(overrides: [:])
+        #expect(spec.annotations == nil)
+    }
+
+    @Test("skips incomplete annotations")
+    func skipsIncomplete() {
+        let spec = makeSpec(overrides: [
+            "annotations": .array([
+                .object(["x": .number(1), "text": .string("no y")]),
+                .object(["x": .number(1), "y": .number(2), "text": .string("valid")]),
+            ]),
+        ])
+        #expect(spec.annotations?.count == 1)
+        #expect(spec.annotations?[0].text == "valid")
+    }
+
+    @Test("parses all anchor values")
+    func parsesAnchors() {
+        let anchors = ["top", "bottom", "leading", "trailing"]
+        for anchor in anchors {
+            let spec = makeSpec(overrides: [
+                "annotations": .array([
+                    .object([
+                        "x": .number(1),
+                        "y": .number(2),
+                        "text": .string("test"),
+                        "anchor": .string(anchor),
+                    ]),
+                ]),
+            ])
+            #expect(spec.annotations?[0].anchor.rawValue == anchor)
+        }
+    }
+
+    private func makeSpec(overrides: [String: JSONValue]) -> PlotChartSpec {
+        var specObject: [String: JSONValue] = [
+            "dataset": .object([
+                "rows": .array([
+                    .object(["x": .number(1), "y": .number(10)]),
+                ]),
+            ]),
+            "marks": .array([
+                .object(["type": .string("line"), "x": .string("x"), "y": .string("y")]),
+            ]),
+        ]
+        for (key, value) in overrides {
+            specObject[key] = value
+        }
+        let args: [String: JSONValue] = ["spec": .object(specObject)]
+        return PlotChartSpec.fromPlotArgs(args)!
+    }
+}

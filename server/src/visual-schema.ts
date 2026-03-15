@@ -46,6 +46,12 @@ const RENDER_HINT_GRID_VERTICAL_MODES = new Set(["none", "major"]);
 const RENDER_HINT_GRID_HORIZONTAL_MODES = new Set(["major"]);
 const CATEGORY_DENSITY_WARNING_THRESHOLD = 40;
 
+const MAX_COLOR_SCALE_ENTRIES = 20;
+const MAX_ANNOTATIONS = 10;
+const MAX_ANNOTATION_TEXT_LENGTH = 80;
+const ANNOTATION_ANCHORS = new Set(["top", "bottom", "leading", "trailing"]);
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
 export interface ToolResultDetailsSanitization {
   details: unknown;
   warnings: string[];
@@ -268,10 +274,12 @@ function sanitizeChartMark(value: unknown, warnings: string[]): Record<string, u
   let isRenderable = true;
   switch (type) {
     case "line":
-    case "area":
     case "bar":
     case "point":
       isRenderable = has("x") && has("y");
+      break;
+    case "area":
+      isRenderable = has("x") && (has("y") || (has("yStart") && has("yEnd")));
       break;
     case "rectangle":
       isRenderable = has("xStart") && has("xEnd") && has("yStart") && has("yEnd");
@@ -611,6 +619,80 @@ function enforceRenderHintSafety(
   }
 }
 
+function sanitizeColorScale(
+  value: unknown,
+  warnings: string[],
+): Record<string, string> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const scale: Record<string, string> = {};
+  let count = 0;
+
+  for (const [rawKey, rawValue] of Object.entries(record)) {
+    if (count >= MAX_COLOR_SCALE_ENTRIES) {
+      warnings.push(`colorScale capped at ${MAX_COLOR_SCALE_ENTRIES} entries`);
+      break;
+    }
+
+    const key = rawKey.trim();
+    if (!key || key.length > MAX_FIELD_NAME_LENGTH) continue;
+
+    const color = boundedString(rawValue, 16);
+    if (!color || !HEX_COLOR_RE.test(color)) {
+      warnings.push(`dropped invalid colorScale color for "${key}"`);
+      continue;
+    }
+
+    scale[key] = color;
+    count++;
+  }
+
+  return Object.keys(scale).length > 0 ? scale : undefined;
+}
+
+function sanitizeAnnotations(
+  value: unknown,
+  warnings: string[],
+): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const annotations: Record<string, unknown>[] = [];
+  const capped = value.slice(0, MAX_ANNOTATIONS);
+
+  if (value.length > MAX_ANNOTATIONS) {
+    warnings.push(`annotations capped at ${MAX_ANNOTATIONS}`);
+  }
+
+  for (const rawAnnotation of capped) {
+    const record = asRecord(rawAnnotation);
+    if (!record) {
+      warnings.push("dropped non-object annotation");
+      continue;
+    }
+
+    const x = finiteNumber(record.x);
+    const y = finiteNumber(record.y);
+    const text = boundedString(record.text, MAX_ANNOTATION_TEXT_LENGTH);
+
+    if (x === undefined || y === undefined || !text) {
+      warnings.push("dropped incomplete annotation (needs x, y, text)");
+      continue;
+    }
+
+    const annotation: Record<string, unknown> = { x, y, text };
+
+    const anchor = boundedString(record.anchor, 16)?.toLowerCase();
+    if (anchor && ANNOTATION_ANCHORS.has(anchor)) {
+      annotation.anchor = anchor;
+    }
+
+    annotations.push(annotation);
+  }
+
+  return annotations.length > 0 ? annotations : undefined;
+}
+
 function sanitizeChartSpec(value: unknown, warnings: string[]): Record<string, unknown> | null {
   const record = asRecord(value);
   if (!record) {
@@ -664,6 +746,16 @@ function sanitizeChartSpec(value: unknown, warnings: string[]): Record<string, u
     if (Object.keys(renderHints).length > 0) {
       spec.renderHints = renderHints;
     }
+  }
+
+  const colorScale = sanitizeColorScale(record.colorScale, warnings);
+  if (colorScale) {
+    spec.colorScale = colorScale;
+  }
+
+  const annotations = sanitizeAnnotations(record.annotations, warnings);
+  if (annotations) {
+    spec.annotations = annotations;
   }
 
   const height = finiteNumber(record.height);
