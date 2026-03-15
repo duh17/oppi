@@ -277,6 +277,13 @@ struct WorkspaceDetailView: View {
                     .foregroundStyle(.themeComment)
                 }
                 Spacer()
+                NavigationLink {
+                    FileBrowserView(workspaceId: workspace.id, initialPath: "")
+                } label: {
+                    Image(systemName: "folder")
+                        .foregroundStyle(.themeComment)
+                }
+                Spacer()
                 Button { showWorkspacePolicy = true } label: {
                     Image(systemName: policyFallbackIconName)
                         .foregroundStyle(policyFallbackColor)
