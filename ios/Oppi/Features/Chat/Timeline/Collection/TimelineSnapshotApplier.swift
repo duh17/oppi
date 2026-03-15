@@ -7,6 +7,7 @@ enum TimelineSnapshotApplier {
     static func applySnapshot(
         dataSource: DataSource?,
         nextIDs: [String],
+        previousIDs: [String],
         nextItemByID: [String: ChatItem],
         previousItemByID: [String: ChatItem],
         hiddenCount: Int,
@@ -43,18 +44,39 @@ enum TimelineSnapshotApplier {
 
         ChatTimelinePerf.beginSnapshotBuildPhase()
 
-        let nextIDSet = Set(nextIDs)
-        let dedupedChangedIDs = reconfigureItemIDs(
-            nextIDs: nextIDs,
-            nextIDSet: nextIDSet,
-            nextItemByID: nextItemByID,
-            previousItemByID: previousItemByID,
-            hiddenCount: hiddenCount,
-            previousHiddenCount: previousHiddenCount,
-            streamingAssistantID: streamingAssistantID,
-            previousStreamingAssistantID: previousStreamingAssistantID,
-            themeChanged: previousThemeID != themeID
-        )
+        // Fast path: when the ID list is structurally unchanged, skip Set
+        // construction for reconfigureItemIDs and avoid the full snapshot
+        // rebuild. Compare previousIDs (caller-supplied) instead of querying
+        // UIKit's snapshot which allocates an array copy.
+        let idsUnchanged = previousIDs.count == nextIDs.count && previousIDs == nextIDs
+            && previousThemeID == themeID
+
+        let dedupedChangedIDs: [String]
+        if idsUnchanged {
+            // IDs unchanged — only detect content mutations, skip Set allocation.
+            dedupedChangedIDs = changedItemIDsForReconfigure(
+                nextIDs: nextIDs,
+                nextItemByID: nextItemByID,
+                previousItemByID: previousItemByID,
+                hiddenCount: hiddenCount,
+                previousHiddenCount: previousHiddenCount,
+                streamingAssistantID: streamingAssistantID,
+                previousStreamingAssistantID: previousStreamingAssistantID
+            )
+        } else {
+            let nextIDSet = Set(nextIDs)
+            dedupedChangedIDs = reconfigureItemIDs(
+                nextIDs: nextIDs,
+                nextIDSet: nextIDSet,
+                nextItemByID: nextItemByID,
+                previousItemByID: previousItemByID,
+                hiddenCount: hiddenCount,
+                previousHiddenCount: previousHiddenCount,
+                streamingAssistantID: streamingAssistantID,
+                previousStreamingAssistantID: previousStreamingAssistantID,
+                themeChanged: previousThemeID != themeID
+            )
+        }
 
         ChatTimelinePerf.endSnapshotBuildPhase()
         ChatTimelinePerf.updateTimelineApplyCycle(
@@ -62,27 +84,28 @@ enum TimelineSnapshotApplier {
             changedCount: dedupedChangedIDs.count
         )
 
-        // Fast path: when the ID list is structurally unchanged (same count,
-        // same IDs), skip the full snapshot rebuild. Just reconfigure changed
-        // items on the existing snapshot. This avoids UIKit's O(n) internal
-        // diff for the common streaming case where only content mutates.
-        if let dataSource,
-           previousThemeID == themeID {
-            let existingSnapshot = dataSource.snapshot()
-            let existingIDs = existingSnapshot.itemIdentifiers
-            if existingIDs.count == nextIDs.count, existingIDs == nextIDs {
-                if !dedupedChangedIDs.isEmpty {
-                    var snapshot = existingSnapshot
-                    snapshot.reconfigureItems(dedupedChangedIDs)
+        // Fast path: when the ID list is structurally unchanged, skip the full
+        // snapshot rebuild. Just reconfigure changed items on the existing
+        // snapshot. This avoids UIKit's O(n) internal diff.
+        if idsUnchanged, let dataSource {
+            if !dedupedChangedIDs.isEmpty {
+                var snapshot = dataSource.snapshot()
+                // Filter to items that exist in the snapshot to avoid UIKit
+                // assertions during reconfigure validation.
+                let validIDs = dedupedChangedIDs.filter {
+                    snapshot.indexOfItem($0) != nil
+                }
+                if !validIDs.isEmpty {
+                    snapshot.reconfigureItems(validIDs)
                     let applyToken = ChatTimelinePerf.beginCollectionApply(
                         itemCount: nextIDs.count,
-                        changedCount: dedupedChangedIDs.count
+                        changedCount: validIDs.count
                     )
                     dataSource.apply(snapshot, animatingDifferences: false)
                     ChatTimelinePerf.endCollectionApply(applyToken)
                 }
-                return
             }
+            return
         }
 
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
@@ -169,6 +192,50 @@ enum TimelineSnapshotApplier {
         }
 
         return dedupeVisibleChangedIDs(changedIDs, nextIDSet: nextIDSet)
+    }
+
+    /// Optimized change detection for the common case where IDs are unchanged.
+    /// Skips Set<String> construction for the common case.
+    private static func changedItemIDsForReconfigure(
+        nextIDs: [String],
+        nextItemByID: [String: ChatItem],
+        previousItemByID: [String: ChatItem],
+        hiddenCount: Int,
+        previousHiddenCount: Int,
+        streamingAssistantID: String?,
+        previousStreamingAssistantID: String?
+    ) -> [String] {
+        var changed = changedItemIDs(
+            nextIDs: nextIDs,
+            nextItemByID: nextItemByID,
+            previousItemByID: previousItemByID,
+            streamingAssistantID: streamingAssistantID
+        )
+
+        if hiddenCount != previousHiddenCount,
+           nextIDs.first == ChatTimelineCollectionHost.loadMoreID {
+            changed.append(ChatTimelineCollectionHost.loadMoreID)
+        }
+
+        if let streamingAssistantID,
+           shouldReconfigureStreamingAssistant(
+               id: streamingAssistantID,
+               nextItemByID: nextItemByID,
+               previousItemByID: previousItemByID
+           ) {
+            changed.append(streamingAssistantID)
+        }
+
+        if let previousStreamingAssistantID,
+           previousStreamingAssistantID != streamingAssistantID {
+            changed.append(previousStreamingAssistantID)
+        }
+
+        // Dedup is required: streaming/previousStreaming IDs may duplicate
+        // entries from changedItemIDs when streaming state transitions.
+        guard changed.count > 1 else { return changed }
+        var seen = Set<String>(minimumCapacity: changed.count)
+        return changed.filter { seen.insert($0).inserted }
     }
 
     /// Detect items whose content changed between snapshots.
