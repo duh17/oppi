@@ -494,6 +494,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
             }
 
+            let previousIDs = currentIDs
             currentIDs = applyPlan.nextIDs
             currentItemByID = applyPlan.nextItemByID
 
@@ -508,6 +509,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             TimelineSnapshotApplier.applySnapshot(
                 dataSource: dataSource,
                 nextIDs: applyPlan.nextIDs,
+                previousIDs: previousIDs,
                 nextItemByID: applyPlan.nextItemByID,
                 previousItemByID: previousItemByID,
                 hiddenCount: configuration.hiddenCount,
