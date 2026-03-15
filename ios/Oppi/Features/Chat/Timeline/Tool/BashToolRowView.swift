@@ -219,8 +219,12 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
             if input.unwrapped {
                 outputLabel.textContainer.lineBreakMode = .byClipping
-                outputScrollView.alwaysBounceHorizontal = true
-                outputScrollView.showsHorizontalScrollIndicator = true
+                // Horizontal scrolling is only meaningful once streaming finishes
+                // and the content width stabilises. During streaming the viewport
+                // auto-follows vertically; enabling horizontal scroll at the same
+                // time causes gesture conflicts and meaningless scroll offsets.
+                outputScrollView.alwaysBounceHorizontal = !input.isStreaming
+                outputScrollView.showsHorizontalScrollIndicator = !input.isStreaming
                 outputUsesUnwrappedLayout = true
             } else {
                 outputLabel.textContainer.lineBreakMode = .byCharWrapping

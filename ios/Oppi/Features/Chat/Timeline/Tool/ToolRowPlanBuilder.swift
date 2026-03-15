@@ -11,7 +11,7 @@ enum ToolRowPlanBuilder {
             )
         }
 
-        let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent)
+        let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent, isDone: configuration.isDone)
         let hasSelectedTextContext = configuration.selectedTextPiRouter != nil
             && configuration.selectedTextSessionId != nil
         let supportsFullScreen = supportsFullScreenPreview(

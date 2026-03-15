@@ -132,7 +132,7 @@ struct ToolTimelineRowModeDispatchTests {
 
     @Test func interactionPolicyMatrixMatchesModeExpectations() {
         let markdownPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .markdown(text: "# Header")
+            .markdown(text: "# Header"), isDone: true
         )
         #expect(markdownPolicy.enablesTapCopyGesture)
         #expect(markdownPolicy.enablesPinchGesture)
@@ -140,7 +140,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(markdownPolicy.supportsFullScreenPreview)
 
         let codePolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "Test.swift")
+            .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "Test.swift"), isDone: true
         )
         #expect(codePolicy.enablesTapCopyGesture)
         #expect(codePolicy.enablesPinchGesture)
@@ -148,17 +148,17 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(codePolicy.supportsFullScreenPreview)
 
         let wrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .bash(command: "echo hi", output: "hi", unwrapped: false)
+            .bash(command: "echo hi", output: "hi", unwrapped: false), isDone: true
         )
         #expect(!wrappedBashPolicy.allowsHorizontalScroll)
 
         let unwrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .bash(command: "echo hi", output: "hi", unwrapped: true)
+            .bash(command: "echo hi", output: "hi", unwrapped: true), isDone: true
         )
         #expect(unwrappedBashPolicy.allowsHorizontalScroll)
 
         let extensionTextPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .text(text: "Extension result", language: nil)
+            .text(text: "Extension result", language: nil), isDone: true
         )
         #expect(extensionTextPolicy.enablesTapCopyGesture)
         #expect(extensionTextPolicy.enablesPinchGesture)
@@ -166,7 +166,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(extensionTextPolicy.supportsFullScreenPreview)
 
         let extensionJSONPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .text(text: "{\"id\":\"EXT-1\"}", language: .json)
+            .text(text: "{\"id\":\"EXT-1\"}", language: .json), isDone: true
         )
         #expect(extensionJSONPolicy.enablesTapCopyGesture)
         #expect(extensionJSONPolicy.enablesPinchGesture)
@@ -174,7 +174,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(extensionJSONPolicy.supportsFullScreenPreview)
 
         let hostedPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1)
+            .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), isDone: true
         )
         #expect(!hostedPolicy.enablesTapCopyGesture)
         #expect(!hostedPolicy.enablesPinchGesture)
@@ -221,7 +221,7 @@ struct ToolTimelineRowModeDispatchTests {
             let routed = route(testCase.content)
             #expect(routed == testCase.expectedMode)
 
-            let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(testCase.content)
+            let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(testCase.content, isDone: true)
             #expect(policy.supportsFullScreenPreview == testCase.expectsFullScreen)
             #expect(policy.allowsHorizontalScroll == testCase.expectsHorizontalScroll)
         }

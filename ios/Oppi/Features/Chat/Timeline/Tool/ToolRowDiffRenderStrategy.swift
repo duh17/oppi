@@ -109,7 +109,7 @@ struct ToolRowDiffRenderStrategy {
             verticalLock: !isStreaming,
             scrollBehavior: scrollBehavior,
             lineBreakMode: .byClipping,
-            horizontalScroll: true,
+            horizontalScroll: !isStreaming,
             deferredHighlight: nil,
             invalidateLayout: false,
             installAction: .none

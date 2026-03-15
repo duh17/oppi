@@ -122,7 +122,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             isDone: false
         )
         let interactionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .code(text: "let draft = 1", language: .swift, startLine: 1, filePath: "Draft.swift")
+            .code(text: "let draft = 1", language: .swift, startLine: 1, filePath: "Draft.swift"), isDone: false
         )
         let sourceStream = SourceTraceStream(
             text: "let draft = 1",
