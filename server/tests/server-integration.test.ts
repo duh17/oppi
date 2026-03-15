@@ -7,7 +7,7 @@
  * Does NOT spawn pi or containers — just the HTTP/WS layer.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "../src/server.js";
@@ -293,6 +293,112 @@ describe("workspaces API", () => {
     const body = await res.json();
     expect(body.sessions).toBeInstanceOf(Array);
     expect(body.sessions.length).toBe(0);
+  });
+});
+
+// ── Workspace File Serving ──
+
+describe("workspace file serving", () => {
+  let wsId: string;
+  let wsRoot: string;
+
+  beforeAll(async () => {
+    wsRoot = mkdtempSync(join(tmpdir(), "oppi-ws-files-"));
+    mkdirSync(join(wsRoot, "output"), { recursive: true });
+    // 1x1 red PNG (minimal valid PNG)
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, // 8bit RGB + CRC
+    ]);
+    writeFileSync(join(wsRoot, "chart.png"), pngHeader);
+    writeFileSync(join(wsRoot, "output", "figure.jpg"), Buffer.alloc(16, 0xab));
+    writeFileSync(join(wsRoot, "secrets.env"), "SECRET=bad");
+
+    const res = await post("/workspaces", {
+      name: "file-test",
+      skills: [],
+      hostMount: wsRoot,
+    });
+    const body = await res.json();
+    wsId = body.workspace.id;
+  });
+
+  afterAll(() => {
+    rmSync(wsRoot, { recursive: true, force: true });
+  });
+
+  it("serves an image file with correct content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/files/chart.png`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+    const body = await res.arrayBuffer();
+    expect(body.byteLength).toBeGreaterThan(0);
+  });
+
+  it("serves files in subdirectories", async () => {
+    const res = await get(`/workspaces/${wsId}/files/output/figure.jpg`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    const body = await res.arrayBuffer();
+    expect(body.byteLength).toBe(16);
+  });
+
+  it("returns byte-identical content", async () => {
+    const res = await get(`/workspaces/${wsId}/files/output/figure.jpg`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    expect(buf).toEqual(Buffer.alloc(16, 0xab));
+  });
+
+  it("rejects non-image file extensions", async () => {
+    const res = await get(`/workspaces/${wsId}/files/secrets.env`);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("not allowed");
+  });
+
+  it("returns 404 for nonexistent files", async () => {
+    const res = await get(`/workspaces/${wsId}/files/missing.png`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for nonexistent workspace", async () => {
+    const res = await get("/workspaces/BOGUS/files/chart.png");
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toContain("not found");
+  });
+
+  it("blocks path traversal", async () => {
+    const res = await get(`/workspaces/${wsId}/files/../../../etc/passwd`);
+    expect(res.status).toBe(404);
+  });
+
+  it("blocks symlinks escaping workspace root", async () => {
+    const outsideFile = join(tmpdir(), `oppi-escape-target-${Date.now()}.png`);
+    writeFileSync(outsideFile, "escaped");
+    symlinkSync(outsideFile, join(wsRoot, "escape.png"));
+    try {
+      const res = await get(`/workspaces/${wsId}/files/escape.png`);
+      expect(res.status).toBe(404);
+    } finally {
+      rmSync(outsideFile, { force: true });
+    }
+  });
+
+  it("rejects requests without auth", async () => {
+    const res = await get(`/workspaces/${wsId}/files/chart.png`, false);
+    expect(res.status).toBe(401);
+  });
+
+  it("supports query-param token auth", async () => {
+    const res = await fetch(
+      `${baseUrl}/workspaces/${wsId}/files/chart.png?token=${token}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
   });
 });
 
