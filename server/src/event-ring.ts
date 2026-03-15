@@ -3,6 +3,10 @@
  *
  * Used by SessionManager (per-session) and UserStreamMux (per-user)
  * to support reconnect catch-up without unbounded memory growth.
+ *
+ * Implementation uses a circular buffer with head/tail pointers
+ * to avoid O(n) Array.shift() on every push at capacity.
+ * `since()` uses binary search on monotonically increasing seqs.
  */
 
 import type { ServerMessage } from "./types.js";
@@ -14,43 +18,80 @@ export interface SequencedEvent {
 }
 
 export class EventRing {
-  private events: SequencedEvent[] = [];
+  private buf: (SequencedEvent | undefined)[];
+  private head = 0; // index of oldest element
+  private len = 0; // number of stored elements
+  private readonly cap: number;
+  /** Cached seq of the most recently pushed event. Avoids a modular index
+   *  lookup on every push for the monotonicity check, and makes currentSeq O(1). */
+  private _lastSeq = 0;
 
-  constructor(private readonly capacity = 500) {}
+  constructor(capacity = 500) {
+    this.cap = capacity;
+    this.buf = new Array(capacity);
+  }
 
   push(event: SequencedEvent): void {
-    if (!Number.isInteger(event.seq) || event.seq <= 0) {
-      throw new Error(`EventRing sequence must be a positive integer (received ${event.seq})`);
+    const seq = event.seq;
+    // Faster integer check than Number.isInteger (avoids function call overhead).
+    if (seq <= 0 || (seq | 0) !== seq) {
+      throw new Error(`EventRing sequence must be a positive integer (received ${seq})`);
     }
 
-    const last = this.events[this.events.length - 1];
-    if (last && event.seq <= last.seq) {
+    if (this.len > 0 && seq <= this._lastSeq) {
       throw new Error(
-        `EventRing sequence must be strictly increasing (last=${last.seq}, next=${event.seq})`,
+        `EventRing sequence must be strictly increasing (last=${this._lastSeq}, next=${seq})`,
       );
     }
+    this._lastSeq = seq;
 
-    this.events.push(event);
-    if (this.events.length > this.capacity) {
-      this.events.shift();
+    if (this.len < this.cap) {
+      // Not yet full — append at tail
+      this.buf[(this.head + this.len) % this.cap] = event;
+      this.len++;
+    } else {
+      // Full — overwrite oldest (head) and advance head
+      this.buf[this.head] = event;
+      this.head = (this.head + 1) % this.cap;
     }
   }
 
   since(sinceSeq: number): SequencedEvent[] {
-    const idx = this.events.findIndex((entry) => entry.seq > sinceSeq);
-    return idx === -1 ? [] : this.events.slice(idx);
+    if (this.len === 0) return [];
+
+    // Binary search for first event with seq > sinceSeq
+    let lo = 0;
+    let hi = this.len;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.buf[(this.head + mid) % this.cap]!.seq > sinceSeq) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+
+    if (lo >= this.len) return [];
+
+    // Copy matching events into result array
+    const count = this.len - lo;
+    const result: SequencedEvent[] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      result[i] = this.buf[(this.head + lo + i) % this.cap]!;
+    }
+    return result;
   }
 
   get currentSeq(): number {
-    const last = this.events[this.events.length - 1];
-    return last?.seq ?? 0;
+    return this.len === 0 ? 0 : this._lastSeq;
   }
 
   get oldestSeq(): number {
-    return this.events[0]?.seq ?? 0;
+    if (this.len === 0) return 0;
+    return this.buf[this.head]!.seq;
   }
 
   canServe(sinceSeq: number): boolean {
-    return this.events.length === 0 || sinceSeq >= this.oldestSeq - 1;
+    return this.len === 0 || sinceSeq >= this.buf[this.head]!.seq - 1;
   }
 }

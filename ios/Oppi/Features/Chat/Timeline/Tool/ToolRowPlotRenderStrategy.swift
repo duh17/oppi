@@ -7,8 +7,7 @@ struct ToolRowPlotRenderStrategy {
         fallbackText: String?,
         previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
-        hasExpandedPlotContentView: Bool,
-        installExpandedPlotView: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Void
+        hasExpandedPlotContentView: Bool
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.plotSignature(
             spec: spec,
@@ -17,10 +16,6 @@ struct ToolRowPlotRenderStrategy {
         let shouldReinstall = signature != previousSignature
             || !isUsingReadMediaLayout
             || !hasExpandedPlotContentView
-
-        if shouldReinstall {
-            installExpandedPlotView(spec, fallbackText)
-        }
 
         return ExpandedRenderOutput(
             renderSignature: shouldReinstall ? signature : previousSignature,
@@ -33,7 +28,8 @@ struct ToolRowPlotRenderStrategy {
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: false
+            invalidateLayout: false,
+            installAction: shouldReinstall ? .plot(spec: spec, fallbackText: fallbackText) : .none
         )
     }
 }

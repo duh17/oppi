@@ -52,6 +52,10 @@ extension ChatItem {
 
     /// Truncate a string to preview length.
     static func preview(_ text: String) -> String {
+        // Fast path: UTF-8 byte count ≥ character count. For ASCII text (common
+        // for tool output), utf8.count == character count, avoiding O(n) grapheme
+        // cluster iteration.
+        if text.utf8.count <= maxPreviewLength { return text }
         if text.count <= maxPreviewLength { return text }
         return String(text.prefix(maxPreviewLength - 1)) + "…"
     }
