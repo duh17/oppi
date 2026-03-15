@@ -21,6 +21,10 @@ struct FileBrowserContentView: View {
         ["png", "jpg", "jpeg", "gif", "webp", "svg"].contains(fileExtension)
     }
 
+    private var isHTML: Bool {
+        ["html", "htm"].contains(fileExtension)
+    }
+
     var body: some View {
         Group {
             switch content {
@@ -48,6 +52,21 @@ struct FileBrowserContentView: View {
         .background(Color.themeBgDark)
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isHTML {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        HTMLPreviewView(
+                            workspaceId: workspaceId,
+                            filePath: filePath,
+                            fileName: fileName
+                        )
+                    } label: {
+                        Label("Preview", systemImage: "eye")
+                    }
+                }
+            }
+        }
         .task { await loadContent() }
     }
 
