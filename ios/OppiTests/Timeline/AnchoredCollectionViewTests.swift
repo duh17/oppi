@@ -51,6 +51,57 @@ struct AnchoredCollectionViewTests {
     }
 
     @MainActor
+    @Test func detachedFromBottomAnchorsWithoutUserInteraction() {
+        let harness = makeAnchoredHarness(contentHeight: 1_200)
+
+        harness.layout.itemOriginY = 400
+        harness.collectionView.contentOffset.y = 380
+        harness.collectionView.layoutIfNeeded()
+
+        // No forceAnchoringForTesting — simulate the real passive detached path.
+        harness.collectionView.isDetachedFromBottom = true
+
+        harness.collectionView.didCaptureAnchorForTesting = {
+            harness.collectionView.didCaptureAnchorForTesting = nil
+            // Cell above grows (e.g. image preview appears), shifting the
+            // anchor item down by 136pt.
+            harness.layout.itemOriginY = 536
+            harness.layout.invalidateLayout()
+        }
+        harness.collectionView.setNeedsLayout()
+        harness.collectionView.layoutIfNeeded()
+
+        // Without anchoring the viewport would jump by 136pt. With passive
+        // anchoring, contentOffset compensates to keep the item on screen.
+        #expect(abs(harness.collectionView.contentOffset.y - 516) < 0.5)
+    }
+
+    @MainActor
+    @Test func attachedFromBottomDoesNotAnchorPassively() {
+        let harness = makeAnchoredHarness(contentHeight: 1_200)
+
+        harness.layout.itemOriginY = 400
+        harness.collectionView.contentOffset.y = 380
+        harness.collectionView.layoutIfNeeded()
+
+        // Attached users: no passive anchoring so auto-scroll works.
+        harness.collectionView.isDetachedFromBottom = false
+
+        harness.collectionView.didCaptureAnchorForTesting = {
+            harness.collectionView.didCaptureAnchorForTesting = nil
+            harness.layout.itemOriginY = 536
+            harness.layout.invalidateLayout()
+        }
+        harness.collectionView.setNeedsLayout()
+        harness.collectionView.layoutIfNeeded()
+
+        // No anchoring: contentOffset stays at 380 (UIKit doesn't adjust it
+        // for this synthetic layout; the important point is that isDetachedFromBottom=false
+        // did NOT trigger anchor correction).
+        #expect(abs(harness.collectionView.contentOffset.y - 380) < 0.5)
+    }
+
+    @MainActor
     @Test func anchorCorrectionClampsToBottomBound() {
         let harness = makeAnchoredHarness(contentHeight: 1_000)
 
