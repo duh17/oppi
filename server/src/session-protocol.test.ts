@@ -1400,6 +1400,123 @@ describe("translatePiEvent", () => {
     });
   });
 
+  describe("ANSI stripping in tool output", () => {
+    it("strips ANSI from tool_execution_update text", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "bash");
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          args: {},
+          partialResult: {
+            content: [{ type: "text", text: "\x1b[31mError: not found\x1b[0m" }],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toHaveLength(1);
+      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
+        "Error: not found",
+      );
+    });
+
+    it("strips ANSI from tool_execution_end text", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "bash");
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_end",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          result: {
+            content: [{ type: "text", text: "\x1b[32mSuccess\x1b[0m: done" }],
+          },
+          isError: false,
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const toolOutput = result.find((m) => m.type === "tool_output") as Extract<
+        ServerMessage,
+        { type: "tool_output" }
+      >;
+      expect(toolOutput).toBeDefined();
+      expect(toolOutput.output).toBe("Success: done");
+    });
+
+    it("strips TUI chrome (cursor movement, mode sets, OSC) from streaming output", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "bash");
+
+      // Simulates capturing pi TUI output
+      const tuiOutput =
+        "\x1b[?2004h\x1b[?25l\x1b[0m\x1b]8;;\x1b\\" +
+        "\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
+        "\x1b[38;5;167mError: 404\x1b[39m\n" +
+        "\x1b[?25h\x1b[?2004l";
+
+      const result = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          args: {},
+          partialResult: { content: [{ type: "text", text: tuiOutput }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toHaveLength(1);
+      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
+        "──\nError: 404\n",
+      );
+    });
+
+    it("computes deltas correctly after ANSI stripping", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-1", "bash");
+
+      // First update: colored text
+      translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          args: {},
+          partialResult: {
+            content: [{ type: "text", text: "\x1b[32mline1\x1b[0m" }],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      // Second update: more colored text appended
+      const result2 = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-1",
+          toolName: "bash",
+          args: {},
+          partialResult: {
+            content: [{ type: "text", text: "\x1b[32mline1\x1b[0m\n\x1b[31mline2\x1b[0m" }],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result2).toHaveLength(1);
+      // Delta should be "\nline2" — the diff between stripped "line1" and stripped "line1\nline2"
+      expect((result2[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
+        "\nline2",
+      );
+    });
+  });
+
   describe("tool_execution_end", () => {
     it("emits final delta and tool_end", () => {
       const ctx = makeCtx();
