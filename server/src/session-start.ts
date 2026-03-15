@@ -1,9 +1,10 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
+import { createAutoresearchFactory } from "./autoresearch-extension.js";
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
-import { SdkBackend } from "./sdk-backend.js";
+import { SdkBackend, resolveSdkSessionCwd } from "./sdk-backend.js";
 import type { ExtensionUIRequest } from "./session-events.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
@@ -69,6 +70,10 @@ export class SessionStartCoordinator {
         const skillPaths =
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
+
+        // Inject autoresearch extension for all workspace sessions
+        const workspaceCwd = resolveSdkSessionCwd(workspace);
+        extraExtensionFactories.push(createAutoresearchFactory(workspaceCwd));
 
         const sdkBackend = await SdkBackend.create({
           session,

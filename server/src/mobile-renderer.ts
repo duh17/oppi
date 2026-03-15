@@ -284,6 +284,125 @@ const plot: MobileToolRenderer = {
   },
 };
 
+// ─── Autoresearch ───
+
+const init_experiment: MobileToolRenderer = {
+  renderCall(args) {
+    return [
+      { text: "init ", style: "bold" },
+      { text: str(args.name) || "experiment", style: "accent" },
+    ];
+  },
+  renderResult(_details: unknown, isError) {
+    if (isError) return [{ text: "failed", style: "error" }];
+    return [{ text: "initialized", style: "success" }];
+  },
+};
+
+const run_experiment: MobileToolRenderer = {
+  renderCall(args) {
+    const cmd = firstLine(str(args.command));
+    return [
+      { text: "run ", style: "bold" },
+      { text: cmd, style: "muted" },
+    ];
+  },
+  renderResult(details: unknown, isError) {
+    const payload = asRecord(details);
+    if (isError || !payload) return [{ text: "failed", style: "error" }];
+
+    const duration = num(payload.durationSeconds);
+    const timedOut = payload.timedOut === true;
+    const checksPass = payload.checksPass;
+    const checksDuration = num(payload.checksDuration);
+
+    if (timedOut) {
+      return [{ text: `timeout ${duration?.toFixed(1) ?? "?"}s`, style: "error" }];
+    }
+
+    if (payload.crashed === true || payload.passed === false) {
+      const code = num(payload.exitCode);
+      return [
+        { text: `exit=${code ?? "?"}`, style: "error" },
+        { text: ` ${duration?.toFixed(1) ?? "?"}s`, style: "dim" },
+      ];
+    }
+
+    const segs: StyledSegment[] = [{ text: `${duration?.toFixed(1) ?? "?"}s`, style: "success" }];
+
+    if (checksPass === false) {
+      segs.push({ text: ` checks failed`, style: "error" });
+      if (checksDuration !== undefined) {
+        segs.push({ text: ` ${checksDuration.toFixed(1)}s`, style: "dim" });
+      }
+    } else if (checksPass === true) {
+      segs.push({ text: ` checks ok`, style: "success" });
+    }
+
+    return segs;
+  },
+};
+
+const log_experiment: MobileToolRenderer = {
+  renderCall(args) {
+    const status = str(args.status);
+    const desc = firstLine(str(args.description), 60);
+    const style: StyledSegment["style"] =
+      status === "keep"
+        ? "success"
+        : status === "crash" || status === "checks_failed"
+          ? "error"
+          : "warning";
+    const icon =
+      status === "keep" ? "+" : status === "crash" ? "x" : status === "checks_failed" ? "!" : "-";
+    return [
+      { text: `${icon} `, style },
+      { text: desc || "experiment", style: "muted" },
+    ];
+  },
+  renderResult(details: unknown, isError) {
+    if (isError) return [{ text: "failed", style: "error" }];
+    const payload = asRecord(details);
+    const exp = asRecord(payload?.experiment);
+    const st = asRecord(payload?.state);
+    if (!exp || !st) return [];
+
+    const status = str(exp.status);
+    const metric = num(exp.metric);
+    const metricName = str(st.metricName);
+    const metricUnit = str(st.metricUnit);
+    const bestMetric = num(st.bestMetric);
+
+    const style: StyledSegment["style"] =
+      status === "keep"
+        ? "success"
+        : status === "crash" || status === "checks_failed"
+          ? "error"
+          : "warning";
+
+    const segs: StyledSegment[] = [{ text: status, style }];
+
+    if (metric !== undefined) {
+      const fmtMetric = metric === Math.round(metric) ? String(metric) : metric.toFixed(2);
+      segs.push({ text: ` ${metricName}: ${fmtMetric}${metricUnit}`, style: "accent" });
+
+      // Delta vs baseline
+      if (bestMetric !== undefined && bestMetric !== 0 && metric !== bestMetric) {
+        const pct = ((metric - bestMetric) / bestMetric) * 100;
+        const sign = pct > 0 ? "+" : "";
+        const direction = str(st.bestDirection);
+        const improved = direction === "higher" ? metric > bestMetric : metric < bestMetric;
+        segs.push({
+          text: ` (${sign}${pct.toFixed(1)}%)`,
+          style: improved ? "success" : "error",
+        });
+      }
+    }
+
+    return segs;
+  },
+};
+
 // ─── Registry ───
 
 const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
@@ -296,6 +415,9 @@ const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
   ls,
   todo,
   plot,
+  init_experiment,
+  run_experiment,
+  log_experiment,
 };
 
 export class MobileRendererRegistry {

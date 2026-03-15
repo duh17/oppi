@@ -51,7 +51,7 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - **ONLY commit files YOU changed in THIS session**
 - ALWAYS use `git add <specific-file-paths>` — list only files you modified
 - Before committing, run `git status` and verify you are only staging your files
-- NEVER commit unless user asks
+- NEVER push unless user asks
 - Always ask before removing functionality that appears intentional
 
 ### Forbidden Operations
