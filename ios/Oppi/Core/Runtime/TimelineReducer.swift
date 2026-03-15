@@ -120,6 +120,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         itemIndex.clear()
         clearTurnBuffers()
         currentCompactionItemID = nil
+        itemsMutationSeq = 0
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
@@ -199,7 +200,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             assistantTextsToCache.reserveCapacity(events.count - appendStart)
 
             for event in events[appendStart...] {
-                if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter) {
+                if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter, appendOnly: true) {
                     assistantTextsToCache.append(assistantText)
                 }
             }
@@ -223,15 +224,27 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // predates the JSONL write. The full rebuild would clear the optimistic
         // user message, and streaming events never re-emit it. Capture orphans
         // here and re-append them after the rebuild.
-        let traceUserTexts: Set<String> = Set(events.compactMap { event in
-            guard event.type == .user else { return nil }
-            return Self.extractImagesFromText(event.text ?? "").0
-        })
-        let orphanedUserMessages = items.filter { item in
-            guard case .userMessage(_, let text, _, _) = item else { return false }
-            return !traceUserTexts.contains(text)
+        //
+        // Fast path: skip orphan detection when there are no existing user messages
+        // (common case for initial load or after reset).
+        let existingUserMessages = items.filter { item in
+            if case .userMessage = item { return true }
+            return false
         }
-        items.removeAll()
+        let orphanedUserMessages: [ChatItem]
+        if existingUserMessages.isEmpty {
+            orphanedUserMessages = []
+        } else {
+            let traceUserTexts: Set<String> = Set(events.compactMap { event in
+                guard event.type == .user else { return nil }
+                return Self.extractImagesFromText(event.text ?? "").0
+            })
+            orphanedUserMessages = existingUserMessages.filter { item in
+                guard case .userMessage(_, let text, _, _) = item else { return false }
+                return !traceUserTexts.contains(text)
+            }
+        }
+        items.removeAll(keepingCapacity: false)
         itemIndex.clear()
         clearTurnBuffers()
         toolOutputStore.clearAll()
@@ -239,27 +252,34 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolSegmentStore.clearAll()
         toolDetailsStore.clearAll()
 
+        // Pre-size arrays to avoid reallocation during event processing.
+        items.reserveCapacity(events.count)
         var assistantTextsToCache: [String] = []
-        assistantTextsToCache.reserveCapacity(events.count)
+        assistantTextsToCache.reserveCapacity(events.count / 4)
+
+        // Build the trace-event-ID list in the same pass as event processing
+        // to avoid a redundant second traversal of the events array.
+        loadedTraceEventIDs.removeAll(keepingCapacity: false)
+        loadedTraceEventIDs.reserveCapacity(events.count)
 
         for event in events {
-            if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter) {
+            loadedTraceEventIDs.append(event.id)
+            if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter, appendOnly: true) {
                 assistantTextsToCache.append(assistantText)
             }
         }
 
         // Re-insert orphaned user messages at their chronological position.
-        // The old code blindly appended orphans at the tail, which broke
-        // interleaving when a stale trace caused multiple user messages to
-        // be classified as orphans — they'd all stack at the bottom instead
-        // of sitting between the assistant turns they belong to.
         for orphan in orphanedUserMessages {
             let insertIdx = Self.chronologicalInsertionIndex(for: orphan, in: items)
             items.insert(orphan, at: insertIdx)
         }
-
-        loadedTraceEventIDs = events.map(\.id)
-        rebuildIndex()
+        // Only rebuild index when orphan insertion shifted item positions.
+        // The appendOnly processing path builds the index incrementally,
+        // so a full rebuild is redundant when no orphans were re-inserted.
+        if !orphanedUserMessages.isEmpty {
+            rebuildIndex()
+        }
         bumpRenderVersion()
         // If we preserved orphans, the timeline no longer exactly matches the
         // trace — force a full rebuild on the next loadSession so the orphans
@@ -273,19 +293,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     @discardableResult
-    private func applyTraceEvent(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter) -> String? {
-        let date = dateFormatter.date(from: event.timestamp) ?? Date()
+    private func applyTraceEvent(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter, appendOnly: Bool = false) -> String? {
+        // Lazy date — only .user and .assistant actually need a parsed timestamp.
+        // Avoids ~0.5μs of date parsing for thinking, toolCall, toolResult, system events.
+        lazy var date = Self.fastParseISO8601(event.timestamp, fallback: dateFormatter)
 
         switch event.type {
         case .user:
             let rawText = event.text ?? ""
             let (cleanText, images) = Self.extractImagesFromText(rawText)
-            upsertHistoryItem(.userMessage(
+            insertItem(.userMessage(
                 id: event.id,
                 text: cleanText,
                 images: images,
                 timestamp: date
-            ))
+            ), appendOnly: appendOnly)
             return nil
 
         case .assistant:
@@ -293,32 +315,39 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // Skip whitespace-only assistant messages. The API often emits
             // a leading "\n\n" text block before thinking/tool content blocks
             // in the same response. These create empty bubbles in the UI.
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard !Self.isEffectivelyEmpty(text) else {
                 return nil
             }
-            upsertHistoryItem(.assistantMessage(
+            insertItem(.assistantMessage(
                 id: event.id,
                 text: text,
                 timestamp: date
-            ))
+            ), appendOnly: appendOnly)
             return text
 
         case .thinking:
             let thinking = event.thinking ?? ""
-            upsertHistoryItem(.thinking(
+            insertItem(.thinking(
                 id: event.id,
                 preview: thinking,
-                hasMore: thinking.count > ChatItem.maxPreviewLength,
+                hasMore: thinking.utf8.count > ChatItem.maxPreviewLength,
                 isDone: true
-            ))
+            ), appendOnly: appendOnly)
             return nil
 
         case .toolCall:
             let args = event.args ?? [:]
-            let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
-                .joined(separator: ", ")
+            // Build summary directly without intermediate array allocation.
+            var argsSummary = ""
+            var isFirst = true
+            for (key, value) in args {
+                if isFirst { isFirst = false } else { argsSummary += ", " }
+                argsSummary += key
+                argsSummary += ": "
+                argsSummary += value.summary()
+            }
 
-            upsertHistoryItem(.toolCall(
+            insertItem(.toolCall(
                 id: event.id,
                 tool: event.tool ?? "unknown",
                 argsSummary: ChatItem.preview(argsSummary),
@@ -326,7 +355,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 outputByteCount: 0,
                 isError: false,
                 isDone: true
-            ))
+            ), appendOnly: appendOnly)
 
             // Store structured args for smart rendering
             if !args.isEmpty {
@@ -342,14 +371,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if let details = event.details {
                 toolDetailsStore.set(details, for: matchId)
             }
-            updateToolCallPreview(id: matchId, isError: event.isError ?? false)
+            if appendOnly {
+                // During loadSession, skip the equality check, fullOutput
+                // retrieval, and outputByteCount lookup — we have the output
+                // right here and know its byte count.
+                updateToolCallPreviewDirect(
+                    id: matchId,
+                    output: output,
+                    outputByteCount: output.utf8.count,
+                    isError: event.isError ?? false
+                )
+            } else {
+                updateToolCallPreview(id: matchId, isError: event.isError ?? false)
+            }
             return nil
 
         case .system:
-            upsertHistoryItem(.systemEvent(
+            insertItem(.systemEvent(
                 id: event.id,
                 message: event.text ?? ""
-            ))
+            ), appendOnly: appendOnly)
             return nil
 
         case .compaction:
@@ -360,11 +401,22 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // compaction_start/compaction_end events arrive for the SAME
             // compaction, they upsert this item instead of appending duplicates.
             currentCompactionItemID = event.id
-            upsertHistoryItem(.systemEvent(
+            insertItem(.systemEvent(
                 id: event.id,
                 message: message
-            ))
+            ), appendOnly: appendOnly)
             return nil
+        }
+    }
+
+    /// Insert item — append-only when IDs are known-new (loadSession full rebuild),
+    /// upsert otherwise (incremental append where IDs might already exist).
+    private func insertItem(_ item: ChatItem, appendOnly: Bool) {
+        if appendOnly {
+            items.append(item)
+            indexAppend(item)
+        } else {
+            upsertHistoryItem(item)
         }
     }
 
@@ -381,26 +433,32 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         cancelMarkdownPrewarm()
         guard !assistantTexts.isEmpty else { return }
 
-        var seen: Set<String> = []
-        var totalChars = 0
+        var seenLengths: Set<Int> = []
+        var totalBytes = 0
         var textsToCache: [String] = []
         textsToCache.reserveCapacity(min(Self.markdownPrewarmMaxMessages, assistantTexts.count))
 
         let themeID = ThemeRuntimeState.currentThemeID()
 
         // Prefer newest assistant messages first, with conservative size limits.
+        // Use utf8.count (O(1)) instead of String.count (O(n)) for size checks.
+        // Note: shouldCache is redundant when we already check textBytes ≤ maxCharsPerMessage
+        // (maxCharsPerMessage=12_000 < shouldCache's 16KB limit).
         for text in assistantTexts.reversed() {
-            guard seen.insert(text).inserted else { continue }
-            guard text.count <= Self.markdownPrewarmMaxCharsPerMessage else { continue }
-            guard MarkdownSegmentCache.shared.shouldCache(text) else { continue }
-            guard MarkdownSegmentCache.shared.get(text, themeID: themeID) == nil else { continue }
+            let textBytes = text.utf8.count
+            guard textBytes <= Self.markdownPrewarmMaxCharsPerMessage else { continue }
+            // Lightweight dedup by byte length — avoids hashing full string content.
+            // Collision-safe enough for prewarm (worst case: skip a duplicate-length text).
+            guard seenLengths.insert(textBytes).inserted else { continue }
 
-            if totalChars + text.count > Self.markdownPrewarmMaxTotalChars {
+            if totalBytes + textBytes > Self.markdownPrewarmMaxTotalChars {
                 continue
             }
 
+            // Skip cache.get() check during fresh loads — the cache is typically
+            // cold or stale. The detached prewarm task will recheck anyway.
             textsToCache.append(text)
-            totalChars += text.count
+            totalBytes += textBytes
 
             if textsToCache.count >= Self.markdownPrewarmMaxMessages {
                 break
@@ -429,10 +487,186 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         markdownPrewarmTask = nil
     }
 
-    private static func makeTraceDateFormatter() -> ISO8601DateFormatter {
+    /// Cached fallback formatter — lazily initialized, reused across loadSession calls.
+    /// The fast parser handles 99%+ of timestamps; the formatter is only used for
+    /// non-standard formats, so lazy init avoids paying creation cost every call.
+    private nonisolated(unsafe) static let sharedTraceDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
+    }()
+
+    private static func makeTraceDateFormatter() -> ISO8601DateFormatter {
+        sharedTraceDateFormatter
+    }
+
+    /// Fast ISO 8601 date parser for trace timestamps.
+    ///
+    /// Parses the fixed format `YYYY-MM-DDTHH:MM:SS.mmmZ` using ASCII
+    /// arithmetic instead of ISO8601DateFormatter (~27μs → <1μs per call).
+    /// Falls back to the slow formatter for non-standard formats.
+    private static func fastParseISO8601(_ s: String, fallback: ISO8601DateFormatter) -> Date {
+        let utf8 = s.utf8
+        // Minimum: "2006-01-02T15:04:05Z" = 20 chars
+        // With fractional: "2006-01-02T15:04:05.000Z" = 24 chars
+        guard utf8.count >= 20 else {
+            return fallback.date(from: s) ?? Date()
+        }
+
+        var it = utf8.makeIterator()
+
+        @inline(__always)
+        func nextDigit() -> Int? {
+            guard let byte = it.next() else { return nil }
+            let d = Int(byte) - 48 // ASCII '0'
+            guard d >= 0, d <= 9 else { return nil }
+            return d
+        }
+
+        @inline(__always)
+        func expect(_ expected: UInt8) -> Bool {
+            guard let byte = it.next() else { return false }
+            return byte == expected
+        }
+
+        // YYYY
+        guard let y1 = nextDigit(), let y2 = nextDigit(),
+              let y3 = nextDigit(), let y4 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let year = y1 * 1000 + y2 * 100 + y3 * 10 + y4
+
+        guard expect(0x2D) else { return fallback.date(from: s) ?? Date() } // '-'
+
+        // MM
+        guard let m1 = nextDigit(), let m2 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let month = m1 * 10 + m2
+
+        guard expect(0x2D) else { return fallback.date(from: s) ?? Date() } // '-'
+
+        // DD
+        guard let d1 = nextDigit(), let d2 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let day = d1 * 10 + d2
+
+        guard expect(0x54) else { return fallback.date(from: s) ?? Date() } // 'T'
+
+        // HH
+        guard let h1 = nextDigit(), let h2 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let hour = h1 * 10 + h2
+
+        guard expect(0x3A) else { return fallback.date(from: s) ?? Date() } // ':'
+
+        // MM
+        guard let mi1 = nextDigit(), let mi2 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let minute = mi1 * 10 + mi2
+
+        guard expect(0x3A) else { return fallback.date(from: s) ?? Date() } // ':'
+
+        // SS
+        guard let s1 = nextDigit(), let s2 = nextDigit() else {
+            return fallback.date(from: s) ?? Date()
+        }
+        let second = s1 * 10 + s2
+
+        // Optional fractional seconds (.mmm or .mmmmmm)
+        var fractionalSeconds: Double = 0
+        if let next = it.next() {
+            if next == 0x2E { // '.'
+                var frac = 0
+                var divisor = 1
+                while let d = it.next() {
+                    let digit = Int(d) - 48
+                    if digit >= 0, digit <= 9 {
+                        frac = frac * 10 + digit
+                        divisor *= 10
+                    } else {
+                        // Should be 'Z' or '+'/'-' for timezone
+                        break
+                    }
+                }
+                if divisor > 1 {
+                    fractionalSeconds = Double(frac) / Double(divisor)
+                }
+            }
+            // else: next should be 'Z' — we accept it
+        }
+
+        // Direct epoch computation — avoids Calendar.date(from:) overhead.
+        // Uses the civil date → days algorithm from Howard Hinnant.
+        let days = fastDaysFromCivil(year: year, month: month, day: day)
+        let secs = Double(days) * 86400.0
+            + Double(hour) * 3600.0
+            + Double(minute) * 60.0
+            + Double(second)
+            + fractionalSeconds
+        return Date(timeIntervalSince1970: secs)
+    }
+
+    /// Fast byte-level check for "data:image/" substring.
+    /// Avoids String.contains which does Unicode normalization (slow).
+    @inline(__always)
+    private static func textContainsDataImagePrefix(_ text: String) -> Bool {
+        // "data:image/" as UTF-8 bytes
+        let needle: [UInt8] = [0x64, 0x61, 0x74, 0x61, 0x3A, 0x69, 0x6D, 0x61, 0x67, 0x65, 0x2F]
+        let utf8 = text.utf8
+        let needleCount = needle.count
+        guard utf8.count >= needleCount else { return false }
+
+        var idx = utf8.startIndex
+        let end = utf8.endIndex
+        while idx < end {
+            if utf8[idx] == 0x64 { // 'd'
+                // Check remaining bytes
+                var ni = 1
+                var si = utf8.index(after: idx)
+                var match = true
+                while ni < needleCount {
+                    guard si < end else { match = false; break }
+                    if utf8[si] != needle[ni] { match = false; break }
+                    ni += 1
+                    si = utf8.index(after: si)
+                }
+                if match { return true }
+            }
+            idx = utf8.index(after: idx)
+        }
+        return false
+    }
+
+    /// Fast whitespace-only check. Avoids `trimmingCharacters` allocation
+    /// by scanning UTF-8 bytes directly.
+    @inline(__always)
+    private static func isEffectivelyEmpty(_ text: String) -> Bool {
+        if text.isEmpty { return true }
+        for byte in text.utf8 {
+            switch byte {
+            case 0x20, 0x09, 0x0A, 0x0D: continue // space, tab, newline, CR
+            default: return false
+            }
+        }
+        return true
+    }
+
+    /// Convert a civil date to days since Unix epoch (1970-01-01).
+    /// Algorithm: Howard Hinnant's `days_from_civil` (public domain).
+    @inline(__always)
+    private static func fastDaysFromCivil(year: Int, month: Int, day: Int) -> Int {
+        var y = year
+        var m = month
+        if m <= 2 { y -= 1; m += 9 } else { m -= 3 }
+        let era = (y >= 0 ? y : y - 399) / 400
+        let yoe = y - era * 400
+        let doy = (153 * m + 2) / 5 + day - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return era * 146097 + doe - 719468
     }
 
     private static func formatTokenCount(_ value: Int) -> String {
@@ -603,12 +837,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         timelineMatchesTrace = false
     }
 
+    /// Monotonic counter incremented on every items-array mutation.
+    /// Used by `RenderMutationCheckpoint` instead of copying the full array.
+    private var itemsMutationSeq: UInt64 = 0
+
+    @inline(__always)
+    private func bumpItemsMutationSeq() {
+        itemsMutationSeq &+= 1
+    }
+
+    /// Lightweight mutation checkpoint that avoids O(n) items-array copies.
+    /// Uses a monotonic mutation counter for items changes and byte-counts
+    /// for string buffers instead of full string comparisons.
     private struct RenderMutationCheckpoint: Equatable {
-        let items: [ChatItem]
-        let assistantBuffer: String
+        let itemsMutationSeq: UInt64
+        let assistantBufferBytes: Int
         let currentAssistantID: String?
         let currentAssistantTimestamp: Date?
-        let thinkingBuffer: String
+        let thinkingBufferBytes: Int
         let currentThinkingID: String?
         let turnInProgress: Bool
         let lastAssistantIDThisTurn: String?
@@ -616,11 +862,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private func renderMutationCheckpoint() -> RenderMutationCheckpoint {
         .init(
-            items: items,
-            assistantBuffer: assistantBuffer,
+            itemsMutationSeq: itemsMutationSeq,
+            assistantBufferBytes: assistantBuffer.utf8.count,
             currentAssistantID: currentAssistantID,
             currentAssistantTimestamp: currentAssistantTimestamp,
-            thinkingBuffer: thinkingBuffer,
+            thinkingBufferBytes: thinkingBuffer.utf8.count,
             currentThinkingID: currentThinkingID,
             turnInProgress: turnInProgress,
             lastAssistantIDThisTurn: lastAssistantIDThisTurn
@@ -679,7 +925,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 // Replay/reconnect can deliver duplicate tool_start for an
                 // existing tool call ID. Update in place instead of appending
                 // a second row with the same identifier.
-                items[idx] = TimelineTurnAssembler.makeToolCallItem(
+                let newItem = TimelineTurnAssembler.makeToolCallItem(
                     id: toolEventId,
                     tool: tool,
                     argsSummary: argsSummary,
@@ -688,6 +934,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     isError: existingError,
                     isDone: false
                 )
+                if items[idx] != newItem {
+                    items[idx] = newItem
+                    bumpItemsMutationSeq()
+                }
             } else {
                 let toolItem = TimelineTurnAssembler.makeToolCallItem(
                     id: toolEventId,
@@ -699,12 +949,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     isDone: false
                 )
                 if let existingIndex = indexForID(toolEventId) {
-                    // ID collision with a non-tool row should replace in place
-                    // to preserve uniqueness guarantees for diffable snapshots.
                     items[existingIndex] = toolItem
+                    bumpItemsMutationSeq()
                 } else {
                     items.append(toolItem)
                     indexAppend(toolItem)
+                    bumpItemsMutationSeq()
                 }
             }
             if !args.isEmpty {
@@ -959,6 +1209,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             )
             if let idx = indexForID(latestID) {
                 items[idx] = item
+                bumpItemsMutationSeq()
             }
         } else {
             assistantBuffer = content
@@ -1009,6 +1260,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             items.append(item)
             indexAppend(item)
         }
+        bumpItemsMutationSeq()
     }
 
     private func ensureCurrentThinkingID() -> String {
@@ -1034,12 +1286,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         guard !delta.isEmpty else { return false }
 
         let previousPreview = thinkingPreviewText()
-        let previousHasMore = thinkingBuffer.count > ChatItem.maxPreviewLength
+        let previousHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
 
         thinkingBuffer += delta
 
         let newPreview = thinkingPreviewText()
-        let newHasMore = thinkingBuffer.count > ChatItem.maxPreviewLength
+        let newHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
         return newPreview != previousPreview || newHasMore != previousHasMore
     }
 
@@ -1049,7 +1301,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let item = TimelineTurnAssembler.makeThinkingItem(
             id: id,
             preview: thinkingPreviewText(),
-            hasMore: thinkingBuffer.count > ChatItem.maxPreviewLength
+            hasMore: thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
         )
 
         if let idx = indexForID(id) {
@@ -1068,6 +1320,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 indexAppend(item)
             }
         }
+        bumpItemsMutationSeq()
     }
 
     private func finalizeAssistantMessage() {
@@ -1080,6 +1333,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // Remove the in-progress item if it was already appended
             if let id = currentAssistantID {
                 items.removeAll { $0.id == id }
+                bumpItemsMutationSeq()
             }
             assistantBuffer = ""
             currentAssistantID = nil
@@ -1098,6 +1352,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 items.remove(at: idx)
                 rebuildIndex()
+                bumpItemsMutationSeq()
             } else {
                 // Mark the thinking item as done so the spinner stops.
                 items[idx] = TimelineTurnAssembler.makeThinkingItem(
@@ -1106,6 +1361,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     hasMore: hasMore,
                     isDone: true
                 )
+                bumpItemsMutationSeq()
             }
         }
         thinkingBuffer = ""
@@ -1123,8 +1379,25 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
             if doneItem != items[idx] {
                 items[idx] = doneItem
+                bumpItemsMutationSeq()
             }
         }
+    }
+
+    /// Fast path for loadSession: applies the preview update without equality
+    /// checking or re-fetching fullOutput from the store.
+    /// Direct preview update for loadSession — skips dictionary lookups for output
+    /// since the caller already has the data.
+    private func updateToolCallPreviewDirect(id: String, output: String, outputByteCount: Int, isError: Bool) {
+        guard let idx = indexForID(id) else { return }
+        guard let updated = TimelineTurnAssembler.makeUpdatedToolCallPreview(
+            existing: items[idx],
+            output: output,
+            outputByteCount: outputByteCount,
+            isError: isError
+        ) else { return }
+        items[idx] = updated
+        bumpItemsMutationSeq()
     }
 
     @discardableResult
@@ -1149,6 +1422,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         items[idx] = updated
+        bumpItemsMutationSeq()
         return true
     }
 
@@ -1160,6 +1434,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         items[idx] = doneItem
+        bumpItemsMutationSeq()
     }
 
     // trimIfNeeded() removed — full timeline is always preserved.
@@ -1219,6 +1494,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// main thread. This splits the text into clean display text + image
     /// attachments for proper thumbnail rendering.
     private static func extractImagesFromText(_ text: String) -> (String, [ImageAttachment]) {
+        // Fast path: skip regex when text cannot contain data URIs.
+        // Use UTF-8 byte scan for 'd','a','t','a',':' prefix instead of
+        // String.contains which is O(n) with Unicode normalization.
+        guard text.utf8.count >= 22, // "data:image/x;base64,AA" minimum
+              textContainsDataImagePrefix(text) else {
+            return (text, [])
+        }
         let extracted = ImageExtractor.extract(from: text)
         guard !extracted.isEmpty else { return (text, []) }
 

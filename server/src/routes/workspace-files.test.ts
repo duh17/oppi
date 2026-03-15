@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -497,5 +498,270 @@ describe("searchWorkspaceFiles", () => {
     const paths = result.entries.map((e) => e.path);
     expect(paths).toContain("src/App.tsx");
     expect(paths).toContain("src/components/Button.tsx");
+  });
+});
+
+// MARK: - searchWorkspaceFiles (git-backed)
+
+describe("searchWorkspaceFiles with git repo", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-git-search-"));
+    execSync("git init", { cwd: tmpRoot, stdio: "ignore" });
+    execSync("git config user.email test@test.com", { cwd: tmpRoot, stdio: "ignore" });
+    execSync("git config user.name Test", { cwd: tmpRoot, stdio: "ignore" });
+
+    mkdirSync(join(tmpRoot, "src"), { recursive: true });
+    mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(tmpRoot, "README.md"), "# Hello");
+    writeFileSync(join(tmpRoot, "src", "app.ts"), "console.log('hi')");
+    writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
+    // .gitignore to exclude node_modules
+    writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\n");
+
+    execSync("git add -A && git commit -m init", { cwd: tmpRoot, stdio: "ignore" });
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("uses git ls-files and respects .gitignore", async () => {
+    const result = await searchWorkspaceFiles(tmpRoot, "index");
+    const paths = result.entries.map((e) => e.path);
+    // node_modules/dep/index.js is gitignored — should not appear
+    expect(paths).not.toContain("node_modules/dep/index.js");
+  });
+
+  test("finds tracked files", async () => {
+    const result = await searchWorkspaceFiles(tmpRoot, "app");
+    const paths = result.entries.map((e) => e.path);
+    expect(paths).toContain("src/app.ts");
+  });
+
+  test("finds untracked but non-ignored files", async () => {
+    // Create an untracked file that's not in .gitignore
+    writeFileSync(join(tmpRoot, "src", "new-feature.ts"), "export {}");
+
+    const result = await searchWorkspaceFiles(tmpRoot, "new-feature");
+    const paths = result.entries.map((e) => e.path);
+    expect(paths).toContain("src/new-feature.ts");
+  });
+});
+
+// MARK: - resolveWorkspaceFilePath (security verification)
+
+describe("resolveWorkspaceFilePath — security edge cases", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-security-"));
+    mkdirSync(join(tmpRoot, "sub"), { recursive: true });
+    writeFileSync(join(tmpRoot, "file.txt"), "content");
+    writeFileSync(join(tmpRoot, "sub", "nested.txt"), "nested");
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("rejects URL-encoded traversal (%2e%2e) as literal path", async () => {
+    // %2e%2e is decoded by URL parser to ".." before reaching the route,
+    // but if it somehow arrives encoded, it becomes a literal directory name
+    // that doesn't exist — realpath fails and returns null
+    const result = await resolveWorkspaceFilePath(tmpRoot, "%2e%2e/etc/passwd");
+    expect(result).toBeNull();
+  });
+
+  test("rejects double-encoded traversal (%252e%252e) as literal path", async () => {
+    const result = await resolveWorkspaceFilePath(tmpRoot, "%252e%252e/etc/passwd");
+    expect(result).toBeNull();
+  });
+
+  test("rejects null bytes in path", async () => {
+    // Node.js fs rejects null bytes with ERR_INVALID_ARG_VALUE
+    const result = await resolveWorkspaceFilePath(tmpRoot, "file.txt\x00.png");
+    expect(result).toBeNull();
+  });
+
+  test("rejects symlink chain escaping workspace", async () => {
+    // symlink A -> B -> outside
+    const outsideFile = join(tmpdir(), `oppi-escape-chain-${Date.now()}`);
+    writeFileSync(outsideFile, "escaped");
+    const linkB = join(tmpRoot, "link-b");
+    symlinkSync(outsideFile, linkB);
+    const linkA = join(tmpRoot, "link-a");
+    symlinkSync(linkB, linkA);
+
+    try {
+      const result = await resolveWorkspaceFilePath(tmpRoot, "link-a");
+      // realpath resolves the full chain; the final target is outside workspace
+      expect(result).toBeNull();
+    } finally {
+      rmSync(outsideFile, { force: true });
+    }
+  });
+
+  test("rejects directory symlink pointing outside workspace", async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "oppi-escape-dir-"));
+    writeFileSync(join(outsideDir, "secret.txt"), "secret");
+    symlinkSync(outsideDir, join(tmpRoot, "escape-dir"));
+
+    try {
+      // The symlink dir resolves outside workspace root
+      const result = await resolveWorkspaceFilePath(tmpRoot, "escape-dir/secret.txt");
+      expect(result).toBeNull();
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("handles workspace root that is itself a symlink", async () => {
+    // Create a symlink to our tmpRoot, use that as the workspace root
+    const symlinkRoot = join(tmpdir(), `oppi-ws-symlink-root-${Date.now()}`);
+    symlinkSync(tmpRoot, symlinkRoot);
+
+    try {
+      // Should still resolve files correctly — realpath normalizes both sides
+      const result = await resolveWorkspaceFilePath(symlinkRoot, "file.txt");
+      expect(result).not.toBeNull();
+
+      // Traversal should still be blocked
+      const escaped = await resolveWorkspaceFilePath(symlinkRoot, "../etc/passwd");
+      expect(escaped).toBeNull();
+    } finally {
+      rmSync(symlinkRoot, { force: true });
+    }
+  });
+});
+
+// MARK: - isSensitivePath (security verification)
+
+describe("isSensitivePath — security edge cases", () => {
+  test("blocks id_rsa.pub (matches id_rsa prefix)", () => {
+    // Note: this IS the current behavior — id_rsa pattern matches the prefix
+    // of id_rsa.pub. This is arguably over-protective but safe.
+    expect(isSensitivePath("id_rsa.pub")).toBe(true);
+  });
+
+  test("blocks deeply nested .env", () => {
+    expect(isSensitivePath("a/b/c/d/.env")).toBe(true);
+    expect(isSensitivePath("deploy/config/.env.staging")).toBe(true);
+  });
+
+  test("blocks .git at any directory depth", () => {
+    expect(isSensitivePath(".git/refs/heads/main")).toBe(true);
+    expect(isSensitivePath("vendor/.git/config")).toBe(true);
+  });
+
+  test("does not block .gitignore or .github", () => {
+    // .git is a path segment check, not a prefix match on filenames
+    expect(isSensitivePath(".gitignore")).toBe(false);
+    expect(isSensitivePath(".github/workflows/ci.yml")).toBe(false);
+    expect(isSensitivePath(".gitattributes")).toBe(false);
+  });
+
+  test("does not block .env-like filenames that are actually code", () => {
+    expect(isSensitivePath("src/env.ts")).toBe(false);
+    expect(isSensitivePath("config/environment.yaml")).toBe(false);
+    expect(isSensitivePath("lib/dotenv-parser.js")).toBe(false);
+  });
+
+  test("blocks files with mixed case extensions", () => {
+    expect(isSensitivePath("cert.PEM")).toBe(true);
+    expect(isSensitivePath("private.KEY")).toBe(true);
+    expect(isSensitivePath("cert.Pem")).toBe(true);
+  });
+});
+
+// MARK: - listDirectoryEntries (security verification)
+
+describe("listDirectoryEntries — security edge cases", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-list-sec-"));
+    mkdirSync(join(tmpRoot, "src"), { recursive: true });
+    writeFileSync(join(tmpRoot, "src", "app.ts"), "code");
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("rejects directory listing via symlink pointing outside workspace", async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "oppi-escape-list-"));
+    writeFileSync(join(outsideDir, "secret.txt"), "secret");
+    symlinkSync(outsideDir, join(tmpRoot, "escape-dir"));
+
+    try {
+      const result = await listDirectoryEntries(tmpRoot, "escape-dir");
+      // resolveWorkspaceFilePath rejects symlinks outside the root
+      expect(result).toBeNull();
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("sensitive files appear in listings (visible but not servable)", async () => {
+    writeFileSync(join(tmpRoot, ".env"), "SECRET=x");
+    writeFileSync(join(tmpRoot, "id_rsa"), "-----BEGIN RSA PRIVATE KEY-----");
+    writeFileSync(join(tmpRoot, "cert.pem"), "cert data");
+
+    const result = await listDirectoryEntries(tmpRoot, "");
+    expect(result).not.toBeNull();
+    const names = result!.entries.map((e) => e.name);
+    // Sensitive files ARE listed — users should know they exist
+    expect(names).toContain(".env");
+    expect(names).toContain("id_rsa");
+    expect(names).toContain("cert.pem");
+    // But isSensitivePath would block serving them (tested separately)
+  });
+
+  test("handles filenames with spaces and special characters", async () => {
+    writeFileSync(join(tmpRoot, "my file.txt"), "content");
+    writeFileSync(join(tmpRoot, "file (copy).ts"), "copy");
+
+    const result = await listDirectoryEntries(tmpRoot, "");
+    expect(result).not.toBeNull();
+    const names = result!.entries.map((e) => e.name);
+    expect(names).toContain("my file.txt");
+    expect(names).toContain("file (copy).ts");
+  });
+});
+
+// MARK: - resolveWorkspaceFilePath (filenames with special characters)
+
+describe("resolveWorkspaceFilePath — special characters", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-special-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("resolves filenames with spaces", async () => {
+    writeFileSync(join(tmpRoot, "my file.txt"), "content");
+    const result = await resolveWorkspaceFilePath(tmpRoot, "my file.txt");
+    expect(result).not.toBeNull();
+  });
+
+  test("resolves filenames with unicode characters", async () => {
+    writeFileSync(join(tmpRoot, "日本語.txt"), "content");
+    const result = await resolveWorkspaceFilePath(tmpRoot, "日本語.txt");
+    expect(result).not.toBeNull();
+  });
+
+  test("resolves filenames with parentheses and brackets", async () => {
+    writeFileSync(join(tmpRoot, "file (1).txt"), "content");
+    writeFileSync(join(tmpRoot, "file [draft].md"), "content");
+    const r1 = await resolveWorkspaceFilePath(tmpRoot, "file (1).txt");
+    const r2 = await resolveWorkspaceFilePath(tmpRoot, "file [draft].md");
+    expect(r1).not.toBeNull();
+    expect(r2).not.toBeNull();
   });
 });

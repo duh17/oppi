@@ -464,6 +464,16 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
       const hasIdeas = fs.existsSync(ideasPath);
       let resumeMsg =
         "Autoresearch loop ended (likely context limit). Resume the experiment loop — read autoresearch.md and git log for context.";
+
+      // Add convergence context so the resuming agent knows whether to keep going
+      const cur = currentResults(state.results, state.currentSegment);
+      const recentN = cur.slice(-6);
+      const recentDiscards = recentN.filter((r) => r.status === "discard").length;
+      if (recentN.length >= 5 && recentDiscards >= 5) {
+        resumeMsg +=
+          ` Note: the last ${recentDiscards} experiments were all discards. The optimization space may be exhausted — check autoresearch.md before trying more experiments.`;
+      }
+
       if (hasIdeas) {
         resumeMsg +=
           " Check autoresearch.ideas.md for promising paths to explore. Prune stale/tried ideas.";

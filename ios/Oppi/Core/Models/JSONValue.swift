@@ -94,6 +94,9 @@ extension JSONValue {
         case .array(let a): raw = "[\(a.count) items]"
         case .object(let o): raw = "{\(o.count) keys}"
         }
+        // Fast path: UTF-8 byte count ≥ character count. For ASCII text,
+        // utf8.count == character count, avoiding O(n) grapheme iteration.
+        if raw.utf8.count <= maxLength { return raw }
         if raw.count <= maxLength { return raw }
         return String(raw.prefix(maxLength - 1)) + "…"
     }

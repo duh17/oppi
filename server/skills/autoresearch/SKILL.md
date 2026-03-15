@@ -51,7 +51,7 @@ This is the heart of the session. A fresh agent with no context should be able t
 <Update this section as experiments accumulate. Note key wins, dead ends, and architectural insights so the agent doesn't repeat failed approaches.>
 ```
 
-Update `autoresearch.md` periodically -- especially the "What's Been Tried" section -- so resuming agents have full context.
+Update `autoresearch.md` every 3-5 experiments -- especially the "What's Been Tried" section. Include both wins AND dead ends with specific reasons (e.g., "V8 regex 2.3x faster than manual scanner" — not just "manual scanner didn't work"). This section is the primary handoff document across sessions.
 
 ### autoresearch.sh
 
@@ -91,8 +91,10 @@ pnpm typecheck 2>&1 | grep -i error || true
 - **Crashes:** fix if trivial, otherwise log and move on. Don't over-invest.
 - **Think longer when stuck.** Re-read source files, study the profiling data, reason about what the CPU is actually doing. The best ideas come from deep understanding, not from trying random variations.
 - **Resuming:** if `autoresearch.md` exists, read it + git log, continue looping.
+- **Convergence:** if the last 5+ experiments are all `discard` and within ±5% of the best, the optimization space is likely exhausted. Write a final summary to `autoresearch.md` "What's Been Tried", update the current profile, and stop the loop. Don't burn context re-confirming a floor.
+- **Benchmark accuracy is fair game.** If a benchmark inflates costs by measuring setup overhead that isn't on the real hot path, fixing the benchmark to be more realistic is a valid `keep`. But never game the metric — the benchmark should become *more* representative, not less.
 
-**NEVER STOP.** The user may be away for hours. Keep going until interrupted.
+**NEVER STOP** until converged. The user may be away for hours. Keep going until interrupted or converged.
 
 ## Ideas Backlog
 

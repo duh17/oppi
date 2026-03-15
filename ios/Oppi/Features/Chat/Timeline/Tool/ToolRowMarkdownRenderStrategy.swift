@@ -62,7 +62,8 @@ struct ToolRowMarkdownRenderStrategy {
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: shouldRerender || !isUsingMarkdownLayout
+            invalidateLayout: shouldRerender || !isUsingMarkdownLayout,
+            installAction: .none
         )
     }
 }
