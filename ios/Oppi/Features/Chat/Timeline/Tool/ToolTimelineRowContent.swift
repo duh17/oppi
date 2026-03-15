@@ -1170,8 +1170,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 fallbackText: fallbackText,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView,
-                installExpandedPlotView: installExpandedPlotView(spec:fallbackText:)
+                hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView
             )
 
         case .readMedia(let output, let filePath, let startLine):
@@ -1182,8 +1181,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isError: configuration.isError,
                 previousSignature: expandedRenderSignature,
                 isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
-                installExpandedReadMediaView: installExpandedReadMediaView(output:isError:filePath:startLine:)
+                hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
             )
 
         case .status(let message):
@@ -1225,6 +1223,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput) {
+        // Execute view-installation intent before surface switch so the
+        // hosted view is in the hierarchy when showExpandedHostedView() runs.
+        switch output.installAction {
+        case .none:
+            break
+        case .plot(let spec, let fallbackText):
+            installExpandedPlotView(spec: spec, fallbackText: fallbackText)
+        case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
+            installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
+        }
+
         switch output.surface {
         case .label:     showExpandedLabel()
         case .markdown:  showExpandedMarkdown()

@@ -402,6 +402,195 @@ describe("workspace file serving", () => {
   });
 });
 
+// ── Workspace File Browser (browse mode, directory listing, search) ──
+
+describe("workspace file browser", () => {
+  let wsId: string;
+  let wsRoot: string;
+
+  beforeAll(async () => {
+    wsRoot = mkdtempSync(join(tmpdir(), "oppi-ws-browser-"));
+    mkdirSync(join(wsRoot, "src", "components"), { recursive: true });
+    mkdirSync(join(wsRoot, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(wsRoot, ".git", "objects"), { recursive: true });
+    writeFileSync(join(wsRoot, "README.md"), "# Hello world");
+    writeFileSync(join(wsRoot, "package.json"), '{"name":"test"}');
+    writeFileSync(join(wsRoot, ".env"), "SECRET=bad");
+    writeFileSync(join(wsRoot, "id_rsa"), "-----BEGIN RSA PRIVATE KEY-----");
+    writeFileSync(join(wsRoot, "chart.png"), Buffer.alloc(16, 0xff));
+    writeFileSync(join(wsRoot, "src", "index.ts"), "console.log('hi')");
+    writeFileSync(join(wsRoot, "src", "components", "Button.tsx"), "export const Button = () => {}");
+    writeFileSync(join(wsRoot, "node_modules", "dep", "index.js"), "module.exports = {}");
+    writeFileSync(join(wsRoot, ".git", "HEAD"), "ref: refs/heads/main");
+
+    const res = await post("/workspaces", {
+      name: "browser-test",
+      skills: [],
+      hostMount: wsRoot,
+    });
+    const body = await res.json();
+    wsId = body.workspace.id;
+  });
+
+  afterAll(() => {
+    rmSync(wsRoot, { recursive: true, force: true });
+  });
+
+  // ── Browse mode ──
+
+  it("browse mode serves text files with correct content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/files/README.md?mode=browse`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
+    const body = await res.text();
+    expect(body).toBe("# Hello world");
+  });
+
+  it("browse mode serves .ts files as text/plain", async () => {
+    const res = await get(`/workspaces/${wsId}/files/src/index.ts?mode=browse`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  });
+
+  it("browse mode serves .json with application/json content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/files/package.json?mode=browse`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+  });
+
+  it("browse mode serves images with image content-type", async () => {
+    const res = await get(`/workspaces/${wsId}/files/chart.png?mode=browse`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("browse mode blocks .env files", async () => {
+    const res = await get(`/workspaces/${wsId}/files/.env?mode=browse`);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("sensitive");
+  });
+
+  it("browse mode blocks private keys", async () => {
+    const res = await get(`/workspaces/${wsId}/files/id_rsa?mode=browse`);
+    expect(res.status).toBe(403);
+  });
+
+  it("browse mode blocks .git directory contents", async () => {
+    const res = await get(`/workspaces/${wsId}/files/.git/HEAD?mode=browse`);
+    expect(res.status).toBe(403);
+  });
+
+  it("browse mode returns 404 for nonexistent files", async () => {
+    const res = await get(`/workspaces/${wsId}/files/missing.ts?mode=browse`);
+    expect(res.status).toBe(404);
+  });
+
+  it("browse mode blocks path traversal", async () => {
+    const res = await get(`/workspaces/${wsId}/files/../../../etc/passwd?mode=browse`);
+    expect(res.status).toBe(404);
+  });
+
+  // ── Directory listing ──
+
+  it("lists workspace root directory with trailing slash", async () => {
+    const res = await get(`/workspaces/${wsId}/files/`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.path).toBeTruthy();
+    expect(body.entries).toBeInstanceOf(Array);
+    expect(typeof body.truncated).toBe("boolean");
+
+    const names = body.entries.map((e: { name: string }) => e.name);
+    expect(names).toContain("src");
+    expect(names).toContain("README.md");
+    // IGNORE_DIRS filtered out
+    expect(names).not.toContain("node_modules");
+    expect(names).not.toContain(".git");
+  });
+
+  it("lists subdirectory entries", async () => {
+    const res = await get(`/workspaces/${wsId}/files/src/`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const names = body.entries.map((e: { name: string }) => e.name);
+    expect(names).toContain("index.ts");
+    expect(names).toContain("components");
+  });
+
+  it("directory entries have correct shape", async () => {
+    const res = await get(`/workspaces/${wsId}/files/`);
+    const body = await res.json();
+    const readme = body.entries.find((e: { name: string }) => e.name === "README.md");
+    expect(readme).toBeDefined();
+    expect(readme.type).toBe("file");
+    expect(readme.size).toBe(13); // "# Hello world"
+    expect(readme.modifiedAt).toBeGreaterThan(0);
+  });
+
+  it("returns 404 for nonexistent directory", async () => {
+    const res = await get(`/workspaces/${wsId}/files/nonexistent/`);
+    expect(res.status).toBe(404);
+  });
+
+  it("directory listing blocks path traversal", async () => {
+    const res = await get(`/workspaces/${wsId}/files/../`);
+    expect(res.status).toBe(404);
+  });
+
+  // ── File search ──
+
+  it("searches files by name substring", async () => {
+    const res = await get(`/workspaces/${wsId}/files?search=Button`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.query).toBe("Button");
+    expect(body.entries).toBeInstanceOf(Array);
+    expect(typeof body.truncated).toBe("boolean");
+    const paths = body.entries.map((e: { path: string }) => e.path);
+    expect(paths).toContain("src/components/Button.tsx");
+  });
+
+  it("search is case-insensitive", async () => {
+    const res = await get(`/workspaces/${wsId}/files?search=readme`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.entries.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("search returns empty for no matches", async () => {
+    const res = await get(`/workspaces/${wsId}/files?search=zzzznotfound`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.entries).toHaveLength(0);
+  });
+
+  it("returns 400 for bare /files without search param", async () => {
+    const res = await get(`/workspaces/${wsId}/files`);
+    expect(res.status).toBe(400);
+  });
+
+  it("search returns 404 for nonexistent workspace", async () => {
+    const res = await get("/workspaces/BOGUS/files?search=test");
+    expect(res.status).toBe(404);
+  });
+
+  // ── Auth ──
+
+  it("all new endpoints require auth", async () => {
+    const endpoints = [
+      `/workspaces/${wsId}/files/`,
+      `/workspaces/${wsId}/files/README.md?mode=browse`,
+      `/workspaces/${wsId}/files?search=test`,
+    ];
+    for (const endpoint of endpoints) {
+      const res = await get(endpoint, false);
+      expect(res.status).toBe(401);
+    }
+  });
+});
+
 // ── Sessions (workspace-scoped) ──
 
 describe("sessions API", () => {

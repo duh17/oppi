@@ -1,42 +1,46 @@
 # Model and Thinking Selection for Multi-Agent Dispatch
 
+## Default
+
+**Always use `anthropic/claude-opus-4-6` with `high` thinking** unless there's a clear reason to deviate.
+
 ## Models
 
 | Model | Strengths | Use when |
 |-------|-----------|----------|
-| `openai-codex/gpt-5.3-codex` | Strongest reasoning, best at complex multi-file tasks | Architecture, design, code review, security, ambiguous requirements |
-| `openai-codex/gpt-5.3-codex-spark` | Fast, cheaper, good at read-heavy work | Exploration, scans, summarization, log triage, test runs |
-| `anthropic/claude-sonnet-4-6` | Balanced reasoning and speed | Standard implementation, test writing, moderate complexity |
+| `anthropic/claude-opus-4-6` | Strongest reasoning, best at complex multi-file tasks, architecture, review | Default for everything |
+| `anthropic/claude-sonnet-4-6` | Fast, cheaper, good at well-defined tasks | Mechanical refactors, simple test writing, pattern replacements |
+| `openai-codex/gpt-5.3-codex` | Strong reasoning, alternative to Opus | When Anthropic models are unavailable or for comparison |
 
 ## Thinking levels
 
 | Level | Use when |
 |-------|----------|
 | `xhigh` | Agent must reason about full codebase structure, dependency graphs, or produce architecture-level documentation |
-| `high` | Agent needs to trace complex logic, validate assumptions, or handle edge cases (review, security, multi-step impl) |
-| `medium` | Balanced default for most implementation and test-writing tasks |
-| `low` | Task is mechanical and well-defined (rename, move, format, pattern replace) |
+| `high` | Default. Agent needs to trace complex logic, validate assumptions, or handle edge cases |
+| `medium` | Task is well-defined with clear spec and limited scope |
+| `low` | Task is purely mechanical (rename, move, format, pattern replace) |
 
 Higher thinking increases response time and token cost but improves quality for complex work.
 
 ## Selection patterns
 
-**Architecture / design work** — codex-5.3, xhigh
+**Architecture / design work** — opus, xhigh
 Reads full codebase, reasons about dependency graphs, produces coherent documentation.
 
-**Implementation with clear spec** — codex-5.3 or sonnet, medium-high
+**Implementation with spec (default)** — opus, high
 TODO has clear requirements and file scope. Read context, implement, verify.
 
-**Mechanical refactor** — spark or sonnet, low-medium
+**Mechanical refactor** — sonnet, medium
 Well-defined transformation. Speed matters more than depth.
 
-**Exploration / audit (read-only)** — spark, medium
+**Exploration / audit (read-only)** — sonnet, medium
 Reads code, checks conditions, reports findings. No writes, so mistakes are cheap.
 
-**Code review** — codex-5.3, high
+**Code review** — opus, high
 Must reason about correctness, architecture compliance, and edge cases.
 
-**Test writing** — sonnet or codex-5.3, medium
+**Test writing** — opus or sonnet, high or medium
 Must understand code under test and design meaningful assertions.
 
 ## Multi-agent vs single session

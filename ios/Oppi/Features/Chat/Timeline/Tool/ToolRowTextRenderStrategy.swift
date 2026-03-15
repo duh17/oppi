@@ -120,7 +120,8 @@ struct ToolRowTextRenderStrategy {
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: false
+            invalidateLayout: false,
+            installAction: .none
         )
     }
 }
