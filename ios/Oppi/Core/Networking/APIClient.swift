@@ -741,6 +741,36 @@ actor APIClient {
         return try await get("/workspaces/\(workspaceID)/files/\(path)")
     }
 
+    // MARK: - Workspace File Browser
+
+    /// List entries in a workspace directory.
+    ///
+    /// Pass an empty string or "/" for the workspace root. Subdirectory paths
+    /// should include a trailing slash (e.g. "src/").
+    func listWorkspaceDirectory(workspaceId: String, path: String = "") async throws -> DirectoryListingResponse {
+        let route = if path.isEmpty || path == "/" {
+            "/workspaces/\(workspaceId)/files/"
+        } else {
+            "/workspaces/\(workspaceId)/files/\(path)"
+        }
+        let data = try await get(route)
+        return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
+    }
+
+    /// Search for files by name/path substring within a workspace.
+    func searchWorkspaceFiles(workspaceId: String, query: String) async throws -> FileSearchResponse {
+        let encoded = try encodeQueryPath(query)
+        let data = try await get("/workspaces/\(workspaceId)/files?search=\(encoded)")
+        return try JSONDecoder().decode(FileSearchResponse.self, from: data)
+    }
+
+    /// Fetch a workspace file in browse mode (text/code files, not just images).
+    ///
+    /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
+    func browseWorkspaceFile(workspaceId: String, path: String) async throws -> Data {
+        return try await get("/workspaces/\(workspaceId)/files/\(path)?mode=browse")
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.
