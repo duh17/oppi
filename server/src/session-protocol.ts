@@ -15,6 +15,7 @@ import type { ServerMessage, Session, SessionMessage } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
+import { stripAnsiEscapes } from "./ansi.js";
 
 // ─── Shell Preview Constants ───
 
@@ -529,7 +530,7 @@ export function translatePiEvent(
 
         const type = record.type;
         if ((type === "text" || type === "output_text") && typeof record.text === "string") {
-          const fullText = record.text;
+          const fullText = stripAnsiEscapes(record.text);
 
           // Compute delta from last partialResult to avoid duplication.
           // partialResult is accumulated (replace semantics) — we convert
@@ -593,7 +594,7 @@ export function translatePiEvent(
 
             const type = record.type;
             const isText = type === "text" || type === "output_text";
-            return isText && typeof record.text === "string" ? record.text : "";
+            return isText && typeof record.text === "string" ? stripAnsiEscapes(record.text) : "";
           })
           .join("");
 
