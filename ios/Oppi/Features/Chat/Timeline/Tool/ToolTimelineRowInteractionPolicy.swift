@@ -19,7 +19,8 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
     let allowsHorizontalScroll: Bool
 
     static func forExpandedContent(
-        _ content: ToolPresentationBuilder.ToolExpandedContent
+        _ content: ToolPresentationBuilder.ToolExpandedContent,
+        isDone: Bool
     ) -> Self {
         let mode = ExpandedMode(content)
         let supportsFullScreenPreview = supportsFullScreenPreview(mode: mode)
@@ -31,7 +32,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
                 supportsFullScreenPreview: supportsFullScreenPreview,
-                allowsHorizontalScroll: unwrapped
+                allowsHorizontalScroll: unwrapped && isDone
             )
 
         case .diff, .code:
@@ -40,7 +41,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
                 supportsFullScreenPreview: supportsFullScreenPreview,
-                allowsHorizontalScroll: true
+                allowsHorizontalScroll: isDone
             )
 
         case .markdown:

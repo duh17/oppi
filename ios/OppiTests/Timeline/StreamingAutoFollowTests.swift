@@ -230,6 +230,166 @@ struct ToolRowStreamingAutoFollowCallbackTests {
     }
 }
 
+// MARK: - Streaming horizontal scroll suppression
+
+@Suite("Horizontal scroll suppressed during streaming")
+@MainActor
+struct StreamingHorizontalScrollSuppressionTests {
+
+    // MARK: - Render strategy output
+
+    @Test("code strategy disables horizontalScroll during streaming, enables when done")
+    func codeHorizontalScrollFollowsStreamingState() {
+        let label = UITextView()
+        let scrollView = UIScrollView()
+
+        let streaming = ToolRowCodeRenderStrategy.render(
+            text: "let x = 1",
+            language: .swift,
+            startLine: 1,
+            isStreaming: true,
+            expandedLabel: label,
+            expandedScrollView: scrollView,
+            previousSignature: nil,
+            previousRenderedText: nil,
+            previousAutoFollow: true,
+            isCurrentModeCode: false,
+            wasExpandedVisible: false
+        )
+        #expect(!streaming.horizontalScroll, "Code should suppress horizontal scroll while streaming")
+
+        let done = ToolRowCodeRenderStrategy.render(
+            text: "let x = 1",
+            language: .swift,
+            startLine: 1,
+            isStreaming: false,
+            expandedLabel: label,
+            expandedScrollView: scrollView,
+            previousSignature: streaming.renderSignature,
+            previousRenderedText: streaming.renderedText,
+            previousAutoFollow: streaming.shouldAutoFollow,
+            isCurrentModeCode: true,
+            wasExpandedVisible: true
+        )
+        #expect(done.horizontalScroll, "Code should enable horizontal scroll when done")
+    }
+
+    @Test("diff strategy disables horizontalScroll during streaming, enables when done")
+    func diffHorizontalScrollFollowsStreamingState() {
+        let label = UITextView()
+        let scrollView = UIScrollView()
+        let lines: [DiffLine] = [
+            DiffLine(kind: .context, text: "line 1"),
+            DiffLine(kind: .added, text: "added"),
+        ]
+
+        let streaming = ToolRowDiffRenderStrategy.render(
+            lines: lines,
+            path: "file.swift",
+            isStreaming: true,
+            expandedLabel: label,
+            expandedScrollView: scrollView,
+            previousSignature: nil,
+            previousRenderedText: nil,
+            previousAutoFollow: true,
+            isCurrentModeDiff: false,
+            wasExpandedVisible: false
+        )
+        #expect(!streaming.horizontalScroll, "Diff should suppress horizontal scroll while streaming")
+
+        let done = ToolRowDiffRenderStrategy.render(
+            lines: lines,
+            path: "file.swift",
+            isStreaming: false,
+            expandedLabel: label,
+            expandedScrollView: scrollView,
+            previousSignature: streaming.renderSignature,
+            previousRenderedText: streaming.renderedText,
+            previousAutoFollow: streaming.shouldAutoFollow,
+            isCurrentModeDiff: true,
+            wasExpandedVisible: true
+        )
+        #expect(done.horizontalScroll, "Diff should enable horizontal scroll when done")
+    }
+
+    // MARK: - Interaction policy
+
+    @Test("code interaction policy disables horizontal scroll while streaming")
+    func codePolicyStreamingVsDone() {
+        let content = ToolPresentationBuilder.ToolExpandedContent.code(
+            text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"
+        )
+
+        let streaming = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: false)
+        #expect(!streaming.allowsHorizontalScroll, "Code policy should suppress horizontal scroll while streaming")
+
+        let done = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: true)
+        #expect(done.allowsHorizontalScroll, "Code policy should allow horizontal scroll when done")
+    }
+
+    @Test("diff interaction policy disables horizontal scroll while streaming")
+    func diffPolicyStreamingVsDone() {
+        let content = ToolPresentationBuilder.ToolExpandedContent.diff(
+            lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"
+        )
+
+        let streaming = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: false)
+        #expect(!streaming.allowsHorizontalScroll, "Diff policy should suppress horizontal scroll while streaming")
+
+        let done = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: true)
+        #expect(done.allowsHorizontalScroll, "Diff policy should allow horizontal scroll when done")
+    }
+
+    @Test("unwrapped bash interaction policy disables horizontal scroll while streaming")
+    func unwrappedBashPolicyStreamingVsDone() {
+        let content = ToolPresentationBuilder.ToolExpandedContent.bash(
+            command: "echo hi", output: "hi", unwrapped: true
+        )
+
+        let streaming = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: false)
+        #expect(!streaming.allowsHorizontalScroll, "Unwrapped bash should suppress horizontal scroll while streaming")
+
+        let done = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: true)
+        #expect(done.allowsHorizontalScroll, "Unwrapped bash should allow horizontal scroll when done")
+    }
+
+    @Test("wrapped bash never allows horizontal scroll regardless of streaming state")
+    func wrappedBashNeverAllowsHorizontalScroll() {
+        let content = ToolPresentationBuilder.ToolExpandedContent.bash(
+            command: "echo hi", output: "hi", unwrapped: false
+        )
+
+        let streaming = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: false)
+        #expect(!streaming.allowsHorizontalScroll)
+
+        let done = ToolTimelineRowInteractionPolicy.forExpandedContent(content, isDone: true)
+        #expect(!done.allowsHorizontalScroll)
+    }
+
+    @Test("markdown and text policies never allow horizontal scroll regardless of streaming state")
+    func noHorizontalScrollModes() {
+        let markdownStreaming = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .markdown(text: "# Title"), isDone: false
+        )
+        #expect(!markdownStreaming.allowsHorizontalScroll)
+
+        let markdownDone = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .markdown(text: "# Title"), isDone: true
+        )
+        #expect(!markdownDone.allowsHorizontalScroll)
+
+        let textStreaming = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: "result", language: nil), isDone: false
+        )
+        #expect(!textStreaming.allowsHorizontalScroll)
+
+        let textDone = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: "result", language: nil), isDone: true
+        )
+        #expect(!textDone.allowsHorizontalScroll)
+    }
+}
+
 // MARK: - Shared helpers
 
 @MainActor
