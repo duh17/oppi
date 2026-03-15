@@ -17,6 +17,30 @@ enum TimelineSnapshotApplier {
         previousThemeID: ThemeID?
     ) {
         ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
+
+        // Fast path: when no previous items exist (cold start), skip change
+        // detection entirely — everything is new.
+        guard !previousItemByID.isEmpty else {
+            ChatTimelinePerf.beginSnapshotBuildPhase()
+            ChatTimelinePerf.endSnapshotBuildPhase()
+            ChatTimelinePerf.updateTimelineApplyCycle(
+                itemCount: nextIDs.count,
+                changedCount: 0
+            )
+
+            var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+            snapshot.appendSections([0])
+            snapshot.appendItems(nextIDs)
+
+            let applyToken = ChatTimelinePerf.beginCollectionApply(
+                itemCount: nextIDs.count,
+                changedCount: 0
+            )
+            dataSource?.apply(snapshot, animatingDifferences: false)
+            ChatTimelinePerf.endCollectionApply(applyToken)
+            return
+        }
+
         ChatTimelinePerf.beginSnapshotBuildPhase()
 
         let nextIDSet = Set(nextIDs)
@@ -43,7 +67,6 @@ enum TimelineSnapshotApplier {
         // items on the existing snapshot. This avoids UIKit's O(n) internal
         // diff for the common streaming case where only content mutates.
         if let dataSource,
-           !previousItemByID.isEmpty,
            previousThemeID == themeID {
             let existingSnapshot = dataSource.snapshot()
             let existingIDs = existingSnapshot.itemIdentifiers
