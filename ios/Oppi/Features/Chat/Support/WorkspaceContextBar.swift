@@ -1,5 +1,59 @@
 import SwiftUI
 
+// MARK: - Scoping logic (testable)
+
+/// Pure-function extraction of the context bar's session-scoping rules.
+/// When `sessionId` is set, all display properties scope exclusively to
+/// that session's changed files — workspace-level data never leaks through.
+enum ContextBarScoping {
+
+    static func hasContent(
+        gitStatus: GitStatus?,
+        sessionId: String?,
+        sessionScope: SessionScopedGitStatus?
+    ) -> Bool {
+        guard let gitStatus, gitStatus.isGitRepo else { return false }
+        if sessionId != nil { return sessionScope != nil }
+        return !gitStatus.isClean
+    }
+
+    static func displayFileCount(
+        gitStatus: GitStatus?,
+        sessionId: String?,
+        sessionScope: SessionScopedGitStatus?
+    ) -> Int {
+        if sessionId != nil { return sessionScope?.sessionFileCount ?? 0 }
+        return gitStatus?.uncommittedCount ?? 0
+    }
+
+    static func displayAddedLines(
+        gitStatus: GitStatus?,
+        sessionId: String?,
+        sessionScope: SessionScopedGitStatus?
+    ) -> Int {
+        if sessionId != nil { return sessionScope?.sessionAddedLines ?? 0 }
+        return gitStatus?.addedLines ?? 0
+    }
+
+    static func displayRemovedLines(
+        gitStatus: GitStatus?,
+        sessionId: String?,
+        sessionScope: SessionScopedGitStatus?
+    ) -> Int {
+        if sessionId != nil { return sessionScope?.sessionRemovedLines ?? 0 }
+        return gitStatus?.removedLines ?? 0
+    }
+
+    static func displayFiles(
+        gitStatus: GitStatus?,
+        sessionId: String?,
+        sessionScope: SessionScopedGitStatus?
+    ) -> [GitFileStatus] {
+        if sessionId != nil { return sessionScope?.sessionFiles ?? [] }
+        return gitStatus?.files ?? []
+    }
+}
+
 /// Expandable bar showing workspace git status.
 ///
 /// Pinned at the top of the chat view. Collapsed shows branch + dirty count + repo-wide +/-.
@@ -69,23 +123,19 @@ struct WorkspaceContextBar: View {
     // MARK: - Computed (scoped)
 
     private var hasContent: Bool {
-        guard let gitStatus, gitStatus.isGitRepo else { return false }
-        return !gitStatus.isClean
+        ContextBarScoping.hasContent(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
-    /// File count shown in the collapsed bar — session count when scoped, total otherwise.
     private var displayFileCount: Int {
-        sessionScope?.sessionFileCount ?? gitStatus?.uncommittedCount ?? 0
+        ContextBarScoping.displayFileCount(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
-    /// Added lines shown in the collapsed bar.
     private var displayAddedLines: Int {
-        sessionScope?.sessionAddedLines ?? gitStatus?.addedLines ?? 0
+        ContextBarScoping.displayAddedLines(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
-    /// Removed lines shown in the collapsed bar.
     private var displayRemovedLines: Int {
-        sessionScope?.sessionRemovedLines ?? gitStatus?.removedLines ?? 0
+        ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
     private var dirtyColor: Color {
@@ -96,9 +146,8 @@ struct WorkspaceContextBar: View {
         return .themeDiffRemoved
     }
 
-    /// Files displayed in the expanded panel — session-touched only when scoped.
     private var displayFiles: [GitFileStatus] {
-        sessionScope?.sessionFiles ?? gitStatus?.files ?? []
+        ContextBarScoping.displayFiles(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
     }
 
     private var allSelected: Bool {
