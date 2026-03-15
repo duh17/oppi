@@ -63,11 +63,13 @@ Dispatch flow:
 
 ## Model Selection (Brief)
 
+**Default: `anthropic/claude-opus-4-6` with `high` thinking.** Use this unless there's a specific reason to deviate.
+
 | Task type | Model | Thinking |
 |---|---|---|
-| Architecture / deep review | `openai-codex/gpt-5.3-codex` | `xhigh` |
-| Standard implementation | `openai-codex/gpt-5.3-codex` or `anthropic/claude-sonnet-4-6` | `medium` |
-| Mechanical/refactor | `openai-codex/gpt-5.3-codex-spark` or sonnet | `low` |
+| Default / implementation | `anthropic/claude-opus-4-6` | `high` |
+| Architecture / deep review | `anthropic/claude-opus-4-6` | `xhigh` |
+| Mechanical/refactor | `anthropic/claude-sonnet-4-6` | `medium` |
 
 Load detailed guidance from:
 - `{baseDir}/references/model-selection.md`

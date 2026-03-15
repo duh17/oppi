@@ -363,6 +363,47 @@ function extractStreamingToolCallUpdate(
   };
 }
 
+/** Shared empty array — avoids allocating `[]` on every no-op event path. */
+const EMPTY_MESSAGES: ServerMessage[] = [];
+
+/**
+ * Compute the delta between accumulated (replace-semantics) tool output and
+ * the full text delivered so far.  Hoisted out of translatePiEvent to avoid
+ * closure allocation on every call.
+ */
+function computeToolDelta(lastText: string, fullText: string): string {
+  if (fullText.length === 0) return "";
+  if (lastText.length === 0) return fullText;
+  if (fullText === lastText) return "";
+  if (fullText.startsWith(lastText)) {
+    return fullText.slice(lastText.length);
+  }
+  // Unexpected divergence: prefer emitting full text over dropping output.
+  return fullText;
+}
+
+/**
+ * Extract toolCallId from a pi event, falling back to the event's `id` field.
+ * Hoisted to a module-level helper to avoid re-creating a closure per call.
+ */
+function resolveToolCallId(event: AgentSessionEvent): string | undefined {
+  if (
+    "toolCallId" in event &&
+    typeof event.toolCallId === "string" &&
+    event.toolCallId.length > 0
+  ) {
+    return event.toolCallId;
+  }
+
+  // Some pi tool events omit toolCallId but still include a stable event id.
+  // Use it so stream-time IDs match trace lookup IDs.
+  if ("id" in event && typeof event.id === "string" && event.id.length > 0) {
+    return event.id;
+  }
+
+  return undefined;
+}
+
 /**
  * Translate a single pi agent event into zero or more ServerMessages.
  *
@@ -373,35 +414,6 @@ export function translatePiEvent(
   event: AgentSessionEvent,
   ctx: TranslationContext,
 ): ServerMessage[] {
-  const resolveToolCallId = (): string | undefined => {
-    if (
-      "toolCallId" in event &&
-      typeof event.toolCallId === "string" &&
-      event.toolCallId.length > 0
-    ) {
-      return event.toolCallId;
-    }
-
-    // Some pi tool events omit toolCallId but still include a stable event id.
-    // Use it so stream-time IDs match trace lookup IDs.
-    if ("id" in event && typeof event.id === "string" && event.id.length > 0) {
-      return event.id;
-    }
-
-    return undefined;
-  };
-
-  const computeToolDelta = (lastText: string, fullText: string): string => {
-    if (fullText.length === 0) return "";
-    if (lastText.length === 0) return fullText;
-    if (fullText === lastText) return "";
-    if (fullText.startsWith(lastText)) {
-      return fullText.slice(lastText.length);
-    }
-    // Unexpected divergence: prefer emitting full text over dropping output.
-    return fullText;
-  };
-
   switch (event.type) {
     case "agent_start":
       ctx.streamedAssistantText = "";
@@ -412,15 +424,15 @@ export function translatePiEvent(
       return [{ type: "agent_end" }];
 
     case "turn_start":
-      return [];
+      return EMPTY_MESSAGES;
 
     case "turn_end":
-      return [];
+      return EMPTY_MESSAGES;
 
     case "message_start":
       // Structural lifecycle marker. No payload needed for iOS —
       // the message object arrives via message_end.
-      return [];
+      return EMPTY_MESSAGES;
 
     case "message_update": {
       const evt = event.assistantMessageEvent;
@@ -476,11 +488,11 @@ export function translatePiEvent(
 
       // Other sub-events (start, text_start/end, thinking_start/end, done)
       // are redundant with top-level events or pure bookkeeping.
-      return [];
+      return EMPTY_MESSAGES;
     }
 
     case "tool_execution_start": {
-      const toolCallId = resolveToolCallId();
+      const toolCallId = resolveToolCallId(event);
       const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
@@ -514,9 +526,9 @@ export function translatePiEvent(
 
     case "tool_execution_update": {
       const contents = event.partialResult?.content;
-      if (!Array.isArray(contents) || contents.length === 0) return [];
+      if (!Array.isArray(contents) || contents.length === 0) return EMPTY_MESSAGES;
 
-      const toolCallId = resolveToolCallId();
+      const toolCallId = resolveToolCallId(event);
       const messages: ServerMessage[] = [];
       const key = toolCallId ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
@@ -573,7 +585,7 @@ export function translatePiEvent(
     }
 
     case "tool_execution_end": {
-      const toolCallId = resolveToolCallId();
+      const toolCallId = resolveToolCallId(event);
       const key = toolCallId ?? "";
       const lastText = ctx.partialResults.get(key) ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
@@ -699,7 +711,7 @@ export function translatePiEvent(
       const message = event.message;
       if (message.role !== "assistant") {
         ctx.streamedAssistantText = "";
-        return [];
+        return EMPTY_MESSAGES;
       }
 
       const out: ServerMessage[] = [];
@@ -733,7 +745,7 @@ export function translatePiEvent(
     }
 
     default:
-      return [];
+      return EMPTY_MESSAGES;
   }
 }
 

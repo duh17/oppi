@@ -9,8 +9,7 @@ struct ToolRowReadMediaRenderStrategy {
         isError: Bool,
         previousSignature: Int?,
         isUsingReadMediaLayout: Bool,
-        hasExpandedReadMediaContentView: Bool,
-        installExpandedReadMediaView: (_ output: String, _ isError: Bool, _ filePath: String?, _ startLine: Int) -> Void
+        hasExpandedReadMediaContentView: Bool
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.readMediaSignature(
             output: output,
@@ -21,10 +20,6 @@ struct ToolRowReadMediaRenderStrategy {
         let shouldReinstall = signature != previousSignature
             || !isUsingReadMediaLayout
             || !hasExpandedReadMediaContentView
-
-        if shouldReinstall {
-            installExpandedReadMediaView(output, isError, filePath, startLine)
-        }
 
         return ExpandedRenderOutput(
             renderSignature: shouldReinstall ? signature : previousSignature,
@@ -37,7 +32,10 @@ struct ToolRowReadMediaRenderStrategy {
             lineBreakMode: .byCharWrapping,
             horizontalScroll: false,
             deferredHighlight: nil,
-            invalidateLayout: false
+            invalidateLayout: false,
+            installAction: shouldReinstall
+                ? .readMedia(output: output, isError: isError, filePath: filePath, startLine: startLine)
+                : .none
         )
     }
 }

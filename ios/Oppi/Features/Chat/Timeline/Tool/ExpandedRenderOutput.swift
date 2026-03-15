@@ -18,6 +18,7 @@ struct ExpandedRenderOutput {
     let horizontalScroll: Bool
     let deferredHighlight: ToolRowCodeRenderStrategy.DeferredHighlight?
     let invalidateLayout: Bool
+    let installAction: InstallAction
 
     enum ExpandedSurface {
         case label
@@ -29,5 +30,14 @@ struct ExpandedRenderOutput {
         case followTail
         case resetToTop
         case preserve
+    }
+
+    /// Declarative view-installation intent returned by hosted-view strategies
+    /// (plot, read-media). The parent interprets this in `applyExpandedRenderOutput`
+    /// instead of the strategy calling installation closures directly.
+    enum InstallAction {
+        case none
+        case plot(spec: PlotChartSpec, fallbackText: String?)
+        case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int)
     }
 }
