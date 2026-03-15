@@ -15,6 +15,14 @@ final class AnchoredCollectionView: UICollectionView {
     private var savedAnchorScreenY: CGFloat = 0
     private var isApplyingAnchorCorrection = false
 
+    /// Set by the timeline controller before each snapshot apply so layout
+    /// passes preserve the first visible item's screen position for users
+    /// who scrolled away from the bottom. Without this, cell height changes
+    /// (e.g. a collapsed image preview appearing in a tool row) shift the
+    /// viewport because neither user-interaction anchoring nor the
+    /// `scrollViewDidScroll` fallback covers the passive detached case.
+    var isDetachedFromBottom = false
+
     #if DEBUG
         /// Tests cannot drive UIKit drag/deceleration flags directly, so this
         /// override allows deterministic anchoring coverage in unit tests.
@@ -51,9 +59,19 @@ final class AnchoredCollectionView: UICollectionView {
             }
         #endif
 
-        // Only anchor during user-driven scroll. During programmatic scrolls
-        // (auto-scroll to bottom) we must not fight the target position.
-        return isTracking || isDragging || isDecelerating
+        // Always anchor during user-driven scroll (drag/decelerate).
+        if isTracking || isDragging || isDecelerating {
+            return true
+        }
+
+        // Anchor for detached users on passive layout passes. When a cell
+        // changes height (e.g. image preview appears) the compositional
+        // layout shifts contentOffset. Without anchoring, the viewport
+        // jumps to an unrelated position. Safe for auto-scroll because
+        // programmatic scrolls (scrollToItem) set contentOffset before the
+        // layout pass — the anchor captures the post-scroll position and
+        // restores it (no-op).
+        return isDetachedFromBottom
     }
 
     private func captureAnchor() {
