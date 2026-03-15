@@ -444,6 +444,39 @@ export interface AnnotationsResponse {
   annotations: DiffAnnotation[];
 }
 
+// ─── Workspace File Browser ───
+
+export interface FileEntry {
+  /** Entry name (filename or directory name). */
+  name: string;
+  /** Whether this is a file or directory. */
+  type: "file" | "directory";
+  /** Size in bytes. */
+  size: number;
+  /** Last modified timestamp in milliseconds since epoch. */
+  modifiedAt: number;
+  /** Workspace-relative path (present in search results). */
+  path?: string;
+}
+
+export interface DirectoryListingResponse {
+  /** Workspace-relative directory path ("/" for root). */
+  path: string;
+  /** Directory entries, sorted: directories first, then files, alphabetical within each. */
+  entries: FileEntry[];
+  /** Whether the entry list was truncated due to size limits. */
+  truncated: boolean;
+}
+
+export interface FileSearchResponse {
+  /** The search query that was used. */
+  query: string;
+  /** Matching file entries with workspace-relative paths. */
+  entries: FileEntry[];
+  /** Whether results were truncated due to the result limit. */
+  truncated: boolean;
+}
+
 // ─── Local Sessions ───
 
 /** A pi TUI session discovered on the host (not yet managed by oppi). */
