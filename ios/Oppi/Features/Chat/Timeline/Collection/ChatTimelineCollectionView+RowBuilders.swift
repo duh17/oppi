@@ -21,7 +21,14 @@ extension ChatTimelineCollectionHost.Controller {
             selectedTextSourceContext: .init(
                 sessionId: sessionId,
                 surface: .assistantProse
-            )
+            ),
+            workspaceID: workspaceId,
+            serverBaseURL: connection?.apiClient?.baseURL,
+            fetchWorkspaceFile: connection?.apiClient.map { client in
+                { workspaceID, path in
+                    try await client.fetchWorkspaceFile(workspaceID: workspaceID, path: path)
+                }
+            }
         )
     }
 

@@ -13,7 +13,14 @@ final class AssistantMarkdownSegmentApplier {
     private var codeBlockViews: [Int: NativeCodeBlockView] = [:]
     /// References to table views for in-place updates during streaming.
     private var tableViews: [Int: NativeTableBlockView] = [:]
+    /// References to image views for in-place updates.
+    private var imageViews: [Int: NativeMarkdownImageView] = [:]
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
+
+    /// Closure for fetching workspace files (for inline markdown images).
+    /// Injected by the owning view chain, wrapping `APIClient` at the site
+    /// where it's available so view-layer files stay decoupled from `APIClient`.
+    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
     init(stackView: UIStackView, textViewDelegate: any UITextViewDelegate) {
         self.stackView = stackView
@@ -34,6 +41,7 @@ final class AssistantMarkdownSegmentApplier {
         textViews.removeAll()
         codeBlockViews.removeAll()
         tableViews.removeAll()
+        imageViews.removeAll()
         renderedSegmentSignatures = []
     }
 
@@ -98,6 +106,12 @@ final class AssistantMarkdownSegmentApplier {
 
             case .thematicBreak:
                 stackView.addArrangedSubview(makeThematicBreak(palette: palette))
+
+            case .image(let alt, let url):
+                let imageView = NativeMarkdownImageView()
+                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                stackView.addArrangedSubview(imageView)
+                imageViews[index] = imageView
             }
         }
 
@@ -147,6 +161,12 @@ final class AssistantMarkdownSegmentApplier {
 
             case .thematicBreak:
                 break
+
+            case .image(let alt, let url):
+                // Image views manage their own load lifecycle — nothing to diff in-place.
+                if let imageView = imageViews[index] {
+                    imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                }
             }
         }
     }
@@ -284,6 +304,7 @@ private enum SegmentSignature: Equatable {
     case codeBlock
     case table
     case thematicBreak
+    case image(url: URL)
 
     init(_ segment: FlatSegment) {
         switch segment {
@@ -295,6 +316,8 @@ private enum SegmentSignature: Equatable {
             self = .table
         case .thematicBreak:
             self = .thematicBreak
+        case .image(_, let url):
+            self = .image(url: url)
         }
     }
 }

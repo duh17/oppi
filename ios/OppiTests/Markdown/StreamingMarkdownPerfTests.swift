@@ -192,6 +192,7 @@ struct IncrementalParseCorrectnessTests {
             case .codeBlock(let lang, _): return .codeBlock(language: lang)
             case .table: return .table
             case .thematicBreak: return .thematicBreak
+            case .image: return .text
             }
         }
     }
