@@ -90,11 +90,28 @@ pnpm typecheck 2>&1 | grep -i error || true
 - **Don't thrash.** Repeatedly reverting the same idea? Try something structurally different.
 - **Crashes:** fix if trivial, otherwise log and move on. Don't over-invest.
 - **Think longer when stuck.** Re-read source files, study the profiling data, reason about what the CPU is actually doing. The best ideas come from deep understanding, not from trying random variations.
-- **Resuming:** if `autoresearch.md` exists, read it + git log, continue looping.
-- **Convergence:** if the last 5+ experiments are all `discard` and within ±5% of the best, the optimization space is likely exhausted. Write a final summary to `autoresearch.md` "What's Been Tried", update the current profile, and stop the loop. Don't burn context re-confirming a floor.
+- **Resuming:** if `autoresearch.md` exists, read it + git log + tail of `autoresearch.jsonl`, continue looping. If the doc says "optimization exhausted" or the last 5+ JSONL entries are discards within noise, **don't re-enter the loop** — tell the user it's done.
+- **Convergence:** if the last 5+ experiments are all `discard` and within ±5% of the best, the optimization space is likely exhausted. Add `## Status: CONVERGED` at the top of `autoresearch.md` with the final metric. Stop the loop. Don't burn context re-confirming a floor.
 - **Benchmark accuracy is fair game.** If a benchmark inflates costs by measuring setup overhead that isn't on the real hot path, fixing the benchmark to be more realistic is a valid `keep`. But never game the metric — the benchmark should become *more* representative, not less.
 
 **NEVER STOP** until converged. The user may be away for hours. Keep going until interrupted or converged.
+
+## Optimization Order
+
+Work through these tiers in order. The biggest wins come from the top; micro-optimization is a last resort.
+
+1. **Profile first.** Identify the dominant cost category before changing anything. Target the biggest slice.
+2. **Algorithmic fixes.** O(n²) → O(n), eliminate redundant traversals, skip work via early-out. These give the largest single wins (often 50%+).
+3. **Stdlib/framework avoidance.** Replace expensive runtime APIs with manual alternatives when you can prove correctness. (Foundation's ISO8601DateFormatter: 27μs/call. Manual ASCII parser: 0.5μs. V8's JSON.stringify for size estimation: replace with arithmetic.)
+4. **Allocation reduction.** Avoid intermediate arrays (map/join → direct build), reuse objects (clean-input fast path), replace heavy containers with lighter ones (Set\<String\> → Set\<Int\> for dedup).
+5. **Lazy evaluation.** Don't compute what won't be used (lazy date parsing, skip cache checks when a background task will recheck anyway).
+6. **Micro-optimization.** utf8.count vs String.count, inline functions, hoist closures. Small gains (1-3%) but they compound.
+
+When you run out of ideas in one tier, move down. When tier 6 stops yielding measurable gains, you've hit the floor.
+
+## Platform Perf Knowledge
+
+Before optimizing in a new language/runtime, `recall(query="<language> performance autoresearch")` in the journal — prior sessions may have documented runtime-specific pitfalls and floor characteristics. Save new discoveries via `remember` so they transfer to future projects.
 
 ## Ideas Backlog
 
