@@ -248,7 +248,8 @@ struct CollectionRenderPerfBench {
         )
 
         print("METRIC apply_new_item_us=\(String(format: "%.1f", us))")
-        #expect(h.coordinator.currentIDs.count == updatedItems.count)
+        // isBusy=true with no streamingAssistantID adds a working indicator
+        #expect(h.coordinator.currentIDs.count == updatedItems.count + 1)
     }
 
     // MARK: - Benchmark: ApplyPlan Build (Isolated)
