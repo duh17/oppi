@@ -185,6 +185,21 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
         let fallbackText: String?
     }
 
+    struct Annotation: Sendable, Equatable, Hashable, Identifiable {
+        let id: Int
+        let x: Double
+        let y: Double
+        let text: String
+        let anchor: AnnotationAnchor
+
+        enum AnnotationAnchor: String, Sendable, Hashable {
+            case top
+            case bottom
+            case leading
+            case trailing
+        }
+    }
+
     var title: String?
     var rows: [Row]
     var marks: [Mark]
@@ -192,6 +207,8 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
     var yAxis: Axis
     var interaction: Interaction
     var renderHints: RenderHints? = nil
+    var colorScale: [String: String]? = nil
+    var annotations: [Annotation]? = nil
     var preferredHeight: Double?
 
     var isRenderable: Bool {
@@ -364,6 +381,8 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
             ),
             interaction: interaction,
             renderHints: parseRenderHints(root["renderHints"]?.objectValue),
+            colorScale: parseColorScale(root["colorScale"]?.objectValue),
+            annotations: parseAnnotations(root["annotations"]?.arrayValue),
             preferredHeight: root["height"]?.numberValue
         )
 
@@ -433,6 +452,32 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
         }
 
         return hints.isEmpty ? nil : hints
+    }
+
+    private static func parseColorScale(_ object: [String: JSONValue]?) -> [String: String]? {
+        guard let object, !object.isEmpty else { return nil }
+        var scale: [String: String] = [:]
+        for (key, value) in object {
+            guard let hex = value.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !hex.isEmpty else { continue }
+            scale[key] = hex
+        }
+        return scale.isEmpty ? nil : scale
+    }
+
+    private static func parseAnnotations(_ array: [JSONValue]?) -> [Annotation]? {
+        guard let array, !array.isEmpty else { return nil }
+        var annotations: [Annotation] = []
+        for (index, entry) in array.enumerated() {
+            guard let object = entry.objectValue,
+                  let x = object["x"]?.numberValue,
+                  let y = object["y"]?.numberValue,
+                  let text = nonEmptyTrimmed(object["text"]?.stringValue) else { continue }
+            let anchorRaw = object["anchor"]?.stringValue?.lowercased() ?? "top"
+            let anchor = Annotation.AnnotationAnchor(rawValue: anchorRaw) ?? .top
+            annotations.append(Annotation(id: index, x: x, y: y, text: text, anchor: anchor))
+        }
+        return annotations.isEmpty ? nil : annotations
     }
 
     private static func normalizedToken(_ value: String?) -> String? {
