@@ -404,6 +404,23 @@ private struct HTMLFileView: View {
         return lines.prefix(lineCount).joined(separator: "\n")
     }
 
+    /// Clipboard fallback for pi actions outside chat context.
+    private var piClipboardHandler: (String, SelectedTextPiActionKind) -> Void {
+        let path = filePath
+        return { text, actionKind in
+            let request = SelectedTextPiRequest(
+                action: actionKind,
+                selectedText: text,
+                source: SelectedTextSourceContext(
+                    sessionId: "",
+                    surface: .fullScreenSource,
+                    filePath: path
+                )
+            )
+            UIPasteboard.general.string = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+        }
+    }
+
     var body: some View {
         Group {
             if presentation.usesInlineChrome {
@@ -522,8 +539,12 @@ private struct HTMLFileView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                HTMLWebView(htmlString: content, baseFileName: filePath ?? "preview.html")
-                    .ignoresSafeArea(edges: .bottom)
+                HTMLWebView(
+                    htmlString: content,
+                    baseFileName: filePath ?? "preview.html",
+                    piActionHandler: piClipboardHandler
+                )
+                .ignoresSafeArea(edges: .bottom)
             }
 
             // Floating toggle

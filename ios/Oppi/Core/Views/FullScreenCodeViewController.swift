@@ -301,10 +301,15 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: filePath
                 )
             )
-        case .html(let text, _):
+        case .html(let text, let filePath):
             return NativeFullScreenHTMLBody(
                 htmlString: text,
-                palette: palette
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeSourceContext(
+                    surface: .fullScreenSource,
+                    filePath: filePath
+                )
             )
         case .thinking(let text, let stream):
             return NativeFullScreenMarkdownBody(
