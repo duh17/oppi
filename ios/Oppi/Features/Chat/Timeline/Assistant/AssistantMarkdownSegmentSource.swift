@@ -14,6 +14,9 @@ final class AssistantMarkdownSegmentSource {
         var prefixSegments: [FlatSegment]
         /// Theme used to build `prefixSegments`.
         var themeID: ThemeID
+        /// Total content UTF-8 byte count when this state was last updated.
+        /// Used to skip FNV-1a hash when content only grew (streaming appends).
+        var lastContentUTF8ByteCount: Int
     }
 
     private var streamingState: StreamingParseState?
@@ -102,9 +105,18 @@ final class AssistantMarkdownSegmentSource {
         if let state = streamingState,
            state.prefixUTF8ByteCount > 0,
            state.prefixUTF8ByteCount < contentUTF8.count {
-            let prefixHash = fnv1a64(bytes: contentUTF8, count: state.prefixUTF8ByteCount)
+            // Fast path: skip FNV-1a hash when content only grew (streaming appends).
+            // The prefix bytes are unchanged since streaming only adds to the tail.
+            // Fall back to hash verification if content shrank or was replaced.
+            let contentByteCount = contentUTF8.count
+            let prefixValid: Bool
+            if contentByteCount >= state.lastContentUTF8ByteCount {
+                prefixValid = true
+            } else {
+                prefixValid = fnv1a64(bytes: contentUTF8, count: state.prefixUTF8ByteCount) == state.prefixContentHash
+            }
 
-            if prefixHash == state.prefixContentHash {
+            if prefixValid {
                 let boundaryIdx = contentUTF8.index(
                     contentUTF8.startIndex,
                     offsetBy: state.prefixUTF8ByteCount
@@ -169,7 +181,8 @@ final class AssistantMarkdownSegmentSource {
                             prefixContentHash: fnv1a64(bytes: contentUTF8, count: newPrefixByteCount),
                             prefixBlocks: Array((state.prefixBlocks + tailBlocks).dropLast()),
                             prefixSegments: newPrefixSegments,
-                            themeID: themeID
+                            themeID: themeID,
+                            lastContentUTF8ByteCount: contentByteCount
                         )
                     } else {
                         streamingState = nil
@@ -180,7 +193,8 @@ final class AssistantMarkdownSegmentSource {
                         prefixContentHash: state.prefixContentHash,
                         prefixBlocks: state.prefixBlocks,
                         prefixSegments: prefixSegments,
-                        themeID: themeID
+                        themeID: themeID,
+                        lastContentUTF8ByteCount: contentByteCount
                     )
                 }
 
@@ -253,7 +267,8 @@ final class AssistantMarkdownSegmentSource {
             prefixContentHash: fnv1a64(bytes: contentUTF8, count: byteOffset),
             prefixBlocks: prefixBlocks,
             prefixSegments: prefixSegments,
-            themeID: themeID
+            themeID: themeID,
+            lastContentUTF8ByteCount: contentUTF8.count
         )
     }
 
