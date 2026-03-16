@@ -302,6 +302,21 @@ enum FlatSegment: Sendable {
     private static func attributedString(for block: MarkdownBlock, palette: ThemePalette) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
+            // Fast path: single text inline heading (common for simple headings).
+            if inlines.count == 1, case .text(let string) = inlines[0] {
+                let font: Font = switch level {
+                case 1: .title.bold()
+                case 2: .title2.bold()
+                case 3: .title3.bold()
+                case 4: .headline
+                case 5: .subheadline.bold()
+                default: .subheadline
+                }
+                var container = AttributeContainer()
+                container.font = font
+                container.foregroundColor = palette.fg
+                return AttributedString(string, attributes: container)
+            }
             var result = renderInlines(inlines, palette: palette)
             let font: Font = switch level {
             case 1: .title.bold()
@@ -316,6 +331,12 @@ enum FlatSegment: Sendable {
             return result
 
         case .paragraph(let inlines):
+            // Fast path: single text inline (most common paragraph shape).
+            if inlines.count == 1, case .text(let string) = inlines[0] {
+                var container = AttributeContainer()
+                container.foregroundColor = palette.fg
+                return AttributedString(string, attributes: container)
+            }
             var result = renderInlines(inlines, palette: palette)
             result.foregroundColor = palette.fg
             return result
