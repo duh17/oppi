@@ -392,9 +392,12 @@ enum ToolPresentationBuilder {
                let editText = ToolCallFormatting.editOldAndNewText(from: args) {
                 if isDone {
                     let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
-                    let diffPath = ToolCallFormatting.displayFilePath(
-                        tool: normalizedTool, args: args, argsSummary: argsSummary
-                    )
+                    // Use the raw file path (not displayFilePath) so downstream consumers
+                    // can fetch the file via API. Display views apply shortenedPath as needed.
+                    let diffPath = fileMetadata.filePath
+                        ?? ToolCallFormatting.displayFilePath(
+                            tool: normalizedTool, args: args, argsSummary: argsSummary
+                        )
                     content = .diff(lines: lines, path: diffPath)
                     copyOutput = DiffEngine.formatUnified(lines)
                 } else {
