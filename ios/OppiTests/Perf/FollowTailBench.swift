@@ -55,12 +55,19 @@ struct FollowTailBench {
                 let endLine = lpc * (chunk + 1)
                 let text = codeLines[0 ..< min(endLine, codeLines.count)].joined(separator: "\n")
 
+                // Measure just the configuration apply (what happens during
+                // DiffableDataSource batch reconfigure). This includes
+                // followTail() → layoutIfNeeded() which is the hot path.
                 let start = ContinuousClock.now
-                applyStreaming(view, text: text, language: .swift)
+                applyStreamingConfig(view, text: text, language: .swift)
                 let elapsed = ContinuousClock.now - start
                 let us = Int(elapsed.components.attoseconds / 1_000_000_000_000)
                     + Int(elapsed.components.seconds) * 1_000_000
                 chunkTimes.append(us)
+
+                // Settle layout after measurement (simulates collection view
+                // layout pass that follows the batch update).
+                forceLayout(view)
             }
 
             chunkTimes.sort()
@@ -94,11 +101,13 @@ struct FollowTailBench {
 
             let extended = largeCode + "\n    let extra\(i) = true"
             let start = ContinuousClock.now
-            applyStreaming(view, text: extended, language: .swift)
+            applyStreamingConfig(view, text: extended, language: .swift)
             let elapsed = ContinuousClock.now - start
             let us = Int(elapsed.components.attoseconds / 1_000_000_000_000)
                 + Int(elapsed.components.seconds) * 1_000_000
             times.append(us)
+
+            forceLayout(view)
         }
 
         times.sort()
@@ -151,6 +160,18 @@ struct FollowTailBench {
         text: String,
         language: SyntaxLanguage?
     ) {
+        applyStreamingConfig(view, text: text, language: language)
+        forceLayout(view)
+    }
+
+    /// Set the streaming configuration WITHOUT forcing layout.
+    /// This is the part that runs during DiffableDataSource batch updates.
+    @MainActor
+    private func applyStreamingConfig(
+        _ view: ToolTimelineRowContentView,
+        text: String,
+        language: SyntaxLanguage?
+    ) {
         let expandedContent: ToolPresentationBuilder.ToolExpandedContent
         if let language {
             expandedContent = .code(
@@ -167,7 +188,6 @@ struct FollowTailBench {
             isExpanded: true,
             isDone: false
         )
-        forceLayout(view)
     }
 
     @MainActor
