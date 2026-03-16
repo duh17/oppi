@@ -92,6 +92,7 @@ struct VoiceStartupPerfBench {
 
     /// Full startRecording → .recording with warm mock provider (on-device mode).
     /// This is the user-facing latency we want to minimize.
+    /// Cancel happens in setup of next iteration, excluded from timing.
     @Test func startRecordingWarm() async throws {
         // Suppress telemetry test hook to avoid interference
         VoiceInputTelemetry._recordMetricForTesting = nil
@@ -106,10 +107,29 @@ struct VoiceStartupPerfBench {
             },
             {
                 try await manager.startRecording(keyboardLanguage: "en", source: "bench")
+            }
+        )
+        // Clean up after last iteration
+        if manager.isRecording { await manager.cancelRecording() }
+        print("METRIC start_recording_us=\(Int(us))")
+    }
+
+    /// stopRecording / cancelRecording overhead (cleanup path).
+    @Test func cancelRecordingOverhead() async throws {
+        VoiceInputTelemetry._recordMetricForTesting = nil
+        let (manager, _) = Self.makeManager()
+
+        let us = await Self.measureMedianUsAsync(
+            setup: {
+                if !manager.isRecording {
+                    try! await manager.startRecording(keyboardLanguage: "en", source: "bench")
+                }
+            },
+            {
                 await manager.cancelRecording()
             }
         )
-        print("METRIC start_recording_us=\(Int(us))")
+        print("METRIC cancel_us=\(Int(us))")
     }
 
     /// Prewarm orchestration overhead with mock provider.
