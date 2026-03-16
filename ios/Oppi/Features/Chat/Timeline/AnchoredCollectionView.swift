@@ -19,6 +19,16 @@ final class AnchoredCollectionView: UICollectionView {
     private var savedAnchorScreenY: CGFloat = 0
     private var isApplyingAnchorCorrection = false
 
+    /// The "known good" contentOffset.y after the latest layoutSubviews
+    /// anchor restoration or explicit anchor capture. The contentOffset
+    /// didSet restores this value instead of querying `layoutAttributesForItem`
+    /// — the layout engine query is expensive (~78μs) and triggers recursive
+    /// layout. Since the didSet only fires for post-layout cascade
+    /// adjustments (where cell frames haven't changed), restoring the saved
+    /// offset is equivalent to a full layout-based correction.
+    private var expandCollapseSavedOffsetY: CGFloat = 0
+    private var detachedSavedOffsetY: CGFloat = 0
+
     /// Set by the timeline controller before each snapshot apply so layout
     /// passes preserve the first visible item's screen position for users
     /// who scrolled away from the bottom. Without this, cell height changes
@@ -46,6 +56,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// `clearExpandCollapseAnchor()` is called.
     func setExpandCollapseAnchor(indexPath: IndexPath) {
         expandCollapseAnchorIP = indexPath
+        expandCollapseSavedOffsetY = contentOffset.y
         if let attrs = layoutAttributesForItem(at: indexPath) {
             expandCollapseAnchorScreenY = attrs.frame.origin.y - contentOffset.y
         }
@@ -75,6 +86,7 @@ final class AnchoredCollectionView: UICollectionView {
         }
         detachedAnchorIP = firstIP
         detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+        detachedSavedOffsetY = contentOffset.y
     }
 
     /// Clear the detached anchor after layout has settled.
@@ -104,33 +116,32 @@ final class AnchoredCollectionView: UICollectionView {
             #endif
 
             // Expand/collapse anchor takes priority.
-            if let ecIP = expandCollapseAnchorIP,
-               let attrs = layoutAttributesForItem(at: ecIP) {
-                let currentScreenY = attrs.frame.origin.y - contentOffset.y
-                let delta = currentScreenY - expandCollapseAnchorScreenY
+            // Restores the saved "known good" offset instead of querying
+            // layoutAttributesForItem — the layout engine query is expensive
+            // and recursive. layoutSubviews already handled geometry changes;
+            // the didSet only undoes post-layout cascade drift.
+            if expandCollapseAnchorIP != nil {
+                let delta = contentOffset.y - expandCollapseSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
                 isApplyingAnchorCorrection = true
-                super.contentOffset.y += delta
+                super.contentOffset.y = expandCollapseSavedOffsetY
                 isApplyingAnchorCorrection = false
                 return
             }
 
             // Detached anchor: preserve position during self-sizing
             // cascade when new items arrive below the viewport.
-            if isDetachedFromBottom,
-               let dIP = detachedAnchorIP,
-               let attrs = layoutAttributesForItem(at: dIP) {
-                let currentScreenY = attrs.frame.origin.y - contentOffset.y
-                let delta = currentScreenY - detachedAnchorScreenY
+            if isDetachedFromBottom, detachedAnchorIP != nil {
+                let delta = contentOffset.y - detachedSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
                 isApplyingAnchorCorrection = true
-                super.contentOffset.y += delta
+                super.contentOffset.y = detachedSavedOffsetY
                 isApplyingAnchorCorrection = false
             }
         }
@@ -195,6 +206,16 @@ final class AnchoredCollectionView: UICollectionView {
         #endif
 
         restoreAnchor()
+
+        // Update the saved "known good" offset after layout restoration.
+        // This ensures the contentOffset.didSet has the correct target
+        // when UIKit applies post-layout cascade adjustments.
+        if expandCollapseAnchorIP != nil {
+            expandCollapseSavedOffsetY = contentOffset.y
+        }
+        if isDetachedFromBottom, detachedAnchorIP != nil {
+            detachedSavedOffsetY = contentOffset.y
+        }
 
         #if DEBUG
             _debugLayoutAnchorCount += 1
