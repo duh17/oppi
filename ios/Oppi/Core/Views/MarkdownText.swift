@@ -205,6 +205,7 @@ enum FlatSegment: Sendable {
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil
     ) -> [Self] {
+        let palette = themeID.palette
         var result: [Self] = []
         result.reserveCapacity(blocks.count)
 
@@ -255,12 +256,12 @@ enum FlatSegment: Sendable {
                     flushPendingText()
                     result.append(.image(alt: alt, url: imageURL))
                 } else {
-                    let attributed = Self.attributedString(for: block, themeID: themeID)
+                    let attributed = Self.attributedString(for: block, palette: palette)
                     appendTextBlock(attributed)
                 }
 
             default:
-                let attributed = Self.attributedString(for: block, themeID: themeID)
+                let attributed = Self.attributedString(for: block, palette: palette)
                 appendTextBlock(attributed)
             }
         }
@@ -298,12 +299,10 @@ enum FlatSegment: Sendable {
 
     // MARK: - Block → AttributedString
 
-    private static func attributedString(for block: MarkdownBlock, themeID: ThemeID) -> AttributedString {
-        let palette = themeID.palette
-
+    private static func attributedString(for block: MarkdownBlock, palette: ThemePalette) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
-            var result = renderInlines(inlines, themeID: themeID)
+            var result = renderInlines(inlines, palette: palette)
             let font: Font = switch level {
             case 1: .title.bold()
             case 2: .title2.bold()
@@ -317,7 +316,7 @@ enum FlatSegment: Sendable {
             return result
 
         case .paragraph(let inlines):
-            var result = renderInlines(inlines, themeID: themeID)
+            var result = renderInlines(inlines, palette: palette)
             result.foregroundColor = palette.fg
             return result
 
@@ -326,7 +325,7 @@ enum FlatSegment: Sendable {
             result.foregroundColor = palette.purple
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
-                result.append(attributedString(for: child, themeID: themeID))
+                result.append(attributedString(for: child, palette: palette))
             }
             result.foregroundColor = palette.fgDim
             return result
@@ -340,7 +339,7 @@ enum FlatSegment: Sendable {
                 result.append(bullet)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n    ")) }
-                    result.append(attributedString(for: block, themeID: themeID))
+                    result.append(attributedString(for: block, palette: palette))
                 }
             }
             return result
@@ -354,7 +353,7 @@ enum FlatSegment: Sendable {
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
-                    result.append(attributedString(for: block, themeID: themeID))
+                    result.append(attributedString(for: block, palette: palette))
                 }
             }
             return result
@@ -372,29 +371,27 @@ enum FlatSegment: Sendable {
 
     // MARK: - Inline → AttributedString
 
-    private static func renderInlines(_ inlines: [MarkdownInline], themeID: ThemeID) -> AttributedString {
+    private static func renderInlines(_ inlines: [MarkdownInline], palette: ThemePalette) -> AttributedString {
         if inlines.count == 1 {
-            return renderInline(inlines[0], themeID: themeID)
+            return renderInline(inlines[0], palette: palette)
         }
         var result = AttributedString()
         for inline in inlines {
-            result.append(renderInline(inline, themeID: themeID))
+            result.append(renderInline(inline, palette: palette))
         }
         return result
     }
 
-    private static func renderInline(_ inline: MarkdownInline, themeID: ThemeID) -> AttributedString {
-        let palette = themeID.palette
-
+    private static func renderInline(_ inline: MarkdownInline, palette: ThemePalette) -> AttributedString {
         switch inline {
         case .text(let string):
             return AttributedString(string)
         case .emphasis(let children):
-            var result = renderInlines(children, themeID: themeID)
+            var result = renderInlines(children, palette: palette)
             result.inlinePresentationIntent = .emphasized
             return result
         case .strong(let children):
-            var result = renderInlines(children, themeID: themeID)
+            var result = renderInlines(children, palette: palette)
             result.inlinePresentationIntent = .stronglyEmphasized
             return result
         case .code(let code):
@@ -403,7 +400,7 @@ enum FlatSegment: Sendable {
             result.foregroundColor = palette.cyan
             return result
         case .link(let children, let destination):
-            var result = renderInlines(children, themeID: themeID)
+            var result = renderInlines(children, palette: palette)
             result.foregroundColor = palette.blue
             result.underlineStyle = .single
             if let destination,
@@ -424,7 +421,7 @@ enum FlatSegment: Sendable {
             result.foregroundColor = palette.comment
             return result
         case .strikethrough(let children):
-            var result = renderInlines(children, themeID: themeID)
+            var result = renderInlines(children, palette: palette)
             result.strikethroughStyle = .single
             return result
         }
