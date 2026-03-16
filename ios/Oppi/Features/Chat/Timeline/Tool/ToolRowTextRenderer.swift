@@ -594,6 +594,8 @@ enum ToolRowTextRenderer {
             return language
         case .json:
             return .json
+        case .html:
+            return .html
         case .plain, .markdown, .image, .audio:
             return nil
         }
