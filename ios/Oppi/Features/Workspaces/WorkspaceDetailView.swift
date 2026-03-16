@@ -270,6 +270,12 @@ struct WorkspaceDetailView: View {
                 .disabled(isCreating)
             }
             ToolbarItemGroup(placement: .bottomBar) {
+                NavigationLink {
+                    FileBrowserView(workspaceId: workspace.id, initialPath: "")
+                } label: {
+                    Image(systemName: "folder")
+                        .foregroundStyle(.themeComment)
+                }
                 Button { showEditWorkspace = true } label: {
                     HStack(spacing: 6) {
                         WorkspaceIcon(icon: currentWorkspace.icon, size: 16)
@@ -283,13 +289,6 @@ struct WorkspaceDetailView: View {
                         }
                     }
                     .foregroundStyle(.themeComment)
-                }
-                Spacer()
-                NavigationLink {
-                    FileBrowserView(workspaceId: workspace.id, initialPath: "")
-                } label: {
-                    Image(systemName: "folder")
-                        .foregroundStyle(.themeComment)
                 }
                 Spacer()
                 Button { showWorkspacePolicy = true } label: {
