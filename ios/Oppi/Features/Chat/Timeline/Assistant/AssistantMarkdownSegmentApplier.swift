@@ -17,6 +17,12 @@ final class AssistantMarkdownSegmentApplier {
     private var imageViews: [Int: NativeMarkdownImageView] = [:]
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
 
+    /// Smooth character reveal for the actively streaming text segment.
+    private let textRevealer = StreamingTextRevealer()
+    /// Character count of the last text segment after the most recent reveal cycle.
+    /// Used to compute the "new characters" delta on the next flush.
+    private var lastStreamingTextCharCount: Int = 0
+
     /// Closure for fetching workspace files (for inline markdown images).
     /// Injected by the owning view chain, wrapping `APIClient` at the site
     /// where it's available so view-layer files stay decoupled from `APIClient`.
@@ -28,6 +34,9 @@ final class AssistantMarkdownSegmentApplier {
     }
 
     func clear() {
+        textRevealer.reset()
+        lastStreamingTextCharCount = 0
+
         for task in highlightTasks.values {
             task.cancel()
         }
@@ -49,11 +58,20 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration
     ) {
+        // When streaming stops, finish any in-progress reveal instantly.
+        if !config.isStreaming {
+            textRevealer.finishImmediately()
+            lastStreamingTextCharCount = 0
+        }
+
         let signatures = segments.map(SegmentSignature.init)
 
         if signatures == renderedSegmentSignatures {
             updateInPlace(segments: segments, config: config)
         } else {
+            // Structural change resets reveal state.
+            textRevealer.reset()
+            lastStreamingTextCharCount = 0
             rebuild(segments: segments, signatures: signatures, config: config)
         }
     }
@@ -116,6 +134,13 @@ final class AssistantMarkdownSegmentApplier {
         }
 
         renderedSegmentSignatures = signatures
+
+        // Track initial character count for the streaming text revealer.
+        if config.isStreaming, let lastIdx = segments.lastIndex(where: {
+            if case .text = $0 { return true } else { return false }
+        }), let tv = textViews[lastIdx] {
+            lastStreamingTextCharCount = tv.attributedText?.length ?? 0
+        }
     }
 
     private func updateInPlace(
@@ -123,16 +148,32 @@ final class AssistantMarkdownSegmentApplier {
         config: AssistantMarkdownContentView.Configuration
     ) {
         let palette = config.themeID.palette
+        let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
 
         for (index, segment) in segments.enumerated() {
             switch segment {
             case .text(let attributed):
                 if let textView = textViews[index] {
                     textView.isSelectable = config.textSelectionEnabled
-                    textView.attributedText = Self.normalizedAttributedText(
+                    let normalized = Self.normalizedAttributedText(
                         from: attributed,
                         palette: palette
                     )
+                    textView.attributedText = normalized
+
+                    // Smooth reveal for the last (actively growing) text segment during streaming.
+                    if config.isStreaming, index == lastTextIndex {
+                        let previousCount = lastStreamingTextCharCount
+                        let currentCount = normalized.length
+                        if currentCount > previousCount {
+                            textRevealer.reveal(
+                                in: textView,
+                                normalizedText: normalized,
+                                previousVisibleCount: previousCount
+                            )
+                        }
+                        lastStreamingTextCharCount = currentCount
+                    }
                 }
 
             case .codeBlock(let language, let code):
