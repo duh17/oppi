@@ -67,7 +67,9 @@ export class SessionStore {
     const sessions: Session[] = [];
 
     for (const file of readdirSync(baseDir)) {
+      // Only load <sessionId>.json — skip auxiliary files like *.annotations.json
       if (!file.endsWith(".json")) continue;
+      if (file.indexOf(".") !== file.length - 5) continue;
 
       const path = join(baseDir, file);
       try {
