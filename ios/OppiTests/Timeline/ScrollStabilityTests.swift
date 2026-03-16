@@ -640,11 +640,23 @@ struct ScrollStabilityTests {
 
     // MARK: - Expand/Collapse Anchor Stability
 
+    /// Drain the main run loop so any `DispatchQueue.main.async` blocks
+    /// (e.g. `invalidateEnclosingCollectionViewLayout`, anchor cleanup)
+    /// execute within the test. Without this, async layout passes never
+    /// fire and the test only validates synchronous state.
+    @MainActor
+    private func drainRunLoop(seconds: TimeInterval = 0.15) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
     @MainActor
     @Test func repeatedExpandCollapseKeepsTappedRowScreenPosition() {
         // Bug: repeatedly tapping a tool row to expand/collapse causes the
         // collapsed bar to shift on screen. The tapped row's screen-relative
         // Y position must stay fixed across each toggle.
+        //
+        // This test drains the run loop after each toggle to catch drift from
+        // deferred layout passes (invalidateEnclosingCollectionViewLayout).
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
@@ -718,7 +730,8 @@ struct ScrollStabilityTests {
             return
         }
 
-        // Toggle expand/collapse 6 times and check screen position each time.
+        // Toggle expand/collapse 6 times and check screen position AFTER
+        // async layout passes settle (not just after the synchronous path).
         for round in 1...6 {
             guard let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP) else {
                 Issue.record("Missing layout attributes before toggle round \(round)")
@@ -727,6 +740,9 @@ struct ScrollStabilityTests {
             let screenYBefore = attrsBefore.frame.origin.y - collectionView.contentOffset.y
 
             coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+            // Drain the run loop to let deferred layout passes fire.
+            drainRunLoop()
 
             guard let attrsAfter = collectionView.layoutAttributesForItem(at: targetIP) else {
                 Issue.record("Missing layout attributes after toggle round \(round)")
@@ -846,6 +862,9 @@ struct ScrollStabilityTests {
         // Expand — this is the scenario that was broken.
         coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
 
+        // Drain the run loop to let deferred layout passes fire.
+        drainRunLoop()
+
         guard let attrsAfter = collectionView.layoutAttributesForItem(at: targetIP) else {
             Issue.record("Missing layout attributes after expand")
             return
@@ -855,5 +874,124 @@ struct ScrollStabilityTests {
 
         #expect(shift < 2.0,
                 "Tool row header shifted \(shift)pt when expanding near bottom")
+    }
+
+    // MARK: - Detached Scroll Stability with New Items
+
+    @MainActor
+    @Test func detachedScrollStaysStableWhenNewToolCallsArrive() {
+        // Bug 2: user scrolls up (detaches), new tool calls arrive from
+        // the agent. The viewport should not shift — the user should stay
+        // at the same scroll position.
+        let window = makeScrollTestWindow()
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<20 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Message \(i). ", count: 10),
+                timestamp: Date()
+            ))
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "cmd \(i)",
+                outputPreview: "result \(i)",
+                outputByteCount: 64,
+                isError: false, isDone: true
+            ))
+        }
+        // Streaming assistant at the end.
+        items.append(.assistantMessage(
+            id: "stream-1",
+            text: "Working...",
+            timestamp: Date()
+        ))
+
+        func applyItems(
+            _ currentItems: [ChatItem],
+            streamingID: String? = nil,
+            isBusy: Bool = true
+        ) {
+            let config = makeTimelineConfiguration(
+                items: currentItems,
+                isBusy: isBusy,
+                streamingAssistantID: streamingID,
+                sessionId: "s-detach",
+                reducer: reducer,
+                toolOutputStore: toolOutputStore,
+                toolArgsStore: toolArgsStore,
+                connection: connection,
+                scrollController: scrollController,
+                audioPlayer: audioPlayer
+            )
+            coordinator.apply(configuration: config, to: collectionView)
+            collectionView.layoutIfNeeded()
+        }
+
+        applyItems(items, streamingID: "stream-1")
+
+        // Scroll through all content so cells are measured.
+        let scrollStep: CGFloat = collectionView.bounds.height * 0.8
+        var scrollY: CGFloat = 0
+        while scrollY < collectionView.contentSize.height {
+            collectionView.contentOffset.y = scrollY
+            collectionView.layoutIfNeeded()
+            scrollY += scrollStep
+        }
+
+        // Scroll to bottom, then to mid — detach.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        let midY = maxOffset * 0.5
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        let anchorOffset = collectionView.contentOffset.y
+
+        // New tool calls arrive (simulating agent running tools).
+        for j in 0..<5 {
+            items.append(.toolCall(
+                id: "tc-new-\(j)", tool: "bash",
+                argsSummary: "new cmd \(j)",
+                outputPreview: "new result \(j)",
+                outputByteCount: 64,
+                isError: false, isDone: j < 4
+            ))
+        }
+        items.append(.assistantMessage(
+            id: "stream-2",
+            text: String(repeating: "More output. ", count: 10),
+            timestamp: Date()
+        ))
+
+        applyItems(items, streamingID: "stream-2")
+        drainRunLoop()
+
+        let driftAfterNewTools = abs(collectionView.contentOffset.y - anchorOffset)
+        #expect(driftAfterNewTools < 2.0,
+                "Detached viewport drifted \(driftAfterNewTools)pt when new tool calls arrived")
+
+        #expect(!scrollController.isCurrentlyNearBottom,
+                "User should still be detached after new tool calls")
     }
 }
