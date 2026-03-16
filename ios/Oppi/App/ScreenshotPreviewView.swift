@@ -75,8 +75,6 @@ private struct WorkspaceEditPreview: View {
         skills: ["search", "web-fetch", "web-browser", "tmux", "sentry"],
         systemPrompt: nil,
         hostMount: "~/workspace/oppi",
-        memoryEnabled: true,
-        memoryNamespace: "oppi",
         extensions: nil,
         gitStatusEnabled: true,
         defaultModel: nil,

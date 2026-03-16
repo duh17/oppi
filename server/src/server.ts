@@ -370,7 +370,6 @@ export class Server {
       streamMux: this.streamMux,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
-      isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
       refreshModelCatalog: () => {
         this.models.refresh();
         return Promise.resolve();
@@ -757,10 +756,6 @@ export class Server {
     const sessions = this.storage.listSessions();
     const match = sessions.find((s) => s.id === sessionId);
     return match ? this.models.ensureSessionContextWindow(match) : undefined;
-  }
-
-  private isValidMemoryNamespace(namespace: string): boolean {
-    return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(namespace);
   }
 
   // ─── Auth ───

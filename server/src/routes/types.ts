@@ -19,7 +19,6 @@ export interface RouteContext {
   streamMux: UserStreamMux;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
-  isValidMemoryNamespace: (ns: string) => boolean;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
   getRuntimeUpdateStatus: (options?: { force?: boolean }) => Promise<RuntimeUpdateStatus>;

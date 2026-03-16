@@ -22,8 +22,6 @@ struct CreateWorkspaceRequest: Encodable {
     var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?
     var gitStatusEnabled: Bool?
-    var memoryEnabled: Bool?
-    var memoryNamespace: String?
     var extensions: [String]?
     var defaultModel: String?
 }
@@ -40,8 +38,6 @@ struct UpdateWorkspaceRequest {
         systemPromptMode: WorkspaceSystemPromptMode? = nil,
         hostMount: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
-        memoryEnabled: Bool? = nil,
-        memoryNamespace: JSONValue? = nil,
         extensions: [String]? = nil,
         defaultModel: JSONValue? = nil
     ) {
@@ -70,12 +66,6 @@ struct UpdateWorkspaceRequest {
         }
         if let gitStatusEnabled {
             body["gitStatusEnabled"] = .bool(gitStatusEnabled)
-        }
-        if let memoryEnabled {
-            body["memoryEnabled"] = .bool(memoryEnabled)
-        }
-        if let memoryNamespace {
-            body["memoryNamespace"] = memoryNamespace
         }
         if let extensions {
             body["extensions"] = .array(extensions.map(JSONValue.string))
