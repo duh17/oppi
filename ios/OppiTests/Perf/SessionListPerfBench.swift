@@ -229,32 +229,43 @@ struct SessionListPerfBench {
 
         let us = Self.measureMedianUs {
             // Mirrors WorkspaceStoppedSessionsSection.stoppedSessionGroups
+            // Pre-sort by lastActivity descending (production code receives pre-sorted data)
+            let sorted = sessions.sorted { $0.lastActivity > $1.lastActivity }
+
             let now = Date()
             let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
             let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
 
-            let grouped = Dictionary(grouping: sessions) { session -> String in
+            // Single-pass: group into Int-keyed buckets, track max date per bucket
+            var buckets: [Int: [Session]] = [:]
+            var bucketMaxDate: [Int: Date] = [:]
+            buckets.reserveCapacity(40)
+            bucketMaxDate.reserveCapacity(40)
+
+            for session in sorted {
                 let ts = session.lastActivity.timeIntervalSince1970
+                let key: Int
                 if ts >= recentCutoffTs {
                     let localTs = ts + tzOffset
-                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
-                    return "day-\(Int(dayStart))"
+                    key = Int(floor(localTs / 86400))  // day index
+                } else {
+                    let cal = Calendar.current
+                    let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                    // Negative keys for month buckets to avoid collision with day indices
+                    key = -(comps.year! * 100 + comps.month!)
                 }
-                let cal = Calendar.current
-                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = cal.date(from: comps) ?? session.lastActivity
-                return "month-\(Int(monthStart.timeIntervalSince1970))"
+                buckets[key, default: []].append(session)
+                if bucketMaxDate[key] == nil {
+                    bucketMaxDate[key] = session.lastActivity  // First item is max (pre-sorted)
+                }
             }
-            // Sort groups by most recent first
-            let sortedGroups = grouped.sorted { lhs, rhs in
-                let lhsDate = lhs.value.map(\.lastActivity).max() ?? .distantPast
-                let rhsDate = rhs.value.map(\.lastActivity).max() ?? .distantPast
-                return lhsDate > rhsDate
+
+            // Sort buckets by max date descending
+            let sortedBuckets = buckets.sorted { lhs, rhs in
+                (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
-            // Sort items within each group
-            for group in sortedGroups {
-                let _ = group.value.sorted { $0.lastActivity > $1.lastActivity }
-            }
+            // Items within each bucket are already sorted (from pre-sorted input)
+            let _ = sortedBuckets
         }
         print("METRIC group_stopped_200=\(Int(us))")
     }
@@ -344,27 +355,35 @@ struct SessionListPerfBench {
                 .filter { $0.status == .stopped }
                 .sorted { $0.lastActivity > $1.lastActivity }
 
-            // Fast timestamp-based grouping
+            // Int-keyed grouping with precomputed max dates
             let nowTs = Date()
             let recentCutoffTs = nowTs.timeIntervalSince1970 - 30 * 86400
             let tzOffset = Double(TimeZone.current.secondsFromGMT(for: nowTs))
 
-            let grouped = Dictionary(grouping: stoppedSessions) { session -> String in
+            var buckets: [Int: [Session]] = [:]
+            var bucketMaxDate: [Int: Date] = [:]
+            buckets.reserveCapacity(40)
+            bucketMaxDate.reserveCapacity(40)
+
+            for session in stoppedSessions {
                 let ts = session.lastActivity.timeIntervalSince1970
+                let key: Int
                 if ts >= recentCutoffTs {
                     let localTs = ts + tzOffset
-                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
-                    return "day-\(Int(dayStart))"
+                    key = Int(floor(localTs / 86400))
+                } else {
+                    let cal = Calendar.current
+                    let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                    key = -(comps.year! * 100 + comps.month!)
                 }
-                let cal = Calendar.current
-                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = cal.date(from: comps) ?? session.lastActivity
-                return "month-\(Int(monthStart.timeIntervalSince1970))"
+                buckets[key, default: []].append(session)
+                if bucketMaxDate[key] == nil {
+                    bucketMaxDate[key] = session.lastActivity
+                }
             }
-            let sortedGroups = grouped.sorted { lhs, rhs in
-                let lhsDate = lhs.value.map(\.lastActivity).max() ?? .distantPast
-                let rhsDate = rhs.value.map(\.lastActivity).max() ?? .distantPast
-                return lhsDate > rhsDate
+
+            let sortedBuckets = buckets.sorted { lhs, rhs in
+                (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
 
             for session in activeSessions {
@@ -377,9 +396,8 @@ struct SessionListPerfBench {
                 }
                 let _ = session.lastActivity.relativeString()
             }
-            for group in sortedGroups {
-                let sortedItems = group.value.sorted { $0.lastActivity > $1.lastActivity }
-                for session in sortedItems {
+            for bucket in sortedBuckets {
+                for session in bucket.value {
                     let _ = session.displayTitle
                     let _ = session.model?.split(separator: "/").last.map(String.init)
                     let _ = session.lastActivity.relativeString()
@@ -424,22 +442,30 @@ struct SessionListPerfBench {
             let recentCutoffTs = nowTs.timeIntervalSince1970 - 30 * 86400
             let tzOffset = Double(TimeZone.current.secondsFromGMT(for: nowTs))
 
-            let grouped = Dictionary(grouping: stoppedSessions) { session -> String in
+            var buckets: [Int: [Session]] = [:]
+            var bucketMaxDate: [Int: Date] = [:]
+            buckets.reserveCapacity(40)
+            bucketMaxDate.reserveCapacity(40)
+
+            for session in stoppedSessions {
                 let ts = session.lastActivity.timeIntervalSince1970
+                let key: Int
                 if ts >= recentCutoffTs {
                     let localTs = ts + tzOffset
-                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
-                    return "day-\(Int(dayStart))"
+                    key = Int(floor(localTs / 86400))
+                } else {
+                    let cal = Calendar.current
+                    let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                    key = -(comps.year! * 100 + comps.month!)
                 }
-                let cal = Calendar.current
-                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = cal.date(from: comps) ?? session.lastActivity
-                return "month-\(Int(monthStart.timeIntervalSince1970))"
+                buckets[key, default: []].append(session)
+                if bucketMaxDate[key] == nil {
+                    bucketMaxDate[key] = session.lastActivity
+                }
             }
-            let sortedGroups = grouped.sorted { lhs, rhs in
-                let lhsDate = lhs.value.map(\.lastActivity).max() ?? .distantPast
-                let rhsDate = rhs.value.map(\.lastActivity).max() ?? .distantPast
-                return lhsDate > rhsDate
+
+            let sortedBuckets = buckets.sorted { lhs, rhs in
+                (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
 
             for session in activeSessions {
@@ -452,9 +478,8 @@ struct SessionListPerfBench {
                 }
                 let _ = session.lastActivity.relativeString()
             }
-            for group in sortedGroups {
-                let sortedItems = group.value.sorted { $0.lastActivity > $1.lastActivity }
-                for session in sortedItems {
+            for bucket in sortedBuckets {
+                for session in bucket.value {
                     let _ = session.displayTitle
                     let _ = session.model?.split(separator: "/").last.map(String.init)
                     let _ = session.lastActivity.relativeString()
