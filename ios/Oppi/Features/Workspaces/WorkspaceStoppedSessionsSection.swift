@@ -56,44 +56,69 @@ struct WorkspaceStoppedSessionsSection: View {
     }
 
     private var stoppedSessionGroups: [StoppedSessionGroup] {
+        // Merge and sort all items by date descending (single pass)
         let stoppedItems = stoppedSessions.map { StoppedItem.session($0) }
         let localItems = localSessions.map { StoppedItem.local($0) }
-        let allItems = stoppedItems + localItems
-
+        var allItems = stoppedItems + localItems
         guard !allItems.isEmpty else { return [] }
+        allItems.sort { $0.sortDate > $1.sortDate }
 
         let now = Date()
         let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
         // Fast local-timezone day boundary using fixed UTC offset.
-        // This ignores DST transitions within the 30-day window, which can shift
-        // a session's day bucket by ±1 hour — acceptable for a display-only grouping
-        // that only needs "same local calendar day" granularity.
+        // Ignores DST transitions within the 30-day window (±1 hour shift at most)
+        // — acceptable for display-only grouping.
         let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
 
-        let grouped = Dictionary(grouping: allItems) { item -> StoppedSessionGroup.Bucket in
+        // Int-keyed grouping: positive = day index, negative = -YYYYMM for month buckets.
+        // Avoids String allocation and hashing per item.
+        var bucketItems: [Int: [StoppedItem]] = [:]
+        var bucketDates: [Int: Date] = [:]  // bucket → Date for Bucket enum reconstruction
+        bucketItems.reserveCapacity(40)
+        bucketDates.reserveCapacity(40)
+
+        for item in allItems {
             let ts = item.sortDate.timeIntervalSince1970
+            let key: Int
             if ts >= recentCutoffTs {
-                // Fast startOfDay: floor to day boundary in local time
                 let localTs = ts + tzOffset
-                let dayStart = floor(localTs / 86400) * 86400 - tzOffset
-                return .day(Date(timeIntervalSince1970: dayStart))
+                key = Int(floor(localTs / 86400))  // day index since epoch
+            } else {
+                let cal = Calendar.current
+                let comps = cal.dateComponents([.year, .month], from: item.sortDate)
+                let year = comps.year ?? 2000
+                let month = comps.month ?? 1
+                key = -(year * 100 + month)
             }
-            // For older items, use Calendar for month grouping (called rarely — only for items >30 days old)
-            let cal = Calendar.current
-            let comps = cal.dateComponents([.year, .month], from: item.sortDate)
-            let monthStart = cal.date(from: comps) ?? item.sortDate
-            return .month(monthStart)
+            bucketItems[key, default: []].append(item)
+            if bucketDates[key] == nil {
+                // First item per bucket is the max date (input is pre-sorted descending)
+                bucketDates[key] = item.sortDate
+            }
         }
 
-        return grouped
-            .map { bucket, items in
-                StoppedSessionGroup(
-                    bucket: bucket,
-                    items: items.sorted { $0.sortDate > $1.sortDate }
-                )
-            }
+        // Sort buckets by max date descending, convert to StoppedSessionGroup
+        return bucketItems
             .sorted { lhs, rhs in
-                stoppedGroupSortDate(lhs.bucket) > stoppedGroupSortDate(rhs.bucket)
+                (bucketDates[lhs.key] ?? .distantPast) > (bucketDates[rhs.key] ?? .distantPast)
+            }
+            .map { key, items in
+                let bucket: StoppedSessionGroup.Bucket
+                if key >= 0 {
+                    // Day bucket: reconstruct Date from day index
+                    let dayStart = Double(key) * 86400 - tzOffset
+                    bucket = .day(Date(timeIntervalSince1970: dayStart))
+                } else {
+                    // Month bucket: reconstruct Date via Calendar (only a few month groups)
+                    let encoded = -key
+                    let year = encoded / 100
+                    let month = encoded % 100
+                    let cal = Calendar.current
+                    let monthStart = cal.date(from: DateComponents(year: year, month: month)) ?? items[0].sortDate
+                    bucket = .month(monthStart)
+                }
+                // Items are already sorted descending from the pre-sorted input
+                return StoppedSessionGroup(bucket: bucket, items: items)
             }
     }
 
