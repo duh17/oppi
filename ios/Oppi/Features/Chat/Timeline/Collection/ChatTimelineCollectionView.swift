@@ -546,11 +546,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             }
 
-            // Skip forced layout during streaming — the collection view
-            // layouts naturally before the next display cycle, and the only
-            // consumer (updateScrollState) is gated off when isBusy. Forcing
-            // layout at 30Hz wastes ~1-3ms per tick for no visible effect.
-            if !configuration.isBusy {
+            // Force layout when not streaming, or when the user is scrolled
+            // away from the bottom. Forced layout resolves all pending cell
+            // self-sizing in one pass, preventing the post-layout self-sizing
+            // cascade that causes contentOffset drift and potential hangs.
+            //
+            // When attached and streaming, skip forced layout — the collection
+            // view layouts naturally and auto-scroll keeps the viewport pinned.
+            let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
+            if !configuration.isBusy || detached {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
