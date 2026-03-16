@@ -8,14 +8,7 @@ import Markdown
 /// This function is intentionally nonisolated so callers can run it
 /// off the main thread via `Task.detached`.
 nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
-    let doc = Document(parsing: source)
-    var blocks: [MarkdownBlock] = []
-    for child in doc.children {
-        if let block = convertBlock(child) {
-            blocks.append(block)
-        }
-    }
-    return blocks
+    return parseCommonMarkFast(source)
 }
 
 /// Parse a CommonMark string and also return the 1-based start line of the
