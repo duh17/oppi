@@ -9,7 +9,13 @@ import Markdown
 /// off the main thread via `Task.detached`.
 nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
     let doc = Document(parsing: source)
-    return doc.children.compactMap { convertBlock($0) }
+    var blocks: [MarkdownBlock] = []
+    for child in doc.children {
+        if let block = convertBlock(child) {
+            blocks.append(block)
+        }
+    }
+    return blocks
 }
 
 /// Parse a CommonMark string and also return the 1-based start line of the
@@ -23,12 +29,20 @@ nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
 ///   than 2 blocks.
 nonisolated func parseCommonMarkWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
     let doc = Document(parsing: source)
-    let children = Array(doc.children)
-    let blocks = children.compactMap { convertBlock($0) }
+    var blocks: [MarkdownBlock] = []
+    var lastChildRange: SourceRange?
+    var childCount = 0
+    for child in doc.children {
+        if let block = convertBlock(child) {
+            blocks.append(block)
+        }
+        lastChildRange = child.range
+        childCount += 1
+    }
     // Need at least 2 top-level blocks to have a finalized prefix.
     let lastLine: Int
-    if children.count >= 2, let lastChild = children.last {
-        lastLine = lastChild.range?.lowerBound.line ?? 1
+    if childCount >= 2, let range = lastChildRange {
+        lastLine = range.lowerBound.line
     } else {
         lastLine = 1
     }
@@ -38,15 +52,12 @@ nonisolated func parseCommonMarkWithLastLine(_ source: String) -> (blocks: [Mark
 // MARK: - Block Conversion
 
 private func convertBlock(_ markup: any Markup) -> MarkdownBlock? {
-    if let heading = markup as? Heading {
-        return .heading(level: heading.level, inlines: convertInlines(heading))
-    }
+    // Ordered by frequency in typical assistant messages.
     if let paragraph = markup as? Paragraph {
         return .paragraph(convertInlines(paragraph))
     }
-    if let blockQuote = markup as? BlockQuote {
-        let blocks = blockQuote.children.compactMap { convertBlock($0) }
-        return .blockQuote(blocks)
+    if let heading = markup as? Heading {
+        return .heading(level: heading.level, inlines: convertInlines(heading))
     }
     if let codeBlock = markup as? CodeBlock {
         // CodeBlock.code includes a trailing newline; strip it for rendering.
@@ -62,6 +73,15 @@ private func convertBlock(_ markup: any Markup) -> MarkdownBlock? {
     if let list = markup as? OrderedList {
         return .orderedList(start: 1, convertListItems(list))
     }
+    if let blockQuote = markup as? BlockQuote {
+        var blocks: [MarkdownBlock] = []
+        for child in blockQuote.children {
+            if let block = convertBlock(child) {
+                blocks.append(block)
+            }
+        }
+        return .blockQuote(blocks)
+    }
     if markup is ThematicBreak {
         return .thematicBreak
     }
@@ -76,10 +96,18 @@ private func convertBlock(_ markup: any Markup) -> MarkdownBlock? {
 
 /// Convert list children (ListItem nodes) into arrays of blocks.
 private func convertListItems(_ list: some Markup) -> [[MarkdownBlock]] {
-    list.children.compactMap { child -> [MarkdownBlock]? in
-        guard let item = child as? ListItem else { return nil }
-        return item.children.compactMap { convertBlock($0) }
+    var items: [[MarkdownBlock]] = []
+    for child in list.children {
+        guard let item = child as? ListItem else { continue }
+        var itemBlocks: [MarkdownBlock] = []
+        for grandchild in item.children {
+            if let block = convertBlock(grandchild) {
+                itemBlocks.append(block)
+            }
+        }
+        items.append(itemBlocks)
     }
+    return items
 }
 
 // MARK: - Table Conversion
@@ -116,7 +144,13 @@ private func extractCellPlainText(_ markup: any Markup) -> String {
 // MARK: - Inline Conversion
 
 private func convertInlines(_ parent: some Markup) -> [MarkdownInline] {
-    parent.children.compactMap { convertInline($0) }
+    var inlines: [MarkdownInline] = []
+    for child in parent.children {
+        if let inline = convertInline(child) {
+            inlines.append(inline)
+        }
+    }
+    return inlines
 }
 
 private func convertInline(_ markup: any Markup) -> MarkdownInline? {
