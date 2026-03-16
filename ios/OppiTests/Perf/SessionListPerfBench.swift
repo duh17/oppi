@@ -226,18 +226,23 @@ struct SessionListPerfBench {
     @Test("METRIC group_stopped_200")
     func groupStopped200() {
         let sessions = Self.generateSessions(count: 200, activeRatio: 0.0)
-        let calendar = Calendar.current
-        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
 
         let us = Self.measureMedianUs {
-            // This mirrors WorkspaceStoppedSessionsSection.stoppedSessionGroups
+            // Mirrors WorkspaceStoppedSessionsSection.stoppedSessionGroups
+            let now = Date()
+            let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
+            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
+
             let grouped = Dictionary(grouping: sessions) { session -> String in
-                if session.lastActivity >= recentCutoff {
-                    let day = calendar.startOfDay(for: session.lastActivity)
-                    return "day-\(Int(day.timeIntervalSince1970))"
+                let ts = session.lastActivity.timeIntervalSince1970
+                if ts >= recentCutoffTs {
+                    let localTs = ts + tzOffset
+                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
+                    return "day-\(Int(dayStart))"
                 }
-                let comps = calendar.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: session.lastActivity)
+                let cal = Calendar.current
+                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                let monthStart = cal.date(from: comps) ?? session.lastActivity
                 return "month-\(Int(monthStart.timeIntervalSince1970))"
             }
             // Sort groups by most recent first
@@ -314,8 +319,6 @@ struct SessionListPerfBench {
     func fullBodyEval200() {
         let allSessions = Self.generateMixedSessions(totalCount: 200)
         let workspaceId = "ws-bench"
-        let calendar = Calendar.current
-        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
         let pendingSessionIds: Set<String> = Set(allSessions.prefix(5).map(\.id))
         var turnEndedDates: [String: Date] = [:]
         let now = Date()
@@ -324,10 +327,8 @@ struct SessionListPerfBench {
         }
 
         let us = Self.measureMedianUs {
-            // Step 1: Filter workspace sessions
             let workspaceSessions = allSessions.filter { $0.workspaceId == workspaceId }
 
-            // Step 2: Filter + sort active
             let activeSessions = workspaceSessions
                 .filter { $0.status != .stopped }
                 .sorted { lhs, rhs in
@@ -339,19 +340,25 @@ struct SessionListPerfBench {
                     return lhsSort > rhsSort
                 }
 
-            // Step 3: Filter + sort stopped
             let stoppedSessions = workspaceSessions
                 .filter { $0.status == .stopped }
                 .sorted { $0.lastActivity > $1.lastActivity }
 
-            // Step 4: Group stopped into date buckets
+            // Fast timestamp-based grouping
+            let nowTs = Date()
+            let recentCutoffTs = nowTs.timeIntervalSince1970 - 30 * 86400
+            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: nowTs))
+
             let grouped = Dictionary(grouping: stoppedSessions) { session -> String in
-                if session.lastActivity >= recentCutoff {
-                    let day = calendar.startOfDay(for: session.lastActivity)
-                    return "day-\(Int(day.timeIntervalSince1970))"
+                let ts = session.lastActivity.timeIntervalSince1970
+                if ts >= recentCutoffTs {
+                    let localTs = ts + tzOffset
+                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
+                    return "day-\(Int(dayStart))"
                 }
-                let comps = calendar.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: session.lastActivity)
+                let cal = Calendar.current
+                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                let monthStart = cal.date(from: comps) ?? session.lastActivity
                 return "month-\(Int(monthStart.timeIntervalSince1970))"
             }
             let sortedGroups = grouped.sorted { lhs, rhs in
@@ -360,7 +367,6 @@ struct SessionListPerfBench {
                 return lhsDate > rhsDate
             }
 
-            // Step 5: Per-row computation for all visible rows
             for session in activeSessions {
                 let _ = session.displayTitle
                 let _ = session.model?.split(separator: "/").last.map(String.init)
@@ -389,8 +395,6 @@ struct SessionListPerfBench {
     func fullBodyEval500() {
         let allSessions = Self.generateMixedSessions(totalCount: 500)
         let workspaceId = "ws-bench"
-        let calendar = Calendar.current
-        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
         let pendingSessionIds: Set<String> = Set(allSessions.prefix(5).map(\.id))
         var turnEndedDates: [String: Date] = [:]
         let now = Date()
@@ -416,13 +420,20 @@ struct SessionListPerfBench {
                 .filter { $0.status == .stopped }
                 .sorted { $0.lastActivity > $1.lastActivity }
 
+            let nowTs = Date()
+            let recentCutoffTs = nowTs.timeIntervalSince1970 - 30 * 86400
+            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: nowTs))
+
             let grouped = Dictionary(grouping: stoppedSessions) { session -> String in
-                if session.lastActivity >= recentCutoff {
-                    let day = calendar.startOfDay(for: session.lastActivity)
-                    return "day-\(Int(day.timeIntervalSince1970))"
+                let ts = session.lastActivity.timeIntervalSince1970
+                if ts >= recentCutoffTs {
+                    let localTs = ts + tzOffset
+                    let dayStart = floor(localTs / 86400) * 86400 - tzOffset
+                    return "day-\(Int(dayStart))"
                 }
-                let comps = calendar.dateComponents([.year, .month], from: session.lastActivity)
-                let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: session.lastActivity)
+                let cal = Calendar.current
+                let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
+                let monthStart = cal.date(from: comps) ?? session.lastActivity
                 return "month-\(Int(monthStart.timeIntervalSince1970))"
             }
             let sortedGroups = grouped.sorted { lhs, rhs in
