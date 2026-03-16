@@ -650,6 +650,114 @@ struct ScrollStabilityTests {
     }
 
     @MainActor
+    @Test func debugAsyncLayoutPassDrift() {
+        // Debug test: trace contentOffset changes during async layout passes
+        // to find EXACTLY what causes drift after expand/collapse.
+        let window = makeScrollTestWindow()
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<20 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Message \(i) text. ", count: 12),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("echo \(i)")], for: "tc-\(i)")
+            toolOutputStore.append(
+                String(repeating: "output \(i)\n", count: 8),
+                to: "tc-\(i)"
+            )
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "echo \(i)",
+                outputPreview: "output \(i)",
+                outputByteCount: 128,
+                isError: false, isDone: true
+            ))
+        }
+
+        let config = makeTimelineConfiguration(
+            items: items,
+            sessionId: "s-debug",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        let midY = maxOffset * 0.5
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let targetIP = visibleIPs.first { ip in
+            ip.item < items.count && items[ip.item].id.hasPrefix("tc-")
+        }!
+
+        let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP)!
+        let screenYBefore = attrsBefore.frame.origin.y - collectionView.contentOffset.y
+
+        print("=== BEFORE EXPAND ===")
+        print("contentOffset.y = \(collectionView.contentOffset.y)")
+        print("contentSize.height = \(collectionView.contentSize.height)")
+        print("target screenY = \(screenYBefore)")
+        print("isDetachedFromBottom = \(collectionView.isDetachedFromBottom)")
+        print("expandCollapseAnchorIP = \(String(describing: collectionView.expandCollapseAnchorIP))")
+
+        coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+        let attrsSync = collectionView.layoutAttributesForItem(at: targetIP)!
+        let screenYSync = attrsSync.frame.origin.y - collectionView.contentOffset.y
+        print("\n=== AFTER SYNC ===")
+        print("contentOffset.y = \(collectionView.contentOffset.y)")
+        print("contentSize.height = \(collectionView.contentSize.height)")
+        print("target screenY = \(screenYSync)")
+        print("sync shift = \(screenYSync - screenYBefore)")
+        print("expandCollapseAnchorIP = \(String(describing: collectionView.expandCollapseAnchorIP))")
+
+        // Drain one tick at a time
+        for tick in 1...5 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.016))
+            let attrsAfter = collectionView.layoutAttributesForItem(at: targetIP)!
+            let screenYAfter = attrsAfter.frame.origin.y - collectionView.contentOffset.y
+            print("\n=== TICK \(tick) ===")
+            print("contentOffset.y = \(collectionView.contentOffset.y)")
+            print("contentSize.height = \(collectionView.contentSize.height)")
+            print("target screenY = \(screenYAfter)")
+            print("total shift = \(screenYAfter - screenYBefore)")
+            print("expandCollapseAnchorIP = \(String(describing: collectionView.expandCollapseAnchorIP))")
+        }
+
+        #expect(true) // Just logging
+    }
+
+    @MainActor
     @Test func repeatedExpandCollapseKeepsTappedRowScreenPosition() {
         // Bug: repeatedly tapping a tool row to expand/collapse causes the
         // collapsed bar to shift on screen. The tapped row's screen-relative
