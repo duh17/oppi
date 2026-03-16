@@ -28,11 +28,18 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    /// Async closure that fetches a file's text content by path.
+    /// Used for "Render" on HTML diffs — fetches the full file from the workspace.
+    typealias FetchFileContent = @Sendable (_ filePath: String) async throws -> String
+
     private let content: FullScreenCodeContent
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSessionId: String?
     private let selectedTextSourceLabel: String?
+    var fetchFileForRender: FetchFileContent?
     private var showSource = false
+    private var fetchedHTMLContent: String?
+    private var isFetchingHTML = false
     private var copyButton: UIBarButtonItem?
     private weak var contentHostController: UIViewController?
     private var installedBodyView: UIView?
@@ -392,10 +399,9 @@ final class FullScreenCodeViewController: UIViewController {
             if case .html(let text, let filePath) = content {
                 return .code(content: text, language: "html", filePath: filePath, startLine: 1)
             }
-            if case .diff(_, _, let filePath, let lines) = content,
-               Self.isHTMLFilePath(filePath),
-               let lines {
-                let html = Self.reconstructNewContent(from: lines)
+            if case .diff = content,
+               let html = fetchedHTMLContent {
+                let filePath = diffFilePath(content)
                 return .html(content: html, filePath: filePath)
             }
         }
@@ -409,8 +415,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .html:
             return showSource ? String(localized: "Preview") : String(localized: "Source")
         case .diff(_, _, let filePath, _):
-            guard Self.isHTMLFilePath(filePath) else { return nil }
-            return showSource ? String(localized: "Diff") : String(localized: "Preview")
+            guard Self.isHTMLFilePath(filePath), fetchFileForRender != nil else { return nil }
+            return showSource ? String(localized: "Diff") : String(localized: "Render")
         default:
             return nil
         }
@@ -424,11 +430,9 @@ final class FullScreenCodeViewController: UIViewController {
         return ext == "html" || ext == "htm"
     }
 
-    private static func reconstructNewContent(from lines: [DiffLine]) -> String {
-        lines
-            .filter { $0.kind != .removed }
-            .map(\.text)
-            .joined(separator: "\n")
+    private func diffFilePath(_ content: FullScreenCodeContent) -> String? {
+        if case .diff(_, _, let filePath, _) = content { return filePath }
+        return nil
     }
 
     // MARK: - Actions
@@ -485,6 +489,61 @@ final class FullScreenCodeViewController: UIViewController {
     @objc private func toggleSource() {
         guard makePresentation().sourceToggleTitle != nil,
               let viewController = contentHostController else {
+            return
+        }
+
+        // For HTML diff render: fetch the full file on first toggle
+        if !showSource,
+           case .diff(_, _, let filePath, _) = currentSemanticContent(),
+           Self.isHTMLFilePath(filePath),
+           fetchedHTMLContent == nil,
+           let filePath,
+           let fetchFileForRender,
+           !isFetchingHTML {
+            isFetchingHTML = true
+            showSource = true
+
+            // Show loading state
+            let palette = ThemeRuntimeState.currentThemeID().palette
+            let loadingLabel = UILabel()
+            loadingLabel.text = "Loading \((filePath as NSString).lastPathComponent)…"
+            loadingLabel.textColor = UIColor(palette.comment)
+            loadingLabel.font = .systemFont(ofSize: 14)
+            loadingLabel.textAlignment = .center
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.startAnimating()
+            let stack = UIStackView(arrangedSubviews: [spinner, loadingLabel])
+            stack.axis = .vertical
+            stack.spacing = 8
+            stack.alignment = .center
+            let container = UIView()
+            container.backgroundColor = UIColor(palette.bgDark)
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            ])
+            installBodyView(container, on: viewController)
+            configureNavigation(on: viewController, palette: palette)
+
+            Task { [weak self] in
+                let html = try? await fetchFileForRender(filePath)
+                guard let self else { return }
+                self.isFetchingHTML = false
+                self.fetchedHTMLContent = html
+                if html == nil {
+                    // Fetch failed — revert toggle
+                    self.showSource = false
+                }
+                let pal = ThemeRuntimeState.currentThemeID().palette
+                let pres = self.makePresentation()
+                self.installBodyView(
+                    self.makeBodyView(for: pres.bodyContent, palette: pal),
+                    on: viewController
+                )
+                self.configureNavigation(on: viewController, palette: pal)
+            }
             return
         }
 
