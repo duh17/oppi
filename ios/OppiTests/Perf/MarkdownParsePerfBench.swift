@@ -212,6 +212,17 @@ struct MarkdownParsePerfBench {
         }
         let parse8kUs = parse8kNs / 1000.0
 
+        // --- 4b. Diagnostic: parse-only and build-only split for 8K ---
+        let parseOnly8kNs = Self.medianNs {
+            Self.consume(parseCommonMark(doc8k))
+        }
+        let parseOnly8kUs = parseOnly8kNs / 1000.0
+        let blocks8k = parseCommonMark(doc8k)
+        let buildOnly8kNs = Self.medianNs {
+            Self.consume(FlatSegment.build(from: blocks8k, themeID: .dark))
+        }
+        let buildOnly8kUs = buildOnly8kNs / 1000.0
+
         // --- 5. FNV-1a hash: 8K bytes ---
         let hashContent = doc8k.utf8
         let hashCount = hashContent.count
@@ -245,6 +256,8 @@ struct MarkdownParsePerfBench {
         print("METRIC full_parse_8k_us=\(String(format: "%.1f", parse8kUs))")
         print("METRIC fnv1a_8k_us=\(String(format: "%.1f", fnvUs))")
         print("METRIC build_20blocks_us=\(String(format: "%.1f", buildUs))")
+        print("METRIC parse_only_8k_us=\(String(format: "%.1f", parseOnly8kUs))")
+        print("METRIC build_only_8k_us=\(String(format: "%.1f", buildOnly8kUs))")
 
         #expect(total > 0)
     }
