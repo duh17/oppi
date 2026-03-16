@@ -24,10 +24,6 @@ export interface Workspace {
   systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
 
-  // Memory
-  memoryEnabled?: boolean; // Enable remember/recall memory extension
-  memoryNamespace?: string; // Same namespace => shared memory across workspaces
-
   // Extensions
   extensions?: string[]; // Extension names from ~/.pi/agent/extensions
 
@@ -504,8 +500,6 @@ export interface CreateWorkspaceRequest {
   systemPrompt?: string;
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string;
-  memoryEnabled?: boolean;
-  memoryNamespace?: string;
   extensions?: string[];
   defaultModel?: string;
   gitStatusEnabled?: boolean;
@@ -521,8 +515,6 @@ export interface UpdateWorkspaceRequest {
   systemPrompt?: string | null;
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string | null;
-  memoryEnabled?: boolean;
-  memoryNamespace?: string | null;
   extensions?: string[];
   defaultModel?: string | null;
   gitStatusEnabled?: boolean;

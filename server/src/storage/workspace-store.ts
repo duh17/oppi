@@ -39,21 +39,6 @@ function normalizeSystemPromptMode(value: unknown): WorkspaceSystemPromptMode {
   return value === "replace" ? "replace" : "append";
 }
 
-function withMemoryNamespaceFallback(workspace: Workspace): Workspace {
-  if (!workspace.memoryEnabled) {
-    return workspace;
-  }
-
-  if (workspace.memoryNamespace && workspace.memoryNamespace.trim().length > 0) {
-    return workspace;
-  }
-
-  return {
-    ...workspace,
-    memoryNamespace: `ws-${workspace.id}`,
-  };
-}
-
 export class WorkspaceStore {
   constructor(private readonly configStore: ConfigStore) {}
 
@@ -65,7 +50,7 @@ export class WorkspaceStore {
     const id = generateId(8);
     const now = Date.now();
 
-    const workspace = withMemoryNamespaceFallback({
+    const workspace: Workspace = {
       id,
       name: req.name,
       description: normalizeOptionalString(req.description),
@@ -76,13 +61,11 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeOptionalString(req.hostMount),
-      memoryEnabled: req.memoryEnabled,
-      memoryNamespace: req.memoryEnabled ? req.memoryNamespace || `ws-${id}` : req.memoryNamespace,
       extensions: normalizeExtensions(req.extensions),
       defaultModel: normalizeOptionalString(req.defaultModel),
       createdAt: now,
       updatedAt: now,
-    });
+    };
 
     this.saveWorkspace(workspace);
     return workspace;
@@ -118,8 +101,6 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeOptionalString(raw.hostMount),
-      memoryEnabled: typeof raw.memoryEnabled === "boolean" ? raw.memoryEnabled : undefined,
-      memoryNamespace: normalizeOptionalString(raw.memoryNamespace),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
       defaultModel: normalizeOptionalString(raw.defaultModel),
       lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
@@ -127,7 +108,7 @@ export class WorkspaceStore {
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
     };
 
-    return withMemoryNamespaceFallback(workspace);
+    return workspace;
   }
 
   getWorkspace(workspaceId: string): Workspace | undefined {
@@ -189,9 +170,6 @@ export class WorkspaceStore {
       workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
     if (updates.hostMount !== undefined)
       workspace.hostMount = normalizeOptionalString(updates.hostMount);
-    if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
-    if (updates.memoryNamespace !== undefined)
-      workspace.memoryNamespace = normalizeOptionalString(updates.memoryNamespace);
     if (updates.extensions !== undefined)
       workspace.extensions = normalizeExtensions(updates.extensions);
     if (updates.defaultModel !== undefined)
@@ -201,9 +179,8 @@ export class WorkspaceStore {
 
     workspace.updatedAt = Date.now();
 
-    const updated = withMemoryNamespaceFallback(workspace);
-    this.saveWorkspace(updated);
-    return updated;
+    this.saveWorkspace(workspace);
+    return workspace;
   }
 
   deleteWorkspace(workspaceId: string): boolean {
@@ -226,8 +203,6 @@ export class WorkspaceStore {
       description: "General-purpose agent with web search and browsing",
       icon: "terminal",
       skills: ["search", "web-fetch", "web-browser"],
-      memoryEnabled: true,
-      memoryNamespace: "general",
     });
 
     this.createWorkspace({
@@ -235,8 +210,6 @@ export class WorkspaceStore {
       description: "Deep research with search, web, and transcription",
       icon: "magnifyingglass",
       skills: ["search", "web-fetch", "web-browser", "deep-research", "youtube-transcript"],
-      memoryEnabled: true,
-      memoryNamespace: "research",
     });
   }
 }

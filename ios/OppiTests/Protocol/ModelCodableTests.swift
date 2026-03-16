@@ -465,8 +465,6 @@ struct WorkspaceCodableTests {
             "systemPrompt": "You are helpful",
             "systemPromptMode": "replace",
             "hostMount": "/Users/me/workspace",
-            "memoryEnabled": true,
-            "memoryNamespace": "dev",
             "extensionMode": "explicit",
             "extensions": ["memory", "todos"],
             "defaultModel": "claude-sonnet-4-20250514",
@@ -484,8 +482,6 @@ struct WorkspaceCodableTests {
         #expect(ws.systemPrompt == "You are helpful")
         #expect(ws.systemPromptMode == .replace)
         #expect(ws.hostMount == "/Users/me/workspace")
-        #expect(ws.memoryEnabled == true)
-        #expect(ws.memoryNamespace == "dev")
         #expect(ws.extensions == ["memory", "todos"])
         #expect(ws.defaultModel == "claude-sonnet-4-20250514")
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
@@ -511,8 +507,6 @@ struct WorkspaceCodableTests {
         #expect(ws.systemPrompt == nil)
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == nil)
-        #expect(ws.memoryEnabled == nil)
-        #expect(ws.memoryNamespace == nil)
         #expect(ws.extensions == nil)
         #expect(ws.defaultModel == nil)
     }
@@ -524,7 +518,6 @@ struct WorkspaceCodableTests {
             "description": "test", "icon": "star",
             "skills": ["fetch"],
             "systemPrompt": "prompt", "systemPromptMode": "replace", "hostMount": "/work",
-            "memoryEnabled": false, "memoryNamespace": "ns",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
             "defaultModel": "model-1",
             "createdAt": 1700000000000, "updatedAt": 1700001000000

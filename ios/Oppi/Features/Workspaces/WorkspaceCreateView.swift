@@ -25,7 +25,6 @@ struct WorkspaceCreateView: View {
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
     @State private var gitStatusEnabled = true
-    @State private var memoryEnabled = true
     @State private var showAdvanced = false
     @State private var isCreating = false
     @State private var error: String?
@@ -183,7 +182,6 @@ struct WorkspaceCreateView: View {
 
             Section {
                 Toggle("Git status bar", isOn: $gitStatusEnabled)
-                Toggle("Memory", isOn: $memoryEnabled)
             }
 
             if showAdvanced {
@@ -237,7 +235,6 @@ struct WorkspaceCreateView: View {
         name = dir.name
         hostMount = dir.path
         gitStatusEnabled = dir.isGitRepo
-        memoryEnabled = true
 
         // Pre-select all skills by default
         if selectedSkills.isEmpty {
@@ -249,7 +246,6 @@ struct WorkspaceCreateView: View {
 
     private func selectManual() {
         hostMount = ""
-        memoryEnabled = true
 
         if selectedSkills.isEmpty {
             selectedSkills = Set(skills.map(\.name))
@@ -262,7 +258,6 @@ struct WorkspaceCreateView: View {
         name = ""
         hostMount = ""
         gitStatusEnabled = false
-        memoryEnabled = true
 
         if selectedSkills.isEmpty {
             selectedSkills = Set(skills.map(\.name))
@@ -328,8 +323,7 @@ struct WorkspaceCreateView: View {
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
             hostMount: hostMount.isEmpty ? nil : hostMount,
-            gitStatusEnabled: gitStatusEnabled,
-            memoryEnabled: memoryEnabled
+            gitStatusEnabled: gitStatusEnabled
         )
 
         do {

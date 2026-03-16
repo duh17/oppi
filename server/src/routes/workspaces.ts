@@ -155,11 +155,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (body.memoryNamespace && !ctx.isValidMemoryNamespace(body.memoryNamespace)) {
-      helpers.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
-      return;
-    }
-
     const extensionsError = extensionValidationError(body.extensions);
     if (extensionsError) {
       helpers.error(res, 400, extensionsError);
@@ -225,11 +220,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         helpers.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
         return;
       }
-    }
-
-    if (body.memoryNamespace && !ctx.isValidMemoryNamespace(body.memoryNamespace)) {
-      helpers.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
-      return;
     }
 
     const extensionsError = extensionValidationError(body.extensions);
