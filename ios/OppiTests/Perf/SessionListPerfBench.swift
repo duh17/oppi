@@ -513,4 +513,81 @@ struct SessionListPerfBench {
         }
         print("METRIC full_body_eval_500=\(Int(us))")
     }
+
+    // --- 11. Scroll no-op: fingerprint check when data hasn't changed (200 sessions) ---
+
+    @Test("METRIC scroll_noop_200")
+    func scrollNoop200() {
+        let allSessions = Self.generateMixedSessions(totalCount: 200)
+        let workspaceId = "ws-bench"
+
+        // Precompute the fingerprint once (simulates first body eval after data change)
+        let cachedFingerprint = Self.sessionFingerprint(allSessions, workspaceId: workspaceId)
+
+        let us = Self.measureMedianUs {
+            // Simulate a scroll-triggered body re-eval: compute fingerprint, compare
+            let currentFingerprint = Self.sessionFingerprint(allSessions, workspaceId: workspaceId)
+            // If fingerprints match, skip all filter/sort/group work
+            if currentFingerprint == cachedFingerprint {
+                // Cache hit — return cached results (no-op here, cost is just the fingerprint)
+                return
+            }
+            // Would do full recomputation here — but during scrolling this never fires
+        }
+        print("METRIC scroll_noop_200=\(Int(us))")
+    }
+
+    // --- 12. Scroll no-op at scale (500 sessions) ---
+
+    @Test("METRIC scroll_noop_500")
+    func scrollNoop500() {
+        let allSessions = Self.generateMixedSessions(totalCount: 500)
+        let workspaceId = "ws-bench"
+
+        let cachedFingerprint = Self.sessionFingerprint(allSessions, workspaceId: workspaceId)
+
+        let us = Self.measureMedianUs {
+            let currentFingerprint = Self.sessionFingerprint(allSessions, workspaceId: workspaceId)
+            if currentFingerprint == cachedFingerprint {
+                return
+            }
+        }
+        print("METRIC scroll_noop_500=\(Int(us))")
+    }
+
+    // MARK: - Fingerprint
+
+    /// Lightweight identity fingerprint for a session list within a workspace.
+    ///
+    /// O(n) scan with no allocations — just arithmetic on existing fields.
+    /// Detects additions, removals, status changes, and activity updates.
+    private struct SessionFingerprint: Equatable {
+        let count: Int
+        let statusHash: Int
+        let activityHash: UInt64
+
+        init(count: Int, statusHash: Int, activityHash: UInt64) {
+            self.count = count
+            self.statusHash = statusHash
+            self.activityHash = activityHash
+        }
+    }
+
+    private static func sessionFingerprint(_ sessions: [Session], workspaceId: String) -> SessionFingerprint {
+        var count = 0
+        var statusHash = 0
+        var activityHash: UInt64 = 0xcbf29ce484222325  // FNV-1a offset basis
+        for session in sessions {
+            guard session.workspaceId == workspaceId else { continue }
+            count += 1
+            statusHash ^= session.status.hashValue
+            // FNV-1a mix of lastActivity timestamp for change detection
+            let bits = session.lastActivity.timeIntervalSince1970.bitPattern
+            activityHash ^= UInt64(bits & 0xFFFFFFFF)
+            activityHash &*= 0x100000001b3  // FNV prime
+            activityHash ^= UInt64(bits >> 32)
+            activityHash &*= 0x100000001b3
+        }
+        return SessionFingerprint(count: count, statusHash: statusHash, activityHash: activityHash)
+    }
 }
