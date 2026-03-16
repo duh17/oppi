@@ -565,14 +565,17 @@ final class VoiceInputManager {
         var audioStartMs: Int = 0
         var totalMs: Int = 0
         var pathTag: String = "warm_cache"
-        var setupTags: [String: String] = [:]
+        var providerTags: [String: String] = [:]
     }
 
     private func emitStartupTelemetry(
         _ timings: StartupTimings,
         annotation: VoiceMetricAnnotation
     ) {
-        let tags = timings.setupTags
+        // Build merged tags once for all 5 emissions (deferred — not on hot path)
+        var tags = ["path": timings.pathTag]
+        for (k, v) in timings.providerTags { tags[k] = v }
+
         recordVoiceMetric(.voiceSetupMs, valueMs: timings.modelReadyMs,
                           annotation: annotation, phase: .modelReady, status: "ok", extraTags: tags)
         recordVoiceMetric(.voiceSetupMs, valueMs: timings.transcriberCreateMs,
@@ -606,10 +609,7 @@ final class VoiceInputManager {
 
         modelPathTag = preparation.pathTag
         timings.pathTag = modelPathTag
-        timings.setupTags = ["path": modelPathTag].merging(
-            preparation.setupMetricTags,
-            uniquingKeysWith: { current, _ in current }
-        )
+        timings.providerTags = preparation.setupMetricTags
         timings.modelReadyMs = elapsedMs(since: modelPhaseStart)
 
         let transcriberStart = ContinuousClock.now
