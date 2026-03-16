@@ -44,6 +44,8 @@ enum DiffAttributedStringBuilder {
         let fgDimColor = UIColor(Color.themeFgDim)
         let headerColor = UIColor(Color.themePurple)
 
+        let lineAddedBg = UIColor(Color.themeDiffAdded.opacity(0.12))
+        let lineRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.10))
         let wordAddedBg = UIColor(Color.themeDiffAdded.opacity(0.35))
         let wordRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.35))
 
@@ -128,17 +130,6 @@ enum DiffAttributedStringBuilder {
                     ]))
                 }
 
-                if let spans = line.spans {
-                    for span in spans {
-                        let length = span.end - span.start
-                        guard span.start >= 0, length > 0, span.end <= codeText.utf16.count else { continue }
-                        let spanRange = NSRange(location: codeStart + span.start, length: length)
-                        guard spanRange.location + spanRange.length <= result.length else { continue }
-                        let bg: UIColor = line.kind == .removed ? wordRemovedBg : wordAddedBg
-                        result.addAttribute(.backgroundColor, value: bg, range: spanRange)
-                    }
-                }
-
                 result.append(NSAttributedString(string: "\n", attributes: [
                     .font: codeFont, .paragraphStyle: paragraph,
                 ]))
@@ -148,10 +139,24 @@ enum DiffAttributedStringBuilder {
                 switch line.kind {
                 case .added:
                     result.addAttribute(diffLineKindAttributeKey, value: "added", range: rowRange)
+                    result.addAttribute(.backgroundColor, value: lineAddedBg, range: rowRange)
                 case .removed:
                     result.addAttribute(diffLineKindAttributeKey, value: "removed", range: rowRange)
+                    result.addAttribute(.backgroundColor, value: lineRemovedBg, range: rowRange)
                 case .context:
                     break
+                }
+
+                // Word-level spans override line bg for specific changed words
+                if let spans = line.spans {
+                    for span in spans {
+                        let length = span.end - span.start
+                        guard span.start >= 0, length > 0, span.end <= codeText.utf16.count else { continue }
+                        let spanRange = NSRange(location: codeStart + span.start, length: length)
+                        guard spanRange.location + spanRange.length <= result.length else { continue }
+                        let bg: UIColor = line.kind == .removed ? wordRemovedBg : wordAddedBg
+                        result.addAttribute(.backgroundColor, value: bg, range: spanRange)
+                    }
                 }
 
                 // Embed tap metadata for annotation authoring
