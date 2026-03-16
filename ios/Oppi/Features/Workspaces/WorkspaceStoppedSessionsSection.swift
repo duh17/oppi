@@ -55,10 +55,6 @@ struct WorkspaceStoppedSessionsSection: View {
         }
     }
 
-    private var calendar: Calendar {
-        Calendar.current
-    }
-
     private var stoppedSessionGroups: [StoppedSessionGroup] {
         let stoppedItems = stoppedSessions.map { StoppedItem.session($0) }
         let localItems = localSessions.map { StoppedItem.local($0) }
@@ -66,16 +62,27 @@ struct WorkspaceStoppedSessionsSection: View {
 
         guard !allItems.isEmpty else { return [] }
 
-        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
+        let now = Date()
+        let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
+        // Fast local-timezone day boundary using fixed UTC offset.
+        // This ignores DST transitions within the 30-day window, which can shift
+        // a session's day bucket by ±1 hour — acceptable for a display-only grouping
+        // that only needs "same local calendar day" granularity.
+        let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
 
-        let grouped = Dictionary(grouping: allItems) { item in
-            if item.sortDate >= recentCutoff {
-                return StoppedSessionGroup.Bucket.day(calendar.startOfDay(for: item.sortDate))
+        let grouped = Dictionary(grouping: allItems) { item -> StoppedSessionGroup.Bucket in
+            let ts = item.sortDate.timeIntervalSince1970
+            if ts >= recentCutoffTs {
+                // Fast startOfDay: floor to day boundary in local time
+                let localTs = ts + tzOffset
+                let dayStart = floor(localTs / 86400) * 86400 - tzOffset
+                return .day(Date(timeIntervalSince1970: dayStart))
             }
-
-            let comps = calendar.dateComponents([.year, .month], from: item.sortDate)
-            let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: item.sortDate)
-            return StoppedSessionGroup.Bucket.month(monthStart)
+            // For older items, use Calendar for month grouping (called rarely — only for items >30 days old)
+            let cal = Calendar.current
+            let comps = cal.dateComponents([.year, .month], from: item.sortDate)
+            let monthStart = cal.date(from: comps) ?? item.sortDate
+            return .month(monthStart)
         }
 
         return grouped
@@ -160,12 +167,13 @@ struct WorkspaceStoppedSessionsSection: View {
     }
 
     private func stoppedGroupTitle(_ bucket: StoppedSessionGroup.Bucket) -> String {
+        let cal = Calendar.current
         switch bucket {
         case .day(let day):
-            if calendar.isDateInToday(day) {
+            if cal.isDateInToday(day) {
                 return "Today"
             }
-            if calendar.isDateInYesterday(day) {
+            if cal.isDateInYesterday(day) {
                 return "Yesterday"
             }
             return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
@@ -201,9 +209,13 @@ struct WorkspaceStoppedSessionsSection: View {
     private func isGroupExpandedByDefault(_ bucket: StoppedSessionGroup.Bucket) -> Bool {
         switch bucket {
         case .day(let day):
-            let todayStart = calendar.startOfDay(for: Date())
-            let expandedCutoff = calendar.date(byAdding: .day, value: -2, to: todayStart) ?? .distantPast
-            return day >= expandedCutoff
+            // Fast: today - 2 days in seconds
+            let now = Date()
+            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
+            let localNow = now.timeIntervalSince1970 + tzOffset
+            let todayStart = floor(localNow / 86400) * 86400 - tzOffset
+            let expandedCutoff = todayStart - 2 * 86400
+            return day.timeIntervalSince1970 >= expandedCutoff
         case .month:
             return false
         }
