@@ -61,3 +61,4 @@ docs/**/*.md
 !docs/testing/extraction-opportunities.md
 
 server/extensions/
+docs/design/mocks/

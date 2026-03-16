@@ -26,14 +26,13 @@ import { applyHostEnv, resolveExecutableOnPath, resolveHostEnv } from "./host-en
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
 import {
-  isTailscaleHostname,
-  prepareTlsForServer,
   readCertificateExpiryMs,
   readCertificateFingerprint,
   resolveTlsConfig,
   tlsSchemeForConfig,
 } from "./tls.js";
-import type { InviteData, InvitePayloadV3, ServerConfig } from "./types.js";
+import type { ServerConfig } from "./types.js";
+import { generateInvite } from "./invite.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -255,96 +254,50 @@ function showPairingQR(
   hostOverride?: string,
   showToken = false,
 ): boolean {
-  const config = storage.getConfig();
-  storage.ensurePaired();
-  const pairingToken = storage.issuePairingToken(90_000);
-  const inviteHost = resolveInviteHost(config, hostOverride);
-
-  if (!inviteHost) {
-    const hint =
-      config.tls?.mode === "tailscale"
-        ? "  Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected"
-        : "  Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
-    console.log(c.red("  Error: Could not determine pairing host"));
-    console.log(c.dim(hint));
-    console.log("");
-    return false;
-  }
-
-  if (config.tls?.mode === "tailscale" && !isTailscaleHostname(inviteHost)) {
-    console.log(c.red("  Error: tailscale TLS mode requires a *.ts.net pairing host"));
-    console.log(c.dim("  Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale"));
+  let invite;
+  try {
+    invite = generateInvite(
+      storage,
+      (override) => resolveInviteHost(storage.getConfig(), override),
+      shortHostLabel,
+      { hostOverride, requestedName },
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(c.red(`  Error: ${message}`));
     console.log("");
     return false;
   }
 
   if (hostOverride?.trim()) {
-    console.log(c.dim(`  (using host override: ${inviteHost})`));
+    console.log(c.dim(`  (using host override: ${invite.host})`));
   } else {
-    console.log(c.dim(`  (auto-detected host: ${inviteHost})`));
+    console.log(c.dim(`  (auto-detected host: ${invite.host})`));
   }
 
-  let inviteScheme: "http" | "https" = "http";
-  let tlsCertFingerprint: string | undefined;
-
-  try {
-    const tls = prepareTlsForServer(config, storage.getDataDir(), {
-      additionalHosts: [inviteHost, config.host],
-      ensureSelfSigned: true,
-    });
-
-    inviteScheme = tls.enabled ? "https" : "http";
-    if (tls.enabled && tls.certPath) {
-      tlsCertFingerprint = readCertificateFingerprint(tls.certPath);
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(c.red(`  Error: TLS setup failed — ${message}`));
-    console.log("");
-    return false;
-  }
-
-  // Build unsigned v3 pairing payload.
-  const inviteData: InviteData = {
-    host: inviteHost,
-    port: config.port,
-    scheme: inviteScheme,
-    token: "",
-    pairingToken,
-    name: requestedName?.trim() || shortHostLabel(inviteHost),
-    tlsCertFingerprint,
-  };
-
-  const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
-
-  const invitePayload: InvitePayloadV3 = {
-    v: 3,
-    host: inviteData.host,
-    port: inviteData.port,
-    scheme: inviteData.scheme,
-    token: inviteData.token,
-    pairingToken: inviteData.pairingToken,
-    name: inviteData.name,
-    tlsCertFingerprint: inviteData.tlsCertFingerprint,
-    fingerprint: identity.fingerprint,
-  };
-
-  const inviteJson = JSON.stringify(invitePayload);
-  const inviteUrl = `oppi://connect?${new URLSearchParams({
-    v: "3",
-    invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
-  }).toString()}`;
-
-  console.log(`  📱 Pair with ${c.bold(shortHostLabel(inviteHost))}`);
-  console.log(c.dim(`  Transport: ${inviteScheme.toUpperCase()} (${inviteHost}:${config.port})`));
-  if (tlsCertFingerprint) {
-    console.log(c.dim(`  Cert pin:  ${tlsCertFingerprint}`));
+  console.log(`  📱 Pair with ${c.bold(shortHostLabel(invite.host))}`);
+  console.log(c.dim(`  Transport: ${invite.scheme.toUpperCase()} (${invite.host}:${invite.port})`));
+  if (invite.tlsCertFingerprint) {
+    console.log(c.dim(`  Cert pin:  ${invite.tlsCertFingerprint}`));
   }
   console.log("");
   console.log("  Scan this QR code in Oppi:");
   console.log("");
 
-  const qr = renderQR(inviteJson);
+  // Reconstruct v3 JSON for QR encoding (generateInvite returns the URL, we need raw JSON for QR)
+  const invitePayloadJson = JSON.stringify({
+    v: 3,
+    host: invite.host,
+    port: invite.port,
+    scheme: invite.scheme,
+    token: "",
+    pairingToken: invite.pairingToken,
+    name: invite.name,
+    tlsCertFingerprint: invite.tlsCertFingerprint,
+    fingerprint: invite.fingerprint,
+  });
+
+  const qr = renderQR(invitePayloadJson);
   console.log(
     qr
       .split("\n")
@@ -354,7 +307,7 @@ function showPairingQR(
 
   console.log("");
   console.log("  Or share this link:");
-  console.log(`  ${c.cyan(inviteUrl)}`);
+  console.log(`  ${c.cyan(invite.inviteURL)}`);
   console.log("");
 
   if (showToken) {
@@ -372,7 +325,25 @@ async function cmdPair(
   requestedName: string | undefined,
   hostOverride?: string,
   showToken = false,
+  jsonOutput = false,
 ): Promise<void> {
+  if (jsonOutput) {
+    try {
+      const invite = generateInvite(
+        storage,
+        (override) => resolveInviteHost(storage.getConfig(), override),
+        shortHostLabel,
+        { hostOverride, requestedName },
+      );
+      process.stdout.write(JSON.stringify(invite, null, 2) + "\n");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`Error: ${message}\n`);
+      process.exit(1);
+    }
+    return;
+  }
+
   printHeader();
 
   if (!showPairingQR(storage, requestedName, hostOverride, showToken)) {
@@ -951,6 +922,7 @@ function cmdHelp(): void {
   console.log("  " + c.bold("Options:"));
   console.log("");
   console.log(`    ${c.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
+  console.log(`    ${c.dim("--json")}             Output invite as JSON (pair command)`);
   console.log(`    ${c.dim("--show-token")}       Print owner token in pair output (unsafe)`);
   console.log(`    ${c.dim("--config-file <p>")}  Config path for 'config validate'`);
   console.log("");
@@ -1004,7 +976,13 @@ async function main(): Promise<void> {
       break;
 
     case "pair":
-      await cmdPair(storage, positional[0], flags.host, flags["show-token"] === "true");
+      await cmdPair(
+        storage,
+        positional[0],
+        flags.host,
+        flags["show-token"] === "true",
+        flags.json === "true",
+      );
       break;
 
     case "status":
