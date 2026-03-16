@@ -95,12 +95,23 @@ final class AnchoredCollectionView: UICollectionView {
         didSet {
             guard !isApplyingAnchorCorrection else { return }
 
+            #if DEBUG
+                let _didSetStart = DispatchTime.now().uptimeNanoseconds
+                _debugDidSetEntryCount += 1
+                defer {
+                    _debugDidSetNanos += DispatchTime.now().uptimeNanoseconds &- _didSetStart
+                }
+            #endif
+
             // Expand/collapse anchor takes priority.
             if let ecIP = expandCollapseAnchorIP,
                let attrs = layoutAttributesForItem(at: ecIP) {
                 let currentScreenY = attrs.frame.origin.y - contentOffset.y
                 let delta = currentScreenY - expandCollapseAnchorScreenY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
+                #if DEBUG
+                    _debugDidSetCorrectionCount += 1
+                #endif
                 isApplyingAnchorCorrection = true
                 super.contentOffset.y += delta
                 isApplyingAnchorCorrection = false
@@ -115,6 +126,9 @@ final class AnchoredCollectionView: UICollectionView {
                 let currentScreenY = attrs.frame.origin.y - contentOffset.y
                 let delta = currentScreenY - detachedAnchorScreenY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
+                #if DEBUG
+                    _debugDidSetCorrectionCount += 1
+                #endif
                 isApplyingAnchorCorrection = true
                 super.contentOffset.y += delta
                 isApplyingAnchorCorrection = false
@@ -131,6 +145,30 @@ final class AnchoredCollectionView: UICollectionView {
         /// UIKit performs the layout pass. Used to simulate estimated→actual
         /// geometry changes in unit tests.
         var didCaptureAnchorForTesting: (() -> Void)?
+
+        // MARK: - Debug instrumentation for autoresearch benchmarks
+
+        /// Count of contentOffset.didSet invocations that entered the
+        /// correction path (did not early-return via isApplyingAnchorCorrection).
+        var _debugDidSetEntryCount = 0
+        /// Count of contentOffset.didSet invocations that actually applied
+        /// a correction (delta > 0.5).
+        var _debugDidSetCorrectionCount = 0
+        /// Accumulated nanoseconds spent in contentOffset.didSet correction path.
+        var _debugDidSetNanos: UInt64 = 0
+
+        /// Count of layoutSubviews passes that captured + restored an anchor.
+        var _debugLayoutAnchorCount = 0
+        /// Accumulated nanoseconds in captureAnchor + restoreAnchor.
+        var _debugLayoutAnchorNanos: UInt64 = 0
+
+        func _debugResetCounters() {
+            _debugDidSetEntryCount = 0
+            _debugDidSetCorrectionCount = 0
+            _debugDidSetNanos = 0
+            _debugLayoutAnchorCount = 0
+            _debugLayoutAnchorNanos = 0
+        }
     #endif
 
     override func layoutSubviews() {
@@ -139,14 +177,30 @@ final class AnchoredCollectionView: UICollectionView {
             return
         }
 
+        #if DEBUG
+            let _captureStart = DispatchTime.now().uptimeNanoseconds
+        #endif
+
         captureAnchor()
 
         #if DEBUG
+            let _captureEnd = DispatchTime.now().uptimeNanoseconds
             didCaptureAnchorForTesting?()
         #endif
 
         super.layoutSubviews()
+
+        #if DEBUG
+            let _restoreStart = DispatchTime.now().uptimeNanoseconds
+        #endif
+
         restoreAnchor()
+
+        #if DEBUG
+            _debugLayoutAnchorCount += 1
+            _debugLayoutAnchorNanos += (_captureEnd &- _captureStart)
+                + (DispatchTime.now().uptimeNanoseconds &- _restoreStart)
+        #endif
     }
 
     // MARK: - Private
