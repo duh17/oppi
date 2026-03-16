@@ -230,6 +230,8 @@ final class FullScreenCodeViewController: UIViewController {
             return (filePath, String(localized: "Diff"))
         case .markdown(_, let filePath):
             return (filePath, String(localized: "Markdown"))
+        case .html(_, let filePath):
+            return (filePath, String(localized: "HTML"))
         case .thinking:
             return (nil, String(localized: "Thinking"))
         case .terminal(_, let command, _):
@@ -291,6 +293,11 @@ final class FullScreenCodeViewController: UIViewController {
                     surface: .fullScreenMarkdown,
                     filePath: filePath
                 )
+            )
+        case .html(let text, _):
+            return NativeFullScreenHTMLBody(
+                htmlString: text,
+                palette: palette
             )
         case .thinking(let text, let stream):
             return NativeFullScreenMarkdownBody(
@@ -378,16 +385,50 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
-        if showSource,
-           case .markdown(let text, let filePath) = content {
-            return .plainText(content: text, filePath: filePath)
+        if showSource {
+            if case .markdown(let text, let filePath) = content {
+                return .plainText(content: text, filePath: filePath)
+            }
+            if case .html(let text, let filePath) = content {
+                return .code(content: text, language: "html", filePath: filePath, startLine: 1)
+            }
+            if case .diff(_, _, let filePath, let lines) = content,
+               Self.isHTMLFilePath(filePath),
+               let lines {
+                let html = Self.reconstructNewContent(from: lines)
+                return .html(content: html, filePath: filePath)
+            }
         }
         return content
     }
 
     private func sourceToggleTitle(for content: FullScreenCodeContent) -> String? {
-        guard case .markdown = content else { return nil }
-        return showSource ? String(localized: "Reader") : String(localized: "Source")
+        switch content {
+        case .markdown:
+            return showSource ? String(localized: "Reader") : String(localized: "Source")
+        case .html:
+            return showSource ? String(localized: "Preview") : String(localized: "Source")
+        case .diff(_, _, let filePath, _):
+            guard Self.isHTMLFilePath(filePath) else { return nil }
+            return showSource ? String(localized: "Diff") : String(localized: "Preview")
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - HTML Diff Helpers
+
+    private static func isHTMLFilePath(_ filePath: String?) -> Bool {
+        guard let filePath else { return false }
+        let ext = (filePath as NSString).pathExtension.lowercased()
+        return ext == "html" || ext == "htm"
+    }
+
+    private static func reconstructNewContent(from lines: [DiffLine]) -> String {
+        lines
+            .filter { $0.kind != .removed }
+            .map(\.text)
+            .joined(separator: "\n")
     }
 
     // MARK: - Actions
@@ -413,6 +454,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(_, let newText, _, _):
             return newText
         case .markdown(let text, _):
+            return text
+        case .html(let text, _):
             return text
         case .thinking(let text, let stream):
             return stream?.snapshot.text ?? text

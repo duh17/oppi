@@ -66,7 +66,7 @@ struct HTMLPreviewView: View {
 ///
 /// Loads HTML from a string with no network access, no bridge,
 /// and external links opening in Safari.
-private struct HTMLWebView: UIViewRepresentable {
+struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
 

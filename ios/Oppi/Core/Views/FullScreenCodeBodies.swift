@@ -1,5 +1,81 @@
 import SwiftUI
 import UIKit
+import WebKit
+
+// MARK: - HTML Body
+
+/// Full-screen HTML renderer using WKWebView.
+///
+/// Same security posture as `HTMLWebView`: ephemeral data store,
+/// no bridge injection, external links open in Safari.
+final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
+    private let webView: WKWebView
+
+    init(htmlString: String, palette: ThemePalette) {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.mediaTypesRequiringUserActionForPlayback = .all
+
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.isInspectable = false
+        wv.allowsBackForwardNavigationGestures = false
+        wv.scrollView.contentInsetAdjustmentBehavior = .always
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.backgroundColor = .clear
+        self.webView = wv
+
+        super.init(frame: .zero)
+        backgroundColor = UIColor(palette.bgDark)
+
+        webView.navigationDelegate = self
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        webView.loadHTMLString(htmlString, baseURL: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    // MARK: - WKNavigationDelegate
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.navigationType == .other {
+            decisionHandler(.allow)
+            return
+        }
+        if let url = navigationAction.request.url,
+           url.scheme == "http" || url.scheme == "https" {
+            UIApplication.shared.open(url)
+        }
+        decisionHandler(.cancel)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url,
+           url.scheme == "http" || url.scheme == "https" {
+            UIApplication.shared.open(url)
+        }
+        return nil
+    }
+}
 
 // MARK: - Code Body
 

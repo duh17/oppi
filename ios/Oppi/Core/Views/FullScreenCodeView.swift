@@ -160,6 +160,8 @@ final class SourceTraceStream {
             return "diff"
         case .markdown:
             return "markdown"
+        case .html:
+            return "html"
         case .thinking:
             return "thinking"
         case .terminal:
@@ -183,6 +185,7 @@ indirect enum FullScreenCodeContent {
     case plainText(content: String, filePath: String?)
     case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
     case markdown(content: String, filePath: String?)
+    case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(content: String, command: String?, stream: TerminalTraceStream? = nil)
     case liveSource(snapshot: SourceTraceStream.Snapshot, stream: SourceTraceStream)

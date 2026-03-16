@@ -5,6 +5,7 @@ import SwiftUI
 /// Detected file type for content-aware rendering.
 enum FileType: Equatable {
     case markdown
+    case html
     case code(language: SyntaxLanguage)
     case json
     case image
@@ -42,6 +43,8 @@ enum FileType: Equatable {
         switch ext {
         case "md", "mdx", "markdown":
             return .markdown
+        case "html", "htm":
+            return .html
         case "jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "tiff":
             return .image
         case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "caf":
@@ -100,6 +103,7 @@ enum FileType: Equatable {
     var displayLabel: String {
         switch self {
         case .markdown: return "Markdown"
+        case .html: return "HTML"
         case .code(let lang): return lang.displayName
         case .json: return "JSON"
         case .image: return "Image"
