@@ -46,8 +46,8 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
         let viewWidth = hostScrollView?.bounds.width ?? 0
         let fillWidth = max(measuredContentWidth, viewWidth)
 
-        let addedBg = UIColor(Color.themeDiffAdded.opacity(0.18))
-        let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.15))
+        let addedBg = UIColor(Color.themeDiffAdded.opacity(0.10))
+        let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.08))
         let headerBg = UIColor(Color.themeBgHighlight)
 
         textStorage.enumerateAttribute(diffLineKindAttributeKey, in: NSRange(location: 0, length: textStorage.length), options: []) { value, attrRange, _ in

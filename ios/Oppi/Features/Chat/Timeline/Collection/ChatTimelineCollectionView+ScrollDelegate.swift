@@ -100,16 +100,16 @@ extension ChatTimelineCollectionHost.Controller {
         }
 
         if !isUserDriven,
-           !isTimelineBusy,
-           streamingAssistantID == nil,
            alreadyAttached,
            contentHeightDelta > 0.5,
            abs(deltaY) < 2 {
             let insets = scrollView.adjustedContentInset
             let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
             if visibleHeight > 0 {
-                // Keep the viewport pinned to the bottom for passive,
-                // idle layout growth (e.g. post-stream markdown reflow).
+                // Keep the viewport pinned to the bottom when content grows
+                // passively (cell resize during streaming, post-stream reflow).
+                // This fills the gap between throttled scroll commands so the
+                // bottom of the streaming message stays visible above the input bar.
                 let desiredBottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
                 if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
                     scrollView.contentOffset.y = desiredBottomOffsetY
