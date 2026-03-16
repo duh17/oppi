@@ -495,6 +495,8 @@ enum ToolPresentationBuilder {
             language = resolvedLanguage
         case .json:
             language = .json
+        case .html:
+            language = .html
         case .markdown, .image, .audio, .plain, .none:
             language = nil
         }
@@ -520,7 +522,7 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .plain, .code, .json, .none:
+        case .html, .plain, .code, .json, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -544,7 +546,7 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .plain, .code, .json, .none:
+        case .html, .plain, .code, .json, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -681,6 +683,7 @@ enum ToolPresentationBuilder {
         switch fileType {
         case .code(let language): return language
         case .json: return .json
+        case .html: return .html
         case .markdown, .image, .audio, .plain: return nil
         }
     }

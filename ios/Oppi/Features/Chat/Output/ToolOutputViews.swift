@@ -293,6 +293,8 @@ extension ToolPresentationBuilder {
                 return language
             case .json:
                 return .json
+            case .html:
+                return .html
             case .markdown, .image, .audio, .plain:
                 return nil
             }
