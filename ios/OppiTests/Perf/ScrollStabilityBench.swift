@@ -71,6 +71,9 @@ struct ScrollStabilityBench {
                 didSetCorrections = cv._debugDidSetCorrectionCount
             }
 
+            // Flush any pending deferred correction before checking drift.
+            cv.layoutIfNeeded()
+
             // Verify anchor restored position.
             let drift = abs(cv.contentOffset.y - startOffset)
             #expect(

@@ -29,6 +29,12 @@ final class AnchoredCollectionView: UICollectionView {
     private var expandCollapseSavedOffsetY: CGFloat = 0
     private var detachedSavedOffsetY: CGFloat = 0
 
+    /// When non-nil, the next layoutSubviews will restore contentOffset.y
+    /// to this value. Set by the contentOffset.didSet to batch multiple
+    /// cascade adjustments into a single layout correction. This avoids
+    /// the ~55μs UIView.bounds setter cost on every didSet entry.
+    private var pendingCorrectionOffsetY: CGFloat?
+
     /// Set by the timeline controller before each snapshot apply so layout
     /// passes preserve the first visible item's screen position for users
     /// who scrolled away from the bottom. Without this, cell height changes
@@ -116,23 +122,20 @@ final class AnchoredCollectionView: UICollectionView {
             #endif
 
             // Expand/collapse anchor takes priority.
-            // Restores the saved "known good" offset by writing directly to
-            // bounds.origin.y — this bypasses UIScrollView's full contentOffset
-            // setter (which triggers setNeedsLayout, delegate callbacks, and
-            // scroll indicator updates). Since the didSet is only undoing
-            // UIKit's post-layout cascade drift, we don't need those side
-            // effects. The bounds write is ~50× cheaper.
+            // Defers the correction to the next layoutSubviews instead of
+            // writing bounds immediately. This batches N cascade adjustments
+            // into 1 layout correction, avoiding the ~55μs UIView.bounds
+            // setter on every didSet entry.
             if expandCollapseAnchorIP != nil {
                 let delta = contentOffset.y - expandCollapseSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
-                isApplyingAnchorCorrection = true
-                var b = bounds
-                b.origin.y = expandCollapseSavedOffsetY
-                bounds = b
-                isApplyingAnchorCorrection = false
+                if pendingCorrectionOffsetY == nil {
+                    pendingCorrectionOffsetY = expandCollapseSavedOffsetY
+                    setNeedsLayout()
+                }
                 return
             }
 
@@ -144,11 +147,10 @@ final class AnchoredCollectionView: UICollectionView {
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
-                isApplyingAnchorCorrection = true
-                var b = bounds
-                b.origin.y = detachedSavedOffsetY
-                bounds = b
-                isApplyingAnchorCorrection = false
+                if pendingCorrectionOffsetY == nil {
+                    pendingCorrectionOffsetY = detachedSavedOffsetY
+                    setNeedsLayout()
+                }
             }
         }
     }
@@ -192,6 +194,16 @@ final class AnchoredCollectionView: UICollectionView {
         if isApplyingAnchorCorrection {
             super.layoutSubviews()
             return
+        }
+
+        // Apply deferred correction from contentOffset.didSet before
+        // the regular anchor cycle. This batches multiple cascade
+        // adjustments into a single contentOffset write.
+        if let pending = pendingCorrectionOffsetY {
+            pendingCorrectionOffsetY = nil
+            isApplyingAnchorCorrection = true
+            contentOffset.y = pending
+            isApplyingAnchorCorrection = false
         }
 
         #if DEBUG
