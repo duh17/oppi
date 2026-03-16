@@ -23,8 +23,12 @@ struct HTMLPreviewView: View {
     var body: some View {
         Group {
             if let html = htmlContent {
-                HTMLWebView(htmlString: html, baseFileName: fileName)
-                    .ignoresSafeArea(edges: .bottom)
+                HTMLWebView(
+                    htmlString: html,
+                    baseFileName: fileName,
+                    piActionHandler: piClipboardHandler
+                )
+                .ignoresSafeArea(edges: .bottom)
             } else if let error {
                 ContentUnavailableView(
                     "Preview Unavailable",
@@ -40,6 +44,23 @@ struct HTMLPreviewView: View {
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadHTML() }
+    }
+
+    /// Clipboard fallback: composes the pi-formatted text and copies it.
+    private var piClipboardHandler: (String, SelectedTextPiActionKind) -> Void {
+        let path = filePath
+        return { text, actionKind in
+            let request = SelectedTextPiRequest(
+                action: actionKind,
+                selectedText: text,
+                source: SelectedTextSourceContext(
+                    sessionId: "",
+                    surface: .fullScreenSource,
+                    filePath: path
+                )
+            )
+            UIPasteboard.general.string = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+        }
     }
 
     private func loadHTML() async {
@@ -69,8 +90,9 @@ struct HTMLPreviewView: View {
 struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
+    var piActionHandler: ((String, SelectedTextPiActionKind) -> Void)?
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIView(context: Context) -> PiWKWebView {
         let config = WKWebViewConfiguration()
 
         // Ephemeral storage — no cookies, cache, or local storage persisted
@@ -81,7 +103,7 @@ struct HTMLWebView: UIViewRepresentable {
         // No media auto-play
         config.mediaTypesRequiringUserActionForPlayback = .all
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = PiWKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.isInspectable = false
         webView.allowsBackForwardNavigationGestures = false
@@ -92,14 +114,16 @@ struct HTMLWebView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
 
+        webView.piActionHandler = piActionHandler
+
         // Load HTML with a blank base URL — no relative resource loading
         webView.loadHTMLString(htmlString, baseURL: nil)
 
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        // No updates needed — HTML is loaded once
+    func updateUIView(_ webView: PiWKWebView, context: Context) {
+        webView.piActionHandler = piActionHandler
     }
 
     func makeCoordinator() -> Coordinator {
