@@ -143,12 +143,11 @@ final class AnchoredCollectionView: UICollectionView {
             contentSize.height - bounds.height + adjustedContentInset.bottom
         )
 
-        let targetOffsetY = contentOffset.y + delta
-        let clampedOffsetY = min(max(targetOffsetY, minOffsetY), maxOffsetY)
-        guard abs(clampedOffsetY - contentOffset.y) > 0.5 else { return }
+        let targetOffsetY = min(max(contentOffset.y + delta, minOffsetY), maxOffsetY)
+        guard abs(targetOffsetY - contentOffset.y) > 0.5 else { return }
 
         isApplyingAnchorCorrection = true
-        contentOffset.y = clampedOffsetY
+        contentOffset.y = targetOffsetY
         isApplyingAnchorCorrection = false
     }
 }

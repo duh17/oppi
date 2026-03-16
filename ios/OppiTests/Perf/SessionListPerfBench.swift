@@ -346,22 +346,32 @@ struct SessionListPerfBench {
         }
 
         let us = Self.measureMedianUs {
-            let workspaceSessions = allSessions.filter { $0.workspaceId == workspaceId }
-
-            let activeSessions = workspaceSessions
-                .filter { $0.status != .stopped }
-                .sorted { lhs, rhs in
-                    let lhsAttn = pendingSessionIds.contains(lhs.id)
-                    let rhsAttn = pendingSessionIds.contains(rhs.id)
-                    if lhsAttn != rhsAttn { return lhsAttn }
-                    let lhsSort = turnEndedDates[lhs.id] ?? lhs.createdAt
-                    let rhsSort = turnEndedDates[rhs.id] ?? rhs.createdAt
-                    return lhsSort > rhsSort
+            // Single-pass: filter workspace + partition active/stopped in one loop
+            var activeRaw: [Session] = []
+            var stoppedRaw: [Session] = []
+            activeRaw.reserveCapacity(20)
+            stoppedRaw.reserveCapacity(180)
+            for session in allSessions {
+                guard session.workspaceId == workspaceId else { continue }
+                if session.status == .stopped {
+                    stoppedRaw.append(session)
+                } else {
+                    activeRaw.append(session)
                 }
+            }
 
-            let stoppedSessions = workspaceSessions
-                .filter { $0.status == .stopped }
-                .sorted { $0.lastActivity > $1.lastActivity }
+            // Sort active by attention + turn-ended
+            activeRaw.sort { lhs, rhs in
+                let lhsAttn = pendingSessionIds.contains(lhs.id)
+                let rhsAttn = pendingSessionIds.contains(rhs.id)
+                if lhsAttn != rhsAttn { return lhsAttn }
+                let lhsSort = turnEndedDates[lhs.id] ?? lhs.createdAt
+                let rhsSort = turnEndedDates[rhs.id] ?? rhs.createdAt
+                return lhsSort > rhsSort
+            }
+
+            // Sort stopped by lastActivity descending
+            stoppedRaw.sort { $0.lastActivity > $1.lastActivity }
 
             // Int-keyed grouping with precomputed max dates
             let nowTs = Date()
@@ -373,7 +383,7 @@ struct SessionListPerfBench {
             buckets.reserveCapacity(40)
             bucketMaxDate.reserveCapacity(40)
 
-            for session in stoppedSessions {
+            for session in stoppedRaw {
                 let ts = session.lastActivity.timeIntervalSince1970
                 let key: Int
                 if ts >= recentCutoffTs {
@@ -394,7 +404,7 @@ struct SessionListPerfBench {
                 (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
 
-            for session in activeSessions {
+            for session in activeRaw {
                 let _ = session.displayTitle
                 let _ = session.model?.split(separator: "/").last.map(String.init)
                 if let used = session.contextTokens,
@@ -429,22 +439,29 @@ struct SessionListPerfBench {
         }
 
         let us = Self.measureMedianUs {
-            let workspaceSessions = allSessions.filter { $0.workspaceId == workspaceId }
-
-            let activeSessions = workspaceSessions
-                .filter { $0.status != .stopped }
-                .sorted { lhs, rhs in
-                    let lhsAttn = pendingSessionIds.contains(lhs.id)
-                    let rhsAttn = pendingSessionIds.contains(rhs.id)
-                    if lhsAttn != rhsAttn { return lhsAttn }
-                    let lhsSort = turnEndedDates[lhs.id] ?? lhs.createdAt
-                    let rhsSort = turnEndedDates[rhs.id] ?? rhs.createdAt
-                    return lhsSort > rhsSort
+            var activeRaw: [Session] = []
+            var stoppedRaw: [Session] = []
+            activeRaw.reserveCapacity(20)
+            stoppedRaw.reserveCapacity(480)
+            for session in allSessions {
+                guard session.workspaceId == workspaceId else { continue }
+                if session.status == .stopped {
+                    stoppedRaw.append(session)
+                } else {
+                    activeRaw.append(session)
                 }
+            }
 
-            let stoppedSessions = workspaceSessions
-                .filter { $0.status == .stopped }
-                .sorted { $0.lastActivity > $1.lastActivity }
+            activeRaw.sort { lhs, rhs in
+                let lhsAttn = pendingSessionIds.contains(lhs.id)
+                let rhsAttn = pendingSessionIds.contains(rhs.id)
+                if lhsAttn != rhsAttn { return lhsAttn }
+                let lhsSort = turnEndedDates[lhs.id] ?? lhs.createdAt
+                let rhsSort = turnEndedDates[rhs.id] ?? rhs.createdAt
+                return lhsSort > rhsSort
+            }
+
+            stoppedRaw.sort { $0.lastActivity > $1.lastActivity }
 
             let nowTs = Date()
             let recentCutoffTs = nowTs.timeIntervalSince1970 - 30 * 86400
@@ -455,7 +472,7 @@ struct SessionListPerfBench {
             buckets.reserveCapacity(40)
             bucketMaxDate.reserveCapacity(40)
 
-            for session in stoppedSessions {
+            for session in stoppedRaw {
                 let ts = session.lastActivity.timeIntervalSince1970
                 let key: Int
                 if ts >= recentCutoffTs {
@@ -476,7 +493,7 @@ struct SessionListPerfBench {
                 (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
 
-            for session in activeSessions {
+            for session in activeRaw {
                 let _ = session.displayTitle
                 let _ = session.model?.split(separator: "/").last.map(String.init)
                 if let used = session.contextTokens,
