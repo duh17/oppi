@@ -6,6 +6,9 @@ packages:
   swift-markdown:
     url: https://github.com/apple/swift-markdown
     from: "0.7.0"
+  swift-cmark:
+    url: https://github.com/swiftlang/swift-cmark.git
+    from: "0.7.1"
   sentry-cocoa:
     url: https://github.com/getsentry/sentry-cocoa
     from: "8.0.0"
@@ -125,6 +128,10 @@ targets:
     dependencies:
       - package: swift-markdown
         product: Markdown
+      - package: swift-cmark
+        product: cmark-gfm
+      - package: swift-cmark
+        product: cmark-gfm-extensions
       - package: sentry-cocoa
         product: Sentry
       - target: OppiActivityExtension
