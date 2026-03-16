@@ -231,9 +231,51 @@ enum ToolTimelineRowPresentationHelpers {
     }
 
     private static func invalidateCollectionViewLayout(_ collectionView: UICollectionView) {
+        // Capture the anchor before full invalidation. invalidateLayout()
+        // clears ALL cached cell heights, which re-introduces estimated
+        // sizes for off-screen cells. If estimated heights differ from
+        // actual heights, contentSize changes and UIKit shifts
+        // contentOffset — causing the visible content to jump.
+        //
+        // We capture the first visible item's screen position before the
+        // invalidation and restore it after. For expand/collapse, the
+        // AnchoredCollectionView's layoutSubviews override handles this
+        // within a single layout pass, but this code covers the deferred
+        // invalidation path that runs via DispatchQueue.main.async.
+        let anchorIP: IndexPath?
+        let anchorScreenY: CGFloat
+
+        // Use the expand/collapse anchor when available (tapped item),
+        // otherwise fall back to the first visible item.
+        if let anchored = collectionView as? AnchoredCollectionView,
+           let ecIP = anchored.expandCollapseAnchorIP,
+           let attrs = collectionView.layoutAttributesForItem(at: ecIP) {
+            anchorIP = ecIP
+            anchorScreenY = attrs.frame.origin.y - collectionView.contentOffset.y
+        } else if let firstIP = collectionView.indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
+                  let attrs = collectionView.layoutAttributesForItem(at: firstIP) {
+            anchorIP = firstIP
+            anchorScreenY = attrs.frame.origin.y - collectionView.contentOffset.y
+        } else {
+            anchorIP = nil
+            anchorScreenY = 0
+        }
+
         UIView.performWithoutAnimation {
             collectionView.collectionViewLayout.invalidateLayout()
             collectionView.layoutIfNeeded()
         }
+
+        // Restore anchor position. Skip clamping because contentSize
+        // after full invalidation reflects estimated (not actual) heights
+        // for off-screen cells, making the computed maxOffset unreliable.
+        // The offset will naturally settle as cells are measured.
+        guard let anchorIP,
+              let newAttrs = collectionView.layoutAttributesForItem(at: anchorIP) else {
+            return
+        }
+        let delta = (newAttrs.frame.origin.y - collectionView.contentOffset.y) - anchorScreenY
+        guard delta.isFinite, abs(delta) > 0.5 else { return }
+        collectionView.contentOffset.y += delta
     }
 }
