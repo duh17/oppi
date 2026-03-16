@@ -442,9 +442,6 @@ final class VoiceInputManager {
                     forceRefresh: true
                 )
                 recordRemoteProbeMetric(probe, annotation: metricAnnotation)
-                logger.info(
-                    "Remote ASR probe: \(endpoint.absoluteString) => \(probe.reachable ? "reachable" : "unreachable")"
-                )
                 guard probe.reachable else {
                     throw VoiceInputError.remoteEndpointUnreachable(
                         endpoint.host ?? endpoint.absoluteString
@@ -452,7 +449,7 @@ final class VoiceInputManager {
                 }
             }
 
-            try await startProviderRecording(
+            let timings = try await startProviderRecording(
                 requestID: requestID,
                 startTime: startTime,
                 engine: engine,
@@ -464,17 +461,11 @@ final class VoiceInputManager {
                 modelPathTag: &modelPathTag
             )
 
-            let totalMs = elapsedMs(since: startTime)
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: totalMs,
-                annotation: metricAnnotation,
-                phase: .total,
-                status: "ok",
-                extraTags: ["path": modelPathTag]
-            )
-            logger.error("Voice setup: recording started in \(totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
             state = .recording
+
+            // Emit telemetry AFTER state transition — off the critical path
+            emitStartupTelemetry(timings, annotation: metricAnnotation)
+            logger.error("Voice setup: recording started in \(timings.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
         } catch is CancellationError {
             let totalMs = elapsedMs(since: startTime)
             recordVoiceMetric(
@@ -564,6 +555,36 @@ final class VoiceInputManager {
         state = .idle
     }
 
+    // MARK: - Startup Timings (deferred telemetry)
+
+    /// Captured during startProviderRecording, emitted after state = .recording.
+    private struct StartupTimings {
+        var modelReadyMs: Int = 0
+        var transcriberCreateMs: Int = 0
+        var analyzerStartMs: Int = 0
+        var audioStartMs: Int = 0
+        var totalMs: Int = 0
+        var pathTag: String = "warm_cache"
+        var setupTags: [String: String] = [:]
+    }
+
+    private func emitStartupTelemetry(
+        _ timings: StartupTimings,
+        annotation: VoiceMetricAnnotation
+    ) {
+        let tags = timings.setupTags
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.modelReadyMs,
+                          annotation: annotation, phase: .modelReady, status: "ok", extraTags: tags)
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.transcriberCreateMs,
+                          annotation: annotation, phase: .transcriberCreate, status: "ok", extraTags: tags)
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.analyzerStartMs,
+                          annotation: annotation, phase: .analyzerStart, status: "ok", extraTags: tags)
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.audioStartMs,
+                          annotation: annotation, phase: .audioStart, status: "ok", extraTags: tags)
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.totalMs,
+                          annotation: annotation, phase: .total, status: "ok", extraTags: tags)
+    }
+
     // MARK: - Provider Recording
 
     private func startProviderRecording(
@@ -576,40 +597,26 @@ final class VoiceInputManager {
         context: VoiceProviderContext,
         metricAnnotation: VoiceMetricAnnotation,
         modelPathTag: inout String
-    ) async throws {
+    ) async throws -> StartupTimings {
+        var timings = StartupTimings()
+
         let modelPhaseStart = ContinuousClock.now
         let preparation = try await provider.prepareSession(context: context)
         try ensureStartRequestActive(requestID)
 
         modelPathTag = preparation.pathTag
-        let setupTags = ["path": modelPathTag].merging(
+        timings.pathTag = modelPathTag
+        timings.setupTags = ["path": modelPathTag].merging(
             preparation.setupMetricTags,
             uniquingKeysWith: { current, _ in current }
         )
-
-        let modelPhaseMs = elapsedMs(since: modelPhaseStart)
-        recordVoiceMetric(
-            .voiceSetupMs,
-            valueMs: modelPhaseMs,
-            annotation: metricAnnotation,
-            phase: .modelReady,
-            status: "ok",
-            extraTags: setupTags
-        )
+        timings.modelReadyMs = elapsedMs(since: modelPhaseStart)
 
         let transcriberStart = ContinuousClock.now
         let session = try provider.makeSession(context: context, preparation: preparation)
         activeLanguageLabel = Self.languageLabel(for: locale)
-        let transcriberMs = elapsedMs(since: transcriberStart)
-        recordVoiceMetric(
-            .voiceSetupMs,
-            valueMs: transcriberMs,
-            annotation: metricAnnotation,
-            phase: .transcriberCreate,
-            status: "ok",
-            extraTags: setupTags
-        )
-        logger.info("Voice setup: created \(engine.logName) session (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
+        timings.transcriberCreateMs = elapsedMs(since: transcriberStart)
+
         try ensureStartRequestActive(requestID)
 
         sessionMonitor.bind(
@@ -642,28 +649,14 @@ final class VoiceInputManager {
         )
 
         try setupAudioSession()
-        let timings = try await session.start()
+        let sessionTimings = try await session.start()
         try ensureStartRequestActive(requestID)
 
-        recordVoiceMetric(
-            .voiceSetupMs,
-            valueMs: timings.analyzerStartMs,
-            annotation: metricAnnotation,
-            phase: .analyzerStart,
-            status: "ok",
-            extraTags: setupTags
-        )
-        recordVoiceMetric(
-            .voiceSetupMs,
-            valueMs: timings.audioStartMs,
-            annotation: metricAnnotation,
-            phase: .audioStart,
-            status: "ok",
-            extraTags: setupTags
-        )
+        timings.analyzerStartMs = sessionTimings.analyzerStartMs
+        timings.audioStartMs = sessionTimings.audioStartMs
+        timings.totalMs = elapsedMs(since: startTime)
 
-        let totalMs = elapsedMs(since: startTime)
-        logger.error("Voice setup: session ready in \(totalMs)ms (engine: \(engine.logName), locale: \(localeID))")
+        return timings
     }
 
     // MARK: - Setup
