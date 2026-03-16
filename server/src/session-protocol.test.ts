@@ -1400,8 +1400,8 @@ describe("translatePiEvent", () => {
     });
   });
 
-  describe("ANSI stripping in tool output", () => {
-    it("strips ANSI from tool_execution_update text", () => {
+  describe("ANSI sanitization in tool output", () => {
+    it("preserves SGR color codes in tool_execution_update text", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
@@ -1419,12 +1419,13 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
+      // SGR codes preserved — iOS ANSIParser renders them as colored text
       expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
-        "Error: not found",
+        "\x1b[31mError: not found\x1b[0m",
       );
     });
 
-    it("strips ANSI from tool_execution_end text", () => {
+    it("preserves SGR color codes in tool_execution_end text", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
@@ -1446,14 +1447,14 @@ describe("translatePiEvent", () => {
         { type: "tool_output" }
       >;
       expect(toolOutput).toBeDefined();
-      expect(toolOutput.output).toBe("Success: done");
+      expect(toolOutput.output).toBe("\x1b[32mSuccess\x1b[0m: done");
     });
 
-    it("strips TUI chrome (cursor movement, mode sets, OSC) from streaming output", () => {
+    it("strips TUI chrome but preserves SGR colors from streaming output", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
-      // Simulates capturing pi TUI output
+      // Simulates capturing pi TUI output — DEC modes and OSC stripped, SGR preserved
       const tuiOutput =
         "\x1b[?2004h\x1b[?25l\x1b[0m\x1b]8;;\x1b\\" +
         "\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
@@ -1472,12 +1473,14 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(1);
+      // DEC modes + OSC stripped, SGR preserved
       expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
-        "──\nError: 404\n",
+        "\x1b[0m\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
+          "\x1b[38;5;167mError: 404\x1b[39m\n",
       );
     });
 
-    it("computes deltas correctly after ANSI stripping", () => {
+    it("computes deltas correctly with SGR codes preserved", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "bash");
 
@@ -1510,9 +1513,9 @@ describe("translatePiEvent", () => {
       );
 
       expect(result2).toHaveLength(1);
-      // Delta should be "\nline2" — the diff between stripped "line1" and stripped "line1\nline2"
+      // Delta includes SGR codes — they're part of the text now
       expect((result2[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
-        "\nline2",
+        "\n\x1b[31mline2\x1b[0m",
       );
     });
   });
