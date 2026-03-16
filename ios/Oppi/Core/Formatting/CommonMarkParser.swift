@@ -21,25 +21,7 @@ nonisolated func parseCommonMark(_ source: String) -> [MarkdownBlock] {
 ///   1-based line number of the last block, or 1 if the document has fewer
 ///   than 2 blocks.
 nonisolated func parseCommonMarkWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
-    let doc = Document(parsing: source)
-    var blocks: [MarkdownBlock] = []
-    var lastChildRange: SourceRange?
-    var childCount = 0
-    for child in doc.children {
-        if let block = convertBlock(child) {
-            blocks.append(block)
-        }
-        lastChildRange = child.range
-        childCount += 1
-    }
-    // Need at least 2 top-level blocks to have a finalized prefix.
-    let lastLine: Int
-    if childCount >= 2, let range = lastChildRange {
-        lastLine = range.lowerBound.line
-    } else {
-        lastLine = 1
-    }
-    return (blocks: blocks, lastBlockStartLine: lastLine)
+    return parseCommonMarkFastWithLastLine(source)
 }
 
 // MARK: - Block Conversion
