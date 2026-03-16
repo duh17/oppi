@@ -324,6 +324,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
+
+        // Deferred follow-tail: scroll to bottom after layout has settled
+        // the content size. Avoids forcing a redundant synchronous TextKit2
+        // layout inside apply() during batch updates.
+        if expandedPendingScrollToBottom {
+            expandedPendingScrollToBottom = false
+            ToolTimelineRowUIHelpers.scrollToBottom(expandedScrollView, animated: false)
+        }
+        bashToolRowView.flushDeferredScrollToBottom()
     }
 
     private func updateViewportHeightsIfNeeded() {
@@ -1636,17 +1645,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     /// Called at the end of apply() after containers are visible and have bounds.
+    ///
+    /// Defers the expensive TextKit2 layout + scroll-to-bottom to the next
+    /// `layoutSubviews()` pass. The old approach forced `layoutIfNeeded()`
+    /// synchronously during cell reconfiguration, triggering a full TextKit2
+    /// viewport layout (adding/removing subviews for text fragments). By
+    /// deferring, the layout happens once during the collection view's natural
+    /// layout pass instead of redundantly during the batch update.
     private func flushPendingFollowTail() {
         bashToolRowView.flushFollowTail()
         if expandedNeedsFollowTail, !expandedContainer.isHidden {
             let label: UIView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
-            ToolTimelineRowUIHelpers.followTail(
-                in: expandedScrollView,
-                contentLabel: label
-            )
+            label.invalidateIntrinsicContentSize()
+            expandedScrollView.setNeedsLayout()
+            expandedPendingScrollToBottom = true
+            setNeedsLayout()
             expandedNeedsFollowTail = false
         }
     }
+
+    /// Whether a deferred scroll-to-bottom is pending for the expanded content.
+    private var expandedPendingScrollToBottom = false
 
     #if DEBUG
     /// Whether the tail of the expanded content is visible in the viewport.
