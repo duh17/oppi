@@ -10,36 +10,50 @@ describe("stripAnsiEscapes", () => {
     expect(stripAnsiEscapes("")).toBe("");
   });
 
-  it("strips SGR color codes (16-color)", () => {
-    expect(stripAnsiEscapes("\x1b[31mred text\x1b[0m")).toBe("red text");
+  // ─── SGR codes are PRESERVED (iOS ANSIParser renders them) ───
+
+  it("preserves SGR color codes (16-color)", () => {
+    expect(stripAnsiEscapes("\x1b[31mred text\x1b[0m")).toBe("\x1b[31mred text\x1b[0m");
   });
 
-  it("strips SGR color codes (256-color)", () => {
-    expect(stripAnsiEscapes("\x1b[38;5;59m─\x1b[39m")).toBe("─");
+  it("preserves SGR color codes (256-color)", () => {
+    expect(stripAnsiEscapes("\x1b[38;5;59m─\x1b[39m")).toBe("\x1b[38;5;59m─\x1b[39m");
   });
 
-  it("strips SGR color codes (24-bit)", () => {
-    expect(stripAnsiEscapes("\x1b[38;2;255;100;0mhello\x1b[0m")).toBe("hello");
-  });
-
-  it("strips bold/dim/reverse", () => {
-    expect(stripAnsiEscapes("\x1b[1mbold\x1b[0m \x1b[2mdim\x1b[0m \x1b[7mreverse\x1b[0m")).toBe(
-      "bold dim reverse",
+  it("preserves SGR color codes (24-bit)", () => {
+    expect(stripAnsiEscapes("\x1b[38;2;255;100;0mhello\x1b[0m")).toBe(
+      "\x1b[38;2;255;100;0mhello\x1b[0m",
     );
   });
 
+  it("preserves bold/dim/reverse SGR codes", () => {
+    const input = "\x1b[1mbold\x1b[0m \x1b[2mdim\x1b[0m \x1b[7mreverse\x1b[0m";
+    expect(stripAnsiEscapes(input)).toBe(input);
+  });
+
+  it("preserves background color codes", () => {
+    expect(stripAnsiEscapes("\x1b[48;5;16m text \x1b[49m")).toBe("\x1b[48;5;16m text \x1b[49m");
+  });
+
+  it("preserves compound SGR (bold + color)", () => {
+    expect(stripAnsiEscapes("\x1b[1;35mmagenta\x1b[0m")).toBe("\x1b[1;35mmagenta\x1b[0m");
+  });
+
+  it("preserves reset code", () => {
+    expect(stripAnsiEscapes("\x1b[0m")).toBe("\x1b[0m");
+  });
+
+  // ─── Non-SGR sequences are STRIPPED ───
+
   it("strips cursor movement sequences", () => {
-    // CUU (cursor up), CUD, CUF, CUB, CHA (cursor horizontal absolute)
     expect(stripAnsiEscapes("\x1b[3A\x1b[1G\x1b[2Khello")).toBe("hello");
   });
 
   it("strips erase sequences", () => {
-    // EL (erase line), ED (erase display)
     expect(stripAnsiEscapes("\x1b[2Khello\x1b[Jworld")).toBe("helloworld");
   });
 
   it("strips private mode set/reset (DEC)", () => {
-    // bracketed paste, cursor visibility, synchronized output
     expect(stripAnsiEscapes("\x1b[?2004h\x1b[?25l\x1b[?2026hhello\x1b[?25h\x1b[?2004l")).toBe(
       "hello",
     );
@@ -50,12 +64,10 @@ describe("stripAnsiEscapes", () => {
   });
 
   it("strips OSC sequences terminated by BEL", () => {
-    // Window title: OSC 0 ; title BEL
     expect(stripAnsiEscapes("\x1b]0;π - dotfiles\x07hello")).toBe("hello");
   });
 
   it("strips OSC sequences terminated by ST (ESC backslash)", () => {
-    // Hyperlink: OSC 8 ;; url ST
     expect(stripAnsiEscapes("\x1b]8;;\x1b\\hello\x1b]8;;\x1b\\")).toBe("hello");
   });
 
@@ -67,40 +79,49 @@ describe("stripAnsiEscapes", () => {
     expect(stripAnsiEscapes("\x1b[>4;2mhello")).toBe("hello");
   });
 
-  it("handles pi TUI output (real-world sample)", () => {
-    // Simplified version of the bug report: colored box-drawing + status line
+  // ─── Mixed: SGR preserved, non-SGR stripped ───
+
+  it("preserves colors in pi TUI output while stripping cursor movement", () => {
     const input =
       "\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
       "\x1b[7m \x1b[0m cursor\n" +
       "\x1b[38;5;59m$0.000 (sub)\x1b[39m";
-    expect(stripAnsiEscapes(input)).toBe("───\n  cursor\n$0.000 (sub)");
+    const expected =
+      "\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\x1b[38;5;59m─\x1b[39m\n" +
+      "\x1b[7m \x1b[0m cursor\n" +
+      "\x1b[38;5;59m$0.000 (sub)\x1b[39m";
+    expect(stripAnsiEscapes(input)).toBe(expected);
   });
 
-  it("handles pi TUI error output", () => {
+  it("preserves error colors", () => {
     const input = '\x1b[38;5;167mError: 404 {"type":"error"}\x1b[39m';
-    expect(stripAnsiEscapes(input)).toBe('Error: 404 {"type":"error"}');
+    expect(stripAnsiEscapes(input)).toBe(input);
   });
 
-  it("strips spinner output", () => {
+  it("preserves spinner colors", () => {
     const input = "\x1b[38;5;179m⠋\x1b[39m \x1b[38;5;60mWorking...\x1b[39m";
-    expect(stripAnsiEscapes(input)).toBe("⠋ Working...");
+    expect(stripAnsiEscapes(input)).toBe(input);
   });
 
   it("preserves newlines and whitespace", () => {
     expect(stripAnsiEscapes("line1\nline2\n  indented\n")).toBe("line1\nline2\n  indented\n");
   });
 
-  it("strips mixed CSI and OSC in sequence", () => {
+  it("strips non-SGR but preserves SGR in mixed sequence", () => {
+    // DEC modes + kitty + OSC stripped; SGR reset preserved
     const input =
       "\x1b[?2004h\x1b[?u\x1b[?25l\x1b[?2026h\x1b[0m\x1b]8;;\x1b\\hello\x1b]0;title\x07";
-    expect(stripAnsiEscapes(input)).toBe("hello");
+    expect(stripAnsiEscapes(input)).toBe("\x1b[0mhello");
   });
 
-  it("handles background color codes", () => {
-    expect(stripAnsiEscapes("\x1b[48;5;16m text \x1b[49m")).toBe(" text ");
+  it("preserves vitest-style colored output", () => {
+    // Green checkmark + test name — the real-world case that was broken
+    const input = "\x1b[32m✓\x1b[39m src/file.test.ts \x1b[2m(5 tests)\x1b[22m \x1b[33m34ms\x1b[39m";
+    expect(stripAnsiEscapes(input)).toBe(input);
   });
 
-  it("handles compound SGR (bold + color)", () => {
-    expect(stripAnsiEscapes("\x1b[1;35mmagenta\x1b[0m")).toBe("magenta");
+  it("preserves npm colored output", () => {
+    const input = "\x1b[1;32mnpm\x1b[0m test";
+    expect(stripAnsiEscapes(input)).toBe(input);
   });
 });
