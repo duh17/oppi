@@ -31,7 +31,7 @@ struct ScrollStabilityBench {
     @MainActor
     @Test func cascade_overhead() {
         // Setup: real collection view with 60 items at actual heights.
-        let harness = makeRealHarness(itemCount: 60)
+        let harness = makeRealHarness(itemCount: 60, withToolOutput: true)
         let cv = harness.collectionView
 
         // Scroll to bottom so all cells measure at actual heights.
@@ -41,24 +41,33 @@ struct ScrollStabilityBench {
 
         // Scroll to mid-point and detach.
         let maxOff = maxOffsetY(cv)
-        cv.contentOffset.y = maxOff * 0.4
+        cv.contentOffset.y = maxOff * 0.5
         cv.layoutIfNeeded()
+        harness.scrollController.detachFromBottomForUserScroll()
+
+        // Find a visible tool row for expand/collapse anchoring.
+        let visibleIPs = cv.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let targetIP = visibleIPs.first { ip in
+            ip.item < harness.items.count && harness.items[ip.item].id.hasPrefix("tc-")
+        }
+        guard let targetIP else {
+            Issue.record("No visible tool row for cascade benchmark")
+            return
+        }
 
         var timings: [UInt64] = []
         var didSetEntries = 0
         var didSetCorrections = 0
 
         for run in 0 ..< (Self.warmupRuns + Self.medianRuns) {
-            // Capture detached anchor at current position.
-            cv.isDetachedFromBottom = true
-            cv.captureDetachedAnchor()
+            // Use expand/collapse anchor (this path still uses didSet
+            // correction — the detached path now relies on layoutSubviews).
+            cv.setExpandCollapseAnchor(indexPath: targetIP)
             cv._debugResetCounters()
 
             let startOffset = cv.contentOffset.y
 
-            // Simulate cascade: UIKit adjusts contentOffset by ~6pt per frame
-            // as cells report preferred sizes. Our didSet should correct each
-            // adjustment back to the anchor position.
+            // Simulate cascade: UIKit adjusts contentOffset by ~6pt per frame.
             let start = DispatchTime.now().uptimeNanoseconds
             for _ in 0 ..< Self.cascadeIterations {
                 cv.contentOffset.y += 6
@@ -81,7 +90,7 @@ struct ScrollStabilityBench {
                 "Cascade simulation drifted \(drift)pt after \(Self.cascadeIterations) adjustments"
             )
 
-            cv.clearDetachedAnchor()
+            cv.clearExpandCollapseAnchor()
         }
 
         timings.sort()

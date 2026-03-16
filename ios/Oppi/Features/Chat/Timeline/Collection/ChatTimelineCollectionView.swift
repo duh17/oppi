@@ -534,17 +534,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenCount = configuration.hiddenCount
             previousThemeID = configuration.themeID
 
-            // Clear detached anchor after layout settles to allow normal
-            // scroll behavior. Double-async ensures it fires after any
-            // deferred layout invalidation passes.
-            if let anchoredCV = collectionView as? AnchoredCollectionView,
-               anchoredCV.isDetachedFromBottom {
-                DispatchQueue.main.async { [weak anchoredCV] in
-                    DispatchQueue.main.async { [weak anchoredCV] in
-                        anchoredCV?.clearDetachedAnchor()
-                    }
-                }
-            }
+            // Note: detached anchor is NOT cleared here. It persists until
+            // the next snapshot apply, where captureDetachedAnchor() replaces
+            // it with a fresh capture. This ensures the anchor stays active
+            // through all deferred layout invalidations (e.g.
+            // invalidateEnclosingCollectionViewLayout from tool rows) that
+            // fire asynchronously after this apply completes.
+            //
+            // Previously, a double-async clear raced with the deferred
+            // invalidation — the anchor could be cleared BEFORE the
+            // invalidation's layoutIfNeeded fired, causing 480pt drift.
 
             // Force layout when not streaming, or when the user is scrolled
             // away from the bottom. Forced layout resolves all pending cell
