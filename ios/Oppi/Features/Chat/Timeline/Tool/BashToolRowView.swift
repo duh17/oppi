@@ -366,12 +366,26 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     // MARK: - Follow Tail
 
-    /// Scroll output to bottom if a follow-tail is pending.
-    /// Call after output container is visible and has valid bounds.
+    /// Defer follow-tail to the next layout pass.
+    ///
+    /// Instead of forcing synchronous `layoutIfNeeded()` during apply(),
+    /// invalidate and let `layoutSubviews()` handle the scroll-to-bottom.
     func flushFollowTail() {
         guard pendingFollowTail, !outputContainer.isHidden else { return }
-        ToolTimelineRowUIHelpers.followTail(in: outputScrollView, contentLabel: outputLabel)
+        outputLabel.invalidateIntrinsicContentSize()
+        outputScrollView.setNeedsLayout()
+        outputPendingScrollToBottom = true
         pendingFollowTail = false
+    }
+
+    /// Whether a deferred scroll-to-bottom is pending for output.
+    private var outputPendingScrollToBottom = false
+
+    /// Called from parent's `layoutSubviews()` to flush any deferred scroll.
+    func flushDeferredScrollToBottom() {
+        guard outputPendingScrollToBottom else { return }
+        outputPendingScrollToBottom = false
+        ToolTimelineRowUIHelpers.scrollToBottom(outputScrollView, animated: false)
     }
 
     // MARK: - UIScrollViewDelegate
