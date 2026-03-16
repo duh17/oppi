@@ -8,13 +8,12 @@ import cmark_gfm_extensions
 ///
 /// Used for the non-streaming full-document parse path where source
 /// positions are not needed.
-nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
-    // Register GFM extensions (tables, strikethrough).
+/// Shared parser setup: register GFM extensions, create parser, attach extensions, feed source.
+private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark_node>? {
     cmark_gfm_core_extensions_ensure_registered()
 
-    let options = CMARK_OPT_DEFAULT | CMARK_OPT_SMART
+    let options = CMARK_OPT_DEFAULT | CMARK_OPT_SMART | CMARK_OPT_SOURCEPOS
     let parser = cmark_parser_new(options)
-    defer { cmark_parser_free(parser) }
 
     // Attach table + strikethrough extensions.
     if let tableExt = cmark_find_syntax_extension("table") {
@@ -29,7 +28,13 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
         cmark_parser_feed(parser, ptr, source.utf8.count)
     }
 
-    guard let doc = cmark_parser_finish(parser) else { return [] }
+    let doc = cmark_parser_finish(parser)
+    cmark_parser_free(parser)
+    return doc
+}
+
+nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
+    guard let doc = cmarkParsedDocument(source) else { return [] }
     defer { cmark_node_free(doc) }
 
     var blocks: [MarkdownBlock] = []
@@ -41,6 +46,33 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
         child = cmark_node_next(node)
     }
     return blocks
+}
+
+/// Fast parse with last block start line — used by the streaming incremental path.
+nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
+    guard let doc = cmarkParsedDocument(source) else { return ([], 1) }
+    defer { cmark_node_free(doc) }
+
+    var blocks: [MarkdownBlock] = []
+    var childCount = 0
+    var lastNode: UnsafeMutablePointer<cmark_node>?
+    var child = cmark_node_first_child(doc)
+    while let node = child {
+        if let block = convertCMarkBlock(node) {
+            blocks.append(block)
+        }
+        lastNode = node
+        childCount += 1
+        child = cmark_node_next(node)
+    }
+
+    let lastLine: Int
+    if childCount >= 2, let last = lastNode {
+        lastLine = Int(cmark_node_get_start_line(last))
+    } else {
+        lastLine = 1
+    }
+    return (blocks: blocks, lastBlockStartLine: lastLine)
 }
 
 // MARK: - Block Conversion
