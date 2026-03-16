@@ -11,24 +11,6 @@ struct ChatEmptyState: View {
     }
 }
 
-enum ZenNavigationPolicy {
-    static func navigationTitle(sessionDisplayName: String, isZenMode: Bool) -> String {
-        isZenMode ? "" : sessionDisplayName
-    }
-
-    static func showsStopButton(isBusy: Bool) -> Bool {
-        isBusy
-    }
-
-    static func zenToggleSystemImage(isZenMode: Bool) -> String {
-        isZenMode ? "viewfinder.circle.fill" : "viewfinder"
-    }
-
-    static func zenToggleAccessibilityLabel(isZenMode: Bool) -> String {
-        isZenMode ? "Exit zen mode" : "Enter zen mode"
-    }
-}
-
 // MARK: - Jump to Bottom
 
 struct JumpToBottomHintButton: View {
