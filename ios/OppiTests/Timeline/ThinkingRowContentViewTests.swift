@@ -30,30 +30,18 @@ struct ThinkingRowContentViewTests {
     @Test func streamingOverflowRespectsConfiguredBubbleCap() throws {
         let text = Array(repeating: "streaming thought line", count: 300).joined(separator: "\n")
 
-        let defaultView = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
             fullText: nil,
             themeID: .dark,
-            maxBubbleHeight: ZenThinkingRowPolicy.defaultMaxBubbleHeight
+            maxBubbleHeight: ThinkingRowHeightPolicy.defaultMaxBubbleHeight
         ))
-        _ = fittedTimelineSize(for: defaultView, width: 360)
+        _ = fittedTimelineSize(for: view, width: 360)
 
-        let zenView = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: false,
-            previewText: text,
-            fullText: nil,
-            themeID: .dark,
-            maxBubbleHeight: ZenThinkingRowPolicy.zenAttachedStreamingMaxBubbleHeight
-        ))
-        _ = fittedTimelineSize(for: zenView, width: 360)
+        let bubbleHeight = try #require(privateBubbleHeightConstraintConstant(in: view))
 
-        let defaultHeight = try #require(privateBubbleHeightConstraintConstant(in: defaultView))
-        let zenHeight = try #require(privateBubbleHeightConstraintConstant(in: zenView))
-
-        #expect(defaultHeight == ZenThinkingRowPolicy.defaultMaxBubbleHeight)
-        #expect(zenHeight == ZenThinkingRowPolicy.zenAttachedStreamingMaxBubbleHeight)
-        #expect(zenHeight > defaultHeight)
+        #expect(bubbleHeight == ThinkingRowHeightPolicy.defaultMaxBubbleHeight)
     }
 
     @Test func thinkingRowDoesNotInstallFloatingFullScreenButton() {

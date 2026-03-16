@@ -63,11 +63,7 @@ extension ChatTimelineCollectionHost.Controller {
     func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
         guard case .thinking(_, let preview, _, let isDone) = item else { return nil }
 
-        let maxBubbleHeight = ZenThinkingRowPolicy.maxBubbleHeight(
-            isDone: isDone,
-            isZenMode: isZenMode,
-            isNearBottom: scrollController?.isCurrentlyNearBottom ?? true
-        )
+        let maxBubbleHeight = ThinkingRowHeightPolicy.defaultMaxBubbleHeight
 
         return ThinkingTimelineRowConfiguration(
             isDone: isDone,

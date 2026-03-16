@@ -37,7 +37,6 @@ struct ChatView: View {
     @State private var showContextInspector = false
     @State private var suppressNextContextTap = false
     @State private var isKeyboardVisible = false
-    @State private var isZenMode = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
     @State private var composerExternalFocusRequestID = 0
@@ -110,13 +109,12 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             isBusy: isBusy,
-            isZenMode: isZenMode,
             scrollController: scrollController,
             sessionManager: sessionManager,
             onFork: forkFromMessage,
             selectedTextPiRouter: selectedTextPiRouter,
-            topOverlap: isZenMode ? 0 : headerHeight,
-            bottomOverlap: isZenMode ? 0 : footerHeight
+            topOverlap: headerHeight,
+            bottomOverlap: footerHeight
         )
     }
 
@@ -125,7 +123,7 @@ struct ChatView: View {
             .ignoresSafeArea(.container, edges: .top)
             .overlay {
                 // Dismiss layer: tap anywhere outside the bar to collapse it
-                if !isZenMode, contextBarExpanded {
+                if contextBarExpanded {
                     Color.clear
                         .contentShape(Rectangle())
                         .ignoresSafeArea()
@@ -133,26 +131,22 @@ struct ChatView: View {
                 }
             }
             .overlay(alignment: .top) {
-                if !isZenMode {
-                    WorkspaceContextBar(
-                        gitStatus: connection.gitStatusStore.gitStatus,
-                        isLoading: connection.gitStatusStore.isLoading,
-                        workspaceId: session?.workspaceId,
-                        sessionId: sessionId,
-                        collapseToken: contextBarCollapseToken,
-                        onExpandedChanged: { contextBarExpanded = $0 }
-                    )
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
-                }
+                WorkspaceContextBar(
+                    gitStatus: connection.gitStatusStore.gitStatus,
+                    isLoading: connection.gitStatusStore.isLoading,
+                    workspaceId: session?.workspaceId,
+                    sessionId: sessionId,
+                    collapseToken: contextBarCollapseToken,
+                    onExpandedChanged: { contextBarExpanded = $0 }
+                )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             }
             .overlay(alignment: .bottom) {
-                if !isZenMode {
-                    footerArea
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
-                }
+                footerArea
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !isZenMode, scrollController.isJumpToBottomHintVisible {
+                if scrollController.isJumpToBottomHintVisible {
                     JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
                         scrollController.requestScrollToBottom()
                     }
@@ -229,9 +223,6 @@ struct ChatView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
                 contextBarCollapseToken &+= 1
-                if isZenMode {
-                    exitZenMode(animated: false)
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
                 isKeyboardVisible = false
@@ -262,7 +253,6 @@ struct ChatView: View {
                 }
             }
             .onDisappear {
-                isZenMode = false
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
@@ -282,7 +272,7 @@ struct ChatView: View {
     private var configuredChatContent: some View {
         chatTimelineScaffold
             .background(Color.themeBg.ignoresSafeArea())
-        .navigationTitle(ZenNavigationPolicy.navigationTitle(sessionDisplayName: sessionDisplayName, isZenMode: isZenMode))
+        .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $forkedSessionToOpen) { route in
             Self(sessionId: route.id)
@@ -291,10 +281,8 @@ struct ChatView: View {
         .toolbar(.hidden, for: .bottomBar)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            if !isZenMode {
-                ToolbarItem(placement: .principal) {
-                    chatPrincipalToolbarItem
-                }
+            ToolbarItem(placement: .principal) {
+                chatPrincipalToolbarItem
             }
 
             ToolbarItem(placement: .topBarTrailing) {
@@ -422,34 +410,17 @@ struct ChatView: View {
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
         HStack(spacing: 10) {
-            if !isZenMode, !reducer.items.isEmpty {
+            if !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
                 }
             }
 
-            if isZenMode, ZenNavigationPolicy.showsStopButton(isBusy: isBusy) {
-                zenStopToolbarButton
-            }
-
-            zenToggleToolbarButton
-
             contextRingButton
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)
         }
-    }
-
-    private var zenToggleToolbarButton: some View {
-        Button {
-            toggleZenMode(animated: false)
-        } label: {
-            Image(systemName: ZenNavigationPolicy.zenToggleSystemImage(isZenMode: isZenMode))
-                .font(.subheadline)
-        }
-        .accessibilityIdentifier("chat.zen.toggle")
-        .accessibilityLabel(ZenNavigationPolicy.zenToggleAccessibilityLabel(isZenMode: isZenMode))
     }
 
     private var contextRingButton: some View {
@@ -504,31 +475,6 @@ struct ChatView: View {
         }
     }
 
-    @ViewBuilder
-    private var zenStopToolbarButton: some View {
-        Button {
-            actionHandler.stop(
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore,
-                sessionManager: sessionManager,
-                sessionId: sessionId
-            )
-        } label: {
-            if isStopping {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Text("Stop")
-                    .font(.subheadline.weight(.semibold))
-            }
-        }
-        .disabled(isStopping)
-        .foregroundStyle(isStopping ? .themeComment : .themeRed)
-        .accessibilityIdentifier("chat.zen.stop")
-        .accessibilityLabel(isStopping ? "Stopping agent" : "Stop agent")
-    }
-
     private var selectedTextPiRouter: SelectedTextPiActionRouter {
         SelectedTextPiActionRouter { request in
             handleSelectedTextPiAction(request)
@@ -536,6 +482,7 @@ struct ChatView: View {
     }
 
     // MARK: - Actions
+
 
     private func updateFileSuggestions(query: String?) {
         if let query {
@@ -549,10 +496,6 @@ struct ChatView: View {
     private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
         let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
         guard !addition.isEmpty else { return }
-
-        if isZenMode {
-            exitZenMode(animated: false)
-        }
 
         if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             inputText = addition
@@ -573,37 +516,6 @@ struct ChatView: View {
 
     private func presentComposer() {
         showComposer = true
-    }
-
-    private func toggleZenMode(animated: Bool = true) {
-        if isZenMode {
-            exitZenMode(animated: animated)
-        } else {
-            enterZenMode(animated: animated)
-        }
-    }
-
-    private func enterZenMode(animated: Bool = true) {
-        guard !isZenMode else { return }
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        if animated {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isZenMode = true
-            }
-        } else {
-            isZenMode = true
-        }
-    }
-
-    private func exitZenMode(animated: Bool = true) {
-        guard isZenMode else { return }
-        if animated {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isZenMode = false
-            }
-        } else {
-            isZenMode = false
-        }
     }
 
     private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
