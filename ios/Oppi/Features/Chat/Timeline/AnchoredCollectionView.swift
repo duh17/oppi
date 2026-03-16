@@ -116,10 +116,12 @@ final class AnchoredCollectionView: UICollectionView {
             #endif
 
             // Expand/collapse anchor takes priority.
-            // Restores the saved "known good" offset instead of querying
-            // layoutAttributesForItem — the layout engine query is expensive
-            // and recursive. layoutSubviews already handled geometry changes;
-            // the didSet only undoes post-layout cascade drift.
+            // Restores the saved "known good" offset by writing directly to
+            // bounds.origin.y — this bypasses UIScrollView's full contentOffset
+            // setter (which triggers setNeedsLayout, delegate callbacks, and
+            // scroll indicator updates). Since the didSet is only undoing
+            // UIKit's post-layout cascade drift, we don't need those side
+            // effects. The bounds write is ~50× cheaper.
             if expandCollapseAnchorIP != nil {
                 let delta = contentOffset.y - expandCollapseSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
@@ -127,7 +129,9 @@ final class AnchoredCollectionView: UICollectionView {
                     _debugDidSetCorrectionCount += 1
                 #endif
                 isApplyingAnchorCorrection = true
-                super.contentOffset.y = expandCollapseSavedOffsetY
+                var b = bounds
+                b.origin.y = expandCollapseSavedOffsetY
+                bounds = b
                 isApplyingAnchorCorrection = false
                 return
             }
@@ -141,7 +145,9 @@ final class AnchoredCollectionView: UICollectionView {
                     _debugDidSetCorrectionCount += 1
                 #endif
                 isApplyingAnchorCorrection = true
-                super.contentOffset.y = detachedSavedOffsetY
+                var b = bounds
+                b.origin.y = detachedSavedOffsetY
+                bounds = b
                 isApplyingAnchorCorrection = false
             }
         }
