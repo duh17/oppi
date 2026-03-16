@@ -2,9 +2,12 @@ import SwiftUI
 
 /// Displays the content of a workspace file in browse mode.
 ///
-/// For text files: renders source with monospace font and line numbers.
-/// For images: renders inline.
-/// For unsupported/large files: shows metadata only.
+/// Delegates to `FileContentView` for type-aware rendering:
+/// - Markdown: rendered prose via the chat markdown renderer
+/// - Code: syntax-highlighted source with line numbers
+/// - JSON: pretty-printed with colored tokens
+/// - Images: inline preview
+/// - Plain text: monospaced with line numbers
 struct FileBrowserContentView: View {
     let workspaceId: String
     let filePath: String
@@ -18,7 +21,7 @@ struct FileBrowserContentView: View {
     }
 
     private var isImage: Bool {
-        ["png", "jpg", "jpeg", "gif", "webp", "svg"].contains(fileExtension)
+        ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff"].contains(fileExtension)
     }
 
     private var isHTML: Bool {
@@ -38,7 +41,11 @@ struct FileBrowserContentView: View {
                     description: Text(message)
                 )
             case .text(let text):
-                sourceCodeView(text)
+                FileContentView(
+                    content: text,
+                    filePath: filePath,
+                    presentation: .document
+                )
             case .image(let data):
                 imageView(data)
             case .binary:
@@ -68,36 +75,6 @@ struct FileBrowserContentView: View {
             }
         }
         .task { await loadContent() }
-    }
-
-    // MARK: - Source Code View
-
-    @ViewBuilder
-    private func sourceCodeView(_ text: String) -> some View {
-        let lines = text.components(separatedBy: "\n")
-        let gutterWidth = max(String(lines.count).count, 3)
-
-        ScrollView([.horizontal, .vertical]) {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { lineNum, line in
-                    HStack(alignment: .top, spacing: 0) {
-                        Text(String(lineNum + 1))
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: CGFloat(gutterWidth) * 9, alignment: .trailing)
-                            .padding(.trailing, 8)
-
-                        Text(line.isEmpty ? " " : line)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 1)
-                }
-            }
-            .padding(.vertical, 8)
-        }
     }
 
     // MARK: - Image View
