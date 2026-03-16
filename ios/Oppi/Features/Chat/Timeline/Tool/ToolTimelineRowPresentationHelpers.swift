@@ -240,8 +240,16 @@ enum ToolTimelineRowPresentationHelpers {
         // contentOffset by ~6pt each time — creating visible drift that
         // the AnchoredCollectionView cannot fully intercept because UIKit
         // applies some offset changes AFTER layoutSubviews() returns.
+        // Skip full invalidateLayout() when an anchor is active. The
+        // snapshot reconfigure + layoutIfNeeded already measured cells at
+        // their correct sizes. A full invalidateLayout() clears ALL cached
+        // cell heights, reverting off-screen cells to .estimated(100pt)
+        // defaults. This triggers a self-sizing cascade where UIKit
+        // re-measures cells one per frame, adjusting contentOffset by
+        // ~6pt each time — creating visible drift.
         if let anchoredCV = collectionView as? AnchoredCollectionView,
-           anchoredCV.expandCollapseAnchorIP != nil {
+           anchoredCV.expandCollapseAnchorIP != nil
+            || (anchoredCV.isDetachedFromBottom && anchoredCV.detachedAnchorIsActive) {
             return
         }
 

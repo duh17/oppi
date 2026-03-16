@@ -82,6 +82,9 @@ final class AnchoredCollectionView: UICollectionView {
     private var detachedAnchorIP: IndexPath?
     private var detachedAnchorScreenY: CGFloat = 0
 
+    /// Whether a detached anchor is currently captured.
+    var detachedAnchorIsActive: Bool { detachedAnchorIP != nil }
+
     /// Capture the detached anchor for subsequent contentOffset corrections.
     /// Called before snapshot apply when the user is scrolled away from bottom.
     func captureDetachedAnchor() {
@@ -139,17 +142,12 @@ final class AnchoredCollectionView: UICollectionView {
                 return
             }
 
-            // Detached anchor: preserve position during self-sizing
-            // cascade when new items arrive below the viewport.
-            if isDetachedFromBottom, detachedAnchorIP != nil {
-                let delta = contentOffset.y - detachedSavedOffsetY
-                guard delta.isFinite, abs(delta) > 0.5 else { return }
-                #if DEBUG
-                    _debugDidSetCorrectionCount += 1
-                #endif
-                pendingCorrectionOffsetY = detachedSavedOffsetY
-                setNeedsLayout()
-            }
+            // Detached anchor: handled entirely by layoutSubviews
+            // captureAnchor/restoreAnchor + controller layoutIfNeeded.
+            // The detached anchor persists until the next snapshot apply
+            // (not cleared via double-async), so the layoutSubviews anchor
+            // stays active through all deferred invalidation passes.
+            // No didSet correction needed for this path.
         }
     }
 
