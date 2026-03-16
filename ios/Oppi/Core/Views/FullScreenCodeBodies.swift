@@ -9,20 +9,26 @@ import WebKit
 /// Same security posture as `HTMLWebView`: ephemeral data store,
 /// no bridge injection, external links open in Safari.
 final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
-    private let webView: WKWebView
+    private let webView: PiWKWebView
 
-    init(htmlString: String, palette: ThemePalette) {
+    init(
+        htmlString: String,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextSourceContext: SelectedTextSourceContext? = nil
+    ) {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = .all
 
-        let wv = WKWebView(frame: .zero, configuration: config)
+        let wv = PiWKWebView(frame: .zero, configuration: config)
         wv.isInspectable = false
         wv.allowsBackForwardNavigationGestures = false
         wv.scrollView.contentInsetAdjustmentBehavior = .always
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
+        wv.configurePiRouter(selectedTextPiRouter, sourceContext: selectedTextSourceContext)
         self.webView = wv
 
         super.init(frame: .zero)
