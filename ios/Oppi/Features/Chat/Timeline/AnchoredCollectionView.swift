@@ -7,6 +7,10 @@ import UIKit
 /// `contentOffset` when cells change size during `layoutSubviews`. This
 /// subclass captures the first visible item's screen-relative Y before layout
 /// and restores it after, eliminating the visible jitter.
+///
+/// For expand/collapse and detached-user scenarios, also intercepts
+/// `contentOffset` changes via `didSet` to counteract UIKit's self-sizing
+/// cascade, which adjusts contentOffset AFTER `layoutSubviews()` returns.
 @MainActor
 final class AnchoredCollectionView: UICollectionView {
 
@@ -31,17 +35,91 @@ final class AnchoredCollectionView: UICollectionView {
     /// scheduling cleanup after all layout passes have settled.
     private(set) var expandCollapseAnchorIP: IndexPath?
 
+    /// The screen-relative Y of the anchored item at the time the anchor
+    /// was set. Used by `contentOffset.didSet` to force-restore position
+    /// when UIKit adjusts contentOffset outside of `layoutSubviews()`.
+    private var expandCollapseAnchorScreenY: CGFloat = 0
+
     /// Pin a specific item's screen position across expand/collapse layout
-    /// passes. Call before the reconfigure that changes the cell height.
-    /// The caller must schedule `clearExpandCollapseAnchor()` after all
-    /// synchronous and asynchronous layout passes have settled.
+    /// passes. Captures the item's current screen-relative Y and
+    /// force-restores it on every subsequent contentOffset change until
+    /// `clearExpandCollapseAnchor()` is called.
     func setExpandCollapseAnchor(indexPath: IndexPath) {
         expandCollapseAnchorIP = indexPath
+        if let attrs = layoutAttributesForItem(at: indexPath) {
+            expandCollapseAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+        }
     }
 
     /// Clear the expand/collapse anchor after layout passes have settled.
     func clearExpandCollapseAnchor() {
         expandCollapseAnchorIP = nil
+    }
+
+    // MARK: - Detached anchor
+
+    /// Anchors the first visible item during snapshot applies when the user
+    /// is scrolled away from the bottom. Counteracts the self-sizing cascade
+    /// from `UICollectionViewCompositionalLayout` which adjusts contentOffset
+    /// outside `layoutSubviews()` as cells report their preferred sizes.
+    private var detachedAnchorIP: IndexPath?
+    private var detachedAnchorScreenY: CGFloat = 0
+
+    /// Capture the detached anchor for subsequent contentOffset corrections.
+    /// Called before snapshot apply when the user is scrolled away from bottom.
+    func captureDetachedAnchor() {
+        guard let firstIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
+              let attrs = layoutAttributesForItem(at: firstIP) else {
+            detachedAnchorIP = nil
+            return
+        }
+        detachedAnchorIP = firstIP
+        detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+    }
+
+    /// Clear the detached anchor after layout has settled.
+    func clearDetachedAnchor() {
+        detachedAnchorIP = nil
+    }
+
+    // MARK: - contentOffset interception
+
+    /// Intercept ALL contentOffset changes. When an expand/collapse or
+    /// detached anchor is active, force the anchored item back to its saved
+    /// screen position. This catches UIKit's self-sizing cascade adjustments
+    /// that happen AFTER `layoutSubviews()` returns — the compositional
+    /// layout re-measures cells one per frame and adjusts contentOffset by
+    /// ~6pt each time, creating visible drift that `layoutSubviews()`
+    /// interception alone cannot prevent.
+    override var contentOffset: CGPoint {
+        didSet {
+            guard !isApplyingAnchorCorrection else { return }
+
+            // Expand/collapse anchor takes priority.
+            if let ecIP = expandCollapseAnchorIP,
+               let attrs = layoutAttributesForItem(at: ecIP) {
+                let currentScreenY = attrs.frame.origin.y - contentOffset.y
+                let delta = currentScreenY - expandCollapseAnchorScreenY
+                guard delta.isFinite, abs(delta) > 0.5 else { return }
+                isApplyingAnchorCorrection = true
+                super.contentOffset.y += delta
+                isApplyingAnchorCorrection = false
+                return
+            }
+
+            // Detached anchor: preserve position during self-sizing
+            // cascade when new items arrive below the viewport.
+            if isDetachedFromBottom,
+               let dIP = detachedAnchorIP,
+               let attrs = layoutAttributesForItem(at: dIP) {
+                let currentScreenY = attrs.frame.origin.y - contentOffset.y
+                let delta = currentScreenY - detachedAnchorScreenY
+                guard delta.isFinite, abs(delta) > 0.5 else { return }
+                isApplyingAnchorCorrection = true
+                super.contentOffset.y += delta
+                isApplyingAnchorCorrection = false
+            }
+        }
     }
 
     #if DEBUG

@@ -508,7 +508,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // When attached (near bottom), anchoring is off so auto-scroll and
             // passive bottom-pinning work without interference.
             if let anchoredCV = collectionView as? AnchoredCollectionView {
-                anchoredCV.isDetachedFromBottom = !(scrollController?.isCurrentlyNearBottom ?? true)
+                let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
+                anchoredCV.isDetachedFromBottom = detached
+                if detached {
+                    anchoredCV.captureDetachedAnchor()
+                }
             }
 
             TimelineSnapshotApplier.applySnapshot(
@@ -529,6 +533,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
             previousThemeID = configuration.themeID
+
+            // Clear detached anchor after layout settles to allow normal
+            // scroll behavior. Double-async ensures it fires after any
+            // deferred layout invalidation passes.
+            if let anchoredCV = collectionView as? AnchoredCollectionView,
+               anchoredCV.isDetachedFromBottom {
+                DispatchQueue.main.async { [weak anchoredCV] in
+                    DispatchQueue.main.async { [weak anchoredCV] in
+                        anchoredCV?.clearDetachedAnchor()
+                    }
+                }
+            }
 
             // Skip forced layout during streaming — the collection view
             // layouts naturally before the next display cycle, and the only
