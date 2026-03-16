@@ -604,7 +604,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ) {
                     if reducer.expandedItemIDs.contains(itemID) {
                         reducer.expandedItemIDs.remove(itemID)
-                        reconfigureToolRow(itemID: itemID, in: collectionView)
+                        anchoredReconfigureToolRow(
+                            itemID: itemID,
+                            anchorIndexPath: indexPath,
+                            in: collectionView
+                        )
                     }
                     return
                 }
@@ -627,7 +631,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         in: collectionView
                     )
                 }
-                reconfigureToolRow(itemID: itemID, in: collectionView)
+                anchoredReconfigureToolRow(
+                    itemID: itemID,
+                    anchorIndexPath: indexPath,
+                    in: collectionView
+                )
             case .thinking:
                 // Thinking rows own their long-form entry points (floating
                 // button, context menu, pinch/double-tap) to match tool rows.
@@ -803,6 +811,77 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             in collectionView: UICollectionView
         ) {
             reconfigureItems([itemID], in: collectionView)
+        }
+
+        /// Reconfigure a tool row while anchoring a specific item's screen
+        /// position. Captures the tapped row's screen-relative Y before
+        /// the reconfigure, restores it after, and sets the anchored
+        /// collection view's expand/collapse anchor for any deferred async
+        /// layout passes (e.g. `invalidateEnclosingCollectionViewLayout`).
+        private func anchoredReconfigureToolRow(
+            itemID: String,
+            anchorIndexPath: IndexPath,
+            in collectionView: UICollectionView
+        ) {
+            let anchoredCV = collectionView as? AnchoredCollectionView
+
+            // Capture anchor position before the reconfigure changes it.
+            let screenYBefore: CGFloat?
+            if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
+                screenYBefore = attrs.frame.origin.y - collectionView.contentOffset.y
+            } else {
+                screenYBefore = nil
+            }
+
+            reconfigureToolRow(itemID: itemID, in: collectionView)
+
+            // Restore anchor position after the synchronous layout pass.
+            if let screenYBefore {
+                restoreAnchorScreenPosition(
+                    anchorIndexPath: anchorIndexPath,
+                    savedScreenY: screenYBefore,
+                    in: collectionView
+                )
+            }
+
+            // Set the AnchoredCollectionView anchor for the deferred async
+            // invalidateEnclosingCollectionViewLayout pass, then clear one
+            // tick after that pass settles.
+            anchoredCV?.setExpandCollapseAnchor(indexPath: anchorIndexPath)
+            DispatchQueue.main.async { [weak anchoredCV] in
+                DispatchQueue.main.async { [weak anchoredCV] in
+                    anchoredCV?.clearExpandCollapseAnchor()
+                }
+            }
+        }
+
+        /// Adjust contentOffset so the item at `anchorIndexPath` returns
+        /// to `savedScreenY` (its screen-relative Y before the layout
+        /// change). Safe to call outside of `layoutSubviews`.
+        private func restoreAnchorScreenPosition(
+            anchorIndexPath: IndexPath,
+            savedScreenY: CGFloat,
+            in collectionView: UICollectionView
+        ) {
+            guard let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) else {
+                return
+            }
+            let currentScreenY = newAttrs.frame.origin.y - collectionView.contentOffset.y
+            let delta = currentScreenY - savedScreenY
+            guard delta.isFinite, abs(delta) > 0.5 else { return }
+
+            let insets = collectionView.adjustedContentInset
+            let minOffsetY = -insets.top
+            let maxOffsetY = max(
+                minOffsetY,
+                collectionView.contentSize.height
+                    - collectionView.bounds.height
+                    + insets.bottom
+            )
+            let target = collectionView.contentOffset.y + delta
+            let clamped = min(max(target, minOffsetY), maxOffsetY)
+            guard abs(clamped - collectionView.contentOffset.y) > 0.5 else { return }
+            collectionView.contentOffset.y = clamped
         }
 
         func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
