@@ -369,20 +369,136 @@ enum FlatSegment: Sendable {
         }
     }
 
-    // MARK: - Inline → AttributedString
+    // MARK: - Inline → AttributedString (range-based construction)
 
+    /// Attribute overlay to apply to a substring range.
+    private struct InlineAttr {
+        let utf8Start: Int
+        let utf8End: Int
+        let apply: (inout AttributedSubstring) -> Void
+    }
+
+    /// Build an AttributedString from inlines by extracting plain text first,
+    /// then applying attributes by range. Avoids creating N intermediate
+    /// AttributedString objects and the overhead of N append operations.
     private static func renderInlines(_ inlines: [MarkdownInline], palette: ThemePalette) -> AttributedString {
+        // Fast path: single text inline (most common paragraph).
+        if inlines.count == 1, case .text(let string) = inlines[0] {
+            return AttributedString(string)
+        }
+        // Fast path: single non-text inline.
         if inlines.count == 1 {
-            return renderInline(inlines[0], palette: palette)
+            return renderInlineFallback(inlines[0], palette: palette)
         }
-        var result = AttributedString()
-        for inline in inlines {
-            result.append(renderInline(inline, palette: palette))
+
+        // Build plain text and collect attribute overlays.
+        var plainText = ""
+        var attrs: [InlineAttr] = []
+        collectInlineText(inlines, palette: palette, into: &plainText, attrs: &attrs, depth: 0)
+
+        guard !plainText.isEmpty else { return AttributedString() }
+
+        var result = AttributedString(plainText)
+
+        // Apply overlays by range.
+        let utf8View = plainText.utf8
+        for attr in attrs {
+            let startIdx = utf8View.index(utf8View.startIndex, offsetBy: attr.utf8Start)
+            let endIdx = utf8View.index(utf8View.startIndex, offsetBy: attr.utf8End)
+            let startStrIdx = String.Index(startIdx, within: plainText) ?? plainText.startIndex
+            let endStrIdx = String.Index(endIdx, within: plainText) ?? plainText.endIndex
+            guard let attrStart = AttributedString.Index(startStrIdx, within: result),
+                  let attrEnd = AttributedString.Index(endStrIdx, within: result) else { continue }
+            if attrStart < attrEnd {
+                attr.apply(&result[attrStart ..< attrEnd])
+            }
         }
+
         return result
     }
 
-    private static func renderInline(_ inline: MarkdownInline, palette: ThemePalette) -> AttributedString {
+    /// Recursively extract plain text from inlines and record attribute ranges.
+    private static func collectInlineText(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        into text: inout String,
+        attrs: inout [InlineAttr],
+        depth: Int
+    ) {
+        for inline in inlines {
+            let start = text.utf8.count
+            switch inline {
+            case .text(let string):
+                text += string
+            case .emphasis(let children):
+                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
+                let end = text.utf8.count
+                if end > start {
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.inlinePresentationIntent = .emphasized
+                    })
+                }
+            case .strong(let children):
+                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
+                let end = text.utf8.count
+                if end > start {
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.inlinePresentationIntent = .stronglyEmphasized
+                    })
+                }
+            case .code(let code):
+                text += code
+                let end = text.utf8.count
+                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                    sub.font = .system(.body, design: .monospaced)
+                    sub.foregroundColor = palette.cyan
+                })
+            case .link(let children, let destination):
+                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
+                let end = text.utf8.count
+                if end > start {
+                    let resolvedURL: URL? = {
+                        guard let destination, let url = URL(string: destination), url.scheme != nil else { return nil }
+                        return url
+                    }()
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.foregroundColor = palette.blue
+                        sub.underlineStyle = .single
+                        if let url = resolvedURL {
+                            sub.link = url
+                        }
+                    })
+                }
+            case .image(let alt, _):
+                if !alt.isEmpty {
+                    text += "[\(alt)]"
+                    let end = text.utf8.count
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.foregroundColor = palette.comment
+                    })
+                }
+            case .softBreak, .hardBreak:
+                text += "\n"
+            case .html(let raw):
+                text += raw
+                let end = text.utf8.count
+                attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                    sub.foregroundColor = palette.comment
+                })
+            case .strikethrough(let children):
+                collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
+                let end = text.utf8.count
+                if end > start {
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.strikethroughStyle = .single
+                    })
+                }
+            }
+        }
+    }
+
+    /// Fallback for single complex inlines (non-text). Uses the old append-based path.
+    private static func renderInlineFallback(_ inline: MarkdownInline, palette: ThemePalette) -> AttributedString {
         switch inline {
         case .text(let string):
             return AttributedString(string)
