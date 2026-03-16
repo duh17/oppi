@@ -153,10 +153,18 @@ struct WorkspaceDetailView: View {
     // MARK: - Body
 
     var body: some View {
+        // Evaluate expensive computed properties once — each involves filter+sort
+        // over all sessions. Without local bindings, SwiftUI re-evaluates them
+        // on every access (activeSessions is read 3× per body, stoppedSessions 2×).
+        let active = activeSessions
+        let stopped = stoppedSessions
+        let localFiltered = filteredLocalSessions
+        let wsEmpty = workspaceSessions.isEmpty
+
         List {
-            if !activeSessions.isEmpty {
+            if !active.isEmpty {
                 Section("Active") {
-                    ForEach(activeSessions) { session in
+                    ForEach(active) { session in
                         NavigationLink(value: session.id) {
                             SessionRow(
                                 session: session,
@@ -178,8 +186,8 @@ struct WorkspaceDetailView: View {
             }
 
             WorkspaceStoppedSessionsSection(
-                stoppedSessions: stoppedSessions,
-                localSessions: filteredLocalSessions,
+                stoppedSessions: stopped,
+                localSessions: localFiltered,
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
                 lineageHint: { session in lineageHint(for: session) },
@@ -196,7 +204,7 @@ struct WorkspaceDetailView: View {
                 collapsedGroupIDs: $collapsedStoppedGroupIDs
             )
 
-            if workspaceSessions.isEmpty {
+            if wsEmpty {
                 Section {
                     ContentUnavailableView(
                         "No Sessions",
@@ -206,9 +214,9 @@ struct WorkspaceDetailView: View {
                     .listRowBackground(Color.themeBg)
                 }
             } else if hasSessionSearchQuery,
-                      activeSessions.isEmpty,
-                      stoppedSessions.isEmpty,
-                      filteredLocalSessions.isEmpty {
+                      active.isEmpty,
+                      stopped.isEmpty,
+                      localFiltered.isEmpty {
                 Section {
                     ContentUnavailableView(
                         "No Matching Sessions",
