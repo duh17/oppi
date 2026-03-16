@@ -116,8 +116,7 @@ struct HostDirectoryTests {
             name: "oppi",
             skills: ["search", "fetch"],
             hostMount: "~/workspace/oppi",
-            gitStatusEnabled: true,
-            memoryEnabled: true
+            gitStatusEnabled: true
         )
 
         let data = try JSONEncoder().encode(request)
@@ -126,7 +125,6 @@ struct HostDirectoryTests {
         #expect(json["name"] as? String == "oppi")
         #expect(json["hostMount"] as? String == "~/workspace/oppi")
         #expect(json["gitStatusEnabled"] as? Bool == true)
-        #expect(json["memoryEnabled"] as? Bool == true)
         #expect((json["skills"] as? [String])?.count == 2)
     }
 
@@ -142,7 +140,6 @@ struct HostDirectoryTests {
         #expect(json["name"] as? String == "blank")
         #expect(json["hostMount"] == nil)
         #expect(json["gitStatusEnabled"] == nil)
-        #expect(json["memoryEnabled"] == nil)
         #expect(json["description"] == nil)
     }
 

@@ -24,10 +24,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var systemPromptMode: WorkspaceSystemPromptMode = .append
     var hostMount: String?      // Host directory mounted as /work
 
-    // Memory
-    var memoryEnabled: Bool?
-    var memoryNamespace: String?
-
     // Extensions
     var extensions: [String]?
 
@@ -50,7 +46,6 @@ extension Workspace: Codable {
         case id, name, description, icon
         case skills
         case systemPrompt, systemPromptMode, hostMount
-        case memoryEnabled, memoryNamespace
         case extensions
         case gitStatusEnabled
         case defaultModel
@@ -67,8 +62,6 @@ extension Workspace: Codable {
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
-        memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
-        memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
         extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
         gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
@@ -90,8 +83,6 @@ extension Workspace: Codable {
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
-        try c.encodeIfPresent(memoryEnabled, forKey: .memoryEnabled)
-        try c.encodeIfPresent(memoryNamespace, forKey: .memoryNamespace)
         try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)

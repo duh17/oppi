@@ -7,7 +7,7 @@
  * Coverage:
  * - Storage: create, get, list, update, delete, ensureDefaultWorkspaces
  * - HTTP: GET/POST /workspaces, GET/PUT/DELETE /workspaces/:id
- * - Validation: name, skills, memoryNamespace
+ * - Validation: name, skills
  * - Edge cases: corrupt files, nonexistent workspaces, empty updates
  */
 
@@ -79,8 +79,6 @@ describe("Storage.createWorkspace", () => {
         systemPrompt: "Be helpful",
         systemPromptMode: "replace",
         hostMount: "~/workspace/oppi",
-        memoryEnabled: true,
-        memoryNamespace: "coding",
         extensions: ["memory", "todos"],
         defaultModel: "anthropic/claude-sonnet-4-0",
       }),
@@ -92,8 +90,6 @@ describe("Storage.createWorkspace", () => {
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("replace");
     expect(ws.hostMount).toBe("~/workspace/oppi");
-    expect(ws.memoryEnabled).toBe(true);
-    expect(ws.memoryNamespace).toBe("coding");
     expect(ws.extensions).toEqual(["memory", "todos"]);
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
@@ -123,28 +119,6 @@ describe("Storage.createWorkspace", () => {
     });
 
     expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
-  });
-
-  it("auto-generates memoryNamespace when memoryEnabled but no namespace given", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: true }),
-    );
-
-    expect(ws.memoryEnabled).toBe(true);
-    expect(ws.memoryNamespace).toBe(`ws-${ws.id}`);
-  });
-
-  it("uses provided memoryNamespace when given", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: true, memoryNamespace: "shared-ns" }),
-    );
-
-    expect(ws.memoryNamespace).toBe("shared-ns");
-  });
-
-  it("does not auto-generate memoryNamespace when memory is disabled", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: false }),
-    );
-
-    expect(ws.memoryNamespace).toBeUndefined();
   });
 
   it("keeps workspace directory available", () => {
@@ -332,41 +306,6 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("updates memoryEnabled", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: false }));
-    const updated = storage.updateWorkspace(ws.id, { memoryEnabled: true });
-
-    expect(updated!.memoryEnabled).toBe(true);
-  });
-
-  it("updates memoryNamespace", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: true, memoryNamespace: "old-ns" }),
-    );
-    const updated = storage.updateWorkspace(ws.id, { memoryNamespace: "new-ns" });
-
-    expect(updated!.memoryNamespace).toBe("new-ns");
-  });
-
-  it("auto-fills memoryNamespace when memoryEnabled and namespace is empty", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: false }));
-
-    // Enable memory without setting a namespace
-    const updated = storage.updateWorkspace(ws.id, { memoryEnabled: true });
-
-    expect(updated!.memoryEnabled).toBe(true);
-    expect(updated!.memoryNamespace).toBe(`ws-${ws.id}`);
-  });
-
-  it("auto-fills memoryNamespace when existing namespace is whitespace-only", () => {
-    const ws = storage.createWorkspace(createReq({ memoryEnabled: true, memoryNamespace: "valid" }),
-    );
-
-    // Set namespace to whitespace, should auto-fill
-    const updated = storage.updateWorkspace(ws.id, { memoryNamespace: "   " });
-
-    expect(updated!.memoryNamespace).toBe(`ws-${ws.id}`);
-  });
-
   it("normalizes and updates extensions", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
@@ -548,8 +487,7 @@ describe("Storage.ensureDefaultWorkspaces", () => {
     const general = storage.listWorkspaces().find((w) => w.name === "general");
 
     expect(general).toBeDefined();
-    expect(general!.memoryEnabled).toBe(true);
-    expect(general!.memoryNamespace).toBe("general");
+    expect(general!.name).toBe("general");
   });
 });
 
@@ -601,55 +539,6 @@ describe("Workspace API route patterns", () => {
     const m = "/workspaces/o_g0UfwY".match(WORKSPACE_ROUTE);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("o_g0UfwY");
-  });
-});
-
-// ─── Validation helpers ───
-
-describe("memoryNamespace validation", () => {
-  // Mirror the regex from server.ts: /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
-  const isValid = (ns: string) => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(ns);
-
-  it("accepts alphanumeric", () => {
-    expect(isValid("general")).toBe(true);
-    expect(isValid("research")).toBe(true);
-    expect(isValid("ws123")).toBe(true);
-  });
-
-  it("accepts dots, hyphens, underscores", () => {
-    expect(isValid("my.namespace")).toBe(true);
-    expect(isValid("my-namespace")).toBe(true);
-    expect(isValid("my_namespace")).toBe(true);
-  });
-
-  it("rejects empty string", () => {
-    expect(isValid("")).toBe(false);
-  });
-
-  it("rejects leading special characters", () => {
-    expect(isValid(".leading-dot")).toBe(false);
-    expect(isValid("-leading-dash")).toBe(false);
-    expect(isValid("_leading-underscore")).toBe(false);
-  });
-
-  it("rejects spaces", () => {
-    expect(isValid("has space")).toBe(false);
-  });
-
-  it("rejects special characters", () => {
-    expect(isValid("ns@work")).toBe(false);
-    expect(isValid("ns/path")).toBe(false);
-  });
-
-  it("rejects names over 64 chars", () => {
-    expect(isValid("a".repeat(65))).toBe(false);
-    expect(isValid("a".repeat(64))).toBe(true);
-  });
-
-  it("accepts single character", () => {
-    expect(isValid("a")).toBe(true);
-    expect(isValid("Z")).toBe(true);
-    expect(isValid("0")).toBe(true);
   });
 });
 

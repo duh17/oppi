@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 
 import {
   createAgentSession,
@@ -197,13 +197,27 @@ export class SdkBackend {
       systemPrompt: workspaceSystemPromptMode === "replace" ? workspace?.systemPrompt : undefined,
       appendSystemPrompt:
         workspaceSystemPromptMode === "append" ? workspace?.systemPrompt : undefined,
-      extensionsOverride: (base) => ({
-        ...base,
-        extensions: base.extensions.filter(
+      extensionsOverride: (base) => {
+        // 1. Always filter out pi's built-in permission-gate (oppi uses its own policy engine)
+        let filtered = base.extensions.filter(
           (ext) =>
             !ext.path.includes("permission-gate") && !ext.resolvedPath.includes("permission-gate"),
-        ),
-      }),
+        );
+
+        // 2. If workspace specifies an extensions list, only load those
+        const allowedNames = workspace?.extensions;
+        if (allowedNames && allowedNames.length > 0) {
+          const allowed = new Set(allowedNames);
+          filtered = filtered.filter((ext) => {
+            const file = basename(ext.resolvedPath || ext.path);
+            const ext2 = extname(file);
+            const name = ext2 ? file.slice(0, -ext2.length) : file;
+            return allowed.has(name);
+          });
+        }
+
+        return { ...base, extensions: filtered };
+      },
     });
     await loader.reload();
 

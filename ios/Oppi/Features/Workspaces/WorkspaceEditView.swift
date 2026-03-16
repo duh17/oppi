@@ -15,8 +15,6 @@ struct WorkspaceEditView: View {
     @State private var systemPrompt: String = ""
     @State private var systemPromptMode: WorkspaceSystemPromptMode = .append
     @State private var gitStatusEnabled: Bool = true
-    @State private var memoryEnabled: Bool = false
-    @State private var memoryNamespace: String = ""
     @State private var extensionNames: String = ""
     @State private var availableExtensions: [ExtensionInfo] = []
     @State private var isLoadingExtensions = false
@@ -192,20 +190,6 @@ struct WorkspaceEditView: View {
                 Text("Shows branch, dirty files, and change stats in chat view")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
-            }
-
-            Section("Memory") {
-                Toggle("Enable memory", isOn: $memoryEnabled)
-
-                if memoryEnabled {
-                    TextField("Namespace", text: $memoryNamespace)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-
-                    Text("Same namespace across workspaces shares memory")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
             }
 
             Section("Extensions") {
@@ -388,8 +372,6 @@ struct WorkspaceEditView: View {
         systemPrompt = source.systemPrompt ?? ""
         systemPromptMode = source.systemPromptMode
         gitStatusEnabled = source.gitStatusEnabled ?? true
-        memoryEnabled = source.memoryEnabled ?? false
-        memoryNamespace = source.memoryNamespace ?? ""
         setSelectedExtensionNames(source.extensions ?? [])
         defaultModel = source.defaultModel ?? ""
     }
@@ -432,8 +414,6 @@ struct WorkspaceEditView: View {
             systemPromptMode: systemPromptMode,
             hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
-            memoryEnabled: memoryEnabled,
-            memoryNamespace: nullableJSONString(memoryNamespace),
             extensions: selectedExtensionNames,
             defaultModel: nullableJSONString(defaultModel)
         )
