@@ -37,7 +37,7 @@ struct ServerDetailView: View {
                 Section {
                     VStack(spacing: 8) {
                         Label("Unable to reach server", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.themeOrange)
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.themeComment)

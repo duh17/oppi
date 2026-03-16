@@ -258,7 +258,7 @@ struct WorkspaceEditView: View {
                 if let extensionsError {
                     Text("Extensions API: \(extensionsError)")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.themeOrange)
                 }
             }
 
