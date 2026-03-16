@@ -291,11 +291,19 @@ struct SessionListPerfBench {
                     let _ = min(max(Double(used) / Double(window), 0), 1)
                 }
 
-                // costString
+                // costString (manual fixed-point)
                 let cost = session.cost
-                let _ = cost >= 0.01
-                    ? String(format: "$%.2f", cost)
-                    : String(format: "$%.3f", cost)
+                if cost >= 0.01 {
+                    let cents = Int((cost * 100).rounded())
+                    let d = cents / 100
+                    let r = cents % 100
+                    let _ = "$\(d).\(r < 10 ? "0" : "")\(r)"
+                } else {
+                    let mils = Int((cost * 1000).rounded())
+                    if mils < 10 { let _ = "$0.00\(mils)" }
+                    else if mils < 100 { let _ = "$0.0\(mils)" }
+                    else { let _ = "$0.\(mils)" }
+                }
 
                 // relativeString
                 let _ = session.lastActivity.relativeString()
