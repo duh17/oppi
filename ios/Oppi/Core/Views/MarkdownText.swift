@@ -337,9 +337,9 @@ enum FlatSegment: Sendable {
                 container.foregroundColor = palette.fg
                 return AttributedString(string, attributes: container)
             }
-            var result = renderInlines(inlines, palette: palette)
-            result.foregroundColor = palette.fg
-            return result
+            // Build with foreground baked into initial construction,
+            // then override specific inline colors (code, links) by range.
+            return renderInlinesWithDefaultColor(inlines, palette: palette, defaultColor: palette.fg)
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
@@ -403,13 +403,40 @@ enum FlatSegment: Sendable {
     /// then applying attributes by range. Avoids creating N intermediate
     /// AttributedString objects and the overhead of N append operations.
     private static func renderInlines(_ inlines: [MarkdownInline], palette: ThemePalette) -> AttributedString {
+        return renderInlinesCore(inlines, palette: palette, defaultColor: nil)
+    }
+
+    /// Like `renderInlines` but bakes a default foreground color into the
+    /// initial AttributedString construction, avoiding an O(runs) post-set.
+    private static func renderInlinesWithDefaultColor(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        defaultColor: Color
+    ) -> AttributedString {
+        return renderInlinesCore(inlines, palette: palette, defaultColor: defaultColor)
+    }
+
+    private static func renderInlinesCore(
+        _ inlines: [MarkdownInline],
+        palette: ThemePalette,
+        defaultColor: Color?
+    ) -> AttributedString {
         // Fast path: single text inline (most common paragraph).
         if inlines.count == 1, case .text(let string) = inlines[0] {
+            if let color = defaultColor {
+                var container = AttributeContainer()
+                container.foregroundColor = color
+                return AttributedString(string, attributes: container)
+            }
             return AttributedString(string)
         }
         // Fast path: single non-text inline.
         if inlines.count == 1 {
-            return renderInlineFallback(inlines[0], palette: palette)
+            var result = renderInlineFallback(inlines[0], palette: palette)
+            if let color = defaultColor {
+                result.foregroundColor = color
+            }
+            return result
         }
 
         // Build plain text and collect attribute overlays.
@@ -419,7 +446,15 @@ enum FlatSegment: Sendable {
 
         guard !plainText.isEmpty else { return AttributedString() }
 
-        var result = AttributedString(plainText)
+        // Create with default color baked in if provided.
+        var result: AttributedString
+        if let color = defaultColor {
+            var container = AttributeContainer()
+            container.foregroundColor = color
+            result = AttributedString(plainText, attributes: container)
+        } else {
+            result = AttributedString(plainText)
+        }
 
         // Apply overlays by range.
         let utf8View = plainText.utf8
