@@ -59,7 +59,7 @@ final class AssistantMarkdownSegmentSource {
         MarkdownStreamingPerf.record(
             parseDurationNs: parseEnd - parseStart,
             buildDurationNs: buildEnd - parseEnd,
-            lineCount: content.components(separatedBy: "\n").count,
+            lineCount: Self.countNewlines(content) + 1,
             isTailOnly: false,
             isStreaming: false
         )
@@ -110,7 +110,7 @@ final class AssistantMarkdownSegmentSource {
                     offsetBy: state.prefixUTF8ByteCount
                 )
                 let tailContent = String(content[boundaryIdx...])
-                let tailLineCount = tailContent.components(separatedBy: "\n").count
+                let tailLineCount = Self.countNewlines(tailContent) + 1
 
                 let parseStart = MarkdownStreamingPerf.timestampNs()
                 let (tailBlocks, tailLastBlockLine) = tailContent.isEmpty
@@ -202,7 +202,7 @@ final class AssistantMarkdownSegmentSource {
         MarkdownStreamingPerf.record(
             parseDurationNs: parseEnd - parseStart,
             buildDurationNs: buildEnd - parseEnd,
-            lineCount: content.components(separatedBy: "\n").count,
+            lineCount: Self.countNewlines(content) + 1,
             isTailOnly: false,
             isStreaming: true
         )
@@ -303,5 +303,14 @@ final class AssistantMarkdownSegmentSource {
             hash &*= 1_099_511_628_211
         }
         return hash
+    }
+
+    /// Count newlines via UTF-8 byte scan. Avoids the `components(separatedBy:)` array allocation.
+    private static func countNewlines(_ string: String) -> Int {
+        var count = 0
+        for byte in string.utf8 {
+            if byte == UInt8(ascii: "\n") { count += 1 }
+        }
+        return count
     }
 }
