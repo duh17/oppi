@@ -453,13 +453,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         // MARK: - Apply Configuration
 
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
+            let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
+
             hiddenCount = configuration.hiddenCount
             renderWindowStep = configuration.renderWindowStep
             isZenMode = configuration.isZenMode
             streamingAssistantID = configuration.streamingAssistantID
             isTimelineBusy = configuration.isBusy
 
-            if context.didChangeSessionScope(for: configuration) {
+            if sessionScopeChanged {
                 cancelAllToolOutputLoadTasks()
                 lastObservedContentOffsetY = nil
                 lastObservedContentHeight = nil
@@ -474,7 +476,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.collectionView = collectionView
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
 
-            collectionView.backgroundColor = UIColor(Color.themeBg)
+            // Only update backgroundColor when theme changed or on first apply.
+            if previousThemeID != configuration.themeID || previousThemeID == nil {
+                collectionView.backgroundColor = UIColor(Color.themeBg)
+            }
 
             if collectionView.contentInset.top != configuration.topOverlap {
                 collectionView.contentInset.top = configuration.topOverlap
