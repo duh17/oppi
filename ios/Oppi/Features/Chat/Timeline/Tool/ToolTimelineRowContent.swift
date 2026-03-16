@@ -1536,8 +1536,40 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             from: self,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSessionId: selectedTextSessionId,
-            selectedTextSourceLabel: currentConfiguration.title
+            selectedTextSourceLabel: currentConfiguration.title,
+            fetchFileForRender: resolveFetchFileForRender()
         )
+    }
+
+    /// Walk up the view hierarchy to find the collection view's controller and
+    /// build a fetch closure from its API client + workspace/session context.
+    private func resolveFetchFileForRender() -> FullScreenCodeViewController.FetchFileContent? {
+        var view: UIView? = superview
+        while let current = view {
+            if let collectionView = current as? UICollectionView,
+               let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller {
+                let sessionId = controller.sessionId
+                guard let apiClient = controller.connection?.apiClient,
+                      let workspaceId = controller.workspaceId,
+                      !workspaceId.isEmpty,
+                      !sessionId.isEmpty else {
+                    return nil
+                }
+                return { @Sendable filePath in
+                    let data = try await apiClient.getSessionFileData(
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        path: filePath
+                    )
+                    guard let text = String(data: data, encoding: .utf8) else {
+                        throw URLError(.cannotDecodeContentData)
+                    }
+                    return text
+                }
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {
