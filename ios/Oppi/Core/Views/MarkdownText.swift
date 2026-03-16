@@ -196,6 +196,9 @@ enum FlatSegment: Sendable {
     /// When `workspaceID` and `serverBaseURL` are provided, paragraphs that
     /// contain a single relative-path image inline are promoted to `.image`
     /// segments instead of the alt-text fallback.
+    /// Cached paragraph separator. Created once to avoid repeated allocation.
+    private static let paragraphSeparator = AttributedString("\n\n")
+
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
@@ -218,7 +221,7 @@ enum FlatSegment: Sendable {
         func appendTextBlock(_ attributed: AttributedString) {
             guard !attributed.characters.isEmpty else { return }
             if hasPendingText {
-                pendingText.append(AttributedString("\n\n"))
+                pendingText.append(paragraphSeparator)
             }
             pendingText.append(attributed)
             hasPendingText = true
@@ -370,6 +373,9 @@ enum FlatSegment: Sendable {
     // MARK: - Inline → AttributedString
 
     private static func renderInlines(_ inlines: [MarkdownInline], themeID: ThemeID) -> AttributedString {
+        if inlines.count == 1 {
+            return renderInline(inlines[0], themeID: themeID)
+        }
         var result = AttributedString()
         for inline in inlines {
             result.append(renderInline(inline, themeID: themeID))
