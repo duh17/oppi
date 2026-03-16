@@ -25,32 +25,51 @@ struct ToolRowCodeRenderStrategy {
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
-        let signature = ToolTimelineRowRenderMetrics.codeSignature(
-            displayText: displayText,
-            language: language,
-            startLine: resolvedStartLine,
-            isStreaming: isStreaming
-        )
-        let currentRenderedString = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
-        let needsNonStreamingUpgrade = !isStreaming && currentRenderedString == displayText
-        let shouldRerender = signature != previousSignature
-            || !isCurrentModeCode
-            || needsNonStreamingUpgrade
+
+        // During streaming, skip the full-text hash for the signature.
+        // Use byte count as a cheap proxy — if the text grew, re-render.
+        let signature: Int
+        let shouldRerender: Bool
+        if isStreaming {
+            let byteCount = displayText.utf8.count
+            signature = byteCount ^ (resolvedStartLine &* 31)
+            shouldRerender = signature != previousSignature || !isCurrentModeCode
+        } else {
+            signature = ToolTimelineRowRenderMetrics.codeSignature(
+                displayText: displayText,
+                language: language,
+                startLine: resolvedStartLine,
+                isStreaming: false
+            )
+            let currentRenderedString = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+            let needsNonStreamingUpgrade = currentRenderedString == displayText
+            shouldRerender = signature != previousSignature
+                || !isCurrentModeCode
+                || needsNonStreamingUpgrade
+        }
 
         var deferred: DeferredHighlight?
         var renderedText = previousRenderedText
 
         if shouldRerender {
             let renderStartNs = ChatTimelinePerf.timestampNs()
-            let profile = StreamingRenderPolicy.ContentProfile.from(text: displayText)
             let languageCategory = Self.languageCategory(for: language)
-            let tier = StreamingRenderPolicy.tier(
-                isStreaming: isStreaming,
-                contentKind: .code(language: languageCategory),
-                byteCount: profile.byteCount,
-                lineCount: profile.lineCount,
-                maxLineByteCount: profile.maxLineByteCount
-            )
+
+            // Fast path: streaming always uses .cheap tier, skip the
+            // content profile scan (avoids iterating entire text UTF-8).
+            let tier: StreamingRenderPolicy.RenderTier
+            if isStreaming {
+                tier = .cheap
+            } else {
+                let profile = StreamingRenderPolicy.ContentProfile.from(text: displayText)
+                tier = StreamingRenderPolicy.tier(
+                    isStreaming: false,
+                    contentKind: .code(language: languageCategory),
+                    byteCount: profile.byteCount,
+                    lineCount: profile.lineCount,
+                    maxLineByteCount: profile.maxLineByteCount
+                )
+            }
 
             switch tier {
             case .cheap:
