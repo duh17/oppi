@@ -27,6 +27,12 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "docs/guide.mdx") == .markdown)
     }
 
+    @Test func detectHTML() {
+        #expect(FileType.detect(from: "page.html") == .html)
+        #expect(FileType.detect(from: "index.htm") == .html)
+        #expect(FileType.detect(from: "REPORT.HTML") == .html)
+    }
+
     @Test func detectJSON() {
         #expect(FileType.detect(from: "config.json") == .json)
     }
@@ -134,6 +140,7 @@ struct FileTypeTests {
 
     @Test func displayLabels() {
         #expect(FileType.markdown.displayLabel == "Markdown")
+        #expect(FileType.html.displayLabel == "HTML")
         #expect(FileType.json.displayLabel == "JSON")
         #expect(FileType.image.displayLabel == "Image")
         #expect(FileType.audio.displayLabel == "Audio")

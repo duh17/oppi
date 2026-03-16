@@ -89,6 +89,10 @@ enum ToolTimelineRowFullScreenSupport {
         case .code(let text, let language, let startLine, let filePath):
             let copyText = outputCopyText ?? text
             guard !copyText.isEmpty else { return nil }
+            // HTML files get rendered preview with source toggle in full-screen
+            if language == .html {
+                return .html(content: copyText, filePath: filePath)
+            }
             return .code(
                 content: copyText,
                 language: language?.displayName,
