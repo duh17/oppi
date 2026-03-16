@@ -609,8 +609,9 @@ extension NativeTableBlockView: UITextViewDelegate {
 /// Show a flash overlay + floating "Copied" pill centered on the given view.
 @MainActor
 private func showCopiedOverlay(on view: UIView) {
+    let palette = ThemeRuntimeState.currentPalette()
     let overlay = UIView()
-    overlay.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+    overlay.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.08)
     overlay.frame = view.bounds
     overlay.layer.cornerRadius = view.layer.cornerRadius
     overlay.isUserInteractionEnabled = false
@@ -644,16 +645,17 @@ private func showCopiedOverlay(on view: UIView) {
 private final class CopiedPillView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
+        let palette = ThemeRuntimeState.currentPalette()
 
         let icon = UIImageView(image: UIImage(systemName: "checkmark"))
-        icon.tintColor = .white
+        icon.tintColor = UIColor(palette.fg)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
 
         let label = UILabel()
         label.text = "Copied"
         label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .white
+        label.textColor = UIColor(palette.fg)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(arrangedSubviews: [icon, label])
@@ -662,7 +664,7 @@ private final class CopiedPillView: UIView {
         stack.alignment = .center
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        backgroundColor = UIColor.black.withAlphaComponent(0.75)
+        backgroundColor = UIColor(palette.bgDark).withAlphaComponent(0.85)
         layer.cornerRadius = 16
         isUserInteractionEnabled = false
 

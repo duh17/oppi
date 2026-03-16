@@ -82,7 +82,7 @@ struct FileBrowserView: View {
                 if response.truncated {
                     Text("Showing first \(response.entries.count) entries")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
             .listStyle(.plain)
@@ -107,7 +107,7 @@ struct FileBrowserView: View {
                     if results.truncated {
                         Text("Showing first \(results.entries.count) results")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
                 }
                 .listStyle(.plain)
@@ -155,11 +155,11 @@ struct FileBrowserView: View {
                             .lineLimit(1)
                         Text(entry.formattedSize)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
                 } icon: {
                     Image(systemName: fileIconName(for: entry.name))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeFgDim)
                 }
             }
         }
