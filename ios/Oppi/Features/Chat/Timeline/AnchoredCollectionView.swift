@@ -23,6 +23,27 @@ final class AnchoredCollectionView: UICollectionView {
     /// `scrollViewDidScroll` fallback covers the passive detached case.
     var isDetachedFromBottom = false
 
+    // MARK: - Expand/collapse anchoring
+
+    /// When set, this index path is used as the anchor instead of the first
+    /// visible item. Persists until explicitly cleared via
+    /// `clearExpandCollapseAnchor()`. The caller is responsible for
+    /// scheduling cleanup after all layout passes have settled.
+    private(set) var expandCollapseAnchorIP: IndexPath?
+
+    /// Pin a specific item's screen position across expand/collapse layout
+    /// passes. Call before the reconfigure that changes the cell height.
+    /// The caller must schedule `clearExpandCollapseAnchor()` after all
+    /// synchronous and asynchronous layout passes have settled.
+    func setExpandCollapseAnchor(indexPath: IndexPath) {
+        expandCollapseAnchorIP = indexPath
+    }
+
+    /// Clear the expand/collapse anchor after layout passes have settled.
+    func clearExpandCollapseAnchor() {
+        expandCollapseAnchorIP = nil
+    }
+
     #if DEBUG
         /// Tests cannot drive UIKit drag/deceleration flags directly, so this
         /// override allows deterministic anchoring coverage in unit tests.
@@ -53,6 +74,11 @@ final class AnchoredCollectionView: UICollectionView {
     // MARK: - Private
 
     private var shouldAnchorDuringThisPass: Bool {
+        // Always anchor when an expand/collapse is in flight.
+        if expandCollapseAnchorIP != nil {
+            return true
+        }
+
         #if DEBUG
             if forceAnchoringForTesting {
                 return true
@@ -79,10 +105,18 @@ final class AnchoredCollectionView: UICollectionView {
 
         guard shouldAnchorDuringThisPass else { return }
 
-        guard let firstIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
-              let attrs = layoutAttributesForItem(at: firstIP) else { return }
+        // Prefer the expand/collapse anchor when active — it pins the exact
+        // item the user tapped, preventing the header bar from shifting.
+        let anchorIP: IndexPath?
+        if let ecIP = expandCollapseAnchorIP {
+            anchorIP = ecIP
+        } else {
+            anchorIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item })
+        }
 
-        savedAnchorIP = firstIP
+        guard let anchorIP, let attrs = layoutAttributesForItem(at: anchorIP) else { return }
+
+        savedAnchorIP = anchorIP
         savedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
     }
 
