@@ -111,7 +111,9 @@ final class AnchoredCollectionView: UICollectionView {
     /// interception alone cannot prevent.
     override var contentOffset: CGPoint {
         didSet {
+            // Fast guards — avoid all work when no correction needed.
             guard !isApplyingAnchorCorrection else { return }
+            guard pendingCorrectionOffsetY == nil else { return }
 
             #if DEBUG
                 let _didSetStart = DispatchTime.now().uptimeNanoseconds
@@ -132,10 +134,8 @@ final class AnchoredCollectionView: UICollectionView {
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
-                if pendingCorrectionOffsetY == nil {
-                    pendingCorrectionOffsetY = expandCollapseSavedOffsetY
-                    setNeedsLayout()
-                }
+                pendingCorrectionOffsetY = expandCollapseSavedOffsetY
+                setNeedsLayout()
                 return
             }
 
@@ -147,10 +147,8 @@ final class AnchoredCollectionView: UICollectionView {
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
-                if pendingCorrectionOffsetY == nil {
-                    pendingCorrectionOffsetY = detachedSavedOffsetY
-                    setNeedsLayout()
-                }
+                pendingCorrectionOffsetY = detachedSavedOffsetY
+                setNeedsLayout()
             }
         }
     }
