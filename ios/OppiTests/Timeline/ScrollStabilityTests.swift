@@ -637,4 +637,223 @@ struct ScrollStabilityTests {
         #expect(drift < 2.0,
                 "contentOffset drifted \(drift)pt after tap-collapsing tool row at index \(targetIP.item)")
     }
+
+    // MARK: - Expand/Collapse Anchor Stability
+
+    @MainActor
+    @Test func repeatedExpandCollapseKeepsTappedRowScreenPosition() {
+        // Bug: repeatedly tapping a tool row to expand/collapse causes the
+        // collapsed bar to shift on screen. The tapped row's screen-relative
+        // Y position must stay fixed across each toggle.
+        let window = makeScrollTestWindow()
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<20 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Message \(i) text. ", count: 12),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("echo \(i)")], for: "tc-\(i)")
+            toolOutputStore.append(
+                String(repeating: "output \(i)\n", count: 8),
+                to: "tc-\(i)"
+            )
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "echo \(i)",
+                outputPreview: "output \(i)",
+                outputByteCount: 128,
+                isError: false, isDone: true
+            ))
+        }
+
+        let config = makeTimelineConfiguration(
+            items: items,
+            sessionId: "s-repeat",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll to bottom so cells measure, then scroll to mid.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        let midY = maxOffset * 0.5
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        // Find a visible tool row.
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let targetIP = visibleIPs.first { ip in
+            ip.item < items.count && items[ip.item].id.hasPrefix("tc-")
+        }
+        guard let targetIP else {
+            Issue.record("No visible tool row at midpoint")
+            return
+        }
+
+        // Toggle expand/collapse 6 times and check screen position each time.
+        for round in 1...6 {
+            guard let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP) else {
+                Issue.record("Missing layout attributes before toggle round \(round)")
+                continue
+            }
+            let screenYBefore = attrsBefore.frame.origin.y - collectionView.contentOffset.y
+
+            coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+            guard let attrsAfter = collectionView.layoutAttributesForItem(at: targetIP) else {
+                Issue.record("Missing layout attributes after toggle round \(round)")
+                continue
+            }
+            let screenYAfter = attrsAfter.frame.origin.y - collectionView.contentOffset.y
+            let shift = abs(screenYAfter - screenYBefore)
+
+            #expect(shift < 2.0,
+                    "Tool row shifted \(shift)pt on screen during toggle round \(round)")
+        }
+    }
+
+    @MainActor
+    @Test func expandCollapseAnchoringWorksWhenNearBottom() {
+        // The original bug: user is near the bottom (isDetachedFromBottom is
+        // false), taps to expand a tool row. Without the expand/collapse
+        // anchor, AnchoredCollectionView skips anchoring entirely, and the
+        // compositional layout shifts contentOffset.
+        //
+        // To match real usage, the test scrolls through ALL content first so
+        // every cell is measured at its actual size (not 44pt estimate).
+        // Otherwise the expand-triggered layoutIfNeeded re-estimates off-screen
+        // cells, collapsing contentSize and making the anchor position
+        // unreachable (clamped to maxOffsetY).
+        let window = makeScrollTestWindow()
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<15 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Line \(i) content. ", count: 10),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("cmd \(i)")], for: "tc-\(i)")
+            toolOutputStore.append(
+                String(repeating: "result \(i)\n", count: 6),
+                to: "tc-\(i)"
+            )
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "cmd \(i)",
+                outputPreview: "result \(i)",
+                outputByteCount: 96,
+                isError: false, isDone: true
+            ))
+        }
+
+        let config = makeTimelineConfiguration(
+            items: items,
+            sessionId: "s-bottom",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll through all content so every cell is measured at its actual
+        // height, matching real-world behavior where the user scrolls through
+        // the conversation. Without this, off-screen cells have 44pt estimated
+        // heights that collapse during the expand layout pass.
+        let scrollStep: CGFloat = collectionView.bounds.height * 0.8
+        var offset: CGFloat = 0
+        while offset < collectionView.contentSize.height {
+            collectionView.contentOffset.y = offset
+            collectionView.layoutIfNeeded()
+            offset += scrollStep
+        }
+
+        // Scroll to bottom — stay attached.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+        scrollController.updateNearBottom(true)
+
+        #expect(scrollController.isCurrentlyNearBottom, "precondition: should be near bottom")
+        #expect(!collectionView.isDetachedFromBottom,
+                "precondition: collection view should not be detached")
+
+        // Find a visible tool row.
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let targetIP = visibleIPs.first { ip in
+            ip.item < items.count && items[ip.item].id.hasPrefix("tc-")
+        }
+        guard let targetIP else {
+            Issue.record("No visible tool row near bottom")
+            return
+        }
+
+        guard let attrsBefore = collectionView.layoutAttributesForItem(at: targetIP) else {
+            Issue.record("Missing layout attributes for target tool row")
+            return
+        }
+        let screenYBefore = attrsBefore.frame.origin.y - collectionView.contentOffset.y
+
+        // Expand — this is the scenario that was broken.
+        coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+        guard let attrsAfter = collectionView.layoutAttributesForItem(at: targetIP) else {
+            Issue.record("Missing layout attributes after expand")
+            return
+        }
+        let screenYAfter = attrsAfter.frame.origin.y - collectionView.contentOffset.y
+        let shift = abs(screenYAfter - screenYBefore)
+
+        #expect(shift < 2.0,
+                "Tool row header shifted \(shift)pt when expanding near bottom")
+    }
 }
