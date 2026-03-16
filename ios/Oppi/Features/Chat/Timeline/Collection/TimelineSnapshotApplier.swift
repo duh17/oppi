@@ -17,11 +17,10 @@ enum TimelineSnapshotApplier {
         themeID: ThemeID,
         previousThemeID: ThemeID?
     ) {
-        ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
-
         // Fast path: when no previous items exist (cold start), skip change
         // detection entirely — everything is new.
         guard !previousItemByID.isEmpty else {
+            ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
             ChatTimelinePerf.beginSnapshotBuildPhase()
             ChatTimelinePerf.endSnapshotBuildPhase()
             ChatTimelinePerf.updateTimelineApplyCycle(
@@ -42,8 +41,6 @@ enum TimelineSnapshotApplier {
             return
         }
 
-        ChatTimelinePerf.beginSnapshotBuildPhase()
-
         // Fast path: when the ID list is structurally unchanged, skip Set
         // construction for reconfigureItemIDs and avoid the full snapshot
         // rebuild. Compare previousIDs (caller-supplied) instead of querying
@@ -51,10 +48,9 @@ enum TimelineSnapshotApplier {
         let idsUnchanged = previousIDs.count == nextIDs.count && previousIDs == nextIDs
             && previousThemeID == themeID
 
-        let dedupedChangedIDs: [String]
         if idsUnchanged {
-            // IDs unchanged — only detect content mutations, skip Set allocation.
-            dedupedChangedIDs = changedItemIDsForReconfigure(
+            // Minimal perf tracking for the streaming fast path.
+            let changedIDs = changedItemIDsForReconfigure(
                 nextIDs: nextIDs,
                 nextItemByID: nextItemByID,
                 previousItemByID: previousItemByID,
@@ -63,7 +59,33 @@ enum TimelineSnapshotApplier {
                 streamingAssistantID: streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID
             )
-        } else {
+            ChatTimelinePerf.beginTimelineApplyCycle(
+                itemCount: nextIDs.count,
+                changedCount: changedIDs.count
+            )
+            if let dataSource, !changedIDs.isEmpty {
+                var snapshot = dataSource.snapshot()
+                let validIDs = changedIDs.filter {
+                    snapshot.indexOfItem($0) != nil
+                }
+                if !validIDs.isEmpty {
+                    snapshot.reconfigureItems(validIDs)
+                    let applyToken = ChatTimelinePerf.beginCollectionApply(
+                        itemCount: nextIDs.count,
+                        changedCount: validIDs.count
+                    )
+                    dataSource.apply(snapshot, animatingDifferences: false)
+                    ChatTimelinePerf.endCollectionApply(applyToken)
+                }
+            }
+            return
+        }
+
+        ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
+        ChatTimelinePerf.beginSnapshotBuildPhase()
+
+        let dedupedChangedIDs: [String]
+        do {
             let nextIDSet = Set(nextIDs)
             dedupedChangedIDs = reconfigureItemIDs(
                 nextIDs: nextIDs,
@@ -83,30 +105,6 @@ enum TimelineSnapshotApplier {
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
         )
-
-        // Fast path: when the ID list is structurally unchanged, skip the full
-        // snapshot rebuild. Just reconfigure changed items on the existing
-        // snapshot. This avoids UIKit's O(n) internal diff.
-        if idsUnchanged, let dataSource {
-            if !dedupedChangedIDs.isEmpty {
-                var snapshot = dataSource.snapshot()
-                // Filter to items that exist in the snapshot to avoid UIKit
-                // assertions during reconfigure validation.
-                let validIDs = dedupedChangedIDs.filter {
-                    snapshot.indexOfItem($0) != nil
-                }
-                if !validIDs.isEmpty {
-                    snapshot.reconfigureItems(validIDs)
-                    let applyToken = ChatTimelinePerf.beginCollectionApply(
-                        itemCount: nextIDs.count,
-                        changedCount: validIDs.count
-                    )
-                    dataSource.apply(snapshot, animatingDifferences: false)
-                    ChatTimelinePerf.endCollectionApply(applyToken)
-                }
-            }
-            return
-        }
 
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
