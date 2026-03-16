@@ -142,12 +142,22 @@ final class AnchoredCollectionView: UICollectionView {
                 return
             }
 
-            // Detached anchor: handled entirely by layoutSubviews
-            // captureAnchor/restoreAnchor + controller layoutIfNeeded.
-            // The detached anchor persists until the next snapshot apply
-            // (not cleared via double-async), so the layoutSubviews anchor
-            // stays active through all deferred invalidation passes.
-            // No didSet correction needed for this path.
+            // Detached anchor: preserve position during self-sizing
+            // cascade when new items arrive below the viewport.
+            // UIKit's display-link-driven cell sizing adjusts contentOffset
+            // by ~6pt per frame — these per-frame adjustments are NOT caught
+            // by layoutSubviews alone because they happen AFTER the layout
+            // pass returns. The deferred correction batches them into a
+            // single layoutSubviews correction.
+            if isDetachedFromBottom, detachedAnchorIP != nil {
+                let delta = contentOffset.y - detachedSavedOffsetY
+                guard delta.isFinite, abs(delta) > 0.5 else { return }
+                #if DEBUG
+                    _debugDidSetCorrectionCount += 1
+                #endif
+                pendingCorrectionOffsetY = detachedSavedOffsetY
+                setNeedsLayout()
+            }
         }
     }
 

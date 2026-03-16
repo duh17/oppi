@@ -33,7 +33,8 @@ enum ToolTimelineRowPresentationHelpers {
         from sourceView: UIView,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil
+        selectedTextSourceLabel: String? = nil,
+        fetchFileForRender: FullScreenCodeViewController.FetchFileContent? = nil
     ) {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
@@ -48,6 +49,7 @@ enum ToolTimelineRowPresentationHelpers {
             selectedTextSessionId: selectedTextSessionId,
             selectedTextSourceLabel: selectedTextSourceLabel
         )
+        controller.fetchFileForRender = fetchFileForRender
         // .pageSheet keeps the presenting VC in the window hierarchy (unlike
         // .fullScreen which removes it, triggering SwiftUI onDisappear).
         // On iPhone, .pageSheet at .large() detent is visually full-screen
