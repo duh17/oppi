@@ -313,6 +313,38 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         match: { tool: "write", pathMatches: "**/rules.ts" },
       },
 
+      // ── Network allowlist protection ──
+      // Adding domains to the fetch allowlist expands what the agent can access.
+      // Always require phone approval.
+      {
+        id: "ask-fetch-allow-add",
+        decision: "ask",
+        label: "Add domain to fetch allowlist",
+        reason: "Expanding network access requires approval",
+        match: { tool: "bash", executable: "fetch", commandMatches: "fetch allow add*" },
+      },
+      {
+        id: "ask-fetch-allow-remove",
+        decision: "ask",
+        label: "Remove domain from fetch allowlist",
+        reason: "Modifying network access requires approval",
+        match: { tool: "bash", executable: "fetch", commandMatches: "fetch allow remove*" },
+      },
+      {
+        id: "ask-edit-allowlist",
+        decision: "ask",
+        label: "Edit fetch allowlist",
+        reason: "Directly editing the allowlist bypasses normal approval flow",
+        match: { tool: "edit", pathMatches: "**/fetch/allowed_domains.txt" },
+      },
+      {
+        id: "ask-write-allowlist",
+        decision: "ask",
+        label: "Overwrite fetch allowlist",
+        reason: "Directly writing the allowlist bypasses normal approval flow",
+        match: { tool: "write", pathMatches: "**/fetch/allowed_domains.txt" },
+      },
+
       // ── Catastrophic operations ──
       {
         id: "block-root-rm",
@@ -788,6 +820,35 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "*rules.json*",
     action: "ask",
     label: "Bash touches rules config",
+  },
+
+  // ── Network allowlist protection → ask ──
+  // Adding/removing domains from the fetch allowlist changes what the agent can access.
+  {
+    tool: "bash",
+    exec: "fetch",
+    pattern: "fetch allow add*",
+    action: "ask",
+    label: "Add domain to fetch allowlist",
+  },
+  {
+    tool: "bash",
+    exec: "fetch",
+    pattern: "fetch allow remove*",
+    action: "ask",
+    label: "Remove domain from fetch allowlist",
+  },
+  {
+    tool: "edit",
+    pattern: "**/fetch/allowed_domains.txt",
+    action: "ask",
+    label: "Edit fetch allowlist",
+  },
+  {
+    tool: "write",
+    pattern: "**/fetch/allowed_domains.txt",
+    action: "ask",
+    label: "Overwrite fetch allowlist",
   },
 
   // ── Destructive local operations → ask ──

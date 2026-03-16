@@ -149,7 +149,13 @@ final class AnchoredCollectionView: UICollectionView {
             // by layoutSubviews alone because they happen AFTER the layout
             // pass returns. The deferred correction batches them into a
             // single layoutSubviews correction.
-            if isDetachedFromBottom, detachedAnchorIP != nil {
+            //
+            // Skip during user-driven scroll — the gesture is intentional
+            // and layoutSubviews anchoring handles it via captureAnchor/
+            // restoreAnchor. Without this guard the didSet fights the
+            // user's finger and locks scrolling in place.
+            if isDetachedFromBottom, detachedAnchorIP != nil,
+               !isTracking, !isDragging, !isDecelerating {
                 let delta = contentOffset.y - detachedSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
                 #if DEBUG
