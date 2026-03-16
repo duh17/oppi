@@ -19,6 +19,22 @@ final class AnchoredCollectionView: UICollectionView {
     private var savedAnchorScreenY: CGFloat = 0
     private var isApplyingAnchorCorrection = false
 
+    /// The "known good" contentOffset.y after the latest layoutSubviews
+    /// anchor restoration or explicit anchor capture. The contentOffset
+    /// didSet restores this value instead of querying `layoutAttributesForItem`
+    /// — the layout engine query is expensive (~78μs) and triggers recursive
+    /// layout. Since the didSet only fires for post-layout cascade
+    /// adjustments (where cell frames haven't changed), restoring the saved
+    /// offset is equivalent to a full layout-based correction.
+    private var expandCollapseSavedOffsetY: CGFloat = 0
+    private var detachedSavedOffsetY: CGFloat = 0
+
+    /// When non-nil, the next layoutSubviews will restore contentOffset.y
+    /// to this value. Set by the contentOffset.didSet to batch multiple
+    /// cascade adjustments into a single layout correction. This avoids
+    /// the ~55μs UIView.bounds setter cost on every didSet entry.
+    private var pendingCorrectionOffsetY: CGFloat?
+
     /// Set by the timeline controller before each snapshot apply so layout
     /// passes preserve the first visible item's screen position for users
     /// who scrolled away from the bottom. Without this, cell height changes
@@ -46,6 +62,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// `clearExpandCollapseAnchor()` is called.
     func setExpandCollapseAnchor(indexPath: IndexPath) {
         expandCollapseAnchorIP = indexPath
+        expandCollapseSavedOffsetY = contentOffset.y
         if let attrs = layoutAttributesForItem(at: indexPath) {
             expandCollapseAnchorScreenY = attrs.frame.origin.y - contentOffset.y
         }
@@ -75,6 +92,7 @@ final class AnchoredCollectionView: UICollectionView {
         }
         detachedAnchorIP = firstIP
         detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+        detachedSavedOffsetY = contentOffset.y
     }
 
     /// Clear the detached anchor after layout has settled.
@@ -93,31 +111,44 @@ final class AnchoredCollectionView: UICollectionView {
     /// interception alone cannot prevent.
     override var contentOffset: CGPoint {
         didSet {
+            // Fast guards — avoid all work when no correction needed.
             guard !isApplyingAnchorCorrection else { return }
+            guard pendingCorrectionOffsetY == nil else { return }
+
+            #if DEBUG
+                let _didSetStart = DispatchTime.now().uptimeNanoseconds
+                _debugDidSetEntryCount += 1
+                defer {
+                    _debugDidSetNanos += DispatchTime.now().uptimeNanoseconds &- _didSetStart
+                }
+            #endif
 
             // Expand/collapse anchor takes priority.
-            if let ecIP = expandCollapseAnchorIP,
-               let attrs = layoutAttributesForItem(at: ecIP) {
-                let currentScreenY = attrs.frame.origin.y - contentOffset.y
-                let delta = currentScreenY - expandCollapseAnchorScreenY
+            // Defers the correction to the next layoutSubviews instead of
+            // writing bounds immediately. This batches N cascade adjustments
+            // into 1 layout correction, avoiding the ~55μs UIView.bounds
+            // setter on every didSet entry.
+            if expandCollapseAnchorIP != nil {
+                let delta = contentOffset.y - expandCollapseSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
-                isApplyingAnchorCorrection = true
-                super.contentOffset.y += delta
-                isApplyingAnchorCorrection = false
+                #if DEBUG
+                    _debugDidSetCorrectionCount += 1
+                #endif
+                pendingCorrectionOffsetY = expandCollapseSavedOffsetY
+                setNeedsLayout()
                 return
             }
 
             // Detached anchor: preserve position during self-sizing
             // cascade when new items arrive below the viewport.
-            if isDetachedFromBottom,
-               let dIP = detachedAnchorIP,
-               let attrs = layoutAttributesForItem(at: dIP) {
-                let currentScreenY = attrs.frame.origin.y - contentOffset.y
-                let delta = currentScreenY - detachedAnchorScreenY
+            if isDetachedFromBottom, detachedAnchorIP != nil {
+                let delta = contentOffset.y - detachedSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
-                isApplyingAnchorCorrection = true
-                super.contentOffset.y += delta
-                isApplyingAnchorCorrection = false
+                #if DEBUG
+                    _debugDidSetCorrectionCount += 1
+                #endif
+                pendingCorrectionOffsetY = detachedSavedOffsetY
+                setNeedsLayout()
             }
         }
     }
@@ -131,6 +162,30 @@ final class AnchoredCollectionView: UICollectionView {
         /// UIKit performs the layout pass. Used to simulate estimated→actual
         /// geometry changes in unit tests.
         var didCaptureAnchorForTesting: (() -> Void)?
+
+        // MARK: - Debug instrumentation for autoresearch benchmarks
+
+        /// Count of contentOffset.didSet invocations that entered the
+        /// correction path (did not early-return via isApplyingAnchorCorrection).
+        var _debugDidSetEntryCount = 0
+        /// Count of contentOffset.didSet invocations that actually applied
+        /// a correction (delta > 0.5).
+        var _debugDidSetCorrectionCount = 0
+        /// Accumulated nanoseconds spent in contentOffset.didSet correction path.
+        var _debugDidSetNanos: UInt64 = 0
+
+        /// Count of layoutSubviews passes that captured + restored an anchor.
+        var _debugLayoutAnchorCount = 0
+        /// Accumulated nanoseconds in captureAnchor + restoreAnchor.
+        var _debugLayoutAnchorNanos: UInt64 = 0
+
+        func _debugResetCounters() {
+            _debugDidSetEntryCount = 0
+            _debugDidSetCorrectionCount = 0
+            _debugDidSetNanos = 0
+            _debugLayoutAnchorCount = 0
+            _debugLayoutAnchorNanos = 0
+        }
     #endif
 
     override func layoutSubviews() {
@@ -139,14 +194,50 @@ final class AnchoredCollectionView: UICollectionView {
             return
         }
 
+        // Apply deferred correction from contentOffset.didSet before
+        // the regular anchor cycle. This batches multiple cascade
+        // adjustments into a single contentOffset write.
+        if let pending = pendingCorrectionOffsetY {
+            pendingCorrectionOffsetY = nil
+            isApplyingAnchorCorrection = true
+            contentOffset.y = pending
+            isApplyingAnchorCorrection = false
+        }
+
+        #if DEBUG
+            let _captureStart = DispatchTime.now().uptimeNanoseconds
+        #endif
+
         captureAnchor()
 
         #if DEBUG
+            let _captureEnd = DispatchTime.now().uptimeNanoseconds
             didCaptureAnchorForTesting?()
         #endif
 
         super.layoutSubviews()
+
+        #if DEBUG
+            let _restoreStart = DispatchTime.now().uptimeNanoseconds
+        #endif
+
         restoreAnchor()
+
+        // Update the saved "known good" offset after layout restoration.
+        // This ensures the contentOffset.didSet has the correct target
+        // when UIKit applies post-layout cascade adjustments.
+        if expandCollapseAnchorIP != nil {
+            expandCollapseSavedOffsetY = contentOffset.y
+        }
+        if isDetachedFromBottom, detachedAnchorIP != nil {
+            detachedSavedOffsetY = contentOffset.y
+        }
+
+        #if DEBUG
+            _debugLayoutAnchorCount += 1
+            _debugLayoutAnchorNanos += (_captureEnd &- _captureStart)
+                + (DispatchTime.now().uptimeNanoseconds &- _restoreStart)
+        #endif
     }
 
     // MARK: - Private
