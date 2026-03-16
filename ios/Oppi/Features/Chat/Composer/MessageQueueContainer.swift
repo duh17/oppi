@@ -111,7 +111,7 @@ struct MessageQueueContainer: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+                .stroke(Color.themeFg.opacity(0.12), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 2)
         .accessibilityElement(children: .contain)

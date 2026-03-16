@@ -279,7 +279,7 @@ private struct WorkspaceHomeRow: View {
 
                     if hasAttention {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.themeOrange)
                             .font(.caption)
                     }
                 }
