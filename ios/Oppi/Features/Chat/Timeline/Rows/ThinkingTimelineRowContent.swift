@@ -1,20 +1,8 @@
 import SwiftUI
 import UIKit
 
-enum ZenThinkingRowPolicy {
+enum ThinkingRowHeightPolicy {
     static let defaultMaxBubbleHeight: CGFloat = 200
-    static let zenAttachedStreamingMaxBubbleHeight: CGFloat = 280
-
-    static func maxBubbleHeight(
-        isDone: Bool,
-        isZenMode: Bool,
-        isNearBottom: Bool
-    ) -> CGFloat {
-        if isZenMode, isNearBottom, !isDone {
-            return zenAttachedStreamingMaxBubbleHeight
-        }
-        return defaultMaxBubbleHeight
-    }
 }
 
 /// Native UIKit thinking row.
@@ -45,7 +33,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         previewText: String,
         fullText: String?,
         themeID: ThemeID,
-        maxBubbleHeight: CGFloat = ZenThinkingRowPolicy.defaultMaxBubbleHeight,
+        maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSourceContext: SelectedTextSourceContext? = nil
     ) {
