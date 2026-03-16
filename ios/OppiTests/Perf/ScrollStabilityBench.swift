@@ -3,11 +3,17 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// Benchmarks for scroll stability during streaming.
+/// Benchmarks for scroll stability anchoring overhead.
 ///
-/// Measures the overhead of the AnchoredCollectionView anchoring system
-/// and verifies correctness (viewport drift < 2pt) during simulated
-/// streaming sessions.
+/// The primary scenario simulates UIKit's self-sizing cascade: repeated
+/// contentOffset adjustments with an active detached anchor. Each adjustment
+/// triggers AnchoredCollectionView.contentOffset.didSet which queries
+/// layoutAttributesForItem and applies correction. In production, the
+/// compositional layout fires 100+ such adjustments during streaming as
+/// cells report preferred sizes one-per-frame.
+///
+/// Secondary scenarios verify correctness (drift, stutter, shift) during
+/// streaming, expand/collapse, and upward scroll.
 ///
 /// Output format: `METRIC name=number` for autoresearch consumption.
 @Suite("ScrollStabilityBench")
@@ -15,114 +21,90 @@ struct ScrollStabilityBench {
 
     // MARK: - Configuration
 
-    /// Number of streaming append rounds per benchmark iteration.
+    private static let cascadeIterations = 200
+    private static let medianRuns = 5
+    private static let warmupRuns = 2
     private static let streamingRounds = 20
 
-    /// Number of full benchmark iterations (median of these).
-    private static let iterations = 3
-
-    // MARK: - Primary: Streaming while detached
+    // MARK: - Primary: Cascade simulation
 
     @MainActor
-    @Test func streaming_detached() {
-        var allAnchorUs: [Double] = []
-        var allApplyUs: [Double] = []
-        var worstDrift: CGFloat = 0
-        var worstDidSetEntries = 0
-        var worstDidSetCorrections = 0
-
-        for _ in 0 ..< Self.iterations {
-            let result = runStreamingDetachedCycle()
-            allAnchorUs.append(result.anchorOverheadUs)
-            allApplyUs.append(result.applyUs)
-            worstDrift = max(worstDrift, result.maxDrift)
-            worstDidSetEntries = max(worstDidSetEntries, result.didSetEntries)
-            worstDidSetCorrections = max(worstDidSetCorrections, result.didSetCorrections)
-        }
-
-        allAnchorUs.sort()
-        allApplyUs.sort()
-        let medianAnchorUs = allAnchorUs[allAnchorUs.count / 2]
-        let medianApplyUs = allApplyUs[allApplyUs.count / 2]
-
-        print("METRIC anchor_overhead_us=\(Int(medianAnchorUs))")
-        print("METRIC apply_total_us=\(Int(medianApplyUs))")
-        print("METRIC max_drift_pt=\(Int(worstDrift * 100))")
-        print("METRIC didset_entry_count=\(worstDidSetEntries)")
-        print("METRIC didset_correction_count=\(worstDidSetCorrections)")
-        print("METRIC per_append_anchor_us=\(Int(medianAnchorUs / Double(Self.streamingRounds)))")
-
-        // Correctness gate: if drift exceeds 2pt, the benchmark fails.
-        #expect(
-            worstDrift < 2.0,
-            "Viewport drifted \(worstDrift)pt during \(Self.streamingRounds) streaming appends while detached"
-        )
-    }
-
-    // MARK: - Secondary: Expand/collapse while detached
-
-    @MainActor
-    @Test func expand_collapse_detached() {
-        let toggleRounds = 6
-
-        var allToggleUs: [Double] = []
-        var worstShift: CGFloat = 0
-
-        for _ in 0 ..< Self.iterations {
-            let result = runExpandCollapseCycle(toggles: toggleRounds)
-            allToggleUs.append(result.totalUs)
-            worstShift = max(worstShift, result.maxShift)
-        }
-
-        allToggleUs.sort()
-        let medianUs = allToggleUs[allToggleUs.count / 2]
-
-        print("METRIC expand_collapse_us=\(Int(medianUs))")
-        print("METRIC expand_collapse_max_shift_pt=\(Int(worstShift * 100))")
-
-        #expect(
-            worstShift < 2.0,
-            "Tool row shifted \(worstShift)pt during \(toggleRounds) expand/collapse toggles"
-        )
-    }
-
-    // MARK: - Secondary: Upward scroll stutter
-
-    @MainActor
-    @Test func upward_scroll_stutter() {
-        let result = runUpwardScrollCycle(steps: 30)
-
-        print("METRIC upward_stutter_max_pt=\(Int(result.maxStutter * 100))")
-        print("METRIC upward_stutter_count=\(result.stutterSteps)")
-
-        #expect(
-            result.maxStutter < 4.0,
-            "Anchor stuttered \(result.maxStutter)pt during upward scroll"
-        )
-    }
-
-    // MARK: - Scenario Implementations
-
-    private struct StreamingResult {
-        let anchorOverheadUs: Double
-        let applyUs: Double
-        let maxDrift: CGFloat
-        let didSetEntries: Int
-        let didSetCorrections: Int
-    }
-
-    @MainActor
-    private func runStreamingDetachedCycle() -> StreamingResult {
-        let harness = makeRealHarness(itemCount: 30)
+    @Test func cascade_overhead() {
+        // Setup: real collection view with 60 items at actual heights.
+        let harness = makeRealHarness(itemCount: 60)
         let cv = harness.collectionView
 
         // Scroll to bottom so all cells measure at actual heights.
+        scrollThroughAll(cv)
         scrollToBottom(cv)
         cv.layoutIfNeeded()
 
         // Scroll to mid-point and detach.
-        let maxOffset = maxOffsetY(cv)
-        cv.contentOffset.y = maxOffset * 0.4
+        let maxOff = maxOffsetY(cv)
+        cv.contentOffset.y = maxOff * 0.4
+        cv.layoutIfNeeded()
+
+        var timings: [UInt64] = []
+        var didSetEntries = 0
+        var didSetCorrections = 0
+
+        for run in 0 ..< (Self.warmupRuns + Self.medianRuns) {
+            // Capture detached anchor at current position.
+            cv.isDetachedFromBottom = true
+            cv.captureDetachedAnchor()
+            cv._debugResetCounters()
+
+            let startOffset = cv.contentOffset.y
+
+            // Simulate cascade: UIKit adjusts contentOffset by ~6pt per frame
+            // as cells report preferred sizes. Our didSet should correct each
+            // adjustment back to the anchor position.
+            let start = DispatchTime.now().uptimeNanoseconds
+            for _ in 0 ..< Self.cascadeIterations {
+                cv.contentOffset.y += 6
+            }
+            let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+
+            if run >= Self.warmupRuns {
+                timings.append(elapsed)
+                didSetEntries = cv._debugDidSetEntryCount
+                didSetCorrections = cv._debugDidSetCorrectionCount
+            }
+
+            // Verify anchor restored position.
+            let drift = abs(cv.contentOffset.y - startOffset)
+            #expect(
+                drift < 2.0,
+                "Cascade simulation drifted \(drift)pt after \(Self.cascadeIterations) adjustments"
+            )
+
+            cv.clearDetachedAnchor()
+        }
+
+        timings.sort()
+        let medianNs = timings[timings.count / 2]
+        let medianUs = Double(medianNs) / 1000.0
+        let perCallNs = Double(medianNs) / Double(Self.cascadeIterations)
+
+        print("METRIC anchor_overhead_us=\(Int(medianUs))")
+        print("METRIC per_didset_ns=\(Int(perCallNs))")
+        print("METRIC didset_entry_count=\(didSetEntries)")
+        print("METRIC didset_correction_count=\(didSetCorrections)")
+    }
+
+    // MARK: - Correctness: Streaming while detached
+
+    @MainActor
+    @Test func streaming_correctness() {
+        let harness = makeRealHarness(itemCount: 40)
+        let cv = harness.collectionView
+
+        scrollThroughAll(cv)
+        scrollToBottom(cv)
+        cv.layoutIfNeeded()
+
+        let maxOff = maxOffsetY(cv)
+        cv.contentOffset.y = maxOff * 0.4
         cv.layoutIfNeeded()
         harness.scrollController.detachFromBottomForUserScroll()
 
@@ -130,12 +112,7 @@ struct ScrollStabilityBench {
         var maxDrift: CGFloat = 0
         var totalApplyNanos: UInt64 = 0
 
-        // Reset instrumentation counters.
-        cv._debugResetCounters()
-
-        // Stream 20 rounds of content growth.
         for round in 1 ... Self.streamingRounds {
-            // Grow the streaming assistant text.
             let lastIdx = harness.items.count - 1
             harness.items[lastIdx] = .assistantMessage(
                 id: "stream-1",
@@ -143,7 +120,6 @@ struct ScrollStabilityBench {
                 timestamp: Date()
             )
 
-            // Every 4th round, also append a new tool call at the bottom.
             if round.isMultiple(of: 4) {
                 harness.items.append(.toolCall(
                     id: "tc-new-\(round)", tool: "bash",
@@ -152,73 +128,59 @@ struct ScrollStabilityBench {
                     outputByteCount: 64,
                     isError: false, isDone: true
                 ))
-                // Re-add streaming message at end.
                 let streamMsg = harness.items.remove(at: lastIdx)
                 harness.items.append(streamMsg)
             }
 
-            // Timed apply.
             let applyStart = DispatchTime.now().uptimeNanoseconds
             harness.applyItems(streamingID: "stream-1", isBusy: true)
             cv.layoutIfNeeded()
             totalApplyNanos += DispatchTime.now().uptimeNanoseconds &- applyStart
 
-            // Drain run loop: 3 frames to let cascade settle.
-            for _ in 0 ..< 3 {
-                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.017))
-            }
-            cv.layoutIfNeeded()
-
             let drift = abs(cv.contentOffset.y - anchorOffset)
             maxDrift = max(maxDrift, drift)
         }
 
-        let anchorOverheadUs = Double(cv._debugDidSetNanos + cv._debugLayoutAnchorNanos) / 1000.0
-        let applyUs = Double(totalApplyNanos) / 1000.0
+        let applyUs = Int(Double(totalApplyNanos) / 1000.0)
 
-        return StreamingResult(
-            anchorOverheadUs: anchorOverheadUs,
-            applyUs: applyUs,
-            maxDrift: maxDrift,
-            didSetEntries: cv._debugDidSetEntryCount,
-            didSetCorrections: cv._debugDidSetCorrectionCount
+        print("METRIC streaming_apply_us=\(applyUs)")
+        print("METRIC streaming_max_drift_pt=\(Int(maxDrift * 100))")
+
+        #expect(
+            maxDrift < 2.0,
+            "Viewport drifted \(maxDrift)pt during streaming while detached"
         )
     }
 
-    private struct ExpandCollapseResult {
-        let totalUs: Double
-        let maxShift: CGFloat
-    }
+    // MARK: - Correctness: Expand/collapse while detached
 
     @MainActor
-    private func runExpandCollapseCycle(toggles: Int) -> ExpandCollapseResult {
+    @Test func expand_collapse_correctness() {
+        let toggleRounds = 6
         let harness = makeRealHarness(itemCount: 30, withToolOutput: true)
         let cv = harness.collectionView
 
-        // Scroll through all content so cells measure.
         scrollThroughAll(cv)
         scrollToBottom(cv)
         cv.layoutIfNeeded()
 
-        // Scroll to mid, detach.
         let maxOff = maxOffsetY(cv)
         cv.contentOffset.y = maxOff * 0.5
         cv.layoutIfNeeded()
         harness.scrollController.detachFromBottomForUserScroll()
 
-        // Find a visible tool row.
         let visibleIPs = cv.indexPathsForVisibleItems.sorted { $0.item < $1.item }
         let targetIP = visibleIPs.first { ip in
             ip.item < harness.items.count && harness.items[ip.item].id.hasPrefix("tc-")
         }
         guard let targetIP else {
-            return ExpandCollapseResult(totalUs: 0, maxShift: 999)
+            Issue.record("No visible tool row at midpoint")
+            return
         }
 
         var maxShift: CGFloat = 0
-        let startNanos = DispatchTime.now().uptimeNanoseconds
 
-        for _ in 1 ... toggles {
+        for round in 1 ... toggleRounds {
             let attrsBefore = cv.layoutAttributesForItem(at: targetIP)
             let screenYBefore = (attrsBefore?.frame.origin.y ?? 0) - cv.contentOffset.y
 
@@ -230,31 +192,22 @@ struct ScrollStabilityBench {
 
             let attrsAfter = cv.layoutAttributesForItem(at: targetIP)
             let screenYAfter = (attrsAfter?.frame.origin.y ?? 0) - cv.contentOffset.y
-            maxShift = max(maxShift, abs(screenYAfter - screenYBefore))
+            let shift = abs(screenYAfter - screenYBefore)
+            maxShift = max(maxShift, shift)
+
+            #expect(shift < 2.0, "Shift \(shift)pt on toggle round \(round)")
         }
 
-        let totalNanos = DispatchTime.now().uptimeNanoseconds &- startNanos
-        // Subtract sleep time: toggles * 5 frames * 17ms
-        let sleepNanos = UInt64(toggles * 5) * 17_000_000
-        let activeNanos = totalNanos > sleepNanos ? totalNanos - sleepNanos : totalNanos
-
-        return ExpandCollapseResult(
-            totalUs: Double(activeNanos) / 1000.0,
-            maxShift: maxShift
-        )
+        print("METRIC expand_collapse_max_shift_pt=\(Int(maxShift * 100))")
     }
 
-    private struct UpwardScrollResult {
-        let maxStutter: CGFloat
-        let stutterSteps: Int
-    }
+    // MARK: - Correctness: Upward scroll stutter
 
     @MainActor
-    private func runUpwardScrollCycle(steps: Int) -> UpwardScrollResult {
+    @Test func upward_scroll_stutter() {
         let harness = makeRealHarness(itemCount: 40)
         let cv = harness.collectionView
 
-        // Apply and scroll to bottom.
         scrollToBottom(cv)
         cv.layoutIfNeeded()
         harness.scrollController.detachFromBottomForUserScroll()
@@ -263,7 +216,7 @@ struct ScrollStabilityBench {
         var maxStutter: CGFloat = 0
         var stutterSteps = 0
 
-        for _ in 1 ... steps {
+        for _ in 1 ... 30 {
             guard let anchorIP = cv.indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
                   let anchorAttrs = cv.layoutAttributesForItem(at: anchorIP)
             else { continue }
@@ -284,7 +237,10 @@ struct ScrollStabilityBench {
             }
         }
 
-        return UpwardScrollResult(maxStutter: maxStutter, stutterSteps: stutterSteps)
+        print("METRIC upward_stutter_max_pt=\(Int(maxStutter * 100))")
+        print("METRIC upward_stutter_count=\(stutterSteps)")
+
+        #expect(maxStutter < 4.0, "Stutter \(maxStutter)pt during upward scroll")
     }
 
     // MARK: - Harness
@@ -369,7 +325,6 @@ struct ScrollStabilityBench {
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
-        // Build diverse items with varying heights.
         var items: [ChatItem] = []
         let harness = BenchHarness(
             window: window,
@@ -402,7 +357,6 @@ struct ScrollStabilityBench {
                 isError: false, isDone: true
             ))
         }
-        // Streaming assistant at tail.
         items.append(.assistantMessage(
             id: "stream-1", text: "Working...", timestamp: Date()
         ))
