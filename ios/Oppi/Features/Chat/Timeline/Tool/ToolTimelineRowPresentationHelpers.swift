@@ -33,7 +33,8 @@ enum ToolTimelineRowPresentationHelpers {
         from sourceView: UIView,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
-        selectedTextSourceLabel: String? = nil
+        selectedTextSourceLabel: String? = nil,
+        fetchFileForRender: FullScreenCodeViewController.FetchFileContent? = nil
     ) {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
@@ -48,6 +49,7 @@ enum ToolTimelineRowPresentationHelpers {
             selectedTextSessionId: selectedTextSessionId,
             selectedTextSourceLabel: selectedTextSourceLabel
         )
+        controller.fetchFileForRender = fetchFileForRender
         // .pageSheet keeps the presenting VC in the window hierarchy (unlike
         // .fullScreen which removes it, triggering SwiftUI onDisappear).
         // On iPhone, .pageSheet at .large() detent is visually full-screen
@@ -240,8 +242,16 @@ enum ToolTimelineRowPresentationHelpers {
         // contentOffset by ~6pt each time — creating visible drift that
         // the AnchoredCollectionView cannot fully intercept because UIKit
         // applies some offset changes AFTER layoutSubviews() returns.
+        // Skip full invalidateLayout() when an anchor is active. The
+        // snapshot reconfigure + layoutIfNeeded already measured cells at
+        // their correct sizes. A full invalidateLayout() clears ALL cached
+        // cell heights, reverting off-screen cells to .estimated(100pt)
+        // defaults. This triggers a self-sizing cascade where UIKit
+        // re-measures cells one per frame, adjusting contentOffset by
+        // ~6pt each time — creating visible drift.
         if let anchoredCV = collectionView as? AnchoredCollectionView,
-           anchoredCV.expandCollapseAnchorIP != nil {
+           anchoredCV.expandCollapseAnchorIP != nil
+            || (anchoredCV.isDetachedFromBottom && anchoredCV.detachedAnchorIsActive) {
             return
         }
 
