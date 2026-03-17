@@ -848,6 +848,38 @@ Provide a structured review with:
 - Verdict: PASS / WARN / FAIL`;
 }
 
+async function cmdStats(api, args) {
+  ensureNoUnknownFlags(args, new Set([]));
+
+  const allSessions = await listSessionsAcrossWorkspaces(api);
+  const workspaces = {};
+
+  for (const s of allSessions) {
+    const name = s.workspaceName || s.workspaceId || "?";
+    if (!workspaces[name]) {
+      workspaces[name] = { count: 0, active: 0, messages: 0, cost: 0, latest: 0 };
+    }
+    const ws = workspaces[name];
+    ws.count++;
+    ws.messages += s.messageCount || 0;
+    ws.cost += s.cost || 0;
+    if (s.status === "active" || s.status === "busy") ws.active++;
+    const ts = s.lastActivity || s.createdAt || 0;
+    if (ts > ws.latest) ws.latest = ts;
+  }
+
+  const sorted = Object.entries(workspaces)
+    .map(([name, d]) => ({ name, ...d }))
+    .sort((a, b) => b.latest - a.latest);
+
+  return {
+    command: "stats",
+    totalSessions: allSessions.length,
+    workspaceCount: sorted.length,
+    workspaces: sorted,
+  };
+}
+
 async function cmdList(api, args) {
   ensureNoUnknownFlags(args, new Set(["--workspace", "--limit"]));
 
@@ -1478,6 +1510,41 @@ function renderReviewHuman(result, { paint, width }) {
   return lines.join("\n");
 }
 
+function renderStatsHuman(result, { paint }) {
+  const lines = [
+    `${paint.bold("stats")} ${paint.dim(`${result.totalSessions} sessions across ${result.workspaceCount} workspaces`)}`,
+    "",
+    `${paint.dim(padEnd("Workspace", 20))} ${paint.dim(padStart("Sess", 6))} ${paint.dim(padStart("Act", 4))} ${paint.dim(padStart("Msgs", 8))} ${paint.dim(padStart("Cost", 10))} ${paint.dim(padStart("Last", 6))}`,
+    paint.dim("-".repeat(58)),
+  ];
+
+  let totalCost = 0;
+  let totalMsgs = 0;
+
+  for (const ws of result.workspaces) {
+    const name = truncate(ws.name, 19);
+    const cost = `$${ws.cost.toFixed(2)}`;
+    const age = ageLabel(ws.latest);
+    const active = ws.active > 0 ? paint.green(padStart(String(ws.active), 4)) : paint.dim(padStart("0", 4));
+    totalCost += ws.cost;
+    totalMsgs += ws.messages;
+
+    lines.push(
+      `${padEnd(name, 20)} ${padStart(String(ws.count), 6)} ${active} ${padStart(String(ws.messages), 8)} ${padStart(cost, 10)} ${padStart(age, 6)}`
+    );
+  }
+
+  lines.push(paint.dim("-".repeat(58)));
+  lines.push(
+    `${padEnd("Total", 20)} ${padStart(String(result.totalSessions), 6)} ${padStart("", 4)} ${padStart(String(totalMsgs), 8)} ${padStart(`$${totalCost.toFixed(2)}`, 10)}`
+  );
+
+  return lines.join("\n");
+}
+
+function padEnd(str, len) { return String(str).padEnd(len); }
+function padStart(str, len) { return String(str).padStart(len); }
+
 function renderHumanOutput(result, renderOptions) {
   const { paint, width } = renderOptions;
 
@@ -1500,6 +1567,8 @@ function renderHumanOutput(result, renderOptions) {
       return renderTraceHuman(result, { paint, width });
     case "review":
       return renderReviewHuman(result, { paint, width });
+    case "stats":
+      return renderStatsHuman(result, { paint, width });
     default:
       return JSON.stringify(result, null, 2);
   }
@@ -1742,6 +1811,9 @@ async function main() {
         break;
       case "latest":
         result = await cmdLatest(api, commandArgs);
+        break;
+      case "stats":
+        result = await cmdStats(api, commandArgs);
         break;
       default:
         throw new CliError(`Unknown command: ${command}\n\n${usage()}`);
