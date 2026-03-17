@@ -359,6 +359,60 @@ struct CommonMarkTests {
         #expect(hasStrong)
     }
 
+    // MARK: - Task Lists
+
+    @Test func taskListUnchecked() {
+        let md = "- [ ] item 1\n- [ ] item 2\n"
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .taskList(let items) = blocks[0] else {
+            Issue.record("Expected taskList, got \(blocks[0])")
+            return
+        }
+        #expect(items.count == 2)
+        #expect(items[0].checked == false)
+        #expect(items[1].checked == false)
+    }
+
+    @Test func taskListChecked() {
+        let md = "- [x] done\n- [ ] todo\n- [x] also done\n"
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .taskList(let items) = blocks[0] else {
+            Issue.record("Expected taskList, got \(blocks[0])")
+            return
+        }
+        #expect(items.count == 3)
+        #expect(items[0].checked == true)
+        #expect(items[1].checked == false)
+        #expect(items[2].checked == true)
+    }
+
+    @Test func taskListItemContent() {
+        let md = "- [x] **bold** task\n"
+        let blocks = parseCommonMark(md)
+        guard case .taskList(let items) = blocks[0] else {
+            Issue.record("Expected taskList")
+            return
+        }
+        #expect(items.count == 1)
+        #expect(items[0].checked == true)
+        guard case .paragraph(let inlines) = items[0].content.first else {
+            Issue.record("Expected paragraph in task item content")
+            return
+        }
+        #expect(plainText(from: inlines) == "bold task")
+    }
+
+    @Test func regularListNotTaskList() {
+        let md = "- normal item\n- another item\n"
+        let blocks = parseCommonMark(md)
+        guard case .unorderedList = blocks[0] else {
+            Issue.record("Expected unorderedList, not taskList")
+            return
+        }
+    }
+
     // MARK: - Thematic Breaks
 
     @Test func thematicBreakDashes() {

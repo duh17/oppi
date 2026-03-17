@@ -379,6 +379,31 @@ enum FlatSegment: Sendable {
             }
             return result
 
+        case .taskList(let items):
+            var result = AttributedString()
+            for (i, item) in items.enumerated() {
+                if i > 0 { result.append(AttributedString("\n")) }
+                if item.checked {
+                    var check = AttributedString("  \u{25C9} ")
+                    check.foregroundColor = palette.green
+                    result.append(check)
+                } else {
+                    var check = AttributedString("  \u{25CB} ")
+                    check.foregroundColor = palette.fgDim
+                    result.append(check)
+                }
+                for (j, block) in item.content.enumerated() {
+                    if j > 0 { result.append(AttributedString("\n     ")) }
+                    var content = attributedString(for: block, palette: palette)
+                    if item.checked {
+                        content.foregroundColor = palette.comment
+                        content.strikethroughStyle = .single
+                    }
+                    result.append(content)
+                }
+            }
+            return result
+
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
             result.font = .system(.caption, design: .monospaced)

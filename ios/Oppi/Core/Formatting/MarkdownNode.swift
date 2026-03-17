@@ -11,9 +11,15 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case codeBlock(language: String?, code: String)
     case unorderedList([[Self]])
     case orderedList(start: Int, [[Self]])
+    case taskList([TaskItem])
     case thematicBreak
     case table(headers: [String], rows: [[String]])
     case htmlBlock(String)
+
+    struct TaskItem: Equatable, Sendable {
+        let checked: Bool
+        let content: [MarkdownBlock]
+    }
 }
 
 /// Parsed CommonMark inline node.
