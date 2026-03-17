@@ -16,7 +16,14 @@ Autonomous experiment loop: try ideas, keep what works, discard what doesn't, ne
 ## Setup
 
 1. Ask (or infer): **Goal**, **Command**, **Metric** (+ direction), **Files in scope**, **Constraints**.
-2. `git checkout -b autoresearch/<goal>-<date>`
+2. Create an isolated worktree (keeps the main checkout clean for other agents):
+   ```bash
+   BRANCH=autoresearch/<goal>-<date>
+   WORKTREE="../$(basename $(pwd))-autoresearch/$BRANCH"
+   git worktree add -b "$BRANCH" "$WORKTREE"
+   cd "$WORKTREE"
+   ```
+   All subsequent work happens inside the worktree directory.
 3. Read the source files. Understand the workload deeply before writing anything.
 4. Write `autoresearch.md` and `autoresearch.sh` (see below). Commit both.
 5. `init_experiment` -> run baseline -> `log_experiment` -> start looping immediately.
@@ -90,7 +97,7 @@ pnpm typecheck 2>&1 | grep -i error || true
 - **Don't thrash.** Repeatedly reverting the same idea? Try something structurally different.
 - **Crashes:** fix if trivial, otherwise log and move on. Don't over-invest.
 - **Think longer when stuck.** Re-read source files, study the profiling data, reason about what the CPU is actually doing. The best ideas come from deep understanding, not from trying random variations.
-- **Resuming:** if `autoresearch.md` exists, read it + git log + tail of `autoresearch.jsonl`, continue looping. If the doc says "optimization exhausted" or the last 5+ JSONL entries are discards within noise, **don't re-enter the loop** — tell the user it's done.
+- **Resuming:** `cd` into the worktree, read `autoresearch.md` + git log + tail of `autoresearch.jsonl`, continue looping. If the doc says "optimization exhausted" or the last 5+ JSONL entries are discards within noise, **don't re-enter the loop** — tell the user it's done.
 - **Convergence:** if the last 5+ experiments are all `discard` and within ±5% of the best, the optimization space is likely exhausted. Add `## Status: CONVERGED` at the top of `autoresearch.md` with the final metric. Stop the loop. Don't burn context re-confirming a floor.
 - **Benchmark accuracy is fair game.** If a benchmark inflates costs by measuring setup overhead that isn't on the real hot path, fixing the benchmark to be more realistic is a valid `keep`. But never game the metric — the benchmark should become *more* representative, not less.
 
@@ -118,6 +125,27 @@ Before optimizing in a new language/runtime, `recall(query="<language> performan
 When you discover complex but promising optimizations that you won't pursue right now, **append them as bullets to `autoresearch.ideas.md`**. Don't let good ideas get lost.
 
 On resume (context limit, crash), check `autoresearch.ideas.md` -- prune stale/tried entries, experiment with the rest. When all paths are exhausted, delete the file and write a final summary.
+
+## Worktree Lifecycle
+
+### Resuming
+If a worktree already exists for the goal, `cd` into it and resume normally (read `autoresearch.md` + git log + JSONL tail).
+
+### Merging results back
+After convergence, bring the kept commits into the main branch:
+```bash
+# From the main repo working directory
+git merge autoresearch/<goal>-<date>
+# Or cherry-pick specific commits
+git cherry-pick <first-kept>..<last-kept>
+```
+
+### Cleanup
+```bash
+# From the main repo working directory
+git worktree remove ../$(basename $(pwd))-autoresearch/autoresearch/<goal>-<date>
+git branch -d autoresearch/<goal>-<date>
+```
 
 ## User Messages During Experiments
 
