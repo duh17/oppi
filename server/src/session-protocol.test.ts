@@ -4,7 +4,6 @@ import type { ServerMessage, Session } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import {
   translatePiEvent,
-  computeAssistantTextTailDelta,
   normalizeCommandError,
   extractToolFullOutputPath,
   updateSessionChangeStats,
@@ -38,98 +37,6 @@ function makeSession(overrides?: Partial<Session>): Session {
     ...overrides,
   };
 }
-
-// ─── computeAssistantTextTailDelta ───
-
-describe("computeAssistantTextTailDelta", () => {
-  it("returns empty when finalized is empty", () => {
-    expect(computeAssistantTextTailDelta("anything", "")).toBe("");
-  });
-
-  it("returns full finalized when streamed is empty", () => {
-    expect(computeAssistantTextTailDelta("", "hello world")).toBe("hello world");
-  });
-
-  it("returns empty when both are equal", () => {
-    expect(computeAssistantTextTailDelta("hello", "hello")).toBe("");
-  });
-
-  it("returns tail when finalized extends streamed", () => {
-    expect(computeAssistantTextTailDelta("hello", "hello world")).toBe(" world");
-  });
-
-  it("returns from common prefix when finalized diverges", () => {
-    // Streamed "abc", finalized "abd" — common prefix "ab", returns "d"
-    expect(computeAssistantTextTailDelta("abc", "abd")).toBe("d");
-  });
-
-  it("handles complete divergence (no common prefix)", () => {
-    expect(computeAssistantTextTailDelta("abc", "xyz")).toBe("xyz");
-  });
-
-  it("handles finalized shorter than streamed", () => {
-    // Streamed "hello world" but finalized is "hello" — streamed is longer
-    // finalized doesn't startWith streamed (reverse), falls into divergence path
-    // common prefix = "hello", returns "" (slice from 5 on "hello" is "")
-    expect(computeAssistantTextTailDelta("hello world", "hello")).toBe("");
-  });
-
-  it("handles both empty", () => {
-    expect(computeAssistantTextTailDelta("", "")).toBe("");
-  });
-
-  // Unicode edge cases
-  it("handles unicode characters correctly (extension)", () => {
-    expect(computeAssistantTextTailDelta("hello 🌍", "hello 🌍🎉")).toBe("🎉");
-  });
-
-  // BUG FOUND: computeAssistantTextTailDelta breaks on emoji divergence.
-  //
-  // "hello 🌍" vs "hello 🎉" should return "🎉" but returns "\uDF89" (lone low surrogate).
-  //
-  // Root cause: The divergence fallback compares by JS string index (UTF-16 code units).
-  // Both emoji start with the same high surrogate (\uD83C), so commonPrefix advances
-  // past it to index 7. finalizedText.slice(7) yields the lone low surrogate "\uDF89"
-  // instead of the complete emoji "🎉" (\uD83C\uDF89).
-  //
-  // Impact: When assistant text diverges at an emoji boundary where both emoji share
-  // a high surrogate, the client receives a malformed string fragment. This could cause
-  // display corruption or encoding errors in downstream consumers.
-  //
-  // Fix: Use Array.from() or a code-point-aware iteration for the common prefix scan,
-  // or after computing commonPrefix, back up if it lands inside a surrogate pair.
-  it("handles unicode divergence at emoji boundary — KNOWN BUG: returns lone surrogate", () => {
-    const result = computeAssistantTextTailDelta("hello 🌍", "hello 🎉");
-    // Expected correct behavior: "🎉"
-    // Actual buggy behavior: lone low surrogate from mid-surrogate slice
-    expect(result).toBe("\uDF89"); // BUG: should be "🎉"
-    expect(result).not.toBe("🎉"); // confirms the bug
-  });
-
-  // BUG PROBE: The divergence fallback compares by JS string index, which
-  // works for code points but could produce a partial surrogate pair in theory.
-  // In practice, emoji are single code points in JS strings (even if multiple
-  // UTF-16 code units), so charAt comparison across surrogates could mismatch
-  // at the code unit level rather than the code point level.
-  it("handles surrogate pair characters (e.g. 𝕳)", () => {
-    // 𝕳 is U+1D573, represented as surrogate pair in UTF-16
-    const streamed = "test 𝕳";
-    const finalized = "test 𝕳 done";
-    expect(computeAssistantTextTailDelta(streamed, finalized)).toBe(" done");
-  });
-
-  // BUG FOUND: Same class of bug as the emoji divergence above.
-  // Mathematical symbols 𝕳 (U+1D573) and 𝕴 (U+1D574) share high surrogate \uD835.
-  // The common prefix scan matches "a" + \uD835 → commonPrefix=2.
-  // finalizedText.slice(2) = "\uDD74" — a lone low surrogate, not a valid character.
-  it("handles divergence mid-surrogate — KNOWN BUG: produces lone low surrogate", () => {
-    const streamed = "a\uD835\uDD73"; // a𝕳
-    const finalized = "a\uD835\uDD74"; // a𝕴
-    const delta = computeAssistantTextTailDelta(streamed, finalized);
-    expect(delta).toBe("\uDD74"); // BUG: should be "𝕴" (\uD835\uDD74)
-    expect(delta).not.toBe("𝕴"); // confirms the bug
-  });
-});
 
 // ─── normalizeCommandError ───
 

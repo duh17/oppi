@@ -10,7 +10,7 @@ import type { PushClient } from "./push.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { Session } from "./types.js";
-import type { SessionBroadcastEvent } from "./sessions.js";
+import type { SessionBroadcastEvent } from "./session-broadcast.js";
 
 // ─── Types ───
 
