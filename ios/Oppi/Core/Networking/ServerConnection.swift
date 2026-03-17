@@ -491,135 +491,22 @@ final class ServerConnection {
 
     /// Handle notification-level events from non-active sessions
     /// (e.g., permissions from other sessions on this server).
+    ///
+    /// Delegates store mutations to `applySharedStoreUpdate` (same logic
+    /// as the active-session path), then records Live Activity events
+    /// directly (cross-session events bypass the coalescer).
     private func handleCrossSessionMessage(_ message: ServerMessage, sessionId: String) {
+        let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+
+        if result.handled {
+            recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)
+            return
+        }
+
+        // Events not handled by the shared helper
         switch message {
-        case .permissionRequest(let perm):
-            permissionStore.add(perm)
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.notifyIfNeeded(
-                    perm,
-                    activeSessionId: sessionStore.activeSessionId
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .permissionExpired(let id, _):
-            if let request = permissionStore.take(id: id) {
-                _ = request
-            }
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
-            syncLiveActivityPermissions()
-
-        case .permissionCancelled(let id):
-            permissionStore.remove(id: id)
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
-            syncLiveActivityPermissions()
-
-        case .agentStart:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status != .stopping {
-                current.status = .busy
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .agentStart(sessionId: sessionId)
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .agentEnd:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status == .busy || current.status == .stopping {
-                current.status = .ready
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            sessionStore.recordTurnEnded(sessionId: sessionId)
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .agentEnd(sessionId: sessionId)
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .stopRequested:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                current.status = .stopping
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            syncLiveActivityPermissions()
-
-        case .stopConfirmed:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status == .stopping {
-                current.status = .ready
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .agentEnd(sessionId: sessionId)
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .stopFailed:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status == .stopping {
-                current.status = .busy
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .agentStart(sessionId: sessionId)
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .state(let session):
-            sessionStore.upsert(session)
-            emitSessionUsageMetricsIfNeeded(session)
-            syncLiveActivityPermissions()
-
-        case .sessionEnded(let reason):
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                current.status = .stopped
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.clearSessionActivity(sessionId: sessionId)
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .sessionEnded(sessionId: sessionId, reason: reason)
-                )
-            }
-            syncLiveActivityPermissions()
-
-        case .sessionDeleted(let deletedId):
-            sessionStore.remove(id: deletedId)
-            notificationSessionIds.remove(deletedId)
-            sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
-            screenAwakeController.clearSessionActivity(sessionId: deletedId)
-            syncLiveActivityPermissions()
-
-        case .error(let message, _, _):
-            if !message.hasPrefix("Retrying ("),
+        case .error(let errorMessage, _, _):
+            if !errorMessage.hasPrefix("Retrying ("),
                var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .error
                 current.lastActivity = Date()
@@ -628,11 +515,10 @@ final class ServerConnection {
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
-                    event: .error(sessionId: sessionId, message: message)
+                    event: .error(sessionId: sessionId, message: errorMessage)
                 )
             }
             syncLiveActivityPermissions()
-
         default:
             break
         }
