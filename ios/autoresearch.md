@@ -76,4 +76,15 @@ Apply the same "fused build" pattern that worked for `makeCodeAttributedText`:
 
 ## What's Been Tried
 
-(Updated as experiments accumulate)
+### Run 0 — Baseline
+| Metric | Value |
+|--------|-------|
+| `diffBuild_500` | 39,572μs |
+| `diffBuild_300` | 23,660μs |
+| `diffBuild_100` | 7,905μs |
+| `diffBuild_plain_500` | 6,011μs |
+
+Cost breakdown (estimated from 500-line numbers):
+- Syntax highlighting (highlightLine × 500): ~33,500μs (85% — this is the legacy per-token append path)
+- Gutter/line number assembly + attributed string appends: ~6,000μs (15%)
+- Without syntax highlighting (plain): 6,011μs baseline
