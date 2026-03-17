@@ -68,21 +68,41 @@ struct OppiMacApp: App {
     }
 
     /// Auto-start the server on subsequent launches (config already exists).
+    ///
+    /// First checks if a server is already running (e.g. started from CLI).
+    /// If healthy, adopts it — starts monitoring without spawning a child process.
+    /// If not, spawns one.
     private func autoStartServer() {
         guard processManager.state == .stopped else { return }
 
         let dataDir = NSString("~/.config/oppi").expandingTildeInPath
         guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
 
-        processManager.startWithDefaults()
-
         let baseURL = URL(string: "https://localhost:7749")!
-        healthMonitor.startMonitoring(
-            baseURL: baseURL,
-            token: token,
-            processManager: processManager
-        )
-        healthMonitor.checkPiCLIVersion()
+        let client = MacAPIClient(baseURL: baseURL, token: token)
+
+        // Check if a server is already running before spawning
+        Task {
+            let alreadyRunning = await client.checkHealth()
+            if alreadyRunning {
+                // Adopt the existing server — monitor it but don't spawn a child
+                processManager.markRunning()
+                healthMonitor.startMonitoring(
+                    baseURL: baseURL,
+                    token: token,
+                    processManager: processManager
+                )
+                healthMonitor.checkPiCLIVersion()
+            } else {
+                processManager.startWithDefaults()
+                healthMonitor.startMonitoring(
+                    baseURL: baseURL,
+                    token: token,
+                    processManager: processManager
+                )
+                healthMonitor.checkPiCLIVersion()
+            }
+        }
     }
 
     private var menuBarIcon: String {
