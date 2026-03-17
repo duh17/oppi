@@ -22,6 +22,9 @@ private func cmarkParsedDocument(_ source: String) -> UnsafeMutablePointer<cmark
     if let strikeExt = cmark_find_syntax_extension("strikethrough") {
         cmark_parser_attach_syntax_extension(parser, strikeExt)
     }
+    if let tasklistExt = cmark_find_syntax_extension("tasklist") {
+        cmark_parser_attach_syntax_extension(parser, tasklistExt)
+    }
 
     // Feed source text.
     source.withCString { ptr in
@@ -109,8 +112,22 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
     case CMARK_NODE_LIST:
         let listType = cmark_node_get_list_type(node)
         var items: [[MarkdownBlock]] = []
+        var hasTaskItems = false
+        var itemCheckedStates: [Bool?] = []
+
         var item = cmark_node_first_child(node)
         while let itemNode = item {
+            // Check if this item is a task list item via the tasklist extension.
+            var isTask = false
+            if let typeStr = cmark_node_get_type_string(itemNode) {
+                if String(cString: typeStr) == "tasklist" {
+                    isTask = true
+                    hasTaskItems = true
+                }
+            }
+            let checked = isTask && cmark_gfm_extensions_get_tasklist_item_checked(itemNode)
+            itemCheckedStates.append(isTask ? checked : nil)
+
             var itemBlocks: [MarkdownBlock] = []
             var itemChild = cmark_node_first_child(itemNode)
             while let c = itemChild {
@@ -122,7 +139,13 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
             items.append(itemBlocks)
             item = cmark_node_next(itemNode)
         }
-        if listType == CMARK_ORDERED_LIST {
+
+        if hasTaskItems {
+            let taskItems = zip(itemCheckedStates, items).map { state, content in
+                MarkdownBlock.TaskItem(checked: state ?? false, content: content)
+            }
+            return .taskList(taskItems)
+        } else if listType == CMARK_ORDERED_LIST {
             return .orderedList(start: 1, items)
         } else {
             return .unorderedList(items)
