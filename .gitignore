@@ -65,3 +65,10 @@ docs/**/*.md
 
 server/extensions/
 docs/design/mocks/
+
+# Autoresearch session artifacts (regenerated each run)
+autoresearch.md
+autoresearch.jsonl
+autoresearch.sh
+autoresearch.checks.sh
+autoresearch.ideas.md
