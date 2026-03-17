@@ -1,4 +1,4 @@
-# ─── Oppi iOS ───
+# ─── Oppi iOS + macOS ───
 # Fork setup: change bundleIdPrefix and DEVELOPMENT_TEAM to your own values.
 # See CONTRIBUTING.md for full setup instructions.
 name: Oppi
@@ -12,6 +12,9 @@ packages:
   sentry-cocoa:
     url: https://github.com/getsentry/sentry-cocoa
     from: "8.0.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.0"
 options:
   bundleIdPrefix: dev.chenda
   deploymentTarget:
@@ -190,6 +193,41 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_ALLOWED: "NO"
 
+  OppiMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: OppiMac
+        type: group
+    dependencies:
+      - package: Sparkle
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac
+        PRODUCT_NAME: Oppi
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: true
+    entitlements:
+      path: OppiMac/OppiMac.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.network.client: true
+        com.apple.security.cs.allow-unsigned-executable-memory: true
+        com.apple.security.cs.disable-library-validation: true
+    info:
+      path: OppiMac/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Oppi
+        LSUIElement: true
+        SUFeedURL: "https://github.com/duh17/oppi/releases/download/appcast/appcast.xml"
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+
 schemes:
   Oppi:
     build:
@@ -202,3 +240,8 @@ schemes:
       targets:
         - OppiTests
         - OppiUITests
+
+  OppiMac:
+    build:
+      targets:
+        OppiMac: all
