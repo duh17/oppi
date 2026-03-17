@@ -4,6 +4,7 @@ struct MenuBarPopover: View {
 
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor
+    let permissionState: TCCPermissionState
     let checkForUpdates: @MainActor () -> Void
 
     var body: some View {
@@ -18,6 +19,16 @@ struct MenuBarPopover: View {
 
             if let info = healthMonitor.serverInfo {
                 Text(info.serverURL)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // TCC permission summary
+            HStack(spacing: 4) {
+                Image(systemName: permissionState.requiredGranted ? "checkmark.shield" : "exclamationmark.shield")
+                    .foregroundStyle(permissionState.requiredGranted ? .green : .orange)
+                    .font(.caption)
+                Text("Permissions: \(permissionState.summary)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
