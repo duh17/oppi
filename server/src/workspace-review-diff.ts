@@ -51,6 +51,7 @@ function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
   return new Promise((resolvePromise) => {
     execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
       if (err) {
+
         resolvePromise(null);
         return;
       }
@@ -66,7 +67,9 @@ function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
 }
 
 async function readHeadText(repoDir: string, reqPath: string): Promise<ReadTextResult> {
-  const stdout = await gitBuffer(repoDir, ["show", `HEAD:${reqPath}`]);
+  const resolved = resolveHomePath(repoDir);
+  const stdout = await gitBuffer(resolved, ["show", `HEAD:${reqPath}`]);
+
   if (stdout === null) {
     return { text: "", exists: false };
   }
