@@ -228,6 +228,48 @@ struct FlatSegmentBuildTests {
             #expect(text.contains("\n"))
         }
     }
+
+    @Test func taskListRendersWithCheckboxCharacters() {
+        let blocks: [MarkdownBlock] = [
+            .taskList([
+                .init(checked: false, content: [.paragraph([.text("Todo")])]),
+                .init(checked: true, content: [.paragraph([.text("Done")])]),
+            ])
+        ]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .text(let attr) = segments[0] {
+            let text = String(attr.characters)
+            #expect(text.contains("\u{25CB}"))
+            #expect(text.contains("\u{25C9}"))
+            #expect(text.contains("Todo"))
+            #expect(text.contains("Done"))
+        } else {
+            Issue.record("Expected .text segment for task list")
+        }
+    }
+
+    @Test func checkedTaskListItemHasStrikethrough() {
+        let blocks: [MarkdownBlock] = [
+            .taskList([
+                .init(checked: true, content: [.paragraph([.text("Done task")])]),
+            ])
+        ]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        guard case .text(let attr) = segments[0] else {
+            Issue.record("Expected .text segment")
+            return
+        }
+        // Find a run that contains strikethrough
+        var hasStrikethrough = false
+        for run in attr.runs {
+            if run.strikethroughStyle == .single {
+                hasStrikethrough = true
+                break
+            }
+        }
+        #expect(hasStrikethrough, "Checked task item text should have strikethrough")
+    }
 }
 
 // MARK: - MarkdownSegmentCache
