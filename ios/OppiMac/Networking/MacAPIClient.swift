@@ -43,12 +43,13 @@ final class MacAPIClient: Sendable {
         }
 
         struct ConfigFile: Decodable {
+            let token: String?
             let ownerToken: String?
         }
 
         do {
             let config = try JSONDecoder().decode(ConfigFile.self, from: data)
-            return config.ownerToken
+            return config.token ?? config.ownerToken
         } catch {
             logger.error("Failed to parse config.json: \(error.localizedDescription)")
             return nil
