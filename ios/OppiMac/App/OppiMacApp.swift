@@ -32,6 +32,15 @@ struct OppiMacApp: App {
                     updaterController.checkForUpdates(nil)
                 }
             )
+            .task {
+                // Auto-start runs here — MenuBarExtra is always created on launch,
+                // unlike the Window which only opens when explicitly requested.
+                await permissionState.refresh()
+                onboardingState.checkFirstRun()
+                if !onboardingState.needsOnboarding {
+                    autoStartServer()
+                }
+            }
         }
         .menuBarExtraStyle(.window)
 
