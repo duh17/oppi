@@ -20,6 +20,32 @@ struct OppiMacApp: App {
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
+
+        // Auto-start server from init. The .task on MenuBarPopover content only
+        // fires when the popover is opened (.menuBarExtraStyle(.window) is lazy),
+        // so we cannot depend on it for launch-time startup.
+        let pm = processManager
+        let hm = healthMonitor
+        let obs = onboardingState
+        Task { @MainActor in
+            obs.checkFirstRun()
+            guard !obs.needsOnboarding else { return }
+            guard pm.state == .stopped else { return }
+
+            let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+            guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
+            let baseURL = URL(string: "https://localhost:7749")!
+            let client = MacAPIClient(baseURL: baseURL, token: token)
+
+            let alreadyRunning = await client.checkHealth()
+            if alreadyRunning {
+                pm.markRunning()
+            } else {
+                pm.startWithDefaults()
+            }
+            hm.startMonitoring(baseURL: baseURL, token: token, processManager: pm)
+            hm.checkPiCLIVersion()
+        }
     }
 
     var body: some Scene {
@@ -33,13 +59,10 @@ struct OppiMacApp: App {
                 }
             )
             .task {
-                // Auto-start runs here — MenuBarExtra is always created on launch,
-                // unlike the Window which only opens when explicitly requested.
+                // Refresh permissions when popover is opened. Server auto-start
+                // runs from init() — this .task only fires on popover open
+                // (.menuBarExtraStyle(.window) lazily instantiates content).
                 await permissionState.refresh()
-                onboardingState.checkFirstRun()
-                if !onboardingState.needsOnboarding {
-                    autoStartServer()
-                }
             }
         }
         .menuBarExtraStyle(.window)
