@@ -325,12 +325,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
         ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
 
-        // Deferred follow-tail: scroll to bottom after layout has settled
-        // the content size. Avoids forcing a redundant synchronous TextKit2
-        // layout inside apply() during batch updates.
+        // Deferred follow-tail: settle the inner scroll view's content size,
+        // then scroll to the bottom. A plain scrollToBottom() here can lag one
+        // update behind because UITextView contentSize has not necessarily
+        // caught up to the newly assigned text yet.
         if expandedPendingScrollToBottom {
+            let contentView: UIView = expandedUsesReadMediaLayout
+                ? expandedReadMediaContainer
+                : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
             expandedPendingScrollToBottom = false
-            ToolTimelineRowUIHelpers.scrollToBottom(expandedScrollView, animated: false)
+            ToolTimelineRowUIHelpers.followTail(
+                in: expandedScrollView,
+                contentLabel: contentView
+            )
         }
         bashToolRowView.flushDeferredScrollToBottom()
     }
