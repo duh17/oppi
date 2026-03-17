@@ -96,6 +96,8 @@ enum DiffAttributedStringBuilder {
         let text = NSMutableString(capacity: totalLines * 80)
         var lineInfos: [LineInfo] = []
         lineInfos.reserveCapacity(totalLines)
+        var codeTexts: [String] = []
+        codeTexts.reserveCapacity(totalLines)
         var headerInfos: [HeaderInfo] = []
 
         for (hunkIndex, hunk) in hunks.enumerated() {
@@ -138,6 +140,7 @@ enum DiffAttributedStringBuilder {
                 let codeText = line.text.isEmpty ? " " : line.text
                 text.append(codeText)
                 let codeLen = text.length - codeStart
+                codeTexts.append(codeText)
 
                 // Newline
                 text.append("\n")
@@ -258,13 +261,12 @@ enum DiffAttributedStringBuilder {
             // Process each line's code text through the optimized scanner.
             // We scan each line independently (no cross-line block comment state,
             // matching the existing behavior of highlightLine).
-            for info in lineInfos {
+            // Use the original line text strings stored during Phase 1 to avoid
+            // NSString.substring extraction overhead.
+            for (idx, info) in lineInfos.enumerated() {
                 guard info.codeLen > 0 else { continue }
 
-                // Extract the code text substring for scanning
-                let codeRange = NSRange(location: info.codeStart, length: info.codeLen)
-                let codeText = (text as NSString).substring(with: codeRange)
-
+                let codeText = codeTexts[idx]
                 let tokenRanges = SyntaxHighlighter.scanTokenRanges(codeText, language: language)
 
                 for token in tokenRanges {
