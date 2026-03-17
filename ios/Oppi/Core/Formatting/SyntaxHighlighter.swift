@@ -267,8 +267,17 @@ private let zigKeywords: Set<String> = [
 /// to avoid the O(n^2) cost of SwiftUI `AttributedString` concatenation.
 enum SyntaxHighlighter {
 
-    /// Maximum lines to process (performance bound).
-    static let maxLines = 500
+    /// Maximum lines to highlight before truncating (with unhighlighted
+    /// remainder appended by the full-screen code path).
+    ///
+    /// Bench results (simulator, M-series Mac — iPhone ~2-4x slower):
+    ///   1K lines: Swift 7ms, TS 11ms, JSON 30ms
+    ///   5K lines: Swift 34ms, TS 55ms, JSON 156ms
+    ///  10K lines: Swift 70ms, TS 111ms, JSON 309ms
+    ///
+    /// All highlighting runs on Task.detached, so even worst-case JSON
+    /// at 10K (~1.2s on iPhone) is fine — users see plain text immediately.
+    static let maxLines = 10_000
 
     // MARK: - Pre-computed Token Attributes
 
