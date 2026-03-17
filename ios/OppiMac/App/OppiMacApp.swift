@@ -39,13 +39,18 @@ struct OppiMacApp: App {
             MainWindowView(
                 processManager: processManager,
                 healthMonitor: healthMonitor,
-                permissionState: permissionState
+                permissionState: permissionState,
+                checkForUpdates: { [updaterController] in
+                    updaterController.checkForUpdates(nil)
+                }
             )
             .task {
                 await permissionState.refresh()
                 onboardingState.checkFirstRun()
                 if onboardingState.needsOnboarding {
                     showOnboarding = true
+                } else {
+                    autoStartServer()
                 }
             }
             .sheet(isPresented: $showOnboarding) {
@@ -60,6 +65,24 @@ struct OppiMacApp: App {
                 )
             }
         }
+    }
+
+    /// Auto-start the server on subsequent launches (config already exists).
+    private func autoStartServer() {
+        guard processManager.state == .stopped else { return }
+
+        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+        guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
+
+        processManager.startWithDefaults()
+
+        let baseURL = URL(string: "https://localhost:7749")!
+        healthMonitor.startMonitoring(
+            baseURL: baseURL,
+            token: token,
+            processManager: processManager
+        )
+        healthMonitor.checkPiCLIVersion()
     }
 
     private var menuBarIcon: String {

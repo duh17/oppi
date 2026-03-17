@@ -7,7 +7,6 @@ private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "MacAPICl
 ///
 /// Handles health checks and server info. Accepts self-signed TLS certificates
 /// from the local server since the Mac app manages the server process directly.
-@MainActor
 final class MacAPIClient: Sendable {
 
     let baseURL: URL

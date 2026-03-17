@@ -105,8 +105,23 @@ struct ServerInitView: View {
 
                 await MainActor.run { phase = .waitingHealth }
 
-                // Step 3: Wait for /health
-                let healthy = try await waitForHealth()
+                // Step 3: Wire health monitor and wait for /health
+                let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+                guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else {
+                    throw InitError.noToken
+                }
+
+                let baseURL = URL(string: "https://localhost:7749")!
+                await MainActor.run {
+                    healthMonitor.startMonitoring(
+                        baseURL: baseURL,
+                        token: token,
+                        processManager: processManager
+                    )
+                }
+
+                // Wait for health monitor to detect healthy state
+                let healthy = try await waitForHealthMonitor()
 
                 await MainActor.run {
                     if healthy {
@@ -133,52 +148,24 @@ struct ServerInitView: View {
             throw InitError.cliNotFound
         }
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [cliPath, "init", "--yes"]
+        let result = try await ProcessRunner.runCapturingStderr(
+            executable: nodePath,
+            arguments: [cliPath, "init", "--yes"]
+        )
 
-        var env = ProcessInfo.processInfo.environment
-        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + currentPath
-        proc.environment = env
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-
-        try proc.run()
-        proc.waitUntilExit()
-
-        if proc.terminationStatus != 0 {
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let errText = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
+        if result.exitCode != 0 {
+            let errText = result.stderr.isEmpty ? "Unknown error" : result.stderr
             throw InitError.initFailed(errText)
         }
 
         logger.info("Server init completed successfully")
     }
 
-    private nonisolated func waitForHealth() async throws -> Bool {
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-
-        // Read token from newly created config
-        guard let token = await MainActor.run(body: {
-            MacAPIClient.readOwnerToken(dataDir: dataDir)
-        }) else {
-            throw InitError.noToken
-        }
-
-        let baseURL = URL(string: "https://localhost:7749")!
-        let client = await MainActor.run {
-            MacAPIClient(baseURL: baseURL, token: token)
-        }
-
-        // Poll for up to 30 seconds
-        for _ in 0..<15 {
-            let healthy = await client.checkHealth()
-            if healthy {
+    /// Wait for the health monitor to report healthy. The monitor polls every 2s
+    /// during startup, so we just watch its state for up to 60 seconds.
+    private func waitForHealthMonitor() async throws -> Bool {
+        for _ in 0..<30 {
+            if healthMonitor.isHealthy {
                 return true
             }
             try await Task.sleep(for: .seconds(2))

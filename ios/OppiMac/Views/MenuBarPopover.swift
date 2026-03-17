@@ -7,6 +7,8 @@ struct MenuBarPopover: View {
     let permissionState: TCCPermissionState
     let checkForUpdates: @MainActor () -> Void
 
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -59,9 +61,8 @@ struct MenuBarPopover: View {
             }
 
             Button("Show Oppi") {
-                if let url = URL(string: "oppiMac://main") {
-                    NSWorkspace.shared.open(url)
-                }
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "main")
             }
 
             Divider()
