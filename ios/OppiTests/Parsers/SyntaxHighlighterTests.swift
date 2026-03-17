@@ -198,6 +198,34 @@ struct SyntaxHighlighterTests {
         #expect(result.string == code)
     }
 
+    @Test func jsonHighlightUsesExpectedTokenColors() {
+        let json = #"{ "key": "value", "num": -42.5e+1, "flag": true, "missing": null }"#
+        let result = SyntaxHighlighter.highlight(json, language: .json)
+
+        #expect(result.string == json)
+        #expect(foregroundColor(of: #""key""#, in: result) == UIColor(Color.themeSyntaxType))
+        #expect(foregroundColor(of: #""value""#, in: result) == UIColor(Color.themeSyntaxString))
+        #expect(foregroundColor(of: "-42.5e+1", in: result) == UIColor(Color.themeSyntaxNumber))
+        #expect(foregroundColor(of: "true", in: result) == UIColor(Color.themeSyntaxKeyword))
+        #expect(foregroundColor(of: "null", in: result) == UIColor(Color.themeSyntaxComment))
+        #expect(foregroundColor(of: ":", in: result) == UIColor(Color.themeSyntaxPunctuation))
+    }
+
+    @Test func jsonHighlightColorsWhitespaceAsPunctuation() {
+        let json = "{\n  \"key\": 1\n}"
+        let result = SyntaxHighlighter.highlight(json, language: .json)
+        let text = result.string as NSString
+        let whitespaceRange = text.range(of: "  ")
+
+        guard whitespaceRange.location != NSNotFound else {
+            Issue.record("Expected JSON indentation whitespace")
+            return
+        }
+
+        let color = result.attribute(.foregroundColor, at: whitespaceRange.location, effectiveRange: nil) as? UIColor
+        #expect(color == UIColor(Color.themeSyntaxPunctuation))
+    }
+
     @MainActor
     @Test func shellBlockHighlightingOnMainThreadUsesHeuristicScanner() {
         let command = "xcodebuild -scheme Oppi"
