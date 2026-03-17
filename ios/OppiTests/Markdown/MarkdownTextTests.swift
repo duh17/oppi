@@ -34,12 +34,12 @@ struct FlatSegmentBuildTests {
     }
 
     @Test func tableProducesTableSegment() {
-        let blocks: [MarkdownBlock] = [.table(headers: ["A"], rows: [["1"]])]
+        let blocks: [MarkdownBlock] = [.table(headers: [[.text("A")]], rows: [[[.text("1")]]])]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         #expect(segments.count == 1)
         if case .table(let headers, let rows) = segments[0] {
-            #expect(headers == ["A"])
-            #expect(rows == [["1"]])
+            #expect(headers.map { plainText(from: $0) } == ["A"])
+            #expect(rows.map { $0.map { plainText(from: $0) } } == [["1"]])
         }
     }
 
@@ -582,5 +582,120 @@ struct FlatSegmentImageResolutionTests {
             // Also acceptable: empty paragraph filtered out entirely
             #expect(segments.isEmpty || segments.count == 1)
         }
+    }
+}
+
+// MARK: - Table cell inline content (links in table cells)
+
+@Suite("Table cell inline content")
+struct TableCellInlineContentTests {
+
+    /// Regression test: markdown links inside table cells should preserve
+    /// their destination URL through the parse pipeline so they can be
+    /// rendered as clickable links.
+    @Test func parsedTableCellPreservesLinkURL() {
+        let md = """
+        | Title | Link |
+        | --- | --- |
+        | Article | [Click here](https://example.com) |
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected .table block, got \(blocks[0])")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Title", "Link"])
+        #expect(rows.count == 1)
+
+        // The second cell should contain a .link inline with the destination URL.
+        let linkCell = rows[0][1]
+        let hasLink = linkCell.contains { inline in
+            if case .link(_, let dest) = inline {
+                return dest == "https://example.com"
+            }
+            return false
+        }
+        #expect(hasLink, "Table cell should preserve link with destination URL")
+        #expect(plainText(from: linkCell) == "Click here")
+    }
+
+    @Test func parsedTableCellPreservesMultipleLinks() {
+        let md = """
+        | Source | Read? |
+        | --- | --- |
+        | [Article A](https://a.com) | [Full](https://a.com/full) |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(_, let rows) = blocks[0] else {
+            Issue.record("Expected .table block")
+            return
+        }
+        let cell0HasLink = rows[0][0].contains {
+            if case .link(_, let d) = $0 { return d == "https://a.com" }
+            return false
+        }
+        let cell1HasLink = rows[0][1].contains {
+            if case .link(_, let d) = $0 { return d == "https://a.com/full" }
+            return false
+        }
+        #expect(cell0HasLink, "First cell should preserve link URL")
+        #expect(cell1HasLink, "Second cell should preserve link URL")
+    }
+
+    @Test func parsedTablePlainTextCellsUnchanged() {
+        let md = """
+        | Name | Value |
+        | --- | --- |
+        | foo | bar |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected .table block")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Name", "Value"])
+        #expect(rows[0].map { plainText(from: $0) } == ["foo", "bar"])
+    }
+
+    @Test func parsedTableCellWithBoldAndLink() {
+        let md = """
+        | Col |
+        | --- |
+        | **bold** and [link](https://x.com) |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(_, let rows) = blocks[0] else {
+            Issue.record("Expected .table block")
+            return
+        }
+        let cell = rows[0][0]
+        let hasStrong = cell.contains { if case .strong = $0 { return true } else { return false } }
+        let hasLink = cell.contains { if case .link = $0 { return true } else { return false } }
+        #expect(hasStrong, "Table cell should preserve bold formatting")
+        #expect(hasLink, "Table cell should preserve link")
+    }
+
+    @Test func flatSegmentTablePassesThroughInlines() {
+        let blocks: [MarkdownBlock] = [
+            .table(
+                headers: [[.text("Title")], [.text("Link")]],
+                rows: [
+                    [[.text("Art")], [.link(children: [.text("Click")], destination: "https://example.com")]],
+                ]
+            )
+        ]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        guard case .table(_, let rows) = segments[0] else {
+            Issue.record("Expected .table segment")
+            return
+        }
+        let hasLink = rows[0][1].contains { inline in
+            if case .link(_, let dest) = inline { return dest == "https://example.com" }
+            return false
+        }
+        #expect(hasLink, "FlatSegment.table should preserve link inlines")
     }
 }

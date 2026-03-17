@@ -13,7 +13,7 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case orderedList(start: Int, [[Self]])
     case taskList([TaskItem])
     case thematicBreak
-    case table(headers: [String], rows: [[String]])
+    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case htmlBlock(String)
 
     struct TaskItem: Equatable, Sendable {
@@ -39,7 +39,9 @@ indirect enum MarkdownInline: Equatable, Sendable {
 // periphery:ignore - used by OppiTests via @testable import
 /// Extract plain text from inline nodes, stripping all formatting.
 func plainText(from inlines: [MarkdownInline]) -> String {
-    inlines.map { inline -> String in
+    // Fast path: single .text inline (most common for plain table cells).
+    if inlines.count == 1, case .text(let s) = inlines[0] { return s }
+    return inlines.map { inline -> String in
         switch inline {
         case .text(let s): return s
         case .emphasis(let children): return plainText(from: children)
