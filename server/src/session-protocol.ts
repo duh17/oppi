@@ -111,32 +111,6 @@ function countNewlines(text: string): number {
 
 // ─── Text Helpers ───
 
-/**
- * Compute the missing assistant text tail from streamed deltas and finalized text.
- *
- * Pi normally streams assistant text via `message_update.text_delta`, but some
- * turns only include text in `message_end`. This helper bridges that gap.
- */
-export function computeAssistantTextTailDelta(streamedText: string, finalizedText: string): string {
-  if (finalizedText.length === 0) return "";
-  if (streamedText.length === 0) return finalizedText;
-  if (finalizedText === streamedText) return "";
-
-  if (finalizedText.startsWith(streamedText)) {
-    return finalizedText.slice(streamedText.length);
-  }
-
-  // Fallback for unexpected divergence: append from common prefix forward.
-  // We cannot retract already-streamed text, but this avoids dropping content.
-  let commonPrefix = 0;
-  const max = Math.min(streamedText.length, finalizedText.length);
-  while (commonPrefix < max && streamedText[commonPrefix] === finalizedText[commonPrefix]) {
-    commonPrefix += 1;
-  }
-
-  return finalizedText.slice(commonPrefix);
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
