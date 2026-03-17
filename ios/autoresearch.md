@@ -1,19 +1,17 @@
-## Status: CONVERGED
-
-# Autoresearch: Syntax Highlighting Pipeline Performance
+# Autoresearch: DiffAttributedStringBuilder Performance
 
 ## Objective
 
-Optimize the `SyntaxHighlighter` and `ToolRowTextRenderer.makeCodeAttributedText` pipeline that converts raw source code into syntax-highlighted NSAttributedString with line numbers and gutter.
+Optimize `DiffAttributedStringBuilder.build()` — the function that converts structured diff hunks into a syntax-highlighted `NSAttributedString` for the unified diff view.
 
-This pipeline runs on the main thread when a code tool finishes streaming (transition from plain text to highlighted). It also runs on cell reconfigure when the render cache misses. Reducing its cost enables tighter frame budgets and potentially live highlighting during streaming.
+This runs on the **main thread** in `UIViewRepresentable.makeUIView()` for both `UnifiedDiffTextView` and `UnifiedDiffTextSegment`. For large diffs (500+ lines), it causes 9000+ ms app hangs (Sentry APPLE-IOS-1X).
 
-Workload: realistic Swift source code at 100 and 500 lines (the 500-line cap is enforced in production).
+Workload: realistic Swift diff hunks at 100, 300, and 500 lines with a mix of context (50%), removed (20%), added (20%), and removed+added pairs (10%). Some lines include word-level highlight spans.
 
 ## Metrics
 
-- **Primary**: `codeAttr_500` (μs, lower is better) — full `makeCodeAttributedText` pipeline for 500 lines of Swift
-- **Secondary**: `highlight_500`, `highlightLines_500`, `codeAttr_100`, `highlight_100`, `highlightLines_100`, `highlight_json_500`, `highlight_shell_100`
+- **Primary**: `diffBuild_500` (μs, lower is better) — full build for 500 diff lines of Swift
+- **Secondary**: `diffBuild_300`, `diffBuild_100`, `diffBuild_plain_500` (unknown language, no syntax highlighting)
 
 ## How to Run
 
@@ -27,157 +25,55 @@ Outputs `METRIC name=value` lines parsed from xcodebuild test output.
 
 | File | What |
 |------|------|
-| `Oppi/Core/Formatting/SyntaxHighlighter.swift` | Token scanner: appendHighlightedLine, highlightLines, highlight, highlightJSON, shell scanner |
-| `Oppi/Features/Chat/Timeline/Tool/ToolRowTextRenderer.swift` | `makeCodeAttributedText` — gutter assembly + highlight + NSAttributedString build |
-| `OppiTests/Perf/SyntaxHighlightPerfBench.swift` | Benchmark harness (outputs METRIC lines) |
+| `Oppi/Core/Views/DiffAttributedStringBuilder.swift` | Target: builds NSAttributedString from diff hunks with syntax highlighting, gutter, backgrounds, word spans, tap metadata |
+| `Oppi/Core/Formatting/SyntaxHighlighter.swift` | Token scanner — has both legacy `highlightLine()` (per-token append) and optimized `scanTokenRanges()` (range-based). The builder currently uses the legacy path. |
+| `OppiTests/Perf/DiffBuilderPerfBench.swift` | Benchmark harness |
 
 ## Off Limits
 
-- `ToolRowCodeRenderStrategy.swift` — render policy / tier logic (architectural, not perf target)
-- `ToolRowRenderCache.swift` — cache layer (already instant on hit)
-- `StreamingRenderPolicy.swift` — tier decision logic
-- Visual output must remain identical (same token colors, same gutter format)
+- `UnifiedDiffView.swift` — view layer (threading fix is separate from perf optimization)
+- `AnnotatedDiffView.swift` — segmentation logic, not perf target
+- `WorkspaceReview.swift` — model types
+- Visual output must remain identical (same colors, gutter layout, backgrounds, word spans, tap metadata)
 
 ## Constraints
 
-- All existing tests must pass: `SyntaxHighlighterTests`, `ToolRowCodeRenderStrategyTests`, `RenderStrategyPerfTests`
+- Output must be visually identical (same foreground colors, background tints, word-level spans, tap info attributes)
+- All existing diff-related tests must pass
 - No new dependencies
-- Output must be visually identical (same foreground colors per token type, same gutter layout)
-- 500-line cap stays (SyntaxHighlighter.maxLines)
-- Must remain @MainActor-safe (no background thread requirements)
+- The `diffLineKindAttributeKey` and `diffLineTapInfoKey` custom attributes must be preserved (used by layout managers and tap handlers)
+- Must remain callable from `@MainActor` context
 
 ## Architecture Notes
 
-### SyntaxHighlighter
+### Current Cost Centers
 
-Token-based line scanner. For each line: scans characters left-to-right, classifies tokens (comment, keyword, string, number, type, variable, punctuation, operator), appends NSAttributedString per token. Block comment state carried across lines.
+For each diff line, the builder currently:
+1. Creates 3 `NSAttributedString` objects: gutter prefix ("▎+ "), line numbers, and (for newlines) another one
+2. Calls `SyntaxHighlighter.highlightLine()` — the **legacy** per-token append path. Each call: `Array(line)` conversion, token scan, per-token NSAttributedString creation + append. For 500 lines: ~5000-15000 intermediate objects.
+3. Wraps result in `NSMutableAttributedString(attributedString:)` copy
+4. Calls `addAttributes` for font + paragraphStyle on the full range
+5. Calls `enumerateAttribute(.foregroundColor)` to fill nil ranges with default fg
+6. Appends gutter + code + newline to the growing result
+7. Applies row-level attributes: diffLineKind, backgroundColor, word spans, tap info
 
-`TokenAttrs` struct pre-computes UIColor dictionaries once per top-level call — avoids repeated `UIColor(Color)` conversions.
+### Known Optimized APIs Available (from prior autoresearch)
 
-Key cost centers:
-- `Array(line)` — copies each line's characters into a [Character] array
-- Per-token `NSAttributedString(string:attributes:)` creation — 10-30 per line × 500 lines = 5000-15000 intermediate objects
-- `NSMutableAttributedString.append()` — O(1) amortized but each call has overhead
+- `SyntaxHighlighter.scanTokenRanges(code, language:)` — returns `[TokenRange]` with `(location, length, kind)`. Range-based, no intermediate NSAttributedString creation. 60% faster than `highlightLine()`.
+- `SyntaxHighlighter.color(for: TokenKind)` — resolves a token kind to its cached UIColor.
+- Fused text assembly pattern: build NSMutableString first, convert once, apply attributes by range.
+- `beginEditing()/endEditing()` for batched attribute mutations.
 
-### makeCodeAttributedText
+### Optimization Strategy
 
-For each line:
-1. `paddedLineNumber` via `String(format:)` — C sprintf overhead per line
-2. Three NSAttributedString allocations: line number, separator "│ ", code content
-3. Each highlighted line gets `addAttributes` for font + paragraphStyle, then `enumerateAttribute` for missing foregroundColor
-4. Final newline append between lines
-
-### JSON Highlighter
-
-Separate path — highlights whole text as one pass (no per-line split). Already efficient for its use case.
-
-### Shell Highlighter
-
-Separate scanner with command/option/variable/operator detection. Same per-token NSAttributedString pattern.
+Apply the same "fused build" pattern that worked for `makeCodeAttributedText`:
+1. First pass: build entire text as NSMutableString, tracking per-line offset arrays (gutter start, lineNum start, code start, row start/end)
+2. Create NSMutableAttributedString from string with default attributes
+3. Apply gutter/lineNum colors by range using offset arrays
+4. For each line's code region, use `scanTokenRanges` on the line text, then map token offsets to fused text positions
+5. Apply row-level attributes (backgrounds, diffLineKind, tap info) by range
+6. Wrap in beginEditing/endEditing
 
 ## What's Been Tried
 
 (Updated as experiments accumulate)
-
-### Run 0 — Baseline
-| Metric | Value |
-|--------|-------|
-| `codeAttr_500` | 16,528μs |
-| `codeAttr_100` | 3,210μs |
-| `highlight_500` | 9,783μs |
-| `highlight_100` | 1,878μs |
-| `highlightLines_500` | 9,873μs |
-| `highlightLines_100` | 1,887μs |
-| `highlight_json_500` | 5,778μs |
-| `highlight_shell_100` | 2,248μs |
-
-Cost breakdown (estimated from 500-line numbers):
-- SyntaxHighlighter.highlight alone: ~9,800μs (59% of codeAttr_500)
-- Gutter + assembly overhead: ~6,700μs (41% of codeAttr_500)
-- highlightLines ≈ highlight (same core work, just splits per-line)
-
-### Run 1 — Range-based syntax highlighting ✅ KEEP
-Replaced per-token `NSAttributedString(string:attributes:)` creation + `append()` with:
-1. Create one `NSMutableAttributedString` from full text with default (variable) color
-2. Run scanner to record `(offset, length, tokenKind)` tuples
-3. Apply non-default foreground colors by `NSRange`
-
-Eliminates ~10,000 intermediate NSAttributedString allocations for 500 lines.
-
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| `codeAttr_500` | 16,528 | 9,830 | **-40.5%** |
-| `highlight_500` | 9,783 | 3,823 | **-60.9%** |
-| `highlightLines_500` | 9,873 | 4,802 | **-51.4%** |
-| `codeAttr_100` | 3,210 | 1,963 | **-38.8%** |
-| `highlight_100` | 1,878 | 741 | **-60.5%** |
-| `highlight_shell_100` | 2,248 | 1,130 | **-49.7%** |
-
-### Run 4 — Single character array scan ✅ KEEP
-Convert entire text to `[Character]` once, find line boundaries by newline scan,
-pass `(allChars, start, end)` bounds to scanner. Eliminates 500 per-line heap
-allocations. Scanner functions rewritten to work on slices with absolute indices.
-
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| `codeAttr_500` | 7,372 | 6,268 | **-15.0%** |
-| `highlight_500` | ~3,800 | 3,472 | **-9.2%** |
-| `codeAttr_100` | 1,401 | 1,212 | **-13.5%** |
-
-### Run 5 — Cache TokenAttrs ✅ KEEP
-Cache the 9 UIColor(Color) conversions in a static var. Avoids redundant
-conversions across sequential highlight calls. `codeAttr_500`: 6,268→5,929 (-5.4%).
-
-### Run 6 — Avoid Substring→String copy + String(format:) ✅ KEEP
-Replace `(lineStr as NSString).length` with `rawLine.utf16.count` on Substring.
-Replace `String(format:)` sprintf with manual padding. `codeAttr_500`: 5,929→5,630 (-5.0%).
-
-### Run 7 — Pre-build line number strings ❌ DISCARD
-Pre-compute all gutter strings in an array. Within noise after Run 6's sprintf removal.
-
-### Run 8 — Build NSMutableAttributedString directly (no NSMutableString) ❌ DISCARD
-Using `result.mutableString.append()` triggers internal attribute bookkeeping per append,
-slower than building plain NSMutableString then converting.
-
-### Run 8b — beginEditing/endEditing ✅ KEEP (marginal)
-Wrap all attribute mutations in beginEditing/endEditing. `codeAttr_500`: 5,630→5,539 (-1.6%).
-
-### Final Summary
-
-| Metric | Baseline | Final | Improvement |
-|--------|----------|-------|-------------|
-| `codeAttr_500` | 16,528 | ~5,600 | **-66.1%** |
-| `highlight_500` | 9,783 | ~3,450 | **-64.7%** |
-| `codeAttr_100` | 3,210 | ~1,100 | **-65.7%** |
-| `highlight_100` | 1,878 | ~660 | **-64.9%** |
-| `highlight_shell_100` | 2,248 | ~1,030 | **-54.2%** |
-| `highlight_json_500` | 5,778 | ~5,600 | **-3.1%** (already efficient) |
-
-6 keeps, 3 discards across 9 experiments.
-
-Remaining cost is dominated by:
-- `Array(truncated)` character conversion: ~1,000μs for 500 lines (irreducible without C scanner)
-- NSMutableAttributedString creation from string: ~1,000μs (Foundation overhead)
-- `addAttribute` calls for gutter + tokens: ~1,500μs (~1500 calls × ~1μs each)
-
-Further gains require: C-level scanner (avoid Character abstraction), or custom
-attributed text representation (avoid NSMutableAttributedString overhead).
-
-### Run 2 — Fused gutter + highlight single-pass (v1) ❌ DISCARD
-Tried building full guttered text as one string with token range mapping. Two problems:
-1. Token→line mapping loop was O(tokens × lines) = O(n²): 9,830→54,514μs
-2. Swift String `+=` and `.utf16.count` calls were O(n) each on growing string
-
-### Run 3 — Fused gutter + highlight (v2, fixed) ✅ KEEP
-Fixed Run 2 issues:
-- NSMutableString for text assembly (avoids COW)
-- Manual UTF-16 position tracking (avoids O(n) `.utf16.count`)
-- Parallel lineIdx scan for O(tokens + lines) token mapping
-- Pre-allocated flat arrays instead of inline struct + tuples
-
-Eliminates per-line: NSMutableAttributedString copy, addAttributes, enumerateAttribute, 2× gutter NSAttributedString allocs.
-
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| `codeAttr_500` | 9,830 | 7,372 | **-25.0%** |
-| `codeAttr_100` | 1,963 | 1,401 | **-28.6%** |

@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 # Run benchmark suite via sim-pool
 OUTPUT=$(./scripts/sim-pool.sh run -- \
     xcodebuild -project Oppi.xcodeproj -scheme Oppi test \
-    -only-testing:'OppiTests/SyntaxHighlightPerfBench' \
+    -only-testing:'OppiTests/DiffBuilderPerfBench' \
     2>&1) || {
     echo "METRIC error=1"
     echo "$OUTPUT" | tail -30
