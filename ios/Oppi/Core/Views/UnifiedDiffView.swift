@@ -5,6 +5,9 @@ import UIKit
 ///
 /// Renders server/local hunks with syntax highlighting, numbered lines, and
 /// optional word-level spans inside a selectable `UITextView`.
+///
+/// The attributed string build runs off the main thread via `Task.detached`
+/// to prevent app hangs on large diffs (500+ lines).
 struct UnifiedDiffView: View {
     let hunks: [WorkspaceReviewDiffHunk]
     let filePath: String
@@ -12,21 +15,59 @@ struct UnifiedDiffView: View {
     var emptySystemImage = "checkmark.circle"
     var emptyDescription = "This diff has no textual changes to show."
 
+    /// Pre-built attributed string + measured width, computed off main thread.
+    @State private var built: BuiltDiff?
+
     var body: some View {
-        if hunks.isEmpty {
-            ContentUnavailableView(
-                emptyTitle,
-                systemImage: emptySystemImage,
-                description: Text(emptyDescription)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.themeBgDark)
-        } else {
-            UnifiedDiffTextView(hunks: hunks, filePath: filePath)
-                .ignoresSafeArea(.keyboard)
+        Group {
+            if hunks.isEmpty {
+                ContentUnavailableView(
+                    emptyTitle,
+                    systemImage: emptySystemImage,
+                    description: Text(emptyDescription)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.themeBgDark)
+            } else if let built {
+                UnifiedDiffTextView(built: built)
+                    .ignoresSafeArea(.keyboard)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.themeBgDark)
+            }
+        }
+        .task(id: filePath + "|\(hunks.count)") {
+            guard !hunks.isEmpty else { return }
+            let h = hunks
+            let fp = filePath
+            let result = await Task.detached(priority: .userInitiated) {
+                let attrText = DiffAttributedStringBuilder.build(hunks: h, filePath: fp)
+                let measured = attrText.boundingRect(
+                    with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin],
+                    context: nil
+                )
+                return BuiltDiff(attributedText: attrText, contentWidth: ceil(measured.width) + 20)
+            }.value
+            built = result
         }
     }
 }
+
+// MARK: - Async Build
+
+extension UnifiedDiffView {
+    /// Build result passed to the UIKit text view.
+    struct BuiltDiff: @unchecked Sendable {
+        let attributedText: NSAttributedString
+        let contentWidth: CGFloat
+    }
+
+
+}
+
+// MARK: - Layout Manager
 
 /// Layout manager that draws full-width backgrounds for added/removed lines.
 /// `NSAttributedString.backgroundColor` only paints behind characters; this
@@ -74,12 +115,12 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
     }
 }
 
-/// Non-scrolling UITextView inside a UIScrollView — matches the proven pattern
-/// from `NativeFullScreenDiffBody` that supports both horizontal and vertical
-/// scrolling with explicit measured-width constraints.
+// MARK: - UIViewRepresentable
+
+/// Non-scrolling UITextView inside a UIScrollView — displays a pre-built
+/// attributed string. The build happens off the main thread in the parent view.
 private struct UnifiedDiffTextView: UIViewRepresentable {
-    let hunks: [WorkspaceReviewDiffHunk]
-    let filePath: String
+    let built: UnifiedDiffView.BuiltDiff
 
     func makeUIView(context: Context) -> UIView {
         let textStorage = NSTextStorage()
@@ -110,18 +151,9 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         scrollView.showsHorizontalScrollIndicator = true
         scrollView.backgroundColor = UIColor(Color.themeBgDark)
 
-        let attrText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath)
-        textStorage.setAttributedString(attrText)
-
-        // Measure content to set explicit width — drives horizontal scroll.
-        let measured = attrText.boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        )
-        let contentWidth = ceil(measured.width) + 20
+        textStorage.setAttributedString(built.attributedText)
         layoutManager.hostScrollView = scrollView
-        layoutManager.measuredContentWidth = contentWidth
+        layoutManager.measuredContentWidth = built.contentWidth
 
         scrollView.addSubview(textView)
 
@@ -139,7 +171,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
             textView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             textView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             textView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            textView.widthAnchor.constraint(equalToConstant: contentWidth),
+            textView.widthAnchor.constraint(equalToConstant: built.contentWidth),
             textView.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor),
         ])
 
