@@ -10,6 +10,9 @@ struct OppiMacApp: App {
 
     @State private var processManager = ServerProcessManager()
     @State private var healthMonitor = ServerHealthMonitor()
+    @State private var permissionState = TCCPermissionState()
+    @State private var onboardingState = OnboardingState()
+    @State private var showOnboarding = false
 
     init() {
         updaterController = SPUStandardUpdaterController(
@@ -24,6 +27,7 @@ struct OppiMacApp: App {
             MenuBarPopover(
                 processManager: processManager,
                 healthMonitor: healthMonitor,
+                permissionState: permissionState,
                 checkForUpdates: { [updaterController] in
                     updaterController.checkForUpdates(nil)
                 }
@@ -34,8 +38,27 @@ struct OppiMacApp: App {
         Window("Oppi", id: "main") {
             MainWindowView(
                 processManager: processManager,
-                healthMonitor: healthMonitor
+                healthMonitor: healthMonitor,
+                permissionState: permissionState
             )
+            .task {
+                await permissionState.refresh()
+                onboardingState.checkFirstRun()
+                if onboardingState.needsOnboarding {
+                    showOnboarding = true
+                }
+            }
+            .sheet(isPresented: $showOnboarding) {
+                OnboardingWindow(
+                    onboardingState: onboardingState,
+                    permissionState: permissionState,
+                    processManager: processManager,
+                    healthMonitor: healthMonitor,
+                    onComplete: {
+                        showOnboarding = false
+                    }
+                )
+            }
         }
     }
 

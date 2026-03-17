@@ -4,6 +4,7 @@ struct MainWindowView: View {
 
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor
+    let permissionState: TCCPermissionState
 
     @State private var selectedTab: SidebarTab? = .status
 
@@ -35,6 +36,8 @@ struct MainWindowView: View {
         case .pair:
             Text("Pair view — coming soon")
                 .foregroundStyle(.secondary)
+        case .permissions:
+            PermissionsView(permissionState: permissionState)
         case .logs:
             LogsView(processManager: processManager)
         case .settings:
@@ -49,6 +52,7 @@ struct MainWindowView: View {
 enum SidebarTab: String, CaseIterable, Identifiable {
     case status
     case pair
+    case permissions
     case logs
     case settings
 
@@ -58,6 +62,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
         switch self {
         case .status: "Status"
         case .pair: "Pair"
+        case .permissions: "Permissions"
         case .logs: "Logs"
         case .settings: "Settings"
         }
@@ -67,6 +72,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
         switch self {
         case .status: "heart.text.square"
         case .pair: "qrcode"
+        case .permissions: "lock.shield"
         case .logs: "doc.text"
         case .settings: "gear"
         }
