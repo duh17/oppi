@@ -194,6 +194,73 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
+    /// Same-session re-entry must NOT rebuild from stale cache when the
+    /// reducer already has items. Loading a stale cache triggers orphan
+    /// detection that preserves user messages but drops their corresponding
+    /// assistant responses — producing a wall of user-only messages.
+    @MainActor
+    @Test func sameSessionReentrySkipsCacheLoadWhenReducerHasItems() async {
+        let sessionId = "reentry-skip-cache-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        // Stale cache with only 1 event (simulating cache that predates
+        // the user's recent messages during the live session).
+        await TimelineCache.shared.saveTrace(sessionId, events: [
+            makeTraceEvent(id: "old-user-1", type: .user, text: "first message"),
+        ])
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        // Pre-populate reducer with live session items (as if user just
+        // had a conversation and is re-entering the same session).
+        reducer.loadSession([
+            TraceEvent(id: "u1", type: .user, timestamp: "2026-03-17T10:00:00Z",
+                       text: "first message", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a1", type: .assistant, timestamp: "2026-03-17T10:00:01Z",
+                       text: "first response", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "u2", type: .user, timestamp: "2026-03-17T10:01:00Z",
+                       text: "second message", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "a2", type: .assistant, timestamp: "2026-03-17T10:01:01Z",
+                       text: "second response", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ])
+        #expect(reducer.items.count == 4, "Precondition: reducer has 4 items")
+
+        // Simulate same-session re-entry: set activeSessionId so
+        // switchingSessions == false → reset() is NOT called.
+        sessionStore.activeSessionId = sessionId
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        try? await Task.sleep(for: .milliseconds(120))
+
+        // The reducer should still have all 4 items — cache load was skipped.
+        #expect(reducer.items.count == 4, "Same-session re-entry must preserve existing items, not rebuild from stale cache")
+
+        // Verify assistant messages survived (the bug would drop them).
+        let assistantCount = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }.count
+        #expect(assistantCount == 2, "Both assistant messages must survive re-entry")
+
+        streams.finish(index: 0)
+        await connectTask.value
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
+
     @MainActor
     @Test func connectWithoutCacheTransitionsToAwaitingConnectedWithoutCachedHistory() async {
         let sessionId = "state-no-cache-\(UUID().uuidString)"

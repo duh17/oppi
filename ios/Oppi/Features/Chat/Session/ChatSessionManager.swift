@@ -321,28 +321,40 @@ final class ChatSessionManager {
 
         if let cached, !cached.events.isEmpty {
             loadedFromCacheAtConnect = true
-            let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
-            reducer.loadSession(cached.events)
-            let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
 
-            ChatSessionTelemetry.recordReducerLoad(
-                durationMs: reducerLoadDurationMs,
-                sessionId: sessionId,
-                source: "cache",
-                eventCount: cached.eventCount,
-                itemCount: reducer.items.count
-            )
+            // Skip cache load when the reducer already has items (same-session
+            // re-entry). The live items are strictly more recent than the cache.
+            // Loading a stale cache would trigger a full rebuild whose orphan
+            // detection preserves user messages but drops their corresponding
+            // assistant responses — producing a wall of user-only messages at
+            // the bottom. The scheduled fresh trace load will reconcile properly.
+            if reducer.items.isEmpty {
+                let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
+                reducer.loadSession(cached.events)
+                let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
 
-            let footprint = SentryService.currentFootprintMB()
-            ClientLog.info("Memory", "Session loaded (cache)", metadata: [
-                "footprintMB": footprint.map(String.init) ?? "n/a",
-                "traceEvents": String(cached.events.count),
-                "timelineItems": String(reducer.items.count),
-                "sessionId": sessionId,
-            ])
+                ChatSessionTelemetry.recordReducerLoad(
+                    durationMs: reducerLoadDurationMs,
+                    sessionId: sessionId,
+                    source: "cache",
+                    eventCount: cached.eventCount,
+                    itemCount: reducer.items.count
+                )
+
+                let footprint = SentryService.currentFootprintMB()
+                ClientLog.info("Memory", "Session loaded (cache)", metadata: [
+                    "footprintMB": footprint.map(String.init) ?? "n/a",
+                    "traceEvents": String(cached.events.count),
+                    "timelineItems": String(reducer.items.count),
+                    "sessionId": sessionId,
+                ])
+
+                log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+            } else {
+                log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
+            }
 
             needsInitialScroll = true
-            log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
         }
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
@@ -904,7 +916,11 @@ final class ChatSessionManager {
                     if usedReplay {
                         reducer.applyTraceWithLiveReplay(trace)
                     } else {
-                        reducer.loadSession(trace)
+                        // Fresh trace is authoritative — don't preserve orphans.
+                        // Orphan detection creates "ghost" user messages at the
+                        // bottom (no matching assistant response) when the trace
+                        // lags behind locally-appended items.
+                        reducer.loadSession(trace, preserveOrphans: false)
                     }
                     let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
 
