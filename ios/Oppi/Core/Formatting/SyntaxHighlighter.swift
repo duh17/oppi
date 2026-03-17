@@ -271,12 +271,12 @@ enum SyntaxHighlighter {
     /// remainder appended by the full-screen code path).
     ///
     /// Bench results (simulator, M-series Mac — iPhone ~2-4x slower):
-    ///   1K lines: Swift 7ms, TS 11ms, JSON 30ms
-    ///   5K lines: Swift 34ms, TS 55ms, JSON 156ms
-    ///  10K lines: Swift 70ms, TS 111ms, JSON 309ms
+    ///   1K lines: Swift 7ms, TS 11ms, JSON 16ms
+    ///   5K lines: Swift 34ms, TS 55ms, JSON 82ms
+    ///  10K lines: Swift 70ms, TS 111ms, JSON 163ms
     ///
     /// All highlighting runs on Task.detached, so even worst-case JSON
-    /// at 10K (~1.2s on iPhone) is fine — users see plain text immediately.
+    /// at 10K (~650ms on iPhone) is fine — users see plain text immediately.
     static let maxLines = 10_000
 
     // MARK: - Pre-computed Token Attributes
@@ -435,10 +435,6 @@ enum SyntaxHighlighter {
         let truncated = truncatedCode(code)
         let attrs = TokenAttrs.current()
 
-        if language == .json {
-            return highlightJSON(truncated, attrs: attrs)
-        }
-
         // Build the full attributed string with default variable color.
         let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
 
@@ -491,6 +487,11 @@ enum SyntaxHighlighter {
         let allChars = Array(text)
         var tokenRanges: [TokenRange] = []
         tokenRanges.reserveCapacity(allChars.count / 4)
+
+        if language == .json {
+            scanJSONRanges(allChars, ranges: &tokenRanges)
+            return tokenRanges
+        }
 
         var inBlockComment = false
         var pos = 0
@@ -1171,61 +1172,104 @@ enum SyntaxHighlighter {
 
     // MARK: - JSON Highlighting
 
-    private static func highlightJSON(_ code: String, attrs: TokenAttrs) -> NSAttributedString {
-        let chars = Array(code)
-        let result = NSMutableAttributedString()
+    private static func scanJSONRanges(
+        _ chars: [Character],
+        ranges: inout [TokenRange]
+    ) {
         var i = 0
 
         while i < chars.count {
             let ch = chars[i]
 
             if ch == "\"" {
-                let (text, end) = scanString(chars, from: i, quote: "\"")
-                // Key detection: string followed by optional whitespace then `:`
-                var j = end
-                while j < chars.count, chars[j] == " " || chars[j] == "\t" { j += 1 }
-                let isKey = j < chars.count && chars[j] == ":"
-                result.append(NSAttributedString(string: text, attributes: isKey ? attrs.type : attrs.string))
+                let end = scanStringEnd(chars, from: i, quote: "\"")
+                var lookahead = end
+                while lookahead < chars.count, chars[lookahead] == " " || chars[lookahead] == "\t" {
+                    lookahead += 1
+                }
+                let kind: TokenKind = lookahead < chars.count && chars[lookahead] == ":" ? .type : .string
+                ranges.append(TokenRange(location: i, length: end - i, kind: kind))
                 i = end
-            } else if ch.isNumber || (ch == "-" && i + 1 < chars.count && chars[i + 1].isNumber) {
-                let (text, end) = scanJSONNumber(chars, from: i)
-                result.append(NSAttributedString(string: text, attributes: attrs.number))
+                continue
+            }
+
+            if ch.isNumber || (ch == "-" && i + 1 < chars.count && chars[i + 1].isNumber) {
+                let end = scanJSONNumberEnd(chars, from: i)
+                ranges.append(TokenRange(location: i, length: end - i, kind: .number))
                 i = end
-            } else if matchesWord(chars, at: i, word: "true") {
-                result.append(NSAttributedString(string: "true", attributes: attrs.keyword))
-                i += 4
-            } else if matchesWord(chars, at: i, word: "false") {
-                result.append(NSAttributedString(string: "false", attributes: attrs.keyword))
-                i += 5
-            } else if matchesWord(chars, at: i, word: "null") {
-                result.append(NSAttributedString(string: "null", attributes: attrs.comment))
-                i += 4
-            } else {
-                result.append(NSAttributedString(string: String(ch), attributes: attrs.punctuation))
+                continue
+            }
+
+            if let (length, kind) = scanJSONKeyword(chars, from: i) {
+                ranges.append(TokenRange(location: i, length: length, kind: kind))
+                i += length
+                continue
+            }
+
+            let punctuationStart = i
+            i += 1
+            while i < chars.count,
+                  chars[i] != "\"",
+                  !chars[i].isNumber,
+                  !(chars[i] == "-" && i + 1 < chars.count && chars[i + 1].isNumber),
+                  scanJSONKeyword(chars, from: i) == nil {
                 i += 1
             }
+            ranges.append(TokenRange(location: punctuationStart, length: i - punctuationStart, kind: .punctuation))
         }
-        return result
     }
 
-    private static func scanJSONNumber(_ chars: [Character], from start: Int) -> (String, Int) {
+    private static func scanStringEnd(_ chars: [Character], from start: Int, quote: Character) -> Int {
+        var i = start + 1
+        var escaped = false
+
+        while i < chars.count {
+            if escaped {
+                escaped = false
+            } else if chars[i] == "\\" {
+                escaped = true
+            } else if chars[i] == quote {
+                return i + 1
+            }
+            i += 1
+        }
+        return chars.count
+    }
+
+    private static func scanJSONNumberEnd(_ chars: [Character], from start: Int) -> Int {
         var i = start
         if chars[i] == "-" { i += 1 }
         while i < chars.count {
             let c = chars[i]
-            if c.isNumber || c == "." { i += 1 } else if c == "e" || c == "E" {
+            if c.isNumber || c == "." {
+                i += 1
+            } else if c == "e" || c == "E" {
                 i += 1
                 if i < chars.count, chars[i] == "+" || chars[i] == "-" { i += 1 }
-            } else { break }
+            } else {
+                break
+            }
         }
-        return (String(chars[start..<i]), i)
+        return i
     }
 
-    private static func matchesWord(_ chars: [Character], at i: Int, word: String) -> Bool {
-        let w = Array(word)
-        guard i + w.count <= chars.count else { return false }
-        for j in 0..<w.count where chars[i + j] != w[j] { return false }
-        let end = i + w.count
+    private static func scanJSONKeyword(_ chars: [Character], from i: Int) -> (length: Int, kind: TokenKind)? {
+        if matchesJSONWord(chars, at: i, word: ["t", "r", "u", "e"]) {
+            return (4, .keyword)
+        }
+        if matchesJSONWord(chars, at: i, word: ["f", "a", "l", "s", "e"]) {
+            return (5, .keyword)
+        }
+        if matchesJSONWord(chars, at: i, word: ["n", "u", "l", "l"]) {
+            return (4, .comment)
+        }
+        return nil
+    }
+
+    private static func matchesJSONWord(_ chars: [Character], at i: Int, word: [Character]) -> Bool {
+        guard i + word.count <= chars.count else { return false }
+        for j in 0..<word.count where chars[i + j] != word[j] { return false }
+        let end = i + word.count
         if end < chars.count, chars[end].isLetter || chars[end].isNumber || chars[end] == "_" {
             return false
         }
