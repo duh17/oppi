@@ -1,5 +1,14 @@
 import UIKit
 
+// MARK: - Render Plan
+
+struct ToolRowRenderPlan: Equatable {
+    let interactionPolicy: ToolTimelineRowInteractionPolicy?
+    let interactionSpec: TimelineInteractionSpec
+}
+
+// MARK: - Render Cache
+
 /// LRU cache for pre-built NSAttributedString results from tool row render strategies.
 ///
 /// Keyed by the deterministic render signature (from `ToolTimelineRowRenderMetrics`).
