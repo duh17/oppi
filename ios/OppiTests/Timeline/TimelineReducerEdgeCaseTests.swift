@@ -573,4 +573,151 @@ struct TimelineReducerEdgeCaseTests {
             "messageEnd after agentEnd should not create a duplicate, got \(assistantItems.count)"
         )
     }
+
+    // MARK: - Ghost user message on re-entry
+
+    /// Verifies that `preserveOrphans: false` prevents ghost user messages.
+    ///
+    /// Scenario: user has a live session with [u1, a1, u2, a2, u3]. The
+    /// fresh trace from the server is missing u3 (JSONL not flushed yet).
+    /// With orphan preservation, u3 would become a ghost at the bottom.
+    /// With `preserveOrphans: false` (used by loadHistory), the orphan
+    /// is dropped — the fresh trace is authoritative.
+    @MainActor
+    @Test func freshTraceLoadWithoutOrphanPreservationDropsGhostMessage() {
+        let reducer = TimelineReducer()
+
+        // Build "live session" state.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "how are you"),
+            ("a2", .assistant, "doing well"),
+        ]))
+        // Simulate user's last message added locally (not yet in server JSONL).
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 5, "Precondition: 4 trace + 1 local user message")
+
+        // Fresh trace arrives — missing the user's latest message.
+        // With preserveOrphans: false, the orphan is NOT preserved.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "how are you"),
+            ("a2", .assistant, "doing well"),
+        ]), preserveOrphans: false)
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "No ghost — orphan dropped by fresh trace")
+        #expect(reducer.items.count == 4, "Clean rebuild from authoritative trace")
+    }
+
+    /// Orphan preservation still works when enabled (cache load path).
+    @MainActor
+    @Test func cacheLoadWithOrphanPreservationKeepsLocalMessage() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 3)
+
+        // Cache load with preserveOrphans: true (default).
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "Orphan preserved during cache load")
+        #expect(reducer.items.count == 3, "2 from trace + 1 orphan")
+    }
+
+    /// When the fresh trace DOES include the user's latest message, no ghost
+    /// should appear regardless of preserveOrphans setting.
+    @MainActor
+    @Test func freshTraceWithAllMessagesProducesNoGhost() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 3)
+
+        // Fresh trace includes all messages.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "one more thing"),
+            ("a2", .assistant, "sure, what is it"),
+        ]), preserveOrphans: false)
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "No ghost — trace had all user messages")
+        #expect(reducer.items.count == 4, "Clean rebuild from trace")
+    }
+
+    // MARK: - Helpers
+
+    private func makeConversation(_ entries: [(String, TraceEventType, String)]) -> [TraceEvent] {
+        entries.enumerated().map { idx, entry in
+            TraceEvent(
+                id: entry.0,
+                type: entry.1,
+                timestamp: "2026-03-17T10:0\(idx):00Z",
+                text: entry.2,
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            )
+        }
+    }
+
+    @MainActor
+    @Test func lateTextDeltaAfterPrematureAgentEndResumesLatestAssistantRow() {
+        // Reproduces a state-sync race: a synthetic/early agentEnd finalizes the
+        // streaming row, then one more text_delta + messageEnd arrive for the
+        // same assistant response. We should resume the latest assistant row,
+        // not append a second bubble.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Lane used"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        reducer.process(.textDelta(sessionId: "s1", delta: "\n\nCommands run"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Lane used\n\nCommands run"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1, "Late text delta should resume existing assistant row")
+        guard case .assistantMessage(_, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(text == "Lane used\n\nCommands run")
+    }
 }

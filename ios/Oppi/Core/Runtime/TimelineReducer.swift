@@ -138,7 +138,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let buffer = liveEventReplayBuffer ?? []
         liveEventReplayBuffer = nil
 
-        loadSession(events)
+        // Fresh trace is authoritative — orphan detection disabled.
+        // The replay buffer re-creates any live items on top.
+        loadSession(events, preserveOrphans: false)
 
         if !buffer.isEmpty {
             processBatch(buffer)
@@ -236,7 +238,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///
     /// Includes tool calls, tool results, thinking blocks, compaction
     /// summaries, and system events (model/thinking level changes).
-    func loadSession(_ events: [TraceEvent]) {
+    ///
+    /// - Parameter preserveOrphans: When true, locally-added user messages
+    ///   not present in the trace are re-inserted after the rebuild. Set to
+    ///   false when loading an authoritative fresh trace (e.g., from
+    ///   `loadHistory`) to avoid "ghost" user messages at the bottom.
+    func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true) {
         cancelMarkdownPrewarm()
 
         let dateFormatter = Self.makeTraceDateFormatter()
@@ -280,23 +287,31 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // user message, and streaming events never re-emit it. Capture orphans
         // here and re-append them after the rebuild.
         //
+        // Disabled when `preserveOrphans` is false (fresh trace from loadHistory
+        // is authoritative — orphans become "ghost" user messages at the bottom
+        // without matching assistant responses).
+        //
         // Fast path: skip orphan detection when there are no existing user messages
         // (common case for initial load or after reset).
-        let existingUserMessages = items.filter { item in
-            if case .userMessage = item { return true }
-            return false
-        }
         let orphanedUserMessages: [ChatItem]
-        if existingUserMessages.isEmpty {
+        if !preserveOrphans {
             orphanedUserMessages = []
         } else {
-            let traceUserTexts: Set<String> = Set(events.compactMap { event in
-                guard event.type == .user else { return nil }
-                return Self.extractImagesFromText(event.text ?? "").0
-            })
-            orphanedUserMessages = existingUserMessages.filter { item in
-                guard case .userMessage(_, let text, _, _) = item else { return false }
-                return !traceUserTexts.contains(text)
+            let existingUserMessages = items.filter { item in
+                if case .userMessage = item { return true }
+                return false
+            }
+            if existingUserMessages.isEmpty {
+                orphanedUserMessages = []
+            } else {
+                let traceUserTexts: Set<String> = Set(events.compactMap { event in
+                    guard event.type == .user else { return nil }
+                    return Self.extractImagesFromText(event.text ?? "").0
+                })
+                orphanedUserMessages = existingUserMessages.filter { item in
+                    guard case .userMessage(_, let text, _, _) = item else { return false }
+                    return !traceUserTexts.contains(text)
+                }
             }
         }
         items.removeAll(keepingCapacity: false)
@@ -1303,8 +1318,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func upsertAssistantMessage() {
-        let id = currentAssistantID ?? UUID().uuidString
-        if currentAssistantID == nil {
+        let id: String
+        if let currentAssistantID {
+            id = currentAssistantID
+        } else if !turnInProgress,
+                  let lastItem = items.last,
+                  case .assistantMessage(let latestID, _, let latestTimestamp) = lastItem {
+            // Recovery path: if a premature/synthetic end finalized the most
+            // recent assistant row and more text arrives before a new turn
+            // starts, resume that same row instead of appending a duplicate.
+            id = latestID
+            currentAssistantID = latestID
+            currentAssistantTimestamp = latestTimestamp
+        } else {
+            id = UUID().uuidString
             currentAssistantID = id
             currentAssistantTimestamp = Date()
         }
