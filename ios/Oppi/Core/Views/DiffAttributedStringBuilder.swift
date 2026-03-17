@@ -258,25 +258,41 @@ enum DiffAttributedStringBuilder {
 
         // --- Phase 5: Syntax highlighting via range-based scanner ---
         if language != .unknown {
-            // Process each line's code text through the optimized scanner.
-            // We scan each line independently (no cross-line block comment state,
-            // matching the existing behavior of highlightLine).
-            // Use the original line text strings stored during Phase 1 to avoid
-            // NSString.substring extraction overhead.
-            for (idx, info) in lineInfos.enumerated() {
-                guard info.codeLen > 0 else { continue }
+            // Batch all code texts into one string (newline-separated) and scan once.
+            // The scanner processes line-by-line internally, so this is equivalent to
+            // 500 individual scanTokenRanges calls but with one Array(text) conversion
+            // instead of 500.
+            let batchedCode = codeTexts.joined(separator: "\n")
+            let allTokens = SyntaxHighlighter.scanTokenRanges(batchedCode, language: language)
 
-                let codeText = codeTexts[idx]
-                let tokenRanges = SyntaxHighlighter.scanTokenRanges(codeText, language: language)
+            // Map tokens from batched-string space to fused-text space.
+            // Both codeTexts and tokens are ordered, so we advance lineIdx in O(tokens + lines).
+            var codeCharOffsets = [Int](repeating: 0, count: lineInfos.count)
+            var charPos = 0
+            for i in 0..<codeTexts.count {
+                codeCharOffsets[i] = charPos
+                charPos += codeTexts[i].count + 1 // +1 for the newline separator
+            }
 
-                for token in tokenRanges {
-                    guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
-                    result.addAttribute(
-                        .foregroundColor,
-                        value: color,
-                        range: NSRange(location: info.codeStart + token.location, length: token.length)
-                    )
+            var lineIdx = 0
+            let lineCount = lineInfos.count
+            for token in allTokens {
+                guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
+
+                // Advance to the line containing this token
+                while lineIdx + 1 < lineCount,
+                      codeCharOffsets[lineIdx + 1] <= token.location {
+                    lineIdx += 1
                 }
+
+                let offsetInLine = token.location - codeCharOffsets[lineIdx]
+                let fusedPos = lineInfos[lineIdx].codeStart + offsetInLine
+
+                result.addAttribute(
+                    .foregroundColor,
+                    value: color,
+                    range: NSRange(location: fusedPos, length: token.length)
+                )
             }
         }
 
