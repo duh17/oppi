@@ -51,15 +51,9 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
   return parsed;
 }
 
-export { composeModelId } from "./session-state.js";
-export type { SessionCatchUpResponse, SessionBroadcastEvent } from "./session-broadcast.js";
-
 // ─── Types ───
 
 type ActiveSession = SessionStartActiveSession;
-
-export type { ExtensionUIRequest } from "./session-events.js";
-export type { ExtensionUIResponse } from "./session-ui.js";
 
 // ─── Session Manager ───
 
