@@ -282,8 +282,10 @@ final class NativeTableBlockView: UIView {
     private var cardWidthConstraint: NSLayoutConstraint?
 
     /// Stored for long-press copy — rebuilt as markdown table text.
-    private var currentHeaders: [String] = []
-    private var currentRows: [[String]] = []
+    private var currentHeaders: [[MarkdownInline]] = []
+    private var currentRows: [[[MarkdownInline]]] = []
+    /// Whether any cell contains a link (enables text view selectability for taps).
+    private var hasLinks = false
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
         UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
@@ -378,19 +380,39 @@ final class NativeTableBlockView: UIView {
         longPressCopyGesture.isEnabled = !selectionEnabled
     }
 
-    func apply(headers: [String], rows: [[String]], palette: ThemePalette) {
+    func apply(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], palette: ThemePalette) {
         currentHeaders = headers
         currentRows = rows
+
+        // Detect links in any cell for selectability.
+        hasLinks = Self.containsLink(headers) || rows.contains { Self.containsLink($0) }
+        // Enable selectability when links are present so UITextView handles taps.
+        if hasLinks {
+            tableLabel.isSelectable = true
+        }
 
         cardView.backgroundColor = UIColor(palette.bgDark)
         cardView.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
         let attrText = Self.makeTableAttributedText(headers: headers, rows: rows, palette: palette)
         tableLabel.attributedText = attrText
+        tableLabel.linkTextAttributes = [
+            .foregroundColor: UIColor(palette.blue),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
 
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
         setNeedsLayout()
+    }
+
+    private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {
+        cells.contains { cell in
+            cell.contains { inline in
+                if case .link = inline { return true }
+                return false
+            }
+        }
     }
 
     /// Monospaced column width of a string — counts emoji/CJK as 2 columns.
@@ -436,20 +458,21 @@ final class NativeTableBlockView: UIView {
     }
 
     private static func makeTableAttributedText(
-        headers: [String],
-        rows: [[String]],
+        headers: [[MarkdownInline]],
+        rows: [[[MarkdownInline]]],
         palette: ThemePalette
     ) -> NSAttributedString {
         let colCount = max(headers.count, rows.first?.count ?? 0)
         guard colCount > 0 else { return NSAttributedString() }
 
+        // Compute column widths from plain text content.
         var colWidths = [Int](repeating: 0, count: colCount)
         for (index, header) in headers.enumerated() where index < colCount {
-            colWidths[index] = max(colWidths[index], monoColumnWidth(header))
+            colWidths[index] = max(colWidths[index], monoColumnWidth(plainText(from: header)))
         }
         for row in rows {
             for (index, cell) in row.enumerated() where index < colCount {
-                colWidths[index] = max(colWidths[index], monoColumnWidth(cell))
+                colWidths[index] = max(colWidths[index], monoColumnWidth(plainText(from: cell)))
             }
         }
 
@@ -462,13 +485,15 @@ final class NativeTableBlockView: UIView {
         let cellFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let headerColor = UIColor(palette.cyan)
         let cellColor = UIColor(palette.fg)
+        let linkColor = UIColor(palette.blue)
         let dimColor = UIColor(palette.comment).withAlphaComponent(0.4)
         let headerBgColor = UIColor(palette.bgHighlight)
         let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.45)
 
         let headerStart = result.length
         for (index, header) in headers.enumerated() {
-            let padded = monoPad(header, toColumnWidth: colWidths[index])
+            let text = plainText(from: header)
+            let padded = monoPad(text, toColumnWidth: colWidths[index])
             let prefix = index == 0 ? " " : " │ "
             result.append(NSAttributedString(string: prefix, attributes: [
                 .font: cellFont,
@@ -497,19 +522,30 @@ final class NativeTableBlockView: UIView {
             let rowStart = result.length
 
             for index in 0..<colCount {
-                let cell = index < row.count ? row[index] : ""
-                let padded = monoPad(cell, toColumnWidth: colWidths[index])
+                let inlines: [MarkdownInline] = index < row.count ? row[index] : [.text("")]
                 let prefix = index == 0 ? " " : " │ "
                 result.append(NSAttributedString(string: prefix, attributes: [
                     .font: cellFont,
                     .foregroundColor: dimColor,
                     .paragraphStyle: paragraph,
                 ]))
-                result.append(NSAttributedString(string: padded, attributes: [
-                    .font: cellFont,
-                    .foregroundColor: cellColor,
-                    .paragraphStyle: paragraph,
-                ]))
+                let cellText = plainText(from: inlines)
+                appendTableCellInlines(
+                    inlines,
+                    to: result,
+                    font: cellFont,
+                    defaultColor: cellColor,
+                    linkColor: linkColor,
+                    paragraph: paragraph
+                )
+                // Pad remaining width with spaces.
+                let padding = max(0, colWidths[index] - monoColumnWidth(cellText))
+                if padding > 0 {
+                    result.append(NSAttributedString(
+                        string: String(repeating: " ", count: padding),
+                        attributes: [.font: cellFont, .paragraphStyle: paragraph]
+                    ))
+                }
             }
             result.append(NSAttributedString(string: " ", attributes: [
                 .font: cellFont,
@@ -529,6 +565,87 @@ final class NativeTableBlockView: UIView {
         return result
     }
 
+    /// Append inline content to the result, rendering links with `.link` attribute.
+    private static func appendTableCellInlines(
+        _ inlines: [MarkdownInline],
+        to result: NSMutableAttributedString,
+        font: UIFont,
+        defaultColor: UIColor,
+        linkColor: UIColor,
+        paragraph: NSParagraphStyle
+    ) {
+        // Fast path: single plain text (most common table cell).
+        if inlines.count == 1, case .text(let s) = inlines[0] {
+            result.append(NSAttributedString(string: s, attributes: [
+                .font: font,
+                .foregroundColor: defaultColor,
+                .paragraphStyle: paragraph,
+            ]))
+            return
+        }
+        for inline in inlines {
+            appendTableInline(
+                inline, to: result, font: font,
+                defaultColor: defaultColor, linkColor: linkColor,
+                paragraph: paragraph
+            )
+        }
+    }
+
+    private static func appendTableInline(
+        _ inline: MarkdownInline,
+        to result: NSMutableAttributedString,
+        font: UIFont,
+        defaultColor: UIColor,
+        linkColor: UIColor,
+        paragraph: NSParagraphStyle
+    ) {
+        switch inline {
+        case .text(let s):
+            result.append(NSAttributedString(string: s, attributes: [
+                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
+            ]))
+        case .link(let children, let destination):
+            let text = plainText(from: children)
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .paragraphStyle: paragraph,
+            ]
+            if let dest = destination, let url = URL(string: dest), url.scheme != nil {
+                attrs[.link] = url
+            }
+            result.append(NSAttributedString(string: text, attributes: attrs))
+        case .code(let s):
+            result.append(NSAttributedString(string: s, attributes: [
+                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
+            ]))
+        case .emphasis(let children), .strong(let children), .strikethrough(let children):
+            for child in children {
+                appendTableInline(
+                    child, to: result, font: font,
+                    defaultColor: defaultColor, linkColor: linkColor,
+                    paragraph: paragraph
+                )
+            }
+        case .softBreak, .hardBreak:
+            result.append(NSAttributedString(string: " ", attributes: [
+                .font: font, .paragraphStyle: paragraph,
+            ]))
+        case .html(let raw):
+            result.append(NSAttributedString(string: raw, attributes: [
+                .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
+            ]))
+        case .image(let alt, _):
+            if !alt.isEmpty {
+                result.append(NSAttributedString(string: "[\(alt)]", attributes: [
+                    .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
+                ]))
+            }
+        }
+    }
+
     @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began else { return }
 
@@ -543,18 +660,41 @@ final class NativeTableBlockView: UIView {
     private func markdownTableText() -> String {
         var lines: [String] = []
 
-        let headerLine = "| " + currentHeaders.joined(separator: " | ") + " |"
+        let headerLine = "| " + currentHeaders.map { markdownText(from: $0) }.joined(separator: " | ") + " |"
         lines.append(headerLine)
 
         let separatorLine = "| " + currentHeaders.map { _ in "---" }.joined(separator: " | ") + " |"
         lines.append(separatorLine)
 
         for row in currentRows {
-            let rowLine = "| " + row.joined(separator: " | ") + " |"
+            let rowLine = "| " + row.map { markdownText(from: $0) }.joined(separator: " | ") + " |"
             lines.append(rowLine)
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Reconstruct markdown source text from inlines (preserves link syntax).
+    private func markdownText(from inlines: [MarkdownInline]) -> String {
+        inlines.map { inline -> String in
+            switch inline {
+            case .text(let s): return s
+            case .link(let children, let dest):
+                let text = plainText(from: children)
+                if let dest { return "[\(text)](\(dest))" }
+                return text
+            case .emphasis(let children): return "*\(markdownText(from: children))*"
+            case .strong(let children): return "**\(markdownText(from: children))**"
+            case .code(let s): return "`\(s)`"
+            case .strikethrough(let children): return "~~\(markdownText(from: children))~~"
+            case .softBreak: return " "
+            case .hardBreak: return "\n"
+            case .html(let s): return s
+            case .image(let alt, let src):
+                if let src { return "![\(alt)](\(src))" }
+                return alt
+            }
+        }.joined()
     }
 
     private func showCopiedFlash() {
