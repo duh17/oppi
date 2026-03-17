@@ -210,13 +210,7 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: true
-    entitlements:
-      path: OppiMac/OppiMac.entitlements
-      properties:
-        com.apple.security.app-sandbox: false
-        com.apple.security.network.client: true
-        com.apple.security.cs.allow-unsigned-executable-memory: true
-        com.apple.security.cs.disable-library-validation: true
+        CODE_SIGN_ENTITLEMENTS: OppiMac/OppiMac.entitlements
     info:
       path: OppiMac/Resources/Info.plist
       properties:

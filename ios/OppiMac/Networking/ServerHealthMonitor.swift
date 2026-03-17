@@ -75,7 +75,10 @@ final class ServerHealthMonitor {
     /// Check the pi CLI version by spawning `pi --version`.
     func checkPiCLIVersion() {
         Task.detached {
-            let version = ServerHealthMonitor.runPiVersion()
+            var version: String?
+            if let piPath = await ProcessRunner.which("pi") {
+                version = await ProcessRunner.version(piPath)
+            }
             await MainActor.run { [weak self] in
                 self?.piCLIVersion = version
             }
@@ -144,39 +147,5 @@ final class ServerHealthMonitor {
         serverInfo = info
     }
 
-    // MARK: - Pi CLI version
 
-    /// Runs `pi --version` synchronously. Call from a non-main context.
-    private nonisolated static func runPiVersion() -> String? {
-        let proc = Process()
-
-        let candidates = [
-            "/opt/homebrew/bin/pi",
-            "/usr/local/bin/pi",
-        ]
-
-        guard let piPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
-            return nil
-        }
-
-        proc.executableURL = URL(fileURLWithPath: piPath)
-        proc.arguments = ["--version"]
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe() // discard
-
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-
-            guard proc.terminationStatus == 0 else { return nil }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return nil
-        }
-    }
 }

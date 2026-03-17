@@ -143,32 +143,17 @@ struct PairingView: View {
             throw PairingError.cliNotFound
         }
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [cliPath, "pair", "--json"]
+        let result = try await ProcessRunner.runCapturingStderr(
+            executable: nodePath,
+            arguments: [cliPath, "pair", "--json"]
+        )
 
-        var env = ProcessInfo.processInfo.environment
-        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + currentPath
-        proc.environment = env
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-
-        try proc.run()
-        proc.waitUntilExit()
-
-        guard proc.terminationStatus == 0 else {
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let errText = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
+        guard result.exitCode == 0 else {
+            let errText = result.stderr.isEmpty ? "Unknown error" : result.stderr
             throw PairingError.commandFailed(errText)
         }
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        guard !data.isEmpty else {
+        guard let data = result.stdout.data(using: .utf8), !data.isEmpty else {
             throw PairingError.emptyOutput
         }
 
