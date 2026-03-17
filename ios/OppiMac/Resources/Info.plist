@@ -31,6 +31,8 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/duh17/oppi/releases/download/appcast/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>wnLCIfY048anOcj7/J/Iv6Lp9Fmba4zQ0EjCL7k/M+E=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>
