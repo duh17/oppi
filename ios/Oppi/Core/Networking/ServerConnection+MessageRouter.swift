@@ -59,63 +59,39 @@ extension ServerConnection {
         case .unknown, .stopRequested, .stopConfirmed, .stopFailed:
             break  // Already logged in WebSocketClient / handled earlier
 
-        // Permission events → store + overlay (NOT inline timeline)
+        // Permission events → shared store update + coalescer/reducer (active only)
         case .permissionRequest(let perm):
-            permissionStore.add(perm)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
             coalescer.receive(.permissionRequest(perm))
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.notifyIfNeeded(
-                    perm,
-                    activeSessionId: sessionStore.activeSessionId
-                )
-            }
-            syncLiveActivityPermissions()
 
         case .permissionExpired(let id, _):
-            if let request = permissionStore.take(id: id) {
+            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+            if let request = result.takenPermission {
                 reducer.resolvePermission(
                     id: id, outcome: .expired,
                     tool: request.tool, summary: request.displaySummary
                 )
             }
             coalescer.receive(.permissionExpired(id: id))
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
-            syncLiveActivityPermissions()
 
         case .permissionCancelled(let id):
-            if let request = permissionStore.take(id: id) {
+            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+            if let request = result.takenPermission {
                 reducer.resolvePermission(
                     id: id, outcome: .cancelled,
                     tool: request.tool, summary: request.displaySummary
                 )
             }
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
-            syncLiveActivityPermissions()
 
-        // Agent events → pipeline
+        // Agent events → shared store update + pipeline (active only)
         case .agentStart:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status != .stopping {
-                current.status = .busy
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentStart(sessionId: sessionId))
             silenceWatchdog.start()
 
         case .agentEnd:
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status == .busy {
-                current.status = .ready
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            sessionStore.recordTurnEnded(sessionId: sessionId)
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
 
@@ -145,22 +121,14 @@ extension ServerConnection {
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
 
         case .sessionEnded(let reason):
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             silenceWatchdog.stop()
             messageQueueStore.clear(sessionId: sessionId)
-            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-                current.status = .stopped
-                current.lastActivity = Date()
-                sessionStore.upsert(current)
-            }
-            screenAwakeController.clearSessionActivity(sessionId: sessionId)
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
         case .sessionDeleted(let deletedId):
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             messageQueueStore.clear(sessionId: deletedId)
-            sessionStore.remove(id: deletedId)
-            notificationSessionIds.remove(deletedId)
-            sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
-            syncLiveActivityPermissions()
 
         case .error(let msg, let code, let fatal):
             if code == Self.missingFullSubscriptionErrorCode
@@ -226,8 +194,10 @@ extension ServerConnection {
         let previousWorkspaceId = previous?.workspaceId
         let previousStatus = previous?.status
 
-        sessionStore.upsert(session)
-        emitSessionUsageMetricsIfNeeded(session)
+        // Shared store mutations (upsert + metrics + live activity sync)
+        applySharedStoreUpdate(for: .state(session: session), sessionId: session.id)
+
+        // Active-session-only: thinking level, slash commands
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
@@ -243,8 +213,6 @@ extension ServerConnection {
             coalescer.receive(.agentEnd(sessionId: session.id))
             silenceWatchdog.stop()
         }
-
-        syncLiveActivityPermissions()
     }
 
     func emitSessionUsageMetricsIfNeeded(_ session: Session) {
@@ -381,20 +349,19 @@ extension ServerConnection {
     func handleStopLifecycleMessage(_ message: ServerMessage, sessionId: String) -> Bool {
         switch message {
         case .stopRequested(_, let reason):
-            updateStopStatus(sessionId, status: .stopping)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             reducer.appendSystemEvent(reason ?? "Stopping…")
             return true
         case .stopConfirmed(_, let reason):
-            updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             // Match TUI behavior: stop-confirmed without agentEnd should still
             // close any in-flight thinking/tool state.
-            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
             return true
         case .stopFailed(_, let reason):
-            updateStopStatus(sessionId, status: .busy, onlyFrom: .stopping)
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
             reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
             return true
         default:
