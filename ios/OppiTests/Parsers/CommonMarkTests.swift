@@ -456,10 +456,10 @@ struct CommonMarkTests {
             Issue.record("Expected table")
             return
         }
-        #expect(headers == ["Header 1", "Header 2"])
+        #expect(headers.map { plainText(from: $0) } == ["Header 1", "Header 2"])
         #expect(rows.count == 2)
-        #expect(rows[0] == ["Cell A", "Cell B"])
-        #expect(rows[1] == ["Cell C", "Cell D"])
+        #expect(rows[0].map { plainText(from: $0) } == ["Cell A", "Cell B"])
+        #expect(rows[1].map { plainText(from: $0) } == ["Cell C", "Cell D"])
     }
 
     @Test func tableCellInlineCodeText() {
@@ -477,8 +477,8 @@ struct CommonMarkTests {
             return
         }
 
-        #expect(headers == ["What", "Path"])
-        #expect(rows == [["Session state", "~/.config/pi-remote/sessions/<userId>/<sessionId>.json"]])
+        #expect(headers.map { plainText(from: $0) } == ["What", "Path"])
+        #expect(rows[0].map { plainText(from: $0) } == ["Session state", "~/.config/pi-remote/sessions/<userId>/<sessionId>.json"])
     }
 
     // MARK: - HTML Blocks
@@ -833,10 +833,10 @@ struct PartialTableParsingTests {
             Issue.record("Expected table")
             return
         }
-        #expect(headers == ["Col A", "Col B"])
+        #expect(headers.map { plainText(from: $0) } == ["Col A", "Col B"])
         #expect(rows.count == 2)
-        #expect(rows[0] == ["val1", "val2"])
-        #expect(rows[1] == ["val3", "va"])
+        #expect(rows[0].map { plainText(from: $0) } == ["val1", "val2"])
+        #expect(rows[1].map { plainText(from: $0) } == ["val3", "va"])
     }
 
     @Test func headerAndSeparatorOnly() {
@@ -850,7 +850,7 @@ struct PartialTableParsingTests {
             Issue.record("Expected table")
             return
         }
-        #expect(headers == ["Col A", "Col B"])
+        #expect(headers.map { plainText(from: $0) } == ["Col A", "Col B"])
         #expect(rows.isEmpty)
     }
 
@@ -877,7 +877,7 @@ struct PartialTableParsingTests {
             Issue.record("Expected table even with incomplete separator")
             return
         }
-        #expect(headers == ["Col A", "Col B"])
+        #expect(headers.map { plainText(from: $0) } == ["Col A", "Col B"])
     }
 
     @Test func missingClosingPipeStillParsesRow() {
@@ -894,7 +894,7 @@ struct PartialTableParsingTests {
             return
         }
         #expect(rows.count == 2)
-        #expect(rows[1] == ["3", "4"])
+        #expect(rows[1].map { plainText(from: $0) } == ["3", "4"])
     }
 
     @Test func singleCellPartialRowFillsEmptyCells() {
@@ -911,6 +911,6 @@ struct PartialTableParsingTests {
             return
         }
         #expect(rows.count == 2)
-        #expect(rows[1] == ["3", ""])
+        #expect(rows[1].map { plainText(from: $0) } == ["3", ""])
     }
 }
