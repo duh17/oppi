@@ -217,6 +217,7 @@ targets:
         CFBundleDisplayName: Oppi
         LSUIElement: true
         SUFeedURL: "https://github.com/duh17/oppi/releases/download/appcast/appcast.xml"
+        SUPublicEDKey: "wnLCIfY048anOcj7/J/Iv6Lp9Fmba4zQ0EjCL7k/M+E="
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         NSAppTransportSecurity:
