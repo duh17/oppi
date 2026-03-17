@@ -96,9 +96,14 @@ enum DiffAttributedStringBuilder {
         let text = NSMutableString(capacity: totalLines * 80)
         var lineInfos: [LineInfo] = []
         lineInfos.reserveCapacity(totalLines)
-        var codeTexts: [String] = []
-        codeTexts.reserveCapacity(totalLines)
         var headerInfos: [HeaderInfo] = []
+
+        // Build batched code text for single-pass syntax scan (Phase 5)
+        let batchCode: NSMutableString? = language != .unknown
+            ? NSMutableString(capacity: totalLines * 60) : nil
+        var batchCharOffsets: [Int] = []
+        if language != .unknown { batchCharOffsets.reserveCapacity(totalLines) }
+        var batchCharPos = 0
 
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
@@ -140,7 +145,17 @@ enum DiffAttributedStringBuilder {
                 let codeText = line.text.isEmpty ? " " : line.text
                 text.append(codeText)
                 let codeLen = text.length - codeStart
-                codeTexts.append(codeText)
+
+                // Accumulate code text for batched syntax scan
+                if let bc = batchCode {
+                    batchCharOffsets.append(batchCharPos)
+                    if batchCharPos > 0 {
+                        bc.append("\n")
+                        batchCharPos += 1
+                    }
+                    bc.append(codeText)
+                    batchCharPos += codeText.count
+                }
 
                 // Newline
                 text.append("\n")
@@ -256,42 +271,24 @@ enum DiffAttributedStringBuilder {
             result.addAttribute(diffLineTapInfoKey, value: tapInfo, range: rowRange)
         }
 
-        // --- Phase 5: Syntax highlighting via range-based scanner ---
-        if language != .unknown {
-            // Batch all code texts into one string (newline-separated) and scan once.
-            // The scanner processes line-by-line internally, so this is equivalent to
-            // 500 individual scanTokenRanges calls but with one Array(text) conversion
-            // instead of 500.
-            let batchedCode = codeTexts.joined(separator: "\n")
-            let allTokens = SyntaxHighlighter.scanTokenRanges(batchedCode, language: language)
-
-            // Map tokens from batched-string space to fused-text space.
-            // Both codeTexts and tokens are ordered, so we advance lineIdx in O(tokens + lines).
-            var codeCharOffsets = [Int](repeating: 0, count: lineInfos.count)
-            var charPos = 0
-            for i in 0..<codeTexts.count {
-                codeCharOffsets[i] = charPos
-                charPos += codeTexts[i].count + 1 // +1 for the newline separator
-            }
+        // --- Phase 5: Syntax highlighting via batched scan ---
+        if language != .unknown, let bc = batchCode {
+            let allTokens = SyntaxHighlighter.scanTokenRanges(bc as String, language: language)
 
             var lineIdx = 0
             let lineCount = lineInfos.count
             for token in allTokens {
                 guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
 
-                // Advance to the line containing this token
                 while lineIdx + 1 < lineCount,
-                      codeCharOffsets[lineIdx + 1] <= token.location {
+                      batchCharOffsets[lineIdx + 1] <= token.location {
                     lineIdx += 1
                 }
 
-                let offsetInLine = token.location - codeCharOffsets[lineIdx]
-                let fusedPos = lineInfos[lineIdx].codeStart + offsetInLine
-
+                let offsetInLine = token.location - batchCharOffsets[lineIdx]
                 result.addAttribute(
-                    .foregroundColor,
-                    value: color,
-                    range: NSRange(location: fusedPos, length: token.length)
+                    .foregroundColor, value: color,
+                    range: NSRange(location: lineInfos[lineIdx].codeStart + offsetInLine, length: token.length)
                 )
             }
         }
