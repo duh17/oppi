@@ -1,3 +1,5 @@
+## Status: CONVERGED
+
 # Autoresearch: DiffAttributedStringBuilder Performance
 
 ## Objective
@@ -88,3 +90,64 @@ Cost breakdown (estimated from 500-line numbers):
 - Syntax highlighting (highlightLine × 500): ~33,500μs (85% — this is the legacy per-token append path)
 - Gutter/line number assembly + attributed string appends: ~6,000μs (15%)
 - Without syntax highlighting (plain): 6,011μs baseline
+
+### Run 1 — Fused text build + range-based syntax highlighting ✅ KEEP
+Replaced per-line append with two-phase fused build:
+1. Build entire text as NSMutableString, tracking per-line offsets in LineInfo structs
+2. Create NSMutableAttributedString once, apply all attributes by range
+3. Use `SyntaxHighlighter.scanTokenRanges()` instead of legacy `highlightLine()` per line
+
+Eliminates: ~5000-15000 intermediate NSAttributedString objects, per-line NSMutableAttributedString copy, per-line enumerateAttribute call.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 39,572 | 17,209 | **-56.5%** |
+| `diffBuild_300` | 23,660 | 10,132 | **-57.2%** |
+| `diffBuild_100` | 7,905 | 3,276 | **-58.6%** |
+| `diffBuild_plain_500` | 6,011 | 5,504 | **-8.4%** |
+
+### Run 2 — Reuse original line text for syntax scan ✅ KEEP
+Avoid `(text as NSString).substring(with:)` in Phase 5. Store original `line.text` strings from Phase 1 and pass them directly to `scanTokenRanges`.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 17,209 | 15,864 | **-7.8%** |
+
+### Run 3 — Batch syntax scan with O(n) offset mapping ✅ KEEP
+Instead of 500 individual `scanTokenRanges` calls, concatenate all code texts into one string (newline-separated) and scan once. Map token offsets to fused text positions via parallel lineIdx scan.
+
+Eliminates: 500 × `truncatedCode()` overhead, 500 × `Array(text)` conversions → 1 conversion.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 15,864 | ~14,700 | **-7.5%** |
+
+### Run 4 — Eliminate codeTexts array ✅ KEEP (cleanup)
+Build the batched code NSMutableString inline during Phase 1 instead of maintaining a separate `[String]` array + `joined`. Same perf, cleaner code, one fewer allocation.
+
+### Run 5 — Flat parallel arrays instead of LineInfo struct ❌ DISCARD
+Replace LineInfo struct array with 11 flat parallel arrays. Within noise — the 11 arrays with 11 reserve+append calls have similar overhead to the struct array.
+
+### Run 6 — Pre-allocate attribute dictionaries ❌ DISCARD
+Hoist dictionary literals out of the inner loop. Within noise — Swift COW dictionaries and inline literal optimization already handle this.
+
+### Run 7 — Cached UIColors ❌ DISCARD (too small)
+~110μs out of 14,700μs (<1%). Not worth the cache invalidation complexity.
+
+### Final Summary
+
+| Metric | Baseline | Final | Improvement |
+|--------|----------|-------|-------------|
+| `diffBuild_500` | 39,572 | ~14,500 | **-63.4%** |
+| `diffBuild_300` | 23,660 | ~9,500 | **-59.8%** |
+| `diffBuild_100` | 7,905 | ~3,000 | **-62.0%** |
+| `diffBuild_plain_500` | 6,011 | ~5,500 | **-8.5%** |
+
+4 keeps, 3 discards across 7 experiments.
+
+Remaining cost dominated by:
+- `SyntaxHighlighter.scanTokenRanges`: Array(text) conversion + token scan (~8,500μs for 500 lines)
+- NSMutableAttributedString creation from string (~1,000μs)
+- addAttribute calls for gutter/lineNum/bg/spans/tap (~4,500μs, ~2500 calls)
+
+Further gains require: C-level scanner (avoid Character abstraction), reduce addAttribute call count (hard without changing visual output).
