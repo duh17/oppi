@@ -286,8 +286,14 @@ enum SyntaxHighlighter {
         let function: [NSAttributedString.Key: Any]
         let `operator`: [NSAttributedString.Key: Any]
 
+        // Cache: UIColor(Color) is expensive (~10μs each × 9 = ~90μs per call).
+        // Invalidated on theme change via resetCachedAttrs().
+        // Safe: only accessed from @MainActor context (all call sites are @MainActor).
+        nonisolated(unsafe) private static var cached: TokenAttrs?
+
         static func current() -> Self {
-            Self(
+            if let cached { return cached }
+            let attrs = Self(
                 comment: [.foregroundColor: UIColor(Color.themeSyntaxComment)],
                 keyword: [.foregroundColor: UIColor(Color.themeSyntaxKeyword)],
                 string: [.foregroundColor: UIColor(Color.themeSyntaxString)],
@@ -298,7 +304,40 @@ enum SyntaxHighlighter {
                 function: [.foregroundColor: UIColor(Color.themeSyntaxFunction)],
                 operator: [.foregroundColor: UIColor(Color.themeSyntaxOperator)]
             )
+            cached = attrs
+            return attrs
         }
+
+        static func resetCache() {
+            cached = nil
+        }
+    }
+
+    /// Invalidate cached token colors. Call when the theme changes.
+    static func resetCachedAttrs() {
+        TokenAttrs.resetCache()
+    }
+
+    // MARK: - Token Type (for range-based highlighting)
+
+    /// Token categories for range-based attribute application.
+    enum TokenKind: UInt8 {
+        case variable = 0  // default — no attribute override needed
+        case comment = 1
+        case keyword = 2
+        case string = 3
+        case number = 4
+        case type = 5
+        case punctuation = 6
+        case function = 7
+        case `operator` = 8
+    }
+
+    /// A token range recorded during scanning.
+    struct TokenRange {
+        let location: Int  // character offset in the scanned text
+        let length: Int    // character length
+        let kind: TokenKind
     }
 
     // MARK: - Public API
@@ -319,28 +358,8 @@ enum SyntaxHighlighter {
     /// across lines, making it much cheaper than N × `highlightLine()` calls.
     /// Used by `makeCodeAttributedText` to interleave gutter numbers.
     static func highlightLines(_ code: String, language: SyntaxLanguage) -> [NSAttributedString] {
-        let truncated = truncatedCode(code)
-        let attrs = TokenAttrs.current()
-        let rawLines = truncated.split(separator: "\n", omittingEmptySubsequences: false)
-
-        if language == .json {
-            // JSON highlighter doesn't track block comments; highlight whole then split.
-            let full = highlightJSON(truncated, attrs: attrs)
-            return splitAttributedStringByNewlines(full)
-        }
-
-        var inBlockComment = false
-        var results: [NSAttributedString] = []
-        results.reserveCapacity(rawLines.count)
-
-        for line in rawLines {
-            let lineResult = NSMutableAttributedString()
-            appendHighlightedLine(
-                Array(line), language: language, inBlockComment: &inBlockComment, attrs: attrs, to: lineResult
-            )
-            results.append(lineResult)
-        }
-        return results
+        let full = highlight(code, language: language)
+        return splitAttributedStringByNewlines(full)
     }
 
     /// Split a single `NSAttributedString` by newline characters into per-line strings.
@@ -367,7 +386,42 @@ enum SyntaxHighlighter {
         return results
     }
 
-    /// Highlight source code.
+    /// Resolve a token kind to its UIColor using the cached TokenAttrs.
+    static func color(for kind: TokenKind) -> UIColor? {
+        guard kind != .variable else { return nil }
+        let attrs = TokenAttrs.current()
+        let dict: [NSAttributedString.Key: Any]
+        switch kind {
+        case .variable: return nil
+        case .comment: dict = attrs.comment
+        case .keyword: dict = attrs.keyword
+        case .string: dict = attrs.string
+        case .number: dict = attrs.number
+        case .type: dict = attrs.type
+        case .punctuation: dict = attrs.punctuation
+        case .function: dict = attrs.function
+        case .operator: dict = attrs.operator
+        }
+        return dict[.foregroundColor] as? UIColor
+    }
+
+    /// Scan source code and return token ranges for non-default tokens.
+    ///
+    /// Each range's `location` is the character offset within `code`.
+    /// Used by `makeCodeAttributedText` to apply syntax colors with gutter
+    /// offset mapping in a single-pass build.
+    static func scanTokenRanges(
+        _ code: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        scanTokenRangesInternal(truncatedCode(code), language: language)
+    }
+
+    /// Highlight source code using range-based attribute application.
+    ///
+    /// Builds a single NSMutableAttributedString from the full text with default
+    /// (variable) color, then applies token-specific colors by NSRange. This avoids
+    /// creating thousands of intermediate NSAttributedString objects per token.
     static func highlight(_ code: String, language: SyntaxLanguage) -> NSAttributedString {
         let truncated = truncatedCode(code)
         let attrs = TokenAttrs.current()
@@ -376,17 +430,88 @@ enum SyntaxHighlighter {
             return highlightJSON(truncated, attrs: attrs)
         }
 
-        let result = NSMutableAttributedString()
-        var inBlockComment = false
-        let lines = truncated.split(separator: "\n", omittingEmptySubsequences: false)
+        // Build the full attributed string with default variable color.
+        let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
 
-        for (i, line) in lines.enumerated() {
-            if i > 0 { result.mutableString.append("\n") }
-            appendHighlightedLine(
-                Array(line), language: language, inBlockComment: &inBlockComment, attrs: attrs, to: result
-            )
+        // Scan for token ranges using the shared single-array scanner.
+        let tokenRanges = scanTokenRangesInternal(truncated, language: language)
+
+        // Pre-extract UIColors to avoid dictionary lookup + cast per token.
+        let commentColor = attrs.comment[.foregroundColor] as? UIColor
+        let keywordColor = attrs.keyword[.foregroundColor] as? UIColor
+        let stringColor = attrs.string[.foregroundColor] as? UIColor
+        let numberColor = attrs.number[.foregroundColor] as? UIColor
+        let typeColor = attrs.type[.foregroundColor] as? UIColor
+        let punctuationColor = attrs.punctuation[.foregroundColor] as? UIColor
+        let functionColor = attrs.function[.foregroundColor] as? UIColor
+        let operatorColor = attrs.operator[.foregroundColor] as? UIColor
+
+        // Apply token colors by range.
+        for token in tokenRanges {
+            let color: UIColor?
+            switch token.kind {
+            case .variable: continue // already default
+            case .comment: color = commentColor
+            case .keyword: color = keywordColor
+            case .string: color = stringColor
+            case .number: color = numberColor
+            case .type: color = typeColor
+            case .punctuation: color = punctuationColor
+            case .function: color = functionColor
+            case .operator: color = operatorColor
+            }
+            if let color {
+                result.addAttribute(
+                    .foregroundColor,
+                    value: color,
+                    range: NSRange(location: token.location, length: token.length)
+                )
+            }
         }
+
         return result
+    }
+
+    /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
+    /// Converts text to `[Character]` once and scans line-by-line using
+    /// newline detection (no per-line `Array(line)` allocation).
+    private static func scanTokenRangesInternal(
+        _ text: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        let allChars = Array(text)
+        var tokenRanges: [TokenRange] = []
+        tokenRanges.reserveCapacity(allChars.count / 4)
+
+        var inBlockComment = false
+        var pos = 0
+
+        while pos <= allChars.count {
+            var lineEnd = pos
+            while lineEnd < allChars.count, allChars[lineEnd] != "\n" {
+                lineEnd += 1
+            }
+
+            if lineEnd > pos {
+                if language == .shell {
+                    scanShellLineRangesSlice(
+                        allChars, start: pos, end: lineEnd,
+                        ranges: &tokenRanges
+                    )
+                } else {
+                    scanLineRangesSlice(
+                        allChars, start: pos, end: lineEnd,
+                        language: language,
+                        inBlockComment: &inBlockComment,
+                        ranges: &tokenRanges
+                    )
+                }
+            }
+
+            pos = lineEnd + 1
+        }
+
+        return tokenRanges
     }
 
     private static func truncatedCode(_ code: String) -> String {
@@ -397,7 +522,187 @@ enum SyntaxHighlighter {
         return lines.prefix(maxLines).joined(separator: "\n")
     }
 
-    // MARK: - Line Scanner
+    // MARK: - Range-based Line Scanner (slice-based)
+
+    /// Scan a line within allChars[start..<end] for token ranges.
+    /// Positions are absolute indices into allChars (= character offsets in the original text).
+    private static func scanLineRangesSlice(
+        _ allChars: [Character],
+        start: Int,
+        end: Int,
+        language: SyntaxLanguage,
+        inBlockComment: inout Bool,
+        ranges: inout [TokenRange]
+    ) {
+        var i = start
+        let keywords = language.keywords
+        let commentPrefix = language.lineCommentPrefix
+
+        while i < end {
+            if inBlockComment {
+                let commentStart = i
+                while i < end {
+                    if i + 1 < end, allChars[i] == "*", allChars[i + 1] == "/" {
+                        i += 2
+                        inBlockComment = false
+                        break
+                    }
+                    i += 1
+                }
+                if i > commentStart {
+                    ranges.append(TokenRange(location: commentStart, length: i - commentStart, kind: .comment))
+                }
+                continue
+            }
+
+            if language.hasBlockComments,
+               i + 1 < end, allChars[i] == "/", allChars[i + 1] == "*" {
+                inBlockComment = true
+                let commentStart = i
+                i += 2
+                while i < end {
+                    if i + 1 < end, allChars[i] == "*", allChars[i + 1] == "/" {
+                        i += 2
+                        inBlockComment = false
+                        break
+                    }
+                    i += 1
+                }
+                ranges.append(TokenRange(location: commentStart, length: i - commentStart, kind: .comment))
+                continue
+            }
+
+            if let prefix = commentPrefix, matchesAt(allChars, offset: i, pattern: prefix) {
+                ranges.append(TokenRange(location: i, length: end - i, kind: .comment))
+                return
+            }
+
+            if allChars[i] == "#", language == .c || language == .cpp {
+                ranges.append(TokenRange(location: i, length: end - i, kind: .keyword))
+                return
+            }
+
+            if allChars[i] == "@" {
+                let tokenStart = i
+                i += 1
+                while i < end, allChars[i].isLetter || allChars[i].isNumber || allChars[i] == "_" {
+                    i += 1
+                }
+                ranges.append(TokenRange(location: tokenStart, length: i - tokenStart, kind: .type))
+                continue
+            }
+
+            let ch = allChars[i]
+            if ch == "\"" || ch == "'" || ch == "`" {
+                let (_, tokenEnd) = scanString(allChars, from: i, quote: ch)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
+
+            if ch.isNumber {
+                let (_, tokenEnd) = scanNumber(allChars, from: i)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .number))
+                i = tokenEnd
+                continue
+            }
+
+            if ch.isLetter || ch == "_" {
+                let (word, tokenEnd) = scanWord(allChars, from: i)
+                if keywords.contains(word) {
+                    ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .keyword))
+                } else if isTypeLike(word) {
+                    ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .type))
+                }
+                i = tokenEnd
+                continue
+            }
+
+            i += 1
+        }
+    }
+
+    /// Scan a shell line within allChars[start..<end] for token ranges.
+    private static func scanShellLineRangesSlice(
+        _ allChars: [Character],
+        start: Int,
+        end: Int,
+        ranges: inout [TokenRange]
+    ) {
+        var i = start
+        var expectCommand = true
+
+        while i < end {
+            let ch = allChars[i]
+
+            if ch.isWhitespace {
+                i += 1
+                continue
+            }
+
+            if ch == "#", isShellCommentStart(allChars, at: i) {
+                ranges.append(TokenRange(location: i, length: end - i, kind: .comment))
+                return
+            }
+
+            if ch == "\"" || ch == "'" || ch == "`" {
+                let (_, tokenEnd) = scanString(allChars, from: i, quote: ch)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                expectCommand = false
+                continue
+            }
+
+            if ch == "$" {
+                let (_, tokenEnd) = scanShellVariable(allChars, from: i)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .type))
+                i = tokenEnd
+                expectCommand = false
+                continue
+            }
+
+            if let (_, tokenEnd, resetsCommand) = scanShellOperator(allChars, from: i) {
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .operator))
+                i = tokenEnd
+                if resetsCommand { expectCommand = true }
+                continue
+            }
+
+            if ch == "-", isShellOptionStart(allChars, at: i) {
+                let (_, tokenEnd) = scanShellToken(allChars, from: i)
+                i = tokenEnd
+                expectCommand = false
+                continue
+            }
+
+            let (token, tokenEnd) = scanShellToken(allChars, from: i)
+            if token.isEmpty {
+                i += 1
+                continue
+            }
+
+            if expectCommand, isShellAssignment(token) {
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .type))
+                i = tokenEnd
+                continue
+            }
+
+            if shellKeywords.contains(token) {
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .keyword))
+                expectCommand = shellCommandStarterKeywords.contains(token)
+                i = tokenEnd
+                continue
+            }
+
+            if expectCommand {
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .function))
+                expectCommand = false
+            }
+            i = tokenEnd
+        }
+    }
+
+    // MARK: - Legacy Line Scanner (kept for highlightLine single-line API)
 
     private static func appendHighlightedLine(
         _ chars: [Character],
