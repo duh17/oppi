@@ -66,6 +66,17 @@ struct ChatTimelineView: View {
         )
     }
 
+    private func consumeInitialScrollIfNeeded() {
+        guard sessionManager.needsInitialScroll else { return }
+        guard let bottomItemID else { return }
+
+        sessionManager.needsInitialScroll = false
+        scrollController.needsInitialScroll = true
+        scrollController.handleInitialScroll(bottomItemID: bottomItemID) { targetID in
+            issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
+        }
+    }
+
     var body: some View {
         ChatTimelineCollectionHost(
             configuration: .init(
@@ -107,6 +118,10 @@ struct ChatTimelineView: View {
         }
         .onAppear {
             syncRenderWindow()
+            Task { @MainActor in
+                await Task.yield()
+                consumeInitialScrollIfNeeded()
+            }
         }
         .onChange(of: reducer.items.count) { _, _ in
             syncRenderWindow()
@@ -131,11 +146,7 @@ struct ChatTimelineView: View {
         }
         .onChange(of: sessionManager.needsInitialScroll) { _, needs in
             guard needs else { return }
-            sessionManager.needsInitialScroll = false
-            scrollController.needsInitialScroll = true
-            scrollController.handleInitialScroll(bottomItemID: bottomItemID) { targetID in
-                issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
-            }
+            consumeInitialScrollIfNeeded()
         }
         .onChange(of: scrollController.scrollTargetID) { _, targetID in
             guard targetID != nil else { return }
