@@ -261,4 +261,39 @@ struct MarkdownParsePerfBench {
 
         #expect(total > 0)
     }
+
+    // MARK: - Table-specific parse benchmark
+
+    @Test("Table parse: 50-row table with links")
+    func tableParseBench() {
+        // Build a realistic table with links in cells (the specific case
+        // affected by the inline-preserving change).
+        var lines: [String] = []
+        lines.append("| Title | Link | Status |")
+        lines.append("| --- | --- | --- |")
+        for i in 0..<50 {
+            lines.append("| Article \(i) | [Source \(i)](https://example.com/\(i)) | Done |")
+        }
+        let tableMd = lines.joined(separator: "\n")
+
+        // Warm up
+        for _ in 0..<Self.warmupIterations {
+            Self.consume(parseCommonMark(tableMd))
+        }
+
+        let parseNs = Self.medianNs {
+            Self.consume(parseCommonMark(tableMd))
+        }
+        let parseUs = parseNs / 1000.0
+
+        let blocks = parseCommonMark(tableMd)
+        let buildNs = Self.medianNs {
+            Self.consume(FlatSegment.build(from: blocks, themeID: .dark))
+        }
+        let buildUs = buildNs / 1000.0
+
+        print("METRIC table_50row_parse_us=\(String(format: "%.1f", parseUs))")
+        print("METRIC table_50row_build_us=\(String(format: "%.1f", buildUs))")
+        #expect(parseUs < 500, "50-row table parse should stay under 500us")
+    }
 }

@@ -173,16 +173,16 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
 // MARK: - Table Conversion
 
 private func convertCMarkTable(_ node: UnsafeMutablePointer<cmark_node>) -> MarkdownBlock {
-    var headers: [String] = []
-    var rows: [[String]] = []
+    var headers: [[MarkdownInline]] = []
+    var rows: [[[MarkdownInline]]] = []
 
     var rowNode = cmark_node_first_child(node)
     var isHeader = true
     while let row = rowNode {
-        var cells: [String] = []
+        var cells: [[MarkdownInline]] = []
         var cellNode = cmark_node_first_child(row)
         while let cell = cellNode {
-            cells.append(extractCMarkPlainText(cell))
+            cells.append(convertCMarkInlines(cell))
             cellNode = cmark_node_next(cell)
         }
         if isHeader {

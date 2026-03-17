@@ -181,7 +181,7 @@ enum WorkspaceFileURL {
 enum FlatSegment: Sendable {
     case text(AttributedString)
     case codeBlock(language: String?, code: String)
-    case table(headers: [String], rows: [[String]])
+    case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case thematicBreak
     /// A standalone image paragraph. The URL is fully resolved at build time
     /// using the workspace context. Rendered by `NativeMarkdownImageView`.
