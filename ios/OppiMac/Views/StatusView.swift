@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct StatusPlaceholderView: View {
+struct StatusView: View {
 
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor

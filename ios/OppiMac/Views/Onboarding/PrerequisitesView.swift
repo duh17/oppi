@@ -84,20 +84,20 @@ struct PrerequisitesView: View {
     // MARK: - Checks
 
     private static func checkNode() async -> PrereqStatus {
-        guard let (path, _) = runWhich("node") else {
+        guard let path = await ProcessRunner.which("node") else {
             return .failed("Not found — install from nodejs.org")
         }
-        guard let version = runVersion(path, args: ["--version"]) else {
+        guard let version = await ProcessRunner.version(path) else {
             return .failed("Found at \(path) but could not get version")
         }
         return .passed(version)
     }
 
     private static func checkPi() async -> PrereqStatus {
-        guard let (path, _) = runWhich("pi") else {
+        guard let path = await ProcessRunner.which("pi") else {
             return .failed("Not found — npm install -g @anthropic-ai/claude-code")
         }
-        guard let version = runVersion(path, args: ["--version"]) else {
+        guard let version = await ProcessRunner.version(path) else {
             return .failed("Found at \(path) but could not get version")
         }
         return .passed(version)
@@ -129,59 +129,6 @@ struct PrerequisitesView: View {
             return .passed("Available")
         } else {
             return .failed("Port is in use")
-        }
-    }
-
-    // MARK: - Process helpers
-
-    private static func runWhich(_ command: String) -> (path: String, output: String)? {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["which", command]
-
-        // Include homebrew paths
-        var env = ProcessInfo.processInfo.environment
-        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + currentPath
-        proc.environment = env
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            guard proc.terminationStatus == 0 else { return nil }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !output.isEmpty else { return nil }
-            return (output, output)
-        } catch {
-            logger.debug("which \(command) failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    private static func runVersion(_ executablePath: String, args: [String]) -> String? {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: executablePath)
-        proc.arguments = args
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            guard proc.terminationStatus == 0 else { return nil }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return nil
         }
     }
 }

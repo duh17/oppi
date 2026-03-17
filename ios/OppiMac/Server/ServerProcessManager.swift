@@ -133,10 +133,7 @@ final class ServerProcessManager {
         proc.arguments = [cliPath, "serve", "--data-dir", dataDir]
 
         // Ensure homebrew paths are available for git, pi, etc.
-        var env = ProcessInfo.processInfo.environment
-        let extraPaths = ["/opt/homebrew/bin", "/usr/local/bin"]
-        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
-        env["PATH"] = (extraPaths + [currentPath]).joined(separator: ":")
+        var env = ProcessRunner.augmentedEnvironment
         env["OPPI_DATA_DIR"] = dataDir
         proc.environment = env
 
