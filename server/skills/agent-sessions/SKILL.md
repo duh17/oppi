@@ -17,6 +17,7 @@ node {baseDir}/scripts/agent-sessions.mjs <command> [flags]
 
 | Command | Purpose | Example |
 |---|---|---|
+| `stats` | Workspace breakdown: sessions, messages, cost, last activity | `node {baseDir}/scripts/agent-sessions.mjs stats` |
 | `list` | List recent sessions (workspace or all) | `node {baseDir}/scripts/agent-sessions.mjs list --workspace oppi --limit 20` |
 | `status <id>` | Get session detail/status | `node {baseDir}/scripts/agent-sessions.mjs status abc123 --workspace oppi` |
 | `latest` | Get most recent session detail | `node {baseDir}/scripts/agent-sessions.mjs latest --workspace oppi` |
