@@ -702,15 +702,15 @@ struct ChatSessionManagerTests {
     }
 
     @MainActor
-    @Test func busyHistoryReloadDoesNotClobberLiveStreamingRows() async {
+    @Test func busyHistoryReloadAppliesTraceAndPreservesLiveRows() async {
         let sessionId = "busy-reload-\(UUID().uuidString)"
         let workspaceId = "w-live"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
-        // Seed cache so loadedFromCacheAtConnect is true — deferral only applies
-        // when the reducer was loaded from a meaningful source (cache), not from
-        // live stream items alone.
+        // Seed cache so replay buffering activates — the buffer captures live
+        // events while the trace fetch is in flight, then replays them on top
+        // of the freshly loaded trace.
         await TimelineCache.shared.saveTrace(sessionId, events: [
             makeTraceEvent(
                 id: "cached-old",
@@ -759,9 +759,10 @@ struct ChatSessionManagerTests {
             }
         })
 
-        // Wait for deferred history reload attempt to complete.
+        // Wait for trace fetch + replay to complete.
         try? await Task.sleep(for: .milliseconds(220))
 
+        // Live tool call preserved via replay buffer
         #expect(reducer.items.contains { item in
             if case .toolCall(let id, _, _, _, _, _, _) = item {
                 return id == "tc-live"
@@ -769,7 +770,8 @@ struct ChatSessionManagerTests {
             return false
         })
 
-        #expect(!reducer.items.contains { item in
+        // Trace content now appears (was previously deferred)
+        #expect(reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("TRACE_RELOAD_MARKER")
             }

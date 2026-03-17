@@ -469,6 +469,15 @@ final class ChatSessionManager {
                     hasReceivedConnected = true
                     unexpectedStreamExitCount = 0
                     transitionTo(.streaming)
+
+                    // Start replay buffering if the session is busy and we loaded
+                    // from cache. This captures live WS events so they survive the
+                    // upcoming trace rebuild in loadHistory().
+                    let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
+                        || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
+                    if sessionIsBusy, loadedFromCacheAtConnect {
+                        reducer.startReplayBuffer()
+                    }
                 }
 
             case .streaming:
@@ -887,47 +896,37 @@ final class ChatSessionManager {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
                     freshnessReason = "history_unchanged"
                 } else {
-                    // Avoid clobbering in-flight streaming rows (thinking/tool calls)
-                    // with a stale trace snapshot while the session is still running.
-                    // Two conditions gate deferral:
-                    //   1. entryState == .streaming — live events may have added items
-                    //   2. loadedFromCacheAtConnect — cache provided a baseline worth
-                    //      preserving; without cache, reducer has only live fragments
-                    //      and the trace is the authoritative source.
-                    let sessionIsActivelyStreaming = session.status == .busy || session.status == .stopping
-                    let shouldDeferRebuild =
-                        sessionIsActivelyStreaming
-                        && !reducer.items.isEmpty
-                        && entryState == .streaming
-                        && loadedFromCacheAtConnect
-
-                    if shouldDeferRebuild {
-                        log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
-                        freshnessReason = "history_deferred"
+                    // Apply the fresh trace. If live events arrived via WS during
+                    // the fetch, the replay buffer preserves them and re-applies
+                    // on top of the rebuilt timeline in a single @MainActor turn.
+                    let usedReplay = reducer.isReplayBuffering
+                    let reducerStartMs = ChatSessionTelemetry.nowMs()
+                    if usedReplay {
+                        reducer.applyTraceWithLiveReplay(trace)
                     } else {
-                        let reducerStartMs = ChatSessionTelemetry.nowMs()
                         reducer.loadSession(trace)
-                        let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
-
-                        ChatSessionTelemetry.recordReducerLoad(
-                            durationMs: reducerDurationMs,
-                            sessionId: self.sessionId,
-                            source: "history",
-                            eventCount: trace.count,
-                            itemCount: reducer.items.count
-                        )
-
-                        needsInitialScroll = true
-                        let footprint = SentryService.currentFootprintMB()
-                        log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count)]")
-                        ClientLog.info("Memory", "Session loaded", metadata: [
-                            "footprintMB": footprint.map(String.init) ?? "n/a",
-                            "traceEvents": String(trace.count),
-                            "timelineItems": String(reducer.items.count),
-                            "sessionId": self.sessionId,
-                        ])
-                        freshnessReason = "history_applied"
                     }
+                    let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
+
+                    ChatSessionTelemetry.recordReducerLoad(
+                        durationMs: reducerDurationMs,
+                        sessionId: self.sessionId,
+                        source: usedReplay ? "history+replay" : "history",
+                        eventCount: trace.count,
+                        itemCount: reducer.items.count
+                    )
+
+                    needsInitialScroll = true
+                    let footprint = SentryService.currentFootprintMB()
+                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count), replay=\(usedReplay)]")
+                    ClientLog.info("Memory", "Session loaded", metadata: [
+                        "footprintMB": footprint.map(String.init) ?? "n/a",
+                        "traceEvents": String(trace.count),
+                        "timelineItems": String(reducer.items.count),
+                        "sessionId": self.sessionId,
+                        "replay": usedReplay ? "1" : "0",
+                    ])
+                    freshnessReason = usedReplay ? "history_replayed" : "history_applied"
                 }
             }
 

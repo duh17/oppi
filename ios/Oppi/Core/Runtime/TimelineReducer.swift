@@ -93,6 +93,60 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// append/no-op mode instead of a destructive full rebuild.
     private(set) var _lastLoadWasIncrementalForTesting = false
 
+    // MARK: - Live Event Replay Buffer
+    //
+    // When a busy session re-entry loads a trace from the server, live events
+    // from the WebSocket may have already been processed. A naive loadSession()
+    // would replace the timeline, losing those live events permanently (they
+    // won't be re-delivered).
+    //
+    // The replay buffer captures live AgentEvents during the history reload
+    // window. When the trace arrives, we apply loadSession(trace) then
+    // processBatch(buffer) in a single @MainActor turn — no interleaving.
+
+    /// When non-nil, `processBatch` appends events to this buffer in addition
+    /// to processing them normally. Set by `startReplayBuffer()`, consumed by
+    /// `applyTraceWithLiveReplay()`.
+    private var liveEventReplayBuffer: [AgentEvent]?
+
+    /// True when replay buffering is active.
+    var isReplayBuffering: Bool { liveEventReplayBuffer != nil }
+
+    /// Start capturing live events for later replay after trace load.
+    /// Call after transitioning to streaming state, before history reload completes.
+    func startReplayBuffer() {
+        liveEventReplayBuffer = []
+    }
+
+    /// Cancel replay buffering without applying (e.g., on disconnect).
+    func cancelReplayBuffer() {
+        liveEventReplayBuffer = nil
+    }
+
+    /// Apply a trace and replay any buffered live events on top.
+    ///
+    /// This is the core fix for the busy re-entry gap bug:
+    /// 1. loadSession(trace) rebuilds timeline from authoritative history
+    /// 2. processBatch(buffer) re-creates live streaming state on top
+    ///
+    /// Both steps execute in a single @MainActor turn — no coalescer
+    /// flush can interleave. The collection view sees one combined diff.
+    ///
+    /// Returns true if the trace was applied (false if no-op/skipped).
+    @discardableResult
+    func applyTraceWithLiveReplay(_ events: [TraceEvent]) -> Bool {
+        let buffer = liveEventReplayBuffer ?? []
+        liveEventReplayBuffer = nil
+
+        loadSession(events)
+
+        if !buffer.isEmpty {
+            processBatch(buffer)
+        }
+
+        return true
+    }
+
     /// Detached markdown cache prewarm task for history loads.
     /// Cancelled on reset/new load to avoid piling up background parse jobs
     /// during rapid session switching.
@@ -120,6 +174,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         itemIndex.clear()
         clearTurnBuffers()
         currentCompactionItemID = nil
+        liveEventReplayBuffer = nil
         itemsMutationSeq = 0
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
@@ -704,6 +759,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Perf note: text/thinking/tool-output deltas are high-frequency. In a
     /// batch, append to local accumulators and upsert affected rows once.
     func processBatch(_ events: [AgentEvent]) {
+        // Capture live events for replay if buffering is active.
+        // Events are still processed normally below — the buffer is
+        // only consumed later by applyTraceWithLiveReplay().
+        if liveEventReplayBuffer != nil {
+            liveEventReplayBuffer?.append(contentsOf: events)
+        }
+
         var hasPendingAssistantUpsert = false
         var hasPendingThinkingUpsert = false
         var didMutate = false
