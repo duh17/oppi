@@ -19,15 +19,43 @@ struct DiffLineTapInfo: Sendable {
 
 /// Builds the attributed string for a unified diff from structured hunks.
 ///
-/// Shared by `UnifiedDiffTextView` (full diff) and `UnifiedDiffTextSegment`
-/// (annotation-split segments) to ensure consistent rendering.
+/// Uses a fused two-phase approach:
+/// 1. Build the entire text as NSMutableString, tracking per-line offsets
+/// 2. Create NSMutableAttributedString once, apply all attributes by range
+///
+/// This avoids thousands of intermediate NSAttributedString allocations that
+/// the previous per-line append approach created.
 enum DiffAttributedStringBuilder {
 
+    /// Per-line metadata tracked during text assembly (phase 1).
+    private struct LineInfo {
+        let rowStart: Int       // UTF-16 offset of the row start (gutter prefix)
+        let gutterStart: Int    // UTF-16 offset of the gutter prefix
+        let gutterLen: Int      // UTF-16 length of the gutter prefix
+        let lineNumStart: Int   // UTF-16 offset of the line number section
+        let lineNumLen: Int     // UTF-16 length of the line number section
+        let codeStart: Int      // UTF-16 offset of the code text
+        let codeCharOffset: Int // Character offset of code text in the original line.text
+        let codeLen: Int        // UTF-16 length of the code text
+        let rowEnd: Int         // UTF-16 offset past the trailing newline
+        let kind: WorkspaceReviewDiffLine.Kind
+        let hasSpans: Bool
+        let spans: [WorkspaceReviewDiffSpan]?
+        let oldLine: Int?
+        let newLine: Int?
+    }
+
+    /// Per-hunk header metadata.
+    private struct HeaderInfo {
+        let start: Int
+        let length: Int
+    }
+
     static func build(hunks: [WorkspaceReviewDiffHunk], filePath: String) -> NSAttributedString {
-        let result = NSMutableAttributedString()
         let ext = (filePath as NSString).pathExtension
         let language = ext.isEmpty ? SyntaxLanguage.unknown : SyntaxLanguage.detect(ext)
 
+        // --- Resolve colors once ---
         let codeFont = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
         let gutterFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
@@ -49,128 +77,216 @@ enum DiffAttributedStringBuilder {
         let wordAddedBg = UIColor(Color.themeDiffAdded.opacity(0.35))
         let wordRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.35))
 
+        // --- Compute max line number for gutter width ---
         var maxLineNum = 1
+        var totalLines = 0
         for hunk in hunks {
+            totalLines += hunk.lines.count
             for line in hunk.lines {
                 if let n = line.oldLine { maxLineNum = max(maxLineNum, n) }
                 if let n = line.newLine { maxLineNum = max(maxLineNum, n) }
             }
         }
         let numDigits = max(3, String(maxLineNum).count)
+        let lineNumSectionLen = numDigits + 1 + numDigits + 1 // "oldNum newNum "
+
+        // --- Phase 1: Build full text as NSMutableString, track offsets ---
+
+        // Estimate capacity: ~80 chars per line
+        let text = NSMutableString(capacity: totalLines * 80)
+        var lineInfos: [LineInfo] = []
+        lineInfos.reserveCapacity(totalLines)
+        var headerInfos: [HeaderInfo] = []
 
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
-                result.append(NSAttributedString(string: "\n", attributes: [
-                    .font: codeFont, .paragraphStyle: paragraph,
-                ]))
+                text.append("\n")
             }
 
-            result.append(NSAttributedString(
-                string: " \(hunk.headerText) \n",
-                attributes: [
-                    .font: headerFont,
-                    .foregroundColor: headerColor,
-                    .paragraphStyle: paragraph,
-                    diffLineKindAttributeKey: "header",
-                ]
-            ))
+            let headerStart = text.length
+            let headerStr = " \(hunk.headerText) \n"
+            text.append(headerStr)
+            headerInfos.append(HeaderInfo(start: headerStart, length: headerStr.utf16.count))
 
             for line in hunk.lines {
-                let rowStart = result.length
+                let rowStart = text.length
 
+                // Gutter prefix
+                let gutterStart = text.length
+                let gutterStr: String
                 switch line.kind {
-                case .added:
-                    result.append(NSAttributedString(string: "▎+ ", attributes: [
-                        .font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph,
-                    ]))
-                case .removed:
-                    result.append(NSAttributedString(string: "▎− ", attributes: [
-                        .font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph,
-                    ]))
-                case .context:
-                    result.append(NSAttributedString(string: "   ", attributes: [
-                        .font: gutterFont, .foregroundColor: contextDim, .paragraphStyle: paragraph,
-                    ]))
+                case .added:   gutterStr = "▎+ "
+                case .removed: gutterStr = "▎− "
+                case .context: gutterStr = "   "
                 }
+                text.append(gutterStr)
+                let gutterLen = text.length - gutterStart
 
-                let oldNum = line.oldLine.map { String($0).leftPadded(toWidth: numDigits) }
+                // Line numbers
+                let lineNumStart = text.length
+                let oldNum = line.oldLine.map { paddedNumber($0, digits: numDigits) }
                     ?? String(repeating: " ", count: numDigits)
-                let newNum = line.newLine.map { String($0).leftPadded(toWidth: numDigits) }
+                let newNum = line.newLine.map { paddedNumber($0, digits: numDigits) }
                     ?? String(repeating: " ", count: numDigits)
-                result.append(NSAttributedString(
-                    string: "\(oldNum) \(newNum) ",
-                    attributes: [
-                        .font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph,
-                    ]
-                ))
+                text.append(oldNum)
+                text.append(" ")
+                text.append(newNum)
+                text.append(" ")
 
+                // Code text
+                let codeStart = text.length
                 let codeText = line.text.isEmpty ? " " : line.text
-                let codeStart = result.length
+                text.append(codeText)
+                let codeLen = text.length - codeStart
 
-                if language != .unknown {
-                    let highlighted = NSMutableAttributedString(
-                        attributedString: SyntaxHighlighter.highlightLine(codeText, language: language)
-                    )
-                    let fullRange = NSRange(location: 0, length: highlighted.length)
-                    highlighted.addAttributes(
-                        [.font: codeFont, .paragraphStyle: paragraph],
-                        range: fullRange
-                    )
-                    let defaultFg: UIColor = line.kind == .context ? fgDimColor : fgColor
-                    highlighted.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { value, range, _ in
-                        if value == nil {
-                            highlighted.addAttribute(.foregroundColor, value: defaultFg, range: range)
-                        }
-                    }
-                    result.append(highlighted)
-                } else {
-                    let fg: UIColor = line.kind == .context ? fgDimColor : fgColor
-                    result.append(NSAttributedString(string: codeText, attributes: [
-                        .font: codeFont, .foregroundColor: fg, .paragraphStyle: paragraph,
-                    ]))
-                }
+                // Newline
+                text.append("\n")
+                let rowEnd = text.length
 
-                result.append(NSAttributedString(string: "\n", attributes: [
-                    .font: codeFont, .paragraphStyle: paragraph,
-                ]))
-
-                let rowEnd = result.length
-                let rowRange = NSRange(location: rowStart, length: rowEnd - rowStart)
-                switch line.kind {
-                case .added:
-                    result.addAttribute(diffLineKindAttributeKey, value: "added", range: rowRange)
-                    result.addAttribute(.backgroundColor, value: lineAddedBg, range: rowRange)
-                case .removed:
-                    result.addAttribute(diffLineKindAttributeKey, value: "removed", range: rowRange)
-                    result.addAttribute(.backgroundColor, value: lineRemovedBg, range: rowRange)
-                case .context:
-                    break
-                }
-
-                // Word-level spans override line bg for specific changed words
-                if let spans = line.spans {
-                    for span in spans {
-                        let length = span.end - span.start
-                        guard span.start >= 0, length > 0, span.end <= codeText.utf16.count else { continue }
-                        let spanRange = NSRange(location: codeStart + span.start, length: length)
-                        guard spanRange.location + spanRange.length <= result.length else { continue }
-                        let bg: UIColor = line.kind == .removed ? wordRemovedBg : wordAddedBg
-                        result.addAttribute(.backgroundColor, value: bg, range: spanRange)
-                    }
-                }
-
-                // Embed tap metadata for annotation authoring
-                let tapSide: AnnotationSide = line.kind == .removed ? .old : .new
-                let tapInfo = DiffLineTapInfo(
-                    newLine: line.newLine,
+                lineInfos.append(LineInfo(
+                    rowStart: rowStart,
+                    gutterStart: gutterStart,
+                    gutterLen: gutterLen,
+                    lineNumStart: lineNumStart,
+                    lineNumLen: lineNumSectionLen,
+                    codeStart: codeStart,
+                    codeCharOffset: 0, // unused in current approach
+                    codeLen: codeLen,
+                    rowEnd: rowEnd,
+                    kind: line.kind,
+                    hasSpans: line.spans != nil && !(line.spans?.isEmpty ?? true),
+                    spans: line.spans,
                     oldLine: line.oldLine,
-                    side: tapSide
-                )
-                result.addAttribute(diffLineTapInfoKey, value: tapInfo, range: rowRange)
+                    newLine: line.newLine
+                ))
             }
         }
 
+        // --- Phase 2: Create attributed string with default code attributes ---
+        let result = NSMutableAttributedString(
+            string: text as String,
+            attributes: [
+                .font: codeFont,
+                .foregroundColor: fgColor,
+                .paragraphStyle: paragraph,
+            ]
+        )
+
+        result.beginEditing()
+
+        // --- Phase 3: Apply header attributes ---
+        for header in headerInfos {
+            let range = NSRange(location: header.start, length: header.length)
+            result.addAttributes([
+                .font: headerFont,
+                .foregroundColor: headerColor,
+                diffLineKindAttributeKey: "header",
+            ], range: range)
+        }
+
+        // --- Phase 4: Apply per-line gutter, line number, and row-level attributes ---
+        for info in lineInfos {
+            let rowRange = NSRange(location: info.rowStart, length: info.rowEnd - info.rowStart)
+
+            // Gutter prefix
+            let gutterColor: UIColor
+            switch info.kind {
+            case .added:   gutterColor = addedAccent
+            case .removed: gutterColor = removedAccent
+            case .context: gutterColor = contextDim
+            }
+            result.addAttributes([
+                .font: gutterFont,
+                .foregroundColor: gutterColor,
+            ], range: NSRange(location: info.gutterStart, length: info.gutterLen))
+
+            // Line numbers
+            result.addAttributes([
+                .font: lineNumFont,
+                .foregroundColor: lineNumColor,
+            ], range: NSRange(location: info.lineNumStart, length: info.lineNumLen))
+
+            // Code default foreground (context lines are dimmed)
+            if info.kind == .context {
+                result.addAttribute(
+                    .foregroundColor,
+                    value: fgDimColor,
+                    range: NSRange(location: info.codeStart, length: info.codeLen + 1) // +1 for newline
+                )
+            }
+
+            // Row-level background + diffLineKind
+            switch info.kind {
+            case .added:
+                result.addAttribute(diffLineKindAttributeKey, value: "added", range: rowRange)
+                result.addAttribute(.backgroundColor, value: lineAddedBg, range: rowRange)
+            case .removed:
+                result.addAttribute(diffLineKindAttributeKey, value: "removed", range: rowRange)
+                result.addAttribute(.backgroundColor, value: lineRemovedBg, range: rowRange)
+            case .context:
+                break
+            }
+
+            // Word-level spans
+            if info.hasSpans, let spans = info.spans {
+                let wordBg: UIColor = info.kind == .removed ? wordRemovedBg : wordAddedBg
+                for span in spans {
+                    let length = span.end - span.start
+                    guard span.start >= 0, length > 0 else { continue }
+                    let spanStart = info.codeStart + span.start
+                    guard spanStart + length <= info.rowEnd else { continue }
+                    result.addAttribute(
+                        .backgroundColor,
+                        value: wordBg,
+                        range: NSRange(location: spanStart, length: length)
+                    )
+                }
+            }
+
+            // Tap metadata
+            let tapSide: AnnotationSide = info.kind == .removed ? .old : .new
+            let tapInfo = DiffLineTapInfo(
+                newLine: info.newLine,
+                oldLine: info.oldLine,
+                side: tapSide
+            )
+            result.addAttribute(diffLineTapInfoKey, value: tapInfo, range: rowRange)
+        }
+
+        // --- Phase 5: Syntax highlighting via range-based scanner ---
+        if language != .unknown {
+            // Process each line's code text through the optimized scanner.
+            // We scan each line independently (no cross-line block comment state,
+            // matching the existing behavior of highlightLine).
+            for info in lineInfos {
+                guard info.codeLen > 0 else { continue }
+
+                // Extract the code text substring for scanning
+                let codeRange = NSRange(location: info.codeStart, length: info.codeLen)
+                let codeText = (text as NSString).substring(with: codeRange)
+
+                let tokenRanges = SyntaxHighlighter.scanTokenRanges(codeText, language: language)
+
+                for token in tokenRanges {
+                    guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
+                    result.addAttribute(
+                        .foregroundColor,
+                        value: color,
+                        range: NSRange(location: info.codeStart + token.location, length: token.length)
+                    )
+                }
+            }
+        }
+
+        result.endEditing()
         return result
+    }
+
+    /// Pad a number to the given digit width without String(format:).
+    private static func paddedNumber(_ n: Int, digits: Int) -> String {
+        let s = String(n)
+        let padding = digits - s.count
+        return padding > 0 ? String(repeating: " ", count: padding) + s : s
     }
 }
 
