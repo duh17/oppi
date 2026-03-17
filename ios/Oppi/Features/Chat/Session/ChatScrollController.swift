@@ -269,6 +269,13 @@ final class ChatScrollController: NSObject {
         guard needsInitialScroll else { return }
         needsInitialScroll = false
 
+        // Re-entry should always land attached at the live bottom, even if the
+        // previous visit left the controller detached while reading history.
+        anchor.isNearBottom = true
+        anchor.isFollowLocked = true
+        isJumpToBottomHintVisible = false
+        isDetachedStreamingHintVisible = false
+
         guard let bottomItemID else { return }
         performScrollToBottom(bottomItemID)
     }
