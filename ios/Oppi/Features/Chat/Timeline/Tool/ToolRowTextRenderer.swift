@@ -132,7 +132,7 @@ enum ToolRowTextRenderer {
         language: SyntaxLanguage?,
         startLine: Int
     ) -> NSAttributedString {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let safeStartLine = max(1, startLine)
         let lastLineNumber = safeStartLine + max(0, lines.count - 1)
         let numberDigits = max(2, String(lastLineNumber).count)
@@ -147,75 +147,113 @@ enum ToolRowTextRenderer {
         let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
         let lineNumberFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
 
-        let lineNumAttrs: [NSAttributedString.Key: Any] = [
-            .font: lineNumberFont,
-            .foregroundColor: lineNumberColor,
-            .paragraphStyle: paragraph,
-        ]
-        let separatorAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont,
-            .foregroundColor: separatorColor,
-            .paragraphStyle: paragraph,
-        ]
-        let codeAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont,
-            .foregroundColor: foregroundColor,
-            .paragraphStyle: paragraph,
-        ]
+        // Phase 1: Build the full guttered text using NSMutableString (avoids
+        // Swift String += copy-on-write overhead). Track per-line offsets manually
+        // instead of calling .utf16.count (which is O(n) per call on Swift String).
+        let separatorStr: NSString = "│ "
+        let sepLen = separatorStr.length // UTF-16 length
+        let lineNumLen = numberDigits + 1 // digits + trailing space
 
-        // Batch-highlight all lines with shared TokenAttrs + block comment state.
-        // This replaces N separate highlightLine() calls (each creating its own TokenAttrs).
-        let highlightedLines: [NSAttributedString]?
-        if let language, language != .unknown {
-            highlightedLines = SyntaxHighlighter.highlightLines(text, language: language)
-        } else {
-            highlightedLines = nil
-        }
+        let nsText = NSMutableString(capacity: text.utf16.count + lines.count * (lineNumLen + sepLen + 1))
 
-        let result = NSMutableAttributedString()
-        for (index, rawLine) in lines.enumerated() {
+        let lineCount = lines.count
+        var codeStartOffsets = [Int](repeating: 0, count: lineCount)
+        var codeCharOffsets = [Int](repeating: 0, count: lineCount)
+        var lineNumStarts = [Int](repeating: 0, count: lineCount)
+        var sepStarts = [Int](repeating: 0, count: lineCount)
+
+        var utf16Pos = 0
+        var origCharOffset = 0
+
+        for index in 0..<lineCount {
+            let rawLine = lines[index]
             let lineNumber = safeStartLine + index
-            result.append(NSAttributedString(
-                string: "\(paddedLineNumber(lineNumber, digits: numberDigits)) ",
-                attributes: lineNumAttrs
-            ))
-            result.append(NSAttributedString(string: "│ ", attributes: separatorAttrs))
+            let lineNumStr = paddedLineNumber(lineNumber, digits: numberDigits) + " "
 
-            let displayLine = rawLine.isEmpty ? " " : rawLine
-            if let highlightedLines,
-               index < highlightedLines.count,
-               displayLine.utf8.count <= maxDiffSyntaxHighlightBytes {
-                let highlighted = NSMutableAttributedString(
-                    attributedString: highlightedLines[index]
-                )
-                let fullRange = NSRange(location: 0, length: highlighted.length)
-                highlighted.addAttributes(
-                    [.font: codeFont, .paragraphStyle: paragraph],
-                    range: fullRange
-                )
-                highlighted.enumerateAttribute(
-                    .foregroundColor,
-                    in: fullRange,
-                    options: []
-                ) { value, range, _ in
-                    if value == nil {
-                        highlighted.addAttribute(
-                            .foregroundColor,
-                            value: foregroundColor,
-                            range: range
-                        )
-                    }
-                }
-                result.append(highlighted)
+            lineNumStarts[index] = utf16Pos
+            nsText.append(lineNumStr)
+            utf16Pos += lineNumLen
+
+            sepStarts[index] = utf16Pos
+            nsText.append(separatorStr as String)
+            utf16Pos += sepLen
+
+            codeStartOffsets[index] = utf16Pos
+            codeCharOffsets[index] = origCharOffset
+
+            if rawLine.isEmpty {
+                nsText.append(" ")
+                utf16Pos += 1
             } else {
-                result.append(NSAttributedString(string: displayLine, attributes: codeAttrs))
+                nsText.append(String(rawLine))
+                utf16Pos += rawLine.utf16.count
             }
 
-            if index < lines.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
+            origCharOffset += rawLine.count + 1
+
+            if index < lineCount - 1 {
+                nsText.append("\n")
+                utf16Pos += 1
             }
         }
 
+        // Phase 2: Create attributed string with default code attributes.
+        let result = NSMutableAttributedString(
+            string: nsText as String,
+            attributes: [
+                .font: codeFont,
+                .foregroundColor: foregroundColor,
+                .paragraphStyle: paragraph,
+            ]
+        )
+
+        // Phase 3+4: Apply all attribute overrides in a single editing batch.
+        // beginEditing/endEditing defers internal attribute-run fixup.
+        result.beginEditing()
+
+        for i in 0..<lineCount {
+            result.addAttributes(
+                [.font: lineNumberFont, .foregroundColor: lineNumberColor],
+                range: NSRange(location: lineNumStarts[i], length: lineNumLen)
+            )
+            result.addAttribute(
+                .foregroundColor,
+                value: separatorColor,
+                range: NSRange(location: sepStarts[i], length: sepLen)
+            )
+        }
+
+        // Apply syntax highlight colors using precomputed offset table.
+        if let language, language != .unknown {
+            let tokenRanges = SyntaxHighlighter.scanTokenRanges(text, language: language)
+
+            // Map each token from original-text space to guttered-text space.
+            // Both tokenRanges and codeCharOffsets are sorted by offset, so we
+            // advance lineIdx forward in O(tokens + lines) total.
+            var lineIdx = 0
+            let lineCount = codeCharOffsets.count
+
+            for token in tokenRanges {
+                guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
+
+                // Advance lineIdx until we find the line containing this token.
+                while lineIdx + 1 < lineCount,
+                      codeCharOffsets[lineIdx + 1] <= token.location {
+                    lineIdx += 1
+                }
+
+                let offsetInLine = token.location - codeCharOffsets[lineIdx]
+                let gutterPos = codeStartOffsets[lineIdx] + offsetInLine
+
+                result.addAttribute(
+                    .foregroundColor,
+                    value: color,
+                    range: NSRange(location: gutterPos, length: token.length)
+                )
+            }
+        }
+
+        result.endEditing()
         return result
     }
 
@@ -574,7 +612,11 @@ enum ToolRowTextRenderer {
             return String(repeating: " ", count: digits)
         }
 
-        return String(format: "%\(digits)d", number)
+        // Manual padding: avoids String(format:) C sprintf overhead per call.
+        let numStr = String(number)
+        let padding = digits - numStr.count
+        if padding <= 0 { return numStr }
+        return String(repeating: " ", count: padding) + numStr
     }
 
     // periphery:ignore - used by ToolRowTextRendererTests via @testable import
