@@ -18,6 +18,9 @@ server/scripts/*
 !ios/scripts/
 ios/scripts/*
 !ios/scripts/check-coverage.sh
+!ios/scripts/release-mac.sh
+!ios/scripts/appcast/
+!ios/scripts/appcast/appcast.xml
 !server/docker/entrypoint.sh
 !server/skills/agent-sessions/scripts/
 
