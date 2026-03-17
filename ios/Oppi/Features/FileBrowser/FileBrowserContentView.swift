@@ -1,3 +1,4 @@
+import PDFKit
 import SwiftUI
 
 /// Displays the content of a workspace file in browse mode.
@@ -24,6 +25,10 @@ struct FileBrowserContentView: View {
         ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff"].contains(fileExtension)
     }
 
+    private var isPDF: Bool {
+        fileExtension == "pdf"
+    }
+
     var body: some View {
         Group {
             switch content {
@@ -44,6 +49,8 @@ struct FileBrowserContentView: View {
                 )
             case .image(let data):
                 imageView(data)
+            case .pdf(let data):
+                PDFBrowserView(data: data)
             case .binary:
                 ContentUnavailableView(
                     "Binary File",
@@ -93,6 +100,11 @@ struct FileBrowserContentView: View {
                 return
             }
 
+            if isPDF {
+                content = .pdf(data)
+                return
+            }
+
             if let text = String(data: data, encoding: .utf8) {
                 content = .text(text)
             } else {
@@ -104,6 +116,43 @@ struct FileBrowserContentView: View {
     }
 }
 
+// MARK: - PDF View
+
+/// Wraps `PDFKit.PDFView` for inline PDF rendering with scroll, zoom, and text selection.
+private struct PDFBrowserView: View {
+    let data: Data
+
+    var body: some View {
+        if PDFDocument(data: data) != nil {
+            PDFKitView(data: data)
+                .ignoresSafeArea(edges: .bottom)
+        } else {
+            ContentUnavailableView(
+                "Invalid PDF",
+                systemImage: "doc.badge.exclamationmark",
+                description: Text("Could not decode PDF data.")
+            )
+        }
+    }
+}
+
+/// UIKit wrapper for `PDFKit.PDFView`.
+private struct PDFKitView: UIViewRepresentable {
+    let data: Data
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.backgroundColor = .clear
+        view.document = PDFDocument(data: data)
+        return view
+    }
+
+    func updateUIView(_ view: PDFView, context: Context) {}
+}
+
 // MARK: - Phase
 
 private enum FileContentPhase: Equatable {
@@ -111,6 +160,7 @@ private enum FileContentPhase: Equatable {
     case error(String)
     case text(String)
     case image(Data)
+    case pdf(Data)
     case binary
 
     static func == (lhs: FileContentPhase, rhs: FileContentPhase) -> Bool {
@@ -119,6 +169,7 @@ private enum FileContentPhase: Equatable {
         case (.error(let a), .error(let b)): a == b
         case (.text(let a), .text(let b)): a == b
         case (.image(let a), .image(let b)): a == b
+        case (.pdf(let a), .pdf(let b)): a == b
         case (.binary, .binary): true
         default: false
         }
