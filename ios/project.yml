@@ -208,7 +208,9 @@ targets:
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: 1
-        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_IDENTITY: "Developer ID Application"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
         ENABLE_HARDENED_RUNTIME: true
         CODE_SIGN_ENTITLEMENTS: OppiMac/OppiMac.entitlements
     info:
