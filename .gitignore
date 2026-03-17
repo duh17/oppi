@@ -6,7 +6,6 @@ server/dist/
 ios/build/
 ios/docs/
 ios/*.xcodeproj/
-ios/OppiMac/
 ios/OppiMacTests/
 ios/.env.testflight.local
 
