@@ -102,13 +102,35 @@ struct ReadySessionScrollToBottomTests {
         #expect(scrolled, "Expected busy re-entry with pending initial scroll to start near bottom")
     }
 
+    @MainActor
+    @Test func pendingInitialScrollOverridesStaleDetachedStateOnReentry() async throws {
+        let fixture = try await makeHostedTimeline(
+            itemCount: 40,
+            isBusy: false,
+            preloadNeedsInitialScroll: true,
+            preloadDetachedState: true
+        )
+
+        let scrolled = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.controller.view.setNeedsLayout()
+                fixture.controller.view.layoutIfNeeded()
+                let metrics = scrollMetrics(in: fixture.collectionView)
+                return metrics.contentHeight > metrics.visibleHeight + 50
+                    && metrics.distanceFromBottom < metrics.distanceFromTop
+            }
+        }
+        #expect(scrolled, "Expected pending initial scroll to beat stale detached state on re-entry")
+    }
+
     // MARK: - Helpers
 
     @MainActor
     private func makeHostedTimeline(
         itemCount: Int,
         isBusy: Bool,
-        preloadNeedsInitialScroll: Bool
+        preloadNeedsInitialScroll: Bool,
+        preloadDetachedState: Bool = false
     ) async throws -> HostedTimelineFixture {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -125,6 +147,11 @@ struct ReadySessionScrollToBottomTests {
         }
         reducer.loadSession(events)
         sessionManager.needsInitialScroll = preloadNeedsInitialScroll
+        if preloadDetachedState {
+            scrollController.updateNearBottom(false)
+            scrollController.updateTopVisibleItemId("evt-0")
+            scrollController.updateContentOffsetY(0)
+        }
 
         let root = AnyView(
             ChatTimelineView(
