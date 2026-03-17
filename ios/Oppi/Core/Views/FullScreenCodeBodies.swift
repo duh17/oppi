@@ -211,7 +211,21 @@ final class NativeFullScreenCodeBody: UIView {
             // AttributedString is Sendable; NSAttributedString is not.
             // Convert at the boundary — still O(n), much cheaper than the old O(n^2) build.
             let sendable = await Task.detached(priority: .userInitiated) {
-                AttributedString(SyntaxHighlighter.highlight(text, language: syntaxLang))
+                let highlighted = SyntaxHighlighter.highlight(text, language: syntaxLang)
+                // SyntaxHighlighter caps highlighting at maxLines for performance.
+                // Append the unhighlighted remainder so full-screen shows all content.
+                let highlightedStr = highlighted.string
+                guard highlightedStr.count < text.count else {
+                    return AttributedString(highlighted)
+                }
+                let mutable = NSMutableAttributedString(attributedString: highlighted)
+                let splitIndex = text.index(text.startIndex, offsetBy: highlightedStr.count)
+                let remainder = String(text[splitIndex...])
+                let baseAttrs: [NSAttributedString.Key: Any] = highlighted.length > 0
+                    ? highlighted.attributes(at: 0, effectiveRange: nil)
+                    : [:]
+                mutable.append(NSAttributedString(string: remainder, attributes: baseAttrs))
+                return AttributedString(mutable)
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
