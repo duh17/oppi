@@ -2,6 +2,14 @@
 
 Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/badlogic/pi-mono) to run agent sessions in-process.
 
+## Mac App (recommended on macOS)
+
+On macOS, the recommended way to run the server is the **Oppi for Mac** menu bar app. It handles installation, TCC permissions, server init, and pairing through a guided wizard — no terminal required. See the [main README](../README.md#mac-app-recommended-on-macos) for install steps.
+
+The CLI below remains the primary path on Linux, headless/Docker setups, and for power users. The `serve`, `pair`, `doctor`, and `init` commands are also used internally by the Mac app.
+
+---
+
 ## Quickstart
 
 ```bash

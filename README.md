@@ -9,6 +9,22 @@
   <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
+## Mac App (recommended on macOS)
+
+**Oppi for Mac** is a menu bar companion app that manages the local server and handles onboarding. It's the easiest way to get started.
+
+**Requirements:** macOS 15+, [Node.js](https://nodejs.org) v20+, [pi](https://github.com/badlogic/pi-mono) CLI
+
+**Install:**
+1. Download the DMG from [Releases](../../releases)
+2. Drag Oppi to Applications and launch it
+3. Follow the setup wizard (checks prerequisites, requests permissions, initializes the server)
+4. Scan the QR code from the Oppi iOS app
+
+The Mac app manages the server process automatically — start, stop, restart, and crash recovery — with no terminal needed. For Linux, headless servers, or manual control, use the [CLI](#install) instead.
+
+---
+
 ## How it works
 
 The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and a policy-driven permission gate. The iOS app connects over WebSocket to stream output and handle approvals.
