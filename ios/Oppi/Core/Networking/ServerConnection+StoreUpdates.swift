@@ -46,15 +46,7 @@ extension ServerConnection {
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
 
-        case .permissionExpired(let id, _):
-            let request = permissionStore.take(id: id)
-            if ReleaseFeatures.pushNotificationsEnabled {
-                PermissionNotificationService.shared.cancelNotification(permissionId: id)
-            }
-            syncLiveActivityPermissions()
-            return StoreUpdateResult(takenPermission: request, handled: true)
-
-        case .permissionCancelled(let id):
+        case .permissionExpired(let id, _), .permissionCancelled(let id):
             let request = permissionStore.take(id: id)
             if ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: id)
