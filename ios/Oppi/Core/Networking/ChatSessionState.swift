@@ -43,11 +43,7 @@ final class ChatSessionState {
     var fileSuggestions: [FileSuggestion] = []
     var fileSuggestionTask: Task<Void, Never>?
 
-    // MARK: - File index (local fuzzy search)
 
-    /// Cached workspace file index for local @file fuzzy search.
-    var fileIndex: [String]?
-    var fileIndexTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -59,8 +55,6 @@ final class ChatSessionState {
         slashCommandsCacheKey = nil
         fileSuggestionTask?.cancel()
         fileSuggestionTask = nil
-        fileIndexTask?.cancel()
-        fileIndexTask = nil
         modelPrefetchTask?.cancel()
         modelPrefetchTask = nil
     }
@@ -70,7 +64,6 @@ final class ChatSessionState {
         cancelTasks()
         slashCommands = []
         fileSuggestions = []
-        fileIndex = nil
     }
 
     /// Reset model cache (called on server disconnect/invalidation).

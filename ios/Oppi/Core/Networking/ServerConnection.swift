@@ -31,6 +31,7 @@ final class ServerConnection {
     let permissionStore = PermissionStore()
     let workspaceStore = WorkspaceStore()
     let gitStatusStore = GitStatusStore()
+    let fileIndexStore = FileIndexStore()
     let messageQueueStore = MessageQueueStore()
 
     // Audio

@@ -220,8 +220,8 @@ struct ChatView: View {
                     )
                 }
                 // Pre-load file index for @file fuzzy search
-                if let wsId = session?.workspaceId {
-                    connection.loadFileIndex(workspaceId: wsId)
+                if let wsId = session?.workspaceId, let api = connection.apiClient {
+                    connection.fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
