@@ -466,6 +466,13 @@ export interface FileSearchResponse {
   truncated: boolean;
 }
 
+/** Flat file index for client-side fuzzy search (GET /workspaces/:id/file-index). */
+export interface FileIndexResponse {
+  /** Workspace-relative file paths (no directories, no ignored/sensitive paths). */
+  paths: string[];
+  truncated: boolean;
+}
+
 // ─── Local Sessions ───
 
 /** A pi TUI session discovered on the host (not yet managed by oppi). */

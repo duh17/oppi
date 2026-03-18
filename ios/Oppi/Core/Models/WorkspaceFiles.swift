@@ -43,3 +43,10 @@ struct FileSearchResponse: Decodable, Sendable, Equatable {
     let entries: [FileEntry]
     let truncated: Bool
 }
+
+/// Flat file index for client-side fuzzy search.
+/// Mirrors `FileIndexResponse` from `server/src/types.ts`.
+struct FileIndexResponse: Decodable, Sendable, Equatable {
+    let paths: [String]
+    let truncated: Bool
+}
