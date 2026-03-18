@@ -187,7 +187,7 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func fetchFileSuggestionsCancelsPreviousTask() {
         let conn = makeTestConnection()
-        conn.chatState.fileIndex = ["src/index.ts", "src/app.ts", "README.md"]
+        conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         let oldTask = Task<Void, Never> { @MainActor in
             try? await Task.sleep(for: .seconds(60))
@@ -202,7 +202,7 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func fetchFileSuggestionsReplacesTask() {
         let conn = makeTestConnection()
-        conn.chatState.fileIndex = ["src/index.ts", "src/app.ts", "README.md"]
+        conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "first")
         let task1 = conn.chatState.fileSuggestionTask
@@ -219,7 +219,7 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func fetchWithNoFileIndexReturnsEmpty() {
         let conn = makeTestConnection()
-        // fileIndex is nil — search should return empty immediately
+        // fileIndex not loaded — search should return empty immediately
         conn.fetchFileSuggestions(query: "src")
         #expect(conn.chatState.fileSuggestions.isEmpty)
         #expect(conn.chatState.fileSuggestionTask == nil)
@@ -228,11 +228,11 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func fetchPopulatesSuggestionsFromLocalIndex() async {
         let conn = makeTestConnection()
-        conn.chatState.fileIndex = [
+        conn.fileIndexStore.setPathsForTesting([
             "ios/Oppi/Features/Chat/ChatView.swift",
             "ios/Oppi/Core/Models/FuzzyMatch.swift",
             "README.md",
-        ]
+        ])
 
         conn.fetchFileSuggestions(query: "fuzzy")
 
@@ -246,9 +246,27 @@ struct FileSuggestionInsertionTests {
     }
 
     @MainActor
+    @Test func fetchEmptyQueryReturnsFilesByLength() {
+        let conn = makeTestConnection()
+        conn.fileIndexStore.setPathsForTesting([
+            "ios/Oppi/Features/Chat/ChatView.swift",
+            "README.md",
+            "server/src/types.ts",
+        ])
+
+        conn.fetchFileSuggestions(query: "")
+
+        // Empty query returns files sorted by path length (shortest first)
+        #expect(conn.chatState.fileSuggestions.count == 3)
+        #expect(conn.chatState.fileSuggestions[0].path == "README.md")
+        #expect(conn.chatState.fileSuggestions[0].matchPositions.isEmpty,
+                "No match positions for empty query")
+    }
+
+    @MainActor
     @Test func clearAfterFetchDropsResults() async {
         let conn = makeTestConnection()
-        conn.chatState.fileIndex = ["src/index.ts", "README.md"]
+        conn.fileIndexStore.setPathsForTesting(["src/index.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "src")
         conn.clearFileSuggestions()
