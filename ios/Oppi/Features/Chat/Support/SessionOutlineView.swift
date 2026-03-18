@@ -158,15 +158,20 @@ struct SessionOutlineView: View {
         }
 
         if !query.isEmpty {
-            // Fuzzy match against summary text, sort by score
             var scored: [(entry: OutlineEntry, score: Int)] = []
-            for entry in filtered {
+            for var entry in filtered {
                 if let result = FuzzyMatch.match(query: query, candidate: entry.summary) {
+                    entry.matchPositions = result.positions
                     scored.append((entry, result.score))
                 }
             }
             scored.sort { $0.score > $1.score }
             filtered = scored.map(\.entry)
+        } else {
+            // Clear positions when search is cleared
+            for i in filtered.indices {
+                filtered[i].matchPositions = []
+            }
         }
 
         displayedEntries = filtered
@@ -222,6 +227,7 @@ struct SessionOutlineView: View {
                             OutlineRow(
                                 item: entry.item,
                                 summary: entry.summary,
+                                matchPositions: entry.matchPositions,
                                 diffStats: entry.diffStats,
                                 isCompaction: entry.isCompaction,
                                 showDivider: index < visibleCount - 1
@@ -354,7 +360,7 @@ struct SessionOutlineView: View {
 // MARK: - Pre-computed Outline Entry
 
 /// Holds pre-computed summary, search text, and classification for each item.
-/// Built once on view appear so filtering is cheap boolean + string.contains.
+/// Built once on view appear so filtering is cheap.
 private struct OutlineEntry: Identifiable {
     let id: String
     let item: ChatItem
@@ -369,6 +375,9 @@ private struct OutlineEntry: Identifiable {
     let passesAllFilter: Bool
     let isMessage: Bool
     let isTool: Bool
+
+    /// Unicode scalar positions of matched characters (populated during search).
+    var matchPositions: [Int] = []
 }
 
 // MARK: - Outline Row
@@ -376,6 +385,7 @@ private struct OutlineEntry: Identifiable {
 private struct OutlineRow: View {
     let item: ChatItem
     let summary: String
+    var matchPositions: [Int] = []
     var diffStats: ToolCallFormatting.DiffStats?
     let isCompaction: Bool
     let showDivider: Bool
@@ -389,13 +399,21 @@ private struct OutlineRow: View {
                     .foregroundStyle(iconColor)
                     .frame(width: 16)
 
-                // Summary text
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(textColor)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Summary text — highlighted when searching
+                if matchPositions.isEmpty {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(textColor)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(highlightedSummary)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if isCompaction {
                     Text("Compaction")
@@ -438,6 +456,34 @@ private struct OutlineRow: View {
                     .padding(.leading, 42)
             }
         }
+    }
+
+    private var highlightedSummary: AttributedString {
+        let scalars = Array(summary.unicodeScalars)
+        let matchSet = Set(matchPositions)
+        var result = AttributedString()
+
+        var i = 0
+        while i < scalars.count {
+            if matchSet.contains(i) {
+                var end = i
+                while end + 1 < scalars.count, matchSet.contains(end + 1) { end += 1 }
+                var seg = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                seg.foregroundColor = .themeYellow
+                seg.font = .caption.bold()
+                result.append(seg)
+                i = end + 1
+            } else {
+                var end = i
+                while end + 1 < scalars.count, !matchSet.contains(end + 1) { end += 1 }
+                var seg = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                seg.foregroundColor = textColor
+                seg.font = .caption
+                result.append(seg)
+                i = end + 1
+            }
+        }
+        return result
     }
 
     private var iconName: String {
