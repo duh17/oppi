@@ -2,29 +2,12 @@ import Foundation
 
 extension ServerConnection {
 
-    /// Load the workspace file index for local fuzzy search.
-    /// Called once per session; cached in chatState.
-    func loadFileIndex(workspaceId: String) {
-        guard chatState.fileIndex == nil, chatState.fileIndexTask == nil else { return }
-
-        chatState.fileIndexTask = Task { @MainActor [weak self] in
-            guard let self, let api = self.apiClient else { return }
-            do {
-                let response = try await api.fetchFileIndex(workspaceId: workspaceId)
-                self.chatState.fileIndex = response.paths
-            } catch {
-                // Silently fall back to empty index
-                self.chatState.fileIndex = []
-            }
-            self.chatState.fileIndexTask = nil
-        }
-    }
-
-    /// Run local fuzzy search against the cached file index.
+    /// Run local fuzzy search against the shared file index.
+    /// For empty query, returns the first N files alphabetically.
     func fetchFileSuggestions(query: String) {
         chatState.fileSuggestionTask?.cancel()
 
-        guard let index = chatState.fileIndex, !index.isEmpty else {
+        guard let index = fileIndexStore.paths, !index.isEmpty else {
             chatState.fileSuggestions = []
             return
         }
@@ -32,8 +15,16 @@ extension ServerConnection {
         let candidates = index
         let limit = ComposerAutocomplete.maxSuggestions
 
+        if query.isEmpty {
+            // Empty query: show first files sorted by path length (shortest = most relevant)
+            let sorted = candidates.sorted { $0.count < $1.count }
+            chatState.fileSuggestions = sorted.prefix(limit).map { path in
+                FileSuggestion(path: path, isDirectory: path.hasSuffix("/"))
+            }
+            return
+        }
+
         chatState.fileSuggestionTask = Task { @MainActor [weak self] in
-            // Run fuzzy match off the main actor
             let results = await Task.detached {
                 FuzzyMatch.search(query: query, candidates: candidates, limit: limit)
             }.value

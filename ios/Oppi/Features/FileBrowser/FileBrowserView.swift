@@ -5,22 +5,25 @@ import SwiftUI
 /// Shows directory contents with navigation into subdirectories,
 /// search, and tap-to-view for text/code files.
 ///
-/// Search uses a cached file index fetched once from the server.
+/// Search uses a shared file index cached in `FileIndexStore`.
 /// All filtering happens locally on-device for instant feedback.
 struct FileBrowserView: View {
     let workspaceId: String
     let initialPath: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
     @State private var listing: DirectoryListingResponse?
     @State private var error: String?
     @State private var searchText = ""
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
-    @State private var fileIndex: [String]?
-    @State private var isLoadingIndex = false
 
     private var isRoot: Bool {
         initialPath.isEmpty || initialPath == "/"
+    }
+
+    private var fileIndex: [String]? {
+        connection.fileIndexStore.paths
     }
 
     var body: some View {
@@ -53,13 +56,12 @@ struct FileBrowserView: View {
             performLocalSearch(query: trimmed)
         }
         .onChange(of: fileIndex) { _, _ in
-            // Re-trigger search when file index arrives (fixes race where user types before index loads)
             let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
             performLocalSearch(query: trimmed)
         }
         .task { await loadDirectory() }
-        .task { await loadFileIndex() }
+        .task { ensureFileIndex() }
     }
 
     // MARK: - Directory List
@@ -91,7 +93,7 @@ struct FileBrowserView: View {
 
     @ViewBuilder
     private var searchResultsView: some View {
-        if isLoadingIndex, fileIndex == nil {
+        if connection.fileIndexStore.isLoading, fileIndex == nil {
             ProgressView("Loading file index...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if fuzzyResults.isEmpty {
@@ -196,30 +198,18 @@ struct FileBrowserView: View {
         }
     }
 
-    private func loadFileIndex() async {
+    private func ensureFileIndex() {
         guard let api = apiClient else { return }
-        guard fileIndex == nil else { return }
-
-        isLoadingIndex = true
-        do {
-            let response = try await api.fetchFileIndex(workspaceId: workspaceId)
-            fileIndex = response.paths
-        } catch {
-            // Silently fail — search will show empty results
-            fileIndex = []
-        }
-        isLoadingIndex = false
+        connection.fileIndexStore.ensureLoaded(workspaceId: workspaceId, apiClient: api)
     }
 
     private func performLocalSearch(query: String) {
         guard let index = fileIndex else { return }
 
-        // Run fuzzy match on background thread to avoid blocking UI
         let candidates = index
         Task.detached {
             let results = FuzzyMatch.search(query: query, candidates: candidates, limit: 100)
             await MainActor.run {
-                // Only update if query hasn't changed while we computed
                 let currentTrimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if currentTrimmed == query {
                     fuzzyResults = results
