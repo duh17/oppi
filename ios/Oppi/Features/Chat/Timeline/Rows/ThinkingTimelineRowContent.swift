@@ -511,8 +511,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     /// - the scroll offset is positive (apply drove the scroll toward tail)
     ///
     /// Returns `true` for done state (no streaming to follow).
-    // periphery:ignore - used by StreamingAutoFollowTests via @testable import
-    var isShowingTailForTesting: Bool {
+    var isShowingTailForTesting: Bool { // periphery:ignore
         guard !currentConfiguration.isDone else { return true }
         guard contentIsTruncated, scrollView.bounds.height > 0 else { return true }
         // If content overflows, apply() must have driven the scroll.

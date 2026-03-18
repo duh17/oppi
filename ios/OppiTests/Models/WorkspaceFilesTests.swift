@@ -65,7 +65,7 @@ struct WorkspaceFilesTests {
 
     @Test func formattedSizeDirectoryIsEmpty() throws {
         let entry = FileEntry(name: "src", type: .directory, size: 0, modifiedAt: 0, path: nil)
-        #expect(entry.formattedSize == "")
+        #expect(entry.formattedSize.isEmpty)
     }
 
     // MARK: - DirectoryListingResponse

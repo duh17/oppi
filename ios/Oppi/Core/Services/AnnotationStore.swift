@@ -8,8 +8,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Anno
 /// Fetches annotations from the server API and provides lookup by line number
 /// for inline rendering in `UnifiedDiffView`. Supports creating, resolving,
 /// and deleting annotations.
-@Observable
-@MainActor
+@MainActor @Observable
 final class AnnotationStore {
     // MARK: - Published state
 

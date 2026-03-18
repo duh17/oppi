@@ -280,7 +280,7 @@ struct SessionStreamCoordinatorSeqStateTests {
 // MARK: - State Machine
 
 @Suite("SessionStreamCoordinator State Machine")
-struct SessionStreamCoordinatorStateMachineTests {
+struct SSCStateMachineTests {
 
     @Test func initialStateIsIdle() async {
         let coordinator = SessionStreamCoordinator()
@@ -315,7 +315,7 @@ struct SessionStreamCoordinatorStateMachineTests {
 // MARK: - Eager Command Resolution
 
 @Suite("SessionStreamCoordinator Eager Resolution")
-struct SessionStreamCoordinatorEagerResolutionTests {
+struct SSCEagerResolutionTests {
 
     @Test func subscribeIsEager() {
         let coordinator = SessionStreamCoordinator()
@@ -356,7 +356,7 @@ struct SessionStreamCoordinatorEagerResolutionTests {
 // MARK: - Multi-Session Isolation
 
 @Suite("SessionStreamCoordinator Multi-Session Isolation")
-struct SessionStreamCoordinatorMultiSessionTests {
+struct SSCMultiSessionTests {
 
     @Test func lastSeenSeqIndependentPerSession() async {
         let coordinator = SessionStreamCoordinator()
