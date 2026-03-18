@@ -14,9 +14,12 @@ struct WorkspaceNavTarget: Hashable {
 struct WorkspaceHomeView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var createOnServer: PairedServer?
     @State private var collapsedServerIds: Set<String> = []
+    /// Guards against re-presenting the guided create after the user dismisses it.
+    @State private var guidedCreateConsumed = false
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -53,15 +56,12 @@ struct WorkspaceHomeView: View {
                     description: Text("Pair with a server to get started.")
                 )
             } else if allWorkspacesEmpty {
-                ContentUnavailableView(
-                    "No Workspaces",
-                    systemImage: "square.grid.2x2",
-                    description: Text("Tap + to create a workspace.")
-                )
+                emptyWorkspacesView
             }
         }
         .task {
             await refresh(force: false)
+            triggerGuidedCreateIfNeeded()
         }
         .onAppear {
             Task { await refresh(force: false) }
@@ -217,6 +217,39 @@ struct WorkspaceHomeView: View {
     private func refresh(force: Bool) async {
         // Unified path: coordinator handles single- and multi-server refresh
         await coordinator.refreshAllServers()
+    }
+
+    // MARK: - Guided Workspace Creation
+
+    /// After a fresh pairing, auto-present WorkspaceCreateView if the server has no workspaces.
+    private func triggerGuidedCreateIfNeeded() {
+        guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
+        guard allWorkspacesEmpty else {
+            // Server already has workspaces — nothing to guide.
+            navigation.shouldGuideWorkspaceCreation = false
+            return
+        }
+        guard let server = servers.first else { return }
+
+        guidedCreateConsumed = true
+        navigation.shouldGuideWorkspaceCreation = false
+        createOnServer = server
+    }
+
+    /// Empty state shown when servers exist but all workspaces are empty.
+    private var emptyWorkspacesView: some View {
+        ContentUnavailableView {
+            Label("No Workspaces", systemImage: "square.grid.2x2")
+        } description: {
+            Text("Create a workspace to start coding with your agent.")
+        } actions: {
+            if let server = servers.first {
+                Button("Create Workspace") {
+                    createOnServer = server
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
     }
 }
 
