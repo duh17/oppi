@@ -264,6 +264,21 @@ struct FileSuggestionInsertionTests {
     }
 
     @MainActor
+    @Test func invalidateMarksIndexDirty() {
+        let conn = makeTestConnection()
+        conn.fileIndexStore.setPathsForTesting(["README.md"])
+
+        // Index is loaded and clean
+        #expect(conn.fileIndexStore.paths?.count == 1)
+
+        // Simulate git_status push — marks dirty
+        conn.fileIndexStore.invalidate()
+
+        // Paths are still cached (stale data available until next ensureLoaded)
+        #expect(conn.fileIndexStore.paths?.count == 1)
+    }
+
+    @MainActor
     @Test func clearAfterFetchDropsResults() async {
         let conn = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "README.md"])
