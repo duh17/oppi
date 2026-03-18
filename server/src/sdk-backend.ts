@@ -204,11 +204,15 @@ export class SdkBackend {
             !ext.path.includes("permission-gate") && !ext.resolvedPath.includes("permission-gate"),
         );
 
-        // 2. If workspace specifies an extensions list, only load those
+        // 2. If workspace specifies an extensions list, only load those.
+        //    Always keep inline factory extensions (path "<inline:N>") — they're
+        //    injected programmatically via extraExtensionFactories and shouldn't
+        //    be subject to workspace allowlist filtering.
         const allowedNames = workspace?.extensions;
         if (allowedNames && allowedNames.length > 0) {
           const allowed = new Set(allowedNames);
           filtered = filtered.filter((ext) => {
+            if (ext.path.startsWith("<inline:")) return true;
             const file = basename(ext.resolvedPath || ext.path);
             const ext2 = extname(file);
             const name = ext2 ? file.slice(0, -ext2.length) : file;
