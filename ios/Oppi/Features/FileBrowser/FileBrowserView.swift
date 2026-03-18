@@ -52,6 +52,12 @@ struct FileBrowserView: View {
             }
             performLocalSearch(query: trimmed)
         }
+        .onChange(of: fileIndex) { _, _ in
+            // Re-trigger search when file index arrives (fixes race where user types before index loads)
+            let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            performLocalSearch(query: trimmed)
+        }
         .task { await loadDirectory() }
         .task { await loadFileIndex() }
     }
