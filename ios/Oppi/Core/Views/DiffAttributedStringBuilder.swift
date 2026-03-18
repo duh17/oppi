@@ -148,11 +148,11 @@ enum DiffAttributedStringBuilder {
 
                 // Accumulate code text for batched syntax scan
                 if let bc = batchCode {
-                    batchCharOffsets.append(batchCharPos)
                     if batchCharPos > 0 {
                         bc.append("\n")
                         batchCharPos += 1
                     }
+                    batchCharOffsets.append(batchCharPos)
                     bc.append(codeText)
                     batchCharPos += codeText.count
                 }
