@@ -108,6 +108,9 @@ enum ToolTimelineRowViewStyler {
         expandedLabel.textContainer.lineFragmentPadding = 0
         expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedLabel.backgroundColor = .clear
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = expandedLabel.layoutManager
 
         expandedMarkdownView.translatesAutoresizingMaskIntoConstraints = false
         expandedMarkdownView.backgroundColor = .clear
