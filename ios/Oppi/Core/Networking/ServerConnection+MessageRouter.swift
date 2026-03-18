@@ -55,6 +55,7 @@ extension ServerConnection {
 
         case .gitStatus(let workspaceId, let status):
             gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)
+            fileIndexStore.invalidate()
 
         case .unknown, .stopRequested, .stopConfirmed, .stopFailed:
             break  // Already logged in WebSocketClient / handled earlier
