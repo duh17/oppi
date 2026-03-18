@@ -55,8 +55,12 @@ final class ServerProcessManager {
     private var process: Process?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
+    private var logFileHandle: FileHandle?
     private var restartAttempts = 0
     private var isIntentionalStop = false
+
+    /// Maximum size for the persistent log file before rotation (5 MB).
+    private static let maxLogFileSize: UInt64 = 5 * 1024 * 1024
 
     // MARK: - Path resolution
 
@@ -153,6 +157,8 @@ final class ServerProcessManager {
             }
         }
 
+        openLogFile()
+
         do {
             try proc.run()
             self.process = proc
@@ -221,6 +227,69 @@ final class ServerProcessManager {
         return false
     }
 
+    // MARK: - Persistent log file
+
+    /// Path to the persistent server log file.
+    static var logFilePath: String {
+        NSString("~/.config/oppi/server.log").expandingTildeInPath
+    }
+
+    /// Path to the rotated (previous) log file.
+    private static var rotatedLogFilePath: String {
+        NSString("~/.config/oppi/server.log.1").expandingTildeInPath
+    }
+
+    /// Open (or rotate + reopen) the persistent log file.
+    private func openLogFile() {
+        let path = Self.logFilePath
+        let fm = FileManager.default
+
+        // Rotate if over size limit
+        if fm.fileExists(atPath: path),
+           let attrs = try? fm.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? UInt64,
+           size > Self.maxLogFileSize {
+            let rotated = Self.rotatedLogFilePath
+            try? fm.removeItem(atPath: rotated)
+            try? fm.moveItem(atPath: path, toPath: rotated)
+            logger.info("Rotated server log (\(size) bytes)")
+        }
+
+        // Create if needed
+        if !fm.fileExists(atPath: path) {
+            fm.createFile(atPath: path, contents: nil)
+        }
+
+        guard let handle = FileHandle(forWritingAtPath: path) else {
+            logger.error("Failed to open server log file at \(path)")
+            return
+        }
+        handle.seekToEndOfFile()
+
+        // Write a separator for this run
+        let header = "\n--- server start \(ISO8601DateFormatter().string(from: Date())) ---\n"
+        if let data = header.data(using: .utf8) {
+            handle.write(data)
+        }
+
+        logFileHandle = handle
+    }
+
+    /// Close the persistent log file.
+    private func closeLogFile() {
+        try? logFileHandle?.close()
+        logFileHandle = nil
+    }
+
+    /// Write raw text to the persistent log file.
+    private func writeToLogFile(_ text: String, stream: Stream) {
+        guard let handle = logFileHandle,
+              let data = text.data(using: .utf8) else { return }
+        handle.write(data)
+    }
+
+    // MARK: - Pipe handling
+
     private func setupPipeHandler(_ pipe: Pipe, stream: Stream) {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -233,6 +302,7 @@ final class ServerProcessManager {
 
             Task { @MainActor [weak self] in
                 self?.appendLogLines(lines)
+                self?.writeToLogFile(text, stream: stream)
             }
         }
     }
@@ -246,13 +316,24 @@ final class ServerProcessManager {
 
     private func handleTermination(_ proc: Process) {
         let status = proc.terminationStatus
-        logger.info("Server process exited with status \(status)")
+        let reason = proc.terminationReason
+        let signal = reason == .uncaughtSignal ? " (signal)" : ""
+        logger.error("Server process exited: status=\(status)\(signal) reason=\(reason.rawValue)")
 
         cleanup()
 
         guard !isIntentionalStop else {
             state = .stopped
             return
+        }
+
+        // Log recent stderr lines so crash reason survives in os_log
+        let recentStderr = logBuffer.suffix(20)
+            .filter { $0.stream == .stderr }
+            .map(\.text)
+            .joined(separator: "\n")
+        if !recentStderr.isEmpty {
+            logger.error("Last stderr before exit:\n\(recentStderr)")
         }
 
         // Unexpected exit — attempt auto-restart
@@ -277,6 +358,7 @@ final class ServerProcessManager {
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         stdoutPipe = nil
         stderrPipe = nil
+        closeLogFile()
         process = nil
     }
 }

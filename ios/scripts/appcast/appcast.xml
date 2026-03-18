@@ -1,8 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <channel>
-    <title>Oppi for Mac</title>
-    <description>Oppi Mac app updates</description>
-    <language>en</language>
-  </channel>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+    <channel>
+        <title>Oppi for Mac</title>
+        <description>Oppi Mac app updates</description>
+        <language>en</language>
+        <item>
+            <title>1.0</title>
+            <pubDate>Mon, 16 Mar 2026 23:10:57 -0700</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/duh17/oppi/releases/download/appcast/Oppi-1.0.0.dmg" length="1782895" type="application/octet-stream" sparkle:edSignature="NKQGRGTEwv3pzUNhZqMjjdW7olW/dKt9/g5DSfKq6RfRtlfCFfk8aSzumnVuNaqLxGG9SG7i+yAAJ+aQp8EaCQ=="/>
+        </item>
+    </channel>
 </rss>
