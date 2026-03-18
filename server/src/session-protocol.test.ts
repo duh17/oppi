@@ -1045,11 +1045,9 @@ describe("translatePiEvent", () => {
       expect(result).toEqual([]);
     });
 
-    // BUG PROBE: What happens when partialResult text diverges from accumulated?
-    // The computeToolDelta inside translatePiEvent uses a different divergence
-    // strategy than computeAssistantTextTailDelta — it emits the full text
-    // rather than computing from common prefix. This means the client would
-    // get duplicated output on divergence.
+    // When partialResult text unexpectedly diverges, computeToolDelta emits
+    // the full text rather than a delta from a common prefix. The client
+    // receives duplicated output, but no content is dropped.
     it("emits full text on divergence (replace semantics reset)", () => {
       const ctx = makeCtx();
       ctx.partialResults.set("tc-1", "hello world");
