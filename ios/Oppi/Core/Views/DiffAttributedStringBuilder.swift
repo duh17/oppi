@@ -245,7 +245,7 @@ enum DiffAttributedStringBuilder {
                 break
             }
 
-            // Word-level spans
+            // Word-level span backgrounds (foreground override in Phase 6)
             if info.hasSpans, let spans = info.spans {
                 let wordBg: UIColor = info.kind == .removed ? wordRemovedBg : wordAddedBg
                 for span in spans {
@@ -289,6 +289,26 @@ enum DiffAttributedStringBuilder {
                 result.addAttribute(
                     .foregroundColor, value: color,
                     range: NSRange(location: lineInfos[lineIdx].codeStart + offsetInLine, length: token.length)
+                )
+            }
+        }
+
+        // --- Phase 6: Word-level foreground override ---
+        // Must run after syntax highlighting (Phase 5) so we override
+        // whatever foreground the highlighter assigned. Without this,
+        // dark syntax colors (e.g. Nord comments at #4c566a) become
+        // invisible on the green/red word-level highlight backgrounds.
+        for info in lineInfos {
+            guard info.hasSpans, let spans = info.spans else { continue }
+            for span in spans {
+                let length = span.end - span.start
+                guard span.start >= 0, length > 0 else { continue }
+                let spanStart = info.codeStart + span.start
+                guard spanStart + length <= info.rowEnd else { continue }
+                result.addAttribute(
+                    .foregroundColor,
+                    value: fgColor,
+                    range: NSRange(location: spanStart, length: length)
                 )
             }
         }
