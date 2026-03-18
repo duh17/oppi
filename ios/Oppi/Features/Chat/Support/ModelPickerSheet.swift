@@ -30,18 +30,25 @@ struct ModelPickerSheet: View {
     }
 
     /// All models grouped by provider, excluding any in the recent section.
+    /// When searching, uses FuzzyMatch across name/id/provider and sorts by score.
     private var groupedModels: [(provider: String, models: [ModelInfo])] {
         let recentSet = Set(recentIds)
         let filtered: [ModelInfo]
         if searchText.isEmpty {
             filtered = models.filter { !recentSet.contains(fullId($0)) }
         } else {
-            // When searching, search everything (including recents)
-            filtered = models.filter { model in
-                model.name.localizedCaseInsensitiveContains(searchText)
-                    || model.id.localizedCaseInsensitiveContains(searchText)
-                    || model.provider.localizedCaseInsensitiveContains(searchText)
+            // Fuzzy search across name, id, and provider — take best score
+            let query = searchText
+            var scored: [(model: ModelInfo, score: Int)] = []
+            for model in models {
+                let candidates = [model.name, model.id, model.provider]
+                let bestScore = candidates.compactMap { FuzzyMatch.match(query: query, candidate: $0)?.score }.max()
+                if let score = bestScore {
+                    scored.append((model, score))
+                }
             }
+            scored.sort { $0.score > $1.score }
+            filtered = scored.map(\.model)
         }
 
         let grouped = Dictionary(grouping: filtered) { $0.provider }

@@ -143,10 +143,9 @@ struct SessionOutlineView: View {
 
     /// Filter pre-computed entries by current filter and search text.
     private func applyFilter() {
-        let query = debouncedSearchText.lowercased()
+        let query = debouncedSearchText
 
-        displayedEntries = allEntries.filter { entry in
-            // Type filter
+        var filtered = allEntries.filter { entry in
             switch filter {
             case .all:
                 guard entry.passesAllFilter else { return false }
@@ -155,16 +154,22 @@ struct SessionOutlineView: View {
             case .tools:
                 guard entry.isTool else { return false }
             }
-
-            // Search filter (pre-lowercased, no ICU overhead)
-            if !query.isEmpty {
-                return entry.lowercasedSummary.contains(query)
-            }
             return true
         }
 
-        // Reset render window when filter/search changes so the user
-        // starts at the top of the new result set.
+        if !query.isEmpty {
+            // Fuzzy match against summary text, sort by score
+            var scored: [(entry: OutlineEntry, score: Int)] = []
+            for entry in filtered {
+                if let result = FuzzyMatch.match(query: query, candidate: entry.summary) {
+                    scored.append((entry, result.score))
+                }
+            }
+            scored.sort { $0.score > $1.score }
+            filtered = scored.map(\.entry)
+        }
+
+        displayedEntries = filtered
         renderWindow = Self.initialRenderWindow
     }
 

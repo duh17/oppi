@@ -128,8 +128,9 @@ struct WorkspaceDetailView: View {
 
         return localSessions.filter { local in
             if hasSessionSearchQuery {
-                let title = local.displayTitle.lowercased()
-                guard title.contains(normalizedSessionSearchQuery) else { return false }
+                guard FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: local.displayTitle) != nil else {
+                    return false
+                }
             }
 
             if suffix.isEmpty {
@@ -351,9 +352,7 @@ struct WorkspaceDetailView: View {
             return true
         }
 
-        return sessionTitle(session)
-            .lowercased()
-            .contains(normalizedSessionSearchQuery)
+        return FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: sessionTitle(session)) != nil
     }
 
     private func lineageHint(for session: Session) -> String? {
