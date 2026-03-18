@@ -3,6 +3,8 @@ import Foundation
 struct FileSuggestion: Sendable, Equatable, Identifiable {
     let path: String
     let isDirectory: Bool
+    /// Unicode scalar indices of matched characters for highlighting.
+    var matchPositions: [Int] = []
 
     var id: String { path }
 

@@ -41,10 +41,18 @@ struct FileSuggestionList: View {
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(suggestion.displayName)
-                        .font(.system(.body, design: .monospaced).weight(.medium))
-                        .foregroundStyle(.themeFg)
+                    if suggestion.matchPositions.isEmpty {
+                        Text(suggestion.displayName)
+                            .font(.system(.body, design: .monospaced).weight(.medium))
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(1)
+                    } else {
+                        HighlightedSuggestionText(
+                            path: suggestion.path,
+                            matchPositions: suggestion.matchPositions
+                        )
                         .lineLimit(1)
+                    }
 
                     if let parentPath = suggestion.parentPath {
                         Text(parentPath)
@@ -61,5 +69,51 @@ struct FileSuggestionList: View {
             .padding(.vertical, 7)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Highlighted Suggestion Text
+
+/// Renders a file path with matched characters highlighted.
+/// Shows only the filename portion but highlights based on full-path match positions.
+private struct HighlightedSuggestionText: View {
+    let path: String
+    let matchPositions: [Int]
+
+    var body: some View {
+        Text(attributedText)
+    }
+
+    private var attributedText: AttributedString {
+        let scalars = Array(path.unicodeScalars)
+        let matchSet = Set(matchPositions)
+        var result = AttributedString()
+
+        var i = 0
+        while i < scalars.count {
+            if matchSet.contains(i) {
+                var end = i
+                while end + 1 < scalars.count, matchSet.contains(end + 1) {
+                    end += 1
+                }
+                var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                segment.foregroundColor = .themeYellow
+                segment.font = .system(.body, design: .monospaced).bold()
+                result.append(segment)
+                i = end + 1
+            } else {
+                var end = i
+                while end + 1 < scalars.count, !matchSet.contains(end + 1) {
+                    end += 1
+                }
+                var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                segment.foregroundColor = .themeFgDim
+                segment.font = .system(.body, design: .monospaced)
+                result.append(segment)
+                i = end + 1
+            }
+        }
+
+        return result
     }
 }

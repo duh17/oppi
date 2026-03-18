@@ -219,6 +219,10 @@ struct ChatView: View {
                         gitStatusEnabled: ws?.gitStatusEnabled ?? true
                     )
                 }
+                // Pre-load file index for @file fuzzy search
+                if let wsId = session?.workspaceId {
+                    connection.loadFileIndex(workspaceId: wsId)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
@@ -482,7 +486,6 @@ struct ChatView: View {
     }
 
     // MARK: - Actions
-
 
     private func updateFileSuggestions(query: String?) {
         if let query {

@@ -186,10 +186,8 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchFileSuggestionsCancelsPreviousTask() {
-        // Install a no-op send hook so sendCommandAwaitingResult doesn't fail
-        // on the absent WS — the debounce sleep is cancelled before the send fires.
         let conn = makeTestConnection()
-        conn._sendMessageForTesting = { _ in }
+        conn.chatState.fileIndex = ["src/index.ts", "src/app.ts", "README.md"]
 
         let oldTask = Task<Void, Never> { @MainActor in
             try? await Task.sleep(for: .seconds(60))
@@ -204,7 +202,7 @@ struct FileSuggestionInsertionTests {
     @MainActor
     @Test func fetchFileSuggestionsReplacesTask() {
         let conn = makeTestConnection()
-        conn._sendMessageForTesting = { _ in }
+        conn.chatState.fileIndex = ["src/index.ts", "src/app.ts", "README.md"]
 
         conn.fetchFileSuggestions(query: "first")
         let task1 = conn.chatState.fileSuggestionTask
@@ -219,19 +217,44 @@ struct FileSuggestionInsertionTests {
     }
 
     @MainActor
-    @Test func staleResponseDroppedAfterClear() async {
-        // Simulate: request fires, result arrives AFTER clearFileSuggestions.
-        // clearFileSuggestions cancels the task, so the result is never applied.
+    @Test func fetchWithNoFileIndexReturnsEmpty() {
         let conn = makeTestConnection()
-        var sentMessages: [ClientMessage] = []
-        conn._sendMessageForTesting = { msg in sentMessages.append(msg) }
+        // fileIndex is nil — search should return empty immediately
+        conn.fetchFileSuggestions(query: "src")
+        #expect(conn.chatState.fileSuggestions.isEmpty)
+        #expect(conn.chatState.fileSuggestionTask == nil)
+    }
 
-        conn.fetchFileSuggestions(query: "stale")
+    @MainActor
+    @Test func fetchPopulatesSuggestionsFromLocalIndex() async {
+        let conn = makeTestConnection()
+        conn.chatState.fileIndex = [
+            "ios/Oppi/Features/Chat/ChatView.swift",
+            "ios/Oppi/Core/Models/FuzzyMatch.swift",
+            "README.md",
+        ]
+
+        conn.fetchFileSuggestions(query: "fuzzy")
+
+        // Wait for the detached task to complete
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(!conn.chatState.fileSuggestions.isEmpty)
+        #expect(conn.chatState.fileSuggestions[0].path.contains("FuzzyMatch"))
+        #expect(!conn.chatState.fileSuggestions[0].matchPositions.isEmpty,
+                "Match positions should be populated for highlighting")
+    }
+
+    @MainActor
+    @Test func clearAfterFetchDropsResults() async {
+        let conn = makeTestConnection()
+        conn.chatState.fileIndex = ["src/index.ts", "README.md"]
+
+        conn.fetchFileSuggestions(query: "src")
         conn.clearFileSuggestions()
 
-        // Brief wait — debounce task should be cancelled, no message sent.
-        try? await Task.sleep(for: .milliseconds(250))
-        #expect(sentMessages.isEmpty, "Cancelled task must not dispatch a network message")
+        // Brief wait — task should be cancelled
+        try? await Task.sleep(for: .milliseconds(100))
         #expect(conn.chatState.fileSuggestions.isEmpty)
     }
 }
