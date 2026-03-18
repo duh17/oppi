@@ -1341,10 +1341,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return nil
         }
         let surface: ToolTimelineRowSelectedTextSupport.Surface
-        if textView === commandLabel { surface = .command }
-        else if textView === outputLabel { surface = .output }
-        else if textView === expandedLabel { surface = .expandedLabel }
-        else { return nil }
+        if textView === commandLabel { surface = .command } else if textView === outputLabel { surface = .output } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
         return ToolTimelineRowSelectedTextSupport.sourceContext(
             surface: surface,
             expandedContent: currentConfiguration.expandedContent,
@@ -1675,10 +1672,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedPendingScrollToBottom = false
 
     #if DEBUG
-    /// Whether the tail of the expanded content is visible in the viewport.
-    ///
-    /// Used by tests to assert auto-follow behavior without coupling to
-    /// internal scroll offsets or dispatch timing.
+    // Whether the tail of the expanded content is visible in the viewport.
+    //
+    // Used by tests to assert auto-follow behavior without coupling to
+    // internal scroll offsets or dispatch timing.
     // periphery:ignore - used by StreamingAutoFollowTests via @testable import
     var isShowingExpandedTailForTesting: Bool {
         guard expandedShouldAutoFollow,

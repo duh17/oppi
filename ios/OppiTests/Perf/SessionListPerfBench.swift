@@ -150,7 +150,7 @@ struct SessionListPerfBench {
         let workspaceId = "ws-bench"
 
         let us = Self.measureMedianUs {
-            let _ = allSessions.filter { $0.workspaceId == workspaceId }
+            _ = allSessions.filter { $0.workspaceId == workspaceId }
         }
         print("METRIC filter_workspace_200=\(Int(us))")
     }
@@ -162,7 +162,7 @@ struct SessionListPerfBench {
         let sessions = Self.generateSessions(count: 50)
 
         let us = Self.measureMedianUs {
-            let _ = sessions.filter { $0.status != .stopped }
+            _ = sessions.filter { $0.status != .stopped }
         }
         print("METRIC filter_active_50=\(Int(us))")
     }
@@ -174,7 +174,7 @@ struct SessionListPerfBench {
         let sessions = Self.generateSessions(count: 50)
 
         let us = Self.measureMedianUs {
-            let _ = sessions.filter { $0.status == .stopped }
+            _ = sessions.filter { $0.status == .stopped }
         }
         print("METRIC filter_stopped_50=\(Int(us))")
     }
@@ -190,7 +190,7 @@ struct SessionListPerfBench {
         var turnEndedDates: [String: Date] = [:]
         let now = Date()
         for (i, s) in sessions.enumerated() {
-            if i % 2 == 0 {
+            if i % 2 == 0 { // swiftlint:disable:this for_where
                 turnEndedDates[s.id] = now.addingTimeInterval(-Double(i) * 60)
             }
         }
@@ -216,7 +216,7 @@ struct SessionListPerfBench {
         let sessions = Self.generateSessions(count: 200, activeRatio: 0.0)
 
         let us = Self.measureMedianUs {
-            let _ = sessions.sorted { $0.lastActivity > $1.lastActivity }
+            _ = sessions.sorted { $0.lastActivity > $1.lastActivity }
         }
         print("METRIC sort_stopped_200=\(Int(us))")
     }
@@ -252,7 +252,7 @@ struct SessionListPerfBench {
                     let cal = Calendar.current
                     let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
                     // Negative keys for month buckets to avoid collision with day indices
-                    key = -(comps.year! * 100 + comps.month!)
+                    key = -(comps.year! * 100 + comps.month!) // swiftlint:disable:this force_unwrapping
                 }
                 buckets[key, default: []].append(session)
                 if bucketMaxDate[key] == nil {
@@ -265,7 +265,7 @@ struct SessionListPerfBench {
                 (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
             }
             // Items within each bucket are already sorted (from pre-sorted input)
-            let _ = sortedBuckets
+            _ = sortedBuckets
         }
         print("METRIC group_stopped_200=\(Int(us))")
     }
@@ -279,16 +279,16 @@ struct SessionListPerfBench {
         let us = Self.measureMedianUs {
             for session in sessions {
                 // displayTitle
-                let _ = session.displayTitle
+                _ = session.displayTitle
 
                 // modelShort
-                let _ = session.model?.split(separator: "/").last.map(String.init)
+                _ = session.model?.split(separator: "/").last.map(String.init)
 
                 // contextPercent
                 if let used = session.contextTokens,
                    let window = session.contextWindow ?? inferContextWindow(from: session.model ?? ""),
                    window > 0 {
-                    let _ = min(max(Double(used) / Double(window), 0), 1)
+                    _ = min(max(Double(used) / Double(window), 0), 1)
                 }
 
                 // costString (manual fixed-point)
@@ -297,16 +297,14 @@ struct SessionListPerfBench {
                     let cents = Int((cost * 100).rounded())
                     let d = cents / 100
                     let r = cents % 100
-                    let _ = "$\(d).\(r < 10 ? "0" : "")\(r)"
+                    _ = "$\(d).\(r < 10 ? "0" : "")\(r)"
                 } else {
                     let mils = Int((cost * 1000).rounded())
-                    if mils < 10 { let _ = "$0.00\(mils)" }
-                    else if mils < 100 { let _ = "$0.0\(mils)" }
-                    else { let _ = "$0.\(mils)" }
+                    if mils < 10 { _ = "$0.00\(mils)" } else if mils < 100 { _ = "$0.0\(mils)" } else { _ = "$0.\(mils)" }
                 }
 
                 // relativeString
-                let _ = session.lastActivity.relativeString()
+                _ = session.lastActivity.relativeString()
             }
         }
         print("METRIC row_compute_50=\(Int(us))")
@@ -326,7 +324,7 @@ struct SessionListPerfBench {
 
         let us = Self.measureMedianUs {
             for i in 0..<50 {
-                let _ = inferContextWindow(from: models[i % models.count])
+                _ = inferContextWindow(from: models[i % models.count])
             }
         }
         print("METRIC infer_context_50=\(Int(us))")
@@ -392,7 +390,7 @@ struct SessionListPerfBench {
                 } else {
                     let cal = Calendar.current
                     let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                    key = -(comps.year! * 100 + comps.month!)
+                    key = -(comps.year! * 100 + comps.month!) // swiftlint:disable:this force_unwrapping
                 }
                 buckets[key, default: []].append(session)
                 if bucketMaxDate[key] == nil {
@@ -405,20 +403,20 @@ struct SessionListPerfBench {
             }
 
             for session in activeRaw {
-                let _ = session.displayTitle
-                let _ = session.model?.split(separator: "/").last.map(String.init)
+                _ = session.displayTitle
+                _ = session.model?.split(separator: "/").last.map(String.init)
                 if let used = session.contextTokens,
                    let window = session.contextWindow ?? inferContextWindow(from: session.model ?? ""),
                    window > 0 {
-                    let _ = min(max(Double(used) / Double(window), 0), 1)
+                    _ = min(max(Double(used) / Double(window), 0), 1)
                 }
-                let _ = session.lastActivity.relativeString()
+                _ = session.lastActivity.relativeString()
             }
             for bucket in sortedBuckets {
                 for session in bucket.value {
-                    let _ = session.displayTitle
-                    let _ = session.model?.split(separator: "/").last.map(String.init)
-                    let _ = session.lastActivity.relativeString()
+                    _ = session.displayTitle
+                    _ = session.model?.split(separator: "/").last.map(String.init)
+                    _ = session.lastActivity.relativeString()
                 }
             }
         }
@@ -481,7 +479,7 @@ struct SessionListPerfBench {
                 } else {
                     let cal = Calendar.current
                     let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                    key = -(comps.year! * 100 + comps.month!)
+                    key = -(comps.year! * 100 + comps.month!) // swiftlint:disable:this force_unwrapping
                 }
                 buckets[key, default: []].append(session)
                 if bucketMaxDate[key] == nil {
@@ -494,20 +492,20 @@ struct SessionListPerfBench {
             }
 
             for session in activeRaw {
-                let _ = session.displayTitle
-                let _ = session.model?.split(separator: "/").last.map(String.init)
+                _ = session.displayTitle
+                _ = session.model?.split(separator: "/").last.map(String.init)
                 if let used = session.contextTokens,
                    let window = session.contextWindow ?? inferContextWindow(from: session.model ?? ""),
                    window > 0 {
-                    let _ = min(max(Double(used) / Double(window), 0), 1)
+                    _ = min(max(Double(used) / Double(window), 0), 1)
                 }
-                let _ = session.lastActivity.relativeString()
+                _ = session.lastActivity.relativeString()
             }
             for bucket in sortedBuckets {
                 for session in bucket.value {
-                    let _ = session.displayTitle
-                    let _ = session.model?.split(separator: "/").last.map(String.init)
-                    let _ = session.lastActivity.relativeString()
+                    _ = session.displayTitle
+                    _ = session.model?.split(separator: "/").last.map(String.init)
+                    _ = session.lastActivity.relativeString()
                 }
             }
         }
@@ -565,12 +563,6 @@ struct SessionListPerfBench {
         let count: Int
         let statusHash: Int
         let activityHash: UInt64
-
-        init(count: Int, statusHash: Int, activityHash: UInt64) {
-            self.count = count
-            self.statusHash = statusHash
-            self.activityHash = activityHash
-        }
     }
 
     private static func sessionFingerprint(_ sessions: [Session], workspaceId: String) -> SessionFingerprint {

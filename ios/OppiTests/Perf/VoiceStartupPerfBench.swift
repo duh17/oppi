@@ -51,7 +51,7 @@ struct VoiceStartupPerfBench {
         for i in 0 ..< (warmupIterations + iterations) {
             await setup()
             let start = DispatchTime.now().uptimeNanoseconds
-            try! await block()
+            try! await block() // swiftlint:disable:this force_try
             let end = DispatchTime.now().uptimeNanoseconds
             if i >= warmupIterations {
                 timings.append(end &- start)
@@ -122,7 +122,7 @@ struct VoiceStartupPerfBench {
         let us = await Self.measureMedianUsAsync(
             setup: {
                 if !manager.isRecording {
-                    try! await manager.startRecording(keyboardLanguage: "en", source: "bench")
+                    try! await manager.startRecording(keyboardLanguage: "en", source: "bench") // swiftlint:disable:this force_try
                 }
             },
             {

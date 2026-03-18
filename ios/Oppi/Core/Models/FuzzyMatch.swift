@@ -102,7 +102,7 @@ enum FuzzyMatch {
             if scored.count > limit * 4 {
                 scored.sort { $0.score > $1.score }
                 scored.removeSubrange(limit...)
-                minThreshold = scored.last!.score
+                minThreshold = scored.last?.score ?? Int.min
                 heapSize = scored.count
             }
         }
@@ -177,7 +177,7 @@ enum FuzzyMatch {
 
         // Compute filename start (last '/')
         var filenameStart = 0
-        for i in stride(from: cLen - 1, through: 0, by: -1) {
+        for i in stride(from: cLen - 1, through: 0, by: -1) { // swiftlint:disable:next for_where
             if buf[i] == 0x2F { filenameStart = i + 1; break }
         }
 
@@ -186,7 +186,8 @@ enum FuzzyMatch {
         // Stack-allocated DP rows. Pointer swap avoids per-row copy.
         let rowSize = cLen * MemoryLayout<Int>.stride
         return withUnsafeTemporaryAllocation(byteCount: rowSize * 2, alignment: MemoryLayout<Int>.alignment) { rawBuf in
-            let base = rawBuf.baseAddress!.assumingMemoryBound(to: Int.self)
+            guard let baseAddr = rawBuf.baseAddress else { return nil }
+            let base = baseAddr.assumingMemoryBound(to: Int.self)
             let rowA = base
             let rowB = base + cLen
             for i in 0..<cLen { rowA[i] = NEG_INF; rowB[i] = NEG_INF }
@@ -271,7 +272,7 @@ enum FuzzyMatch {
             }
         }
         var filenameStart = 0
-        for i in stride(from: cLen - 1, through: 0, by: -1) {
+        for i in stride(from: cLen - 1, through: 0, by: -1) { // swiftlint:disable:next for_where
             if cBytes[i] == 0x2F { filenameStart = i + 1; break }
         }
 

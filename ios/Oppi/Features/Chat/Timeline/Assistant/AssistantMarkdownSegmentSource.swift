@@ -323,8 +323,8 @@ final class AssistantMarkdownSegmentSource {
     /// Count newlines via UTF-8 byte scan. Avoids the `components(separatedBy:)` array allocation.
     private static func countNewlines(_ string: String) -> Int {
         var count = 0
-        for byte in string.utf8 {
-            if byte == UInt8(ascii: "\n") { count += 1 }
+        for byte in string.utf8 where byte == UInt8(ascii: "\n") {
+            count += 1
         }
         return count
     }

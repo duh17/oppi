@@ -261,13 +261,7 @@ struct FlatSegmentBuildTests {
             return
         }
         // Find a run that contains strikethrough
-        var hasStrikethrough = false
-        for run in attr.runs {
-            if run.strikethroughStyle == .single {
-                hasStrikethrough = true
-                break
-            }
-        }
+        let hasStrikethrough = attr.runs.contains { $0.strikethroughStyle == .single }
         #expect(hasStrikethrough, "Checked task item text should have strikethrough")
     }
 }
@@ -411,7 +405,7 @@ struct MarkdownDocumentRenderingTests {
 
 @Suite("FlatSegment image URL resolution")
 struct FlatSegmentImageResolutionTests {
-    private let baseURL = URL(string: "https://server.example.com")!
+    private let baseURL = URL(string: "https://server.example.com")! // swiftlint:disable:this force_unwrapping
     private let workspaceID = "ws-abc123"
 
     // MARK: - Image-only paragraph promotion
@@ -513,7 +507,7 @@ struct FlatSegmentImageResolutionTests {
             from: blocks,
             themeID: .dark,
             workspaceID: "my-workspace",
-            serverBaseURL: URL(string: "https://pi.local:8080")!
+            serverBaseURL: URL(string: "https://pi.local:8080")! // swiftlint:disable:this force_unwrapping
         )
         if case .image(_, let url) = segments[0] {
             let abs = url.absoluteString

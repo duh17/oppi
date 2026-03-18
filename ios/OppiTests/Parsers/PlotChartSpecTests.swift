@@ -787,7 +787,7 @@ struct PlotChartSpecColorScaleTests {
             specObject[key] = value
         }
         let args: [String: JSONValue] = ["spec": .object(specObject)]
-        return PlotChartSpec.fromPlotArgs(args)!
+        return PlotChartSpec.fromPlotArgs(args)! // swiftlint:disable:this force_unwrapping
     }
 }
 
@@ -869,6 +869,6 @@ struct PlotChartSpecAnnotationTests {
             specObject[key] = value
         }
         let args: [String: JSONValue] = ["spec": .object(specObject)]
-        return PlotChartSpec.fromPlotArgs(args)!
+        return PlotChartSpec.fromPlotArgs(args)! // swiftlint:disable:this force_unwrapping
     }
 }

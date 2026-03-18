@@ -234,7 +234,7 @@ struct ToolRowStreamingAutoFollowCallbackTests {
 
 @Suite("Horizontal scroll suppressed during streaming")
 @MainActor
-struct StreamingHorizontalScrollSuppressionTests {
+struct HScrollSuppressionTests {
 
     // MARK: - Render strategy output
 
