@@ -429,6 +429,9 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         tv.textContainer.lineFragmentPadding = 0
         tv.textContainer.lineBreakMode = .byCharWrapping
         tv.backgroundColor = .clear
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = tv.layoutManager
     }
 
     private func setupViews() {

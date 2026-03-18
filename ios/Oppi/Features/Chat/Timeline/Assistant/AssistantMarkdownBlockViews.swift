@@ -58,6 +58,9 @@ final class NativeCodeBlockView: UIView {
         tv.backgroundColor = .clear
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = tv.layoutManager
         return tv
     }()
 
@@ -269,6 +272,9 @@ final class NativeTableBlockView: UIView {
         tv.backgroundColor = .clear
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = tv.layoutManager
         return tv
     }()
 
