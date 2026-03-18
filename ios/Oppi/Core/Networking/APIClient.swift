@@ -764,6 +764,15 @@ actor APIClient {
         return try JSONDecoder().decode(FileSearchResponse.self, from: data)
     }
 
+    /// Fetch the complete file index for client-side fuzzy search.
+    ///
+    /// Returns all workspace-relative file paths in a single response.
+    /// The client caches this and filters locally for instant search feedback.
+    func fetchFileIndex(workspaceId: String) async throws -> FileIndexResponse {
+        let data = try await get("/workspaces/\(workspaceId)/file-index")
+        return try JSONDecoder().decode(FileIndexResponse.self, from: data)
+    }
+
     /// Fetch a workspace file in browse mode (text/code files, not just images).
     ///
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.

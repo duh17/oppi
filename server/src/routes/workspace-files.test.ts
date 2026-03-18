@@ -13,6 +13,7 @@ import {
   getContentType,
   listDirectoryEntries,
   searchWorkspaceFiles,
+  getFileIndex,
 } from "./workspace-files.js";
 
 // MARK: - ALLOWED_EXTENSIONS
@@ -763,5 +764,90 @@ describe("resolveWorkspaceFilePath — special characters", () => {
     const r2 = await resolveWorkspaceFilePath(tmpRoot, "file [draft].md");
     expect(r1).not.toBeNull();
     expect(r2).not.toBeNull();
+  });
+});
+
+// MARK: - getFileIndex
+
+describe("getFileIndex", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-index-"));
+    mkdirSync(join(tmpRoot, "src", "components"), { recursive: true });
+    mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(tmpRoot, "README.md"), "# Hello");
+    writeFileSync(join(tmpRoot, "package.json"), "{}");
+    writeFileSync(join(tmpRoot, "src", "index.ts"), "");
+    writeFileSync(join(tmpRoot, "src", "App.tsx"), "");
+    writeFileSync(join(tmpRoot, "src", "components", "Button.tsx"), "");
+    writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "");
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("returns flat list of file paths", async () => {
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths.length).toBeGreaterThanOrEqual(4);
+    expect(result.paths).toContain("README.md");
+    expect(result.paths).toContain("src/index.ts");
+    expect(result.paths).toContain("src/App.tsx");
+    expect(result.paths).toContain("src/components/Button.tsx");
+  });
+
+  test("skips files in ignored directories (walk fallback)", async () => {
+    const result = await getFileIndex(tmpRoot);
+    const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
+    expect(hasNodeModules).toBe(false);
+  });
+
+  test("returns truncated: false for small file sets", async () => {
+    const result = await getFileIndex(tmpRoot);
+    expect(result.truncated).toBe(false);
+  });
+
+  test("returns consistent results on second call (cache hit)", async () => {
+    const first = await getFileIndex(tmpRoot);
+    const second = await getFileIndex(tmpRoot);
+    expect(second.paths).toEqual(first.paths);
+    expect(second.truncated).toBe(first.truncated);
+  });
+});
+
+describe("getFileIndex with git repo", () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-git-index-"));
+    execSync("git init", { cwd: tmpRoot, stdio: "ignore" });
+    execSync("git config user.email test@test.com", { cwd: tmpRoot, stdio: "ignore" });
+    execSync("git config user.name Test", { cwd: tmpRoot, stdio: "ignore" });
+
+    mkdirSync(join(tmpRoot, "src"), { recursive: true });
+    mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(tmpRoot, "README.md"), "# Hello");
+    writeFileSync(join(tmpRoot, "src", "app.ts"), "");
+    writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "");
+    writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\n");
+    execSync("git add -A && git commit -m init", { cwd: tmpRoot, stdio: "ignore" });
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test("uses git ls-files and respects .gitignore", async () => {
+    const result = await getFileIndex(tmpRoot);
+    const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
+    expect(hasNodeModules).toBe(false);
+  });
+
+  test("includes tracked and untracked non-ignored files", async () => {
+    writeFileSync(join(tmpRoot, "src", "new.ts"), "");
+    const result = await getFileIndex(tmpRoot);
+    expect(result.paths).toContain("src/new.ts");
+    expect(result.paths).toContain("src/app.ts");
   });
 });

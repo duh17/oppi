@@ -7,7 +7,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
-import type { DirectoryListingResponse, FileEntry, FileSearchResponse } from "../types.js";
+import type {
+  DirectoryListingResponse,
+  FileEntry,
+  FileIndexResponse,
+  FileSearchResponse,
+} from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -312,19 +317,7 @@ export async function searchWorkspaceFiles(
   if (!query.trim()) return { entries: [], truncated: false };
 
   const queryLower = query.toLowerCase().trim();
-  let filePaths: string[];
-
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["ls-files", "--cached", "--others", "--exclude-standard"],
-      { cwd: workspaceRoot, maxBuffer: 10 * 1024 * 1024, timeout: GIT_TIMEOUT_MS },
-    );
-    filePaths = stdout.split("\n").filter(Boolean);
-  } catch {
-    // Not a git repo or git not available — fall back to manual walk
-    filePaths = await walkDirectoryForSearch(workspaceRoot);
-  }
+  const filePaths = await collectFilePaths(workspaceRoot);
 
   const matches = filePaths.filter((p) => p.toLowerCase().includes(queryLower));
   const truncated = matches.length > MAX_SEARCH_RESULTS;
@@ -380,6 +373,49 @@ async function walkDirectoryForSearch(root: string): Promise<string[]> {
   await walk(root, 0);
   return results;
 }
+
+// ─── File Index Cache ───
+
+const FILE_INDEX_TTL_MS = 30_000; // 30 seconds
+const MAX_INDEX_PATHS = 50_000;
+
+interface CachedFileIndex {
+  paths: string[];
+  truncated: boolean;
+  timestamp: number;
+}
+
+const fileIndexCache = new Map<string, CachedFileIndex>();
+
+/** Collect all workspace-relative file paths (no stat calls, no sensitive filtering). */
+async function collectFilePaths(workspaceRoot: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard"],
+      { cwd: workspaceRoot, maxBuffer: 10 * 1024 * 1024, timeout: GIT_TIMEOUT_MS },
+    );
+    return stdout.split("\n").filter(Boolean);
+  } catch {
+    return walkDirectoryForSearch(workspaceRoot);
+  }
+}
+
+/** Get file index for a workspace, using cache when fresh. */
+export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResponse> {
+  const cached = fileIndexCache.get(workspaceRoot);
+  if (cached && Date.now() - cached.timestamp < FILE_INDEX_TTL_MS) {
+    return { paths: cached.paths, truncated: cached.truncated };
+  }
+
+  const allPaths = await collectFilePaths(workspaceRoot);
+  const truncated = allPaths.length > MAX_INDEX_PATHS;
+  const paths = truncated ? allPaths.slice(0, MAX_INDEX_PATHS) : allPaths;
+
+  fileIndexCache.set(workspaceRoot, { paths, truncated, timestamp: Date.now() });
+  return { paths, truncated };
+}
+
 
 export function createWorkspaceFileRoutes(
   ctx: RouteContext,
@@ -522,6 +558,18 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
+  async function handleFileIndex(wsId: string, res: ServerResponse): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const workspaceRoot = resolveSdkSessionCwd(workspace);
+    const response = await getFileIndex(workspaceRoot);
+    helpers.json(res, response);
+  }
+
   async function handleSearch(wsId: string, query: string, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
@@ -540,6 +588,13 @@ export function createWorkspaceFileRoutes(
   }
 
   return async ({ method, path, url, res }) => {
+    // GET /workspaces/:id/file-index — flat path list for client-side fuzzy search
+    const indexMatch = path.match(/^\/workspaces\/([^/]+)\/file-index$/);
+    if (indexMatch && method === "GET") {
+      await handleFileIndex(indexMatch[1], res);
+      return true;
+    }
+
     const searchMatch = path.match(/^\/workspaces\/([^/]+)\/files$/);
     if (searchMatch && method === "GET") {
       const searchQuery = url.searchParams.get("search");
