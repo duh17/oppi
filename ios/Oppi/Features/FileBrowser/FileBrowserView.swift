@@ -3,7 +3,7 @@ import SwiftUI
 /// Workspace file browser — entry point view.
 ///
 /// Shows directory contents with navigation into subdirectories,
-/// fuzzy search (fzf-style), and tap-to-view for text/code files.
+/// search, and tap-to-view for text/code files.
 ///
 /// Search uses a cached file index fetched once from the server.
 /// All filtering happens locally on-device for instant feedback.
@@ -43,7 +43,7 @@ struct FileBrowserView: View {
         .background(Color.themeBgDark)
         .navigationTitle(isRoot ? "Files" : lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Fuzzy search files")
+        .searchable(text: $searchText, prompt: "Search")
         .onChange(of: searchText) { _, newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
