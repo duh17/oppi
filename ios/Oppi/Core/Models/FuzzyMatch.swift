@@ -15,6 +15,7 @@
 enum FuzzyMatch {
 
     /// Result of a successful fuzzy match.
+    /// `positions` are unicode scalar indices suitable for use with `String.unicodeScalars`.
     struct Result: Sendable {
         let score: Int
         let positions: [Int]
@@ -54,11 +55,13 @@ enum FuzzyMatch {
     // MARK: - Public API
 
     /// Fuzzy-match `query` against `candidate`. Returns nil if no subsequence match.
+    /// Positions are unicode scalar indices for use with `String.unicodeScalars`.
     static func match(query: String, candidate: String) -> Result? {
         guard !query.isEmpty, !candidate.isEmpty else { return nil }
         let qBytes = Array(query.utf8).map { asciiLower($0) }
         let cBytes = Array(candidate.utf8)
-        return matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true)
+        guard let r = matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true) else { return nil }
+        return Result(score: r.score, positions: byteToScalarPositions(r.positions, candidate: candidate))
     }
 
     /// Score a batch of candidates, returning top matches sorted by score.
@@ -141,8 +144,9 @@ enum FuzzyMatch {
             let candidate = candidates[sc.index]
             let cBytes = Array(candidate.utf8)
             if let r = matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true) {
+                let scalarPositions = byteToScalarPositions(r.positions, candidate: candidate)
                 results.append(ScoredPath(path: candidate, index: sc.index,
-                                          score: r.score, positions: r.positions))
+                                          score: r.score, positions: scalarPositions))
             } else {
                 results.append(ScoredPath(path: candidate, index: sc.index,
                                           score: sc.score, positions: []))
@@ -155,7 +159,27 @@ enum FuzzyMatch {
         let path: String
         let index: Int
         let score: Int
+        /// Unicode scalar indices for highlighting. Use with `String.unicodeScalars`.
         let positions: [Int]
+    }
+
+    // MARK: - Position Conversion
+
+    /// Convert UTF-8 byte positions to unicode scalar positions.
+    /// Fast path for all-ASCII strings (no conversion needed).
+    private static func byteToScalarPositions(_ bytePositions: [Int], candidate: String) -> [Int] {
+        // Fast path: ASCII-only strings have 1:1 byte-to-scalar mapping
+        if candidate.utf8.allSatisfy({ $0 < 0x80 }) { return bytePositions }
+
+        // Slow path: build byte offset → scalar index mapping
+        var byteToScalar = [Int: Int]()
+        byteToScalar.reserveCapacity(candidate.unicodeScalars.count)
+        var byteOffset = 0
+        for (scalarIdx, scalar) in candidate.unicodeScalars.enumerated() {
+            byteToScalar[byteOffset] = scalarIdx
+            byteOffset += scalar.utf8.count
+        }
+        return bytePositions.map { byteToScalar[$0] ?? $0 }
     }
 
     // MARK: - Core: Score-Only on UnsafeBufferPointer (hot path)
