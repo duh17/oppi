@@ -344,6 +344,11 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
 
     let autoresearchMode = false;
     let lastRunChecks: { pass: boolean; output: string; duration: number } | null = null;
+
+    // Effective cwd for git operations. Updated by run_experiment when the
+    // command starts with `cd <path> &&`. This lets worktree-based sessions
+    // commit to the worktree instead of the workspace root.
+    let effectiveCwd = workspaceCwd;
     let experimentsThisSession = 0;
     let autoResumeTurns = 0;
     let lastAutoResumeTime = 0;
@@ -363,7 +368,11 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
         currentSegment: 0,
       };
 
-      const jsonlPath = path.join(workspaceCwd, "autoresearch.jsonl");
+      // Try effectiveCwd first (worktree), fall back to workspaceCwd (main checkout).
+      let jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
+      if (!fs.existsSync(jsonlPath)) {
+        jsonlPath = path.join(workspaceCwd, "autoresearch.jsonl");
+      }
       try {
         if (fs.existsSync(jsonlPath)) {
           let segment = 0;
@@ -420,9 +429,9 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
     pi.on("before_agent_start", async (event) => {
       if (!autoresearchMode) return;
 
-      const mdPath = path.join(workspaceCwd, "autoresearch.md");
-      const ideasPath = path.join(workspaceCwd, "autoresearch.ideas.md");
-      const checksPath = path.join(workspaceCwd, "autoresearch.checks.sh");
+      const mdPath = path.join(effectiveCwd, "autoresearch.md");
+      const ideasPath = path.join(effectiveCwd, "autoresearch.ideas.md");
+      const checksPath = path.join(effectiveCwd, "autoresearch.checks.sh");
       const hasIdeas = fs.existsSync(ideasPath);
       const hasChecks = fs.existsSync(checksPath);
 
@@ -460,7 +469,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
 
       if (autoResumeTurns >= MAX_AUTORESUME_TURNS) return;
 
-      const ideasPath = path.join(workspaceCwd, "autoresearch.ideas.md");
+      const ideasPath = path.join(effectiveCwd, "autoresearch.ideas.md");
       const hasIdeas = fs.existsSync(ideasPath);
       let resumeMsg =
         "Autoresearch loop ended (likely context limit). Resume the experiment loop — read autoresearch.md and git log for context.";
@@ -513,7 +522,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
         state.secondaryMetrics = [];
 
         try {
-          const jsonlPath = path.join(workspaceCwd, "autoresearch.jsonl");
+          const jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
           const config = JSON.stringify({
             type: "config",
             name: state.name,
@@ -575,6 +584,23 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
       async execute(_toolCallId, params, signal, onUpdate) {
         const timeout = (params.timeout_seconds ?? 600) * 1000;
 
+        // Detect effective cwd from commands like `cd /path/to/worktree && ./autoresearch.sh`
+        // This ensures log_experiment's git operations target the same directory.
+        const cdMatch = params.command.match(/^cd\s+("([^"]+)"|'([^']+)'|(\S+))\s*&&/);
+        if (cdMatch) {
+          const rawPath = cdMatch[2] ?? cdMatch[3] ?? cdMatch[4];
+          const resolved = rawPath.startsWith("/")
+            ? rawPath
+            : path.resolve(workspaceCwd, rawPath);
+          // Expand ~ and $HOME
+          const expanded = resolved
+            .replace(/^~/, process.env.HOME ?? "~")
+            .replace(/\$HOME/g, process.env.HOME ?? "");
+          if (fs.existsSync(expanded)) {
+            effectiveCwd = expanded;
+          }
+        }
+
         onUpdate?.({
           content: [{ type: "text", text: `Running: ${params.command}` }],
           details: { phase: "running" } as unknown,
@@ -586,7 +612,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
           result = await pi.exec("bash", ["-c", params.command], {
             signal,
             timeout,
-            cwd: workspaceCwd,
+            cwd: effectiveCwd,
           });
         } catch (e) {
           return {
@@ -622,7 +648,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
         let checksTimedOut = false;
         let checksOutput = "";
         let checksDuration = 0;
-        const checksPath = path.join(workspaceCwd, "autoresearch.checks.sh");
+        const checksPath = path.join(effectiveCwd, "autoresearch.checks.sh");
 
         if (benchmarkPassed && fs.existsSync(checksPath)) {
           const checksTimeout = (params.checks_timeout_seconds ?? 300) * 1000;
@@ -631,7 +657,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
             const checksResult = await pi.exec("bash", [checksPath], {
               signal,
               timeout: checksTimeout,
-              cwd: workspaceCwd,
+              cwd: effectiveCwd,
             });
             checksDuration = (Date.now() - ct0) / 1000;
             checksTimedOut = !!checksResult.killed;
@@ -848,7 +874,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
                 "-c",
                 `git add -A && git diff --cached --quiet && echo "NOTHING_TO_COMMIT" || git commit -m ${JSON.stringify(commitMsg)}`,
               ],
-              { cwd: workspaceCwd, timeout: 10000 },
+              { cwd: effectiveCwd, timeout: 10000 },
             );
             const gitOutput = (gitResult.stdout + gitResult.stderr).trim();
 
@@ -861,7 +887,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
               // Update commit hash to actual
               try {
                 const shaResult = await pi.exec("git", ["rev-parse", "--short=7", "HEAD"], {
-                  cwd: workspaceCwd,
+                  cwd: effectiveCwd,
                   timeout: 5000,
                 });
                 const newSha = (shaResult.stdout || "").trim();
@@ -883,7 +909,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
 
         // Persist to autoresearch.jsonl
         try {
-          const jsonlPath = path.join(workspaceCwd, "autoresearch.jsonl");
+          const jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
           fs.appendFileSync(
             jsonlPath,
             JSON.stringify({ run: state.results.length, ...experiment }) + "\n",
