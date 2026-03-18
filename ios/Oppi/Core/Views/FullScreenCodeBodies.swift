@@ -166,6 +166,9 @@ final class NativeFullScreenCodeBody: UIView {
         codeTextView.textContainer.lineBreakMode = .byClipping
         codeTextView.textContainer.widthTracksTextView = false
         codeTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = codeTextView.layoutManager
         codeTextView.text = content
         codeTextView.delegate = self
         contentContainer.addSubview(codeTextView)
@@ -328,6 +331,9 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.textContainer.lineBreakMode = .byClipping
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = diffTextView.layoutManager
         diffTextView.delegate = self
         let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
         let diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath ?? "diff.txt")
@@ -482,6 +488,9 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         commandView.textContainer.lineFragmentPadding = 0
         commandView.backgroundColor = UIColor(palette.bgHighlight)
         commandView.layer.cornerRadius = 8
+        // Force TextKit 1. TextKit 2 can render the first character with
+        // textColor instead of the attributed string's foregroundColor.
+        _ = commandView.layoutManager
         commandView.delegate = self
 
         outputView.translatesAutoresizingMaskIntoConstraints = false
@@ -491,6 +500,8 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         outputView.backgroundColor = .clear
         outputView.textContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
         outputView.textContainer.lineFragmentPadding = 0
+        // Force TextKit 1 for attributed text with custom foreground colors.
+        _ = outputView.layoutManager
         outputView.font = FullScreenCodeTypography.codeFont
         outputView.textColor = UIColor(palette.fg)
         outputView.delegate = self
