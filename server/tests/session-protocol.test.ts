@@ -8,7 +8,7 @@ import {
   applyMessageEndToSession,
   type TranslationContext,
 } from "../src/session-protocol.js";
-import { composeModelId } from "../src/sessions.js";
+import { composeModelId } from "../src/session-state.js";
 
 function makeSession(): Session {
   const now = Date.now();
