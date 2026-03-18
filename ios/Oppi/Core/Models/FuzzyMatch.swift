@@ -5,212 +5,152 @@
 /// (after `/`, `.`, `_`, `-`), camelCase transitions, and filename matches.
 ///
 /// Algorithm:
-/// 1. Quick scan — verify all query chars exist in candidate (in order). O(n).
-/// 2. DP scoring — find optimal match positions that maximize total score. O(n*m).
-/// 3. Backtrack — extract the actual matched positions for highlighting.
+/// 1. Quick scan — verify all query chars exist in candidate (in order). O(c).
+/// 2. DP scoring — running-max DP finds optimal match positions. O(q*c).
+/// 3. Backtrack — extract the actual matched positions for highlighting. O(q).
+///
+/// search() uses a two-phase approach:
+///   Phase 1: score-only pass over all candidates (no backtracking allocation).
+///   Phase 2: full match with positions only for the top-K results.
 enum FuzzyMatch {
 
     /// Result of a successful fuzzy match.
     struct Result: Sendable {
-        /// Overall match score (higher = better match).
         let score: Int
-        /// Indices into the candidate string where query characters matched.
         let positions: [Int]
     }
 
     // MARK: - Scoring Constants
 
-    /// Bonus for consecutive matched characters.
     private static let consecutiveBonus = 8
-    /// Bonus for matching at a word boundary (after separator or camelCase).
     private static let boundaryBonus = 10
-    /// Bonus for matching the first character of the candidate.
     private static let firstCharBonus = 6
-    /// Bonus for matching in the filename (after last `/`).
     private static let filenameBonus = 5
-    /// Penalty per gap character between matches.
     private static let gapPenalty = -1
-    /// Base score per matched character.
     private static let matchBase = 1
+
+    // MARK: - ASCII Helpers
+
+    @inline(__always)
+    private static func asciiLower(_ b: UInt8) -> UInt8 {
+        (b >= 0x41 && b <= 0x5A) ? b + 0x20 : b
+    }
+
+    @inline(__always)
+    private static func isSepByte(_ b: UInt8) -> Bool {
+        b == 0x2F || b == 0x2E || b == 0x5F || b == 0x2D || b == 0x20
+    }
+
+    @inline(__always)
+    private static func isUpperByte(_ b: UInt8) -> Bool {
+        b >= 0x41 && b <= 0x5A
+    }
+
+    @inline(__always)
+    private static func isLowerByte(_ b: UInt8) -> Bool {
+        b >= 0x61 && b <= 0x7A
+    }
 
     // MARK: - Public API
 
-    /// Attempt to fuzzy-match `query` against `candidate`.
-    ///
-    /// Returns `nil` if the query characters don't all appear (in order) in the candidate.
-    /// Otherwise returns a `Result` with a score and the matched character positions.
+    /// Fuzzy-match `query` against `candidate`. Returns nil if no subsequence match.
     static func match(query: String, candidate: String) -> Result? {
         guard !query.isEmpty, !candidate.isEmpty else { return nil }
-
-        let queryChars = Array(query.lowercased().unicodeScalars)
-        let candChars = Array(candidate.unicodeScalars)
-        let candLower = Array(candidate.lowercased().unicodeScalars)
-        let qLen = queryChars.count
-        let cLen = candChars.count
-
-        guard qLen <= cLen else { return nil }
-
-        // Phase 1: quick scan — all query chars present in order?
-        var qi = 0
-        for ci in 0..<cLen {
-            if qi < qLen, candLower[ci] == queryChars[qi] {
-                qi += 1
-            }
-        }
-        guard qi == qLen else { return nil }
-
-        // Pre-compute boundary flags and filename start
-        let boundaries = computeBoundaries(candChars)
-        let filenameStart = computeFilenameStart(candChars)
-
-        // Phase 2: DP scoring
-        // dp[q][c] = best score matching query[0..<q] against candidate[0..<c]
-        // Using two rows to save memory.
-        let NEG_INF = Int.min / 2
-
-        // score[q][c]: best score ending with query[q-1] matched at candidate[c-1]
-        // We need to track: (score, consecutive count) for the bonus calculation.
-        // Simplified approach: compute score matrix with match/skip choices.
-
-        // For each (qi, ci) where query[qi] matches candidate[ci]:
-        //   matchScore = bestScoreEndingBefore(qi-1, ci-1) + charScore(qi, ci, consecutive?)
-        // We pick the assignment that maximizes total score.
-
-        // Track: for each query position qi (0-indexed), the best score achievable
-        // matching query[0..qi] to some prefix of candidate, along with the last
-        // matched candidate index.
-
-        // Full DP: score[qi][ci] = best score matching query[0..qi] with last match at ci
-        //   score[qi][ci] defined only when candLower[ci] == queryChars[qi]
-        //   score[qi][ci] = max over valid ci' < ci of:
-        //     score[qi-1][ci'] + gap(ci' → ci) + charBonus(qi, ci, consecutive: ci == ci'+1)
-
-        // This is O(qLen * cLen) which is fine for file paths (both small).
-
-        // Flatten to 1D arrays for performance
-        // prevBest[ci] = best score for matching query[0..qi-1] ending at candidate ci
-        // prevBestAny = max(prevBest[0..ci]) = best score achievable for query[0..qi-1]
-
-        var prevRow = [Int](repeating: NEG_INF, count: cLen)
-        var currRow = [Int](repeating: NEG_INF, count: cLen)
-        // Track the previous match index for backtracking
-        var prevFrom = [[Int]](repeating: [Int](repeating: -1, count: cLen), count: qLen)
-
-        for qi in 0..<qLen {
-            for ci in qi..<cLen { // ci >= qi (can't match more query chars than candidate chars)
-                guard candLower[ci] == queryChars[qi] else { continue }
-
-                var score: Int
-                if qi == 0 {
-                    // First query char: no previous match needed
-                    score = charScore(qi: qi, ci: ci, consecutive: false,
-                                      boundaries: boundaries, filenameStart: filenameStart)
-                    // Gap from start
-                    if ci > 0 {
-                        score += ci * gapPenalty
-                    }
-                    prevFrom[qi][ci] = -1
-                } else {
-                    // Need a previous match at some ci' < ci
-                    // Update bestPrevScore/bestPrevIdx up to ci-1
-                    // We process ci in order, so we can incrementally track the best
-                    // previous score including the gap penalty up to position ci.
-
-                    // Actually, let's track best prev score correctly.
-                    // We want: max over ci' < ci of (prevRow[ci'] + gap(ci', ci))
-                    // gap(ci', ci) = (ci - ci' - 1) * gapPenalty
-
-                    // Since gapPenalty is negative, the best prev is the one maximizing:
-                    //   prevRow[ci'] + (ci - ci' - 1) * gapPenalty
-                    // = prevRow[ci'] - ci' * gapPenalty + (ci - 1) * gapPenalty
-                    // = (prevRow[ci'] - ci' * gapPenalty) + (ci - 1) * gapPenalty
-
-                    // So we can track: maxAdjusted = max(prevRow[ci'] + ci' * |gapPenalty|)
-                    // and then: bestScore = maxAdjusted - (ci - 1) * |gapPenalty|
-                    // But this complicates consecutive tracking.
-
-                    // Simpler: just track best-so-far with recalculation.
-                    // For file paths (cLen < 200 typically), this is fast enough.
-
-                    // Scan all valid previous positions
-                    var best = NEG_INF
-                    var bestIdx = -1
-                    for pi in (qi - 1)..<ci {
-                        guard prevRow[pi] > NEG_INF else { continue }
-                        let gapSize = ci - pi - 1
-                        let adjusted = prevRow[pi] + gapSize * gapPenalty
-                        if adjusted > best {
-                            best = adjusted
-                            bestIdx = pi
-                        }
-                    }
-
-                    guard best > NEG_INF else { continue }
-
-                    let isConsecutive = bestIdx == ci - 1
-                    score = best + charScore(qi: qi, ci: ci, consecutive: isConsecutive,
-                                             boundaries: boundaries, filenameStart: filenameStart)
-                    prevFrom[qi][ci] = bestIdx
-                }
-
-                currRow[ci] = score
-            }
-
-            // Swap rows
-            prevRow = currRow
-            currRow = [Int](repeating: NEG_INF, count: cLen)
-        }
-
-        // Find best final score
-        var bestScore = NEG_INF
-        var bestEnd = -1
-        for ci in (qLen - 1)..<cLen where prevRow[ci] > bestScore {
-            bestScore = prevRow[ci]
-            bestEnd = ci
-        }
-
-        guard bestScore > NEG_INF else { return nil }
-
-        // Backtrack to find positions
-        var positions = [Int](repeating: 0, count: qLen)
-        var ci = bestEnd
-        for qi in stride(from: qLen - 1, through: 0, by: -1) {
-            positions[qi] = ci
-            ci = prevFrom[qi][ci]
-        }
-
-        return Result(score: bestScore, positions: positions)
+        let qBytes = Array(query.utf8).map { asciiLower($0) }
+        let cBytes = Array(candidate.utf8)
+        return matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true)
     }
 
-    /// Score a batch of candidates against a query, returning matched results sorted by score.
-    ///
-    /// This is the main entry point for the file browser. Filters and sorts in one pass.
-    /// - Parameter limit: Maximum number of results to return.
+    /// Score a batch of candidates, returning top matches sorted by score.
     static func search(query: String, candidates: [String], limit: Int = 100) -> [ScoredPath] {
         guard !query.isEmpty else { return [] }
 
-        var results: [ScoredPath] = []
-        results.reserveCapacity(min(candidates.count, limit * 2))
+        let qBytes = Array(query.utf8).map { asciiLower($0) }
+        let qLen = qBytes.count
+
+        // Phase 1: score-only pass — no position tracking, no prevFrom allocation.
+        struct Scored {
+            let index: Int
+            let score: Int
+        }
+        var scored: [Scored] = []
+        scored.reserveCapacity(min(candidates.count, limit * 2))
+
+        // Maintain a running min-score threshold: once we have `limit` results,
+        // skip candidates that score below the worst in the current top-K.
+        var minThreshold = Int.min
+        var heapSize = 0
 
         for (index, candidate) in candidates.enumerated() {
-            guard let result = match(query: query, candidate: candidate) else { continue }
-            results.append(ScoredPath(path: candidate, index: index, score: result.score, positions: result.positions))
+            var s: Int?
+            candidate.utf8.withContiguousStorageIfAvailable { buf in
+                s = scoreBuffer(qLower: qBytes, qLen: qLen, buf: buf)
+            }
+            if s == nil {
+                let bytes = Array(candidate.utf8)
+                bytes.withUnsafeBufferPointer { buf in
+                    s = scoreBuffer(qLower: qBytes, qLen: qLen, buf: buf)
+                }
+            }
+            guard let score = s else { continue }
+
+            if heapSize >= limit && score <= minThreshold { continue }
+            scored.append(Scored(index: index, score: score))
+            heapSize += 1
+
+            // Periodically compact to keep memory bounded
+            if scored.count > limit * 4 {
+                scored.sort { $0.score > $1.score }
+                scored.removeSubrange(limit...)
+                minThreshold = scored.last!.score
+                heapSize = scored.count
+            }
         }
 
-        // Sort by score descending, then by path length ascending (shorter = more relevant)
-        results.sort { a, b in
+        // Partial sort: only fully sort the top `limit` elements.
+        // For 194K candidates with limit=100, this avoids O(n log n) full sort.
+        if scored.count > limit {
+            scored.withUnsafeMutableBufferPointer { buf in
+                // nth_element-style: partition around the limit-th element
+                var lo = 0, hi = buf.count - 1
+                let target = limit
+                while lo < hi {
+                    let pivot = buf[Int.random(in: lo...hi)]
+                    var i = lo, j = hi
+                    while i <= j {
+                        while buf[i].score > pivot.score || (buf[i].score == pivot.score && candidates[buf[i].index].count < candidates[pivot.index].count) { i += 1 }
+                        while buf[j].score < pivot.score || (buf[j].score == pivot.score && candidates[buf[j].index].count > candidates[pivot.index].count) { j -= 1 }
+                        if i <= j { buf.swapAt(i, j); i += 1; j -= 1 }
+                    }
+                    if j < target { lo = i }
+                    if i > target { hi = j }
+                }
+            }
+            scored.removeSubrange(limit...)
+        }
+        // Sort the top `limit` results
+        scored.sort { a, b in
             if a.score != b.score { return a.score > b.score }
-            return a.path.count < b.path.count
+            return candidates[a.index].count < candidates[b.index].count
         }
 
-        if results.count > limit {
-            results.removeSubrange(limit...)
+        // Phase 2: compute positions only for top results.
+        var results: [ScoredPath] = []
+        results.reserveCapacity(scored.count)
+        for sc in scored {
+            let candidate = candidates[sc.index]
+            let cBytes = Array(candidate.utf8)
+            if let r = matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true) {
+                results.append(ScoredPath(path: candidate, index: sc.index,
+                                          score: r.score, positions: r.positions))
+            } else {
+                results.append(ScoredPath(path: candidate, index: sc.index,
+                                          score: sc.score, positions: []))
+            }
         }
-
         return results
     }
 
-    /// A scored search result with the original path and match positions.
     struct ScoredPath: Sendable {
         let path: String
         let index: Int
@@ -218,48 +158,204 @@ enum FuzzyMatch {
         let positions: [Int]
     }
 
-    // MARK: - Internals
+    // MARK: - Core: Score-Only on UnsafeBufferPointer (hot path)
+
+    /// Score a candidate against a query using zero-copy buffer access.
+    /// Returns the score or nil if no match. No position tracking.
+    private static func scoreBuffer(
+        qLower: [UInt8], qLen: Int, buf: UnsafeBufferPointer<UInt8>
+    ) -> Int? {
+        let cLen = buf.count
+        guard qLen > 0, cLen >= qLen else { return nil }
+
+        // Quick scan: all query chars present in order?
+        var qi = 0
+        for ci in 0..<cLen {
+            if qi < qLen, asciiLower(buf[ci]) == qLower[qi] { qi += 1 }
+        }
+        guard qi == qLen else { return nil }
+
+        // Compute filename start (last '/')
+        var filenameStart = 0
+        for i in stride(from: cLen - 1, through: 0, by: -1) {
+            if buf[i] == 0x2F { filenameStart = i + 1; break }
+        }
+
+        let NEG_INF = Int.min / 2
+
+        // Stack-allocated DP rows. Pointer swap avoids per-row copy.
+        let rowSize = cLen * MemoryLayout<Int>.stride
+        return withUnsafeTemporaryAllocation(byteCount: rowSize * 2, alignment: MemoryLayout<Int>.alignment) { rawBuf in
+            let base = rawBuf.baseAddress!.assumingMemoryBound(to: Int.self)
+            let rowA = base
+            let rowB = base + cLen
+            for i in 0..<cLen { rowA[i] = NEG_INF; rowB[i] = NEG_INF }
+
+            var prev = rowA
+            var curr = rowB
+
+            for qi in 0..<qLen {
+                var runMax = NEG_INF
+                var runMaxIdx = -1
+                let qb = qLower[qi]
+
+                for ci in qi..<cLen {
+                    if qi > 0, ci > 0, prev[ci - 1] > NEG_INF {
+                        let adj = prev[ci - 1] + (ci - 1)
+                        if adj > runMax { runMax = adj; runMaxIdx = ci - 1 }
+                    }
+
+                    guard asciiLower(buf[ci]) == qb else { continue }
+
+                    var score = matchBase
+                    if ci == 0 {
+                        score += firstCharBonus + boundaryBonus
+                    } else {
+                        let p = buf[ci - 1]
+                        if isSepByte(p) {
+                            score += boundaryBonus
+                        } else if isUpperByte(buf[ci]) && isLowerByte(p) {
+                            score += boundaryBonus
+                        }
+                    }
+                    if ci >= filenameStart { score += filenameBonus }
+
+                    if qi == 0 {
+                        if ci > 0 { score += ci * gapPenalty }
+                    } else {
+                        guard runMax > NEG_INF else { continue }
+                        let best = runMax + (ci - 1) * gapPenalty
+                        if runMaxIdx == ci - 1 { score += consecutiveBonus }
+                        score += best
+                    }
+
+                    curr[ci] = score
+                }
+
+                // Pointer swap + reset curr for next iteration
+                let tmp = prev; prev = curr; curr = tmp
+                for i in 0..<cLen { curr[i] = NEG_INF }
+            }
+
+            var bestScore = NEG_INF
+            for ci in (qLen - 1)..<cLen where prev[ci] > bestScore {
+                bestScore = prev[ci]
+            }
+            return bestScore > NEG_INF ? bestScore : nil
+        }
+    }
+
+    // MARK: - Core: Full Match with Positions
+
+    /// Match with position backtracking. Used by match() and for top-K position recovery.
+    private static func matchBytes(
+        qLower: [UInt8], cBytes: [UInt8], needPositions: Bool
+    ) -> Result? {
+        let qLen = qLower.count
+        let cLen = cBytes.count
+        guard qLen > 0, cLen > 0, qLen <= cLen else { return nil }
+
+        // Quick scan
+        var qi = 0
+        for ci in 0..<cLen {
+            if qi < qLen, asciiLower(cBytes[ci]) == qLower[qi] { qi += 1 }
+        }
+        guard qi == qLen else { return nil }
+
+        // Compute boundaries
+        var boundaries = [Bool](repeating: false, count: cLen)
+        boundaries[0] = true
+        for i in 1..<cLen {
+            if isSepByte(cBytes[i - 1]) || (isUpperByte(cBytes[i]) && isLowerByte(cBytes[i - 1])) {
+                boundaries[i] = true
+            }
+        }
+        var filenameStart = 0
+        for i in stride(from: cLen - 1, through: 0, by: -1) {
+            if cBytes[i] == 0x2F { filenameStart = i + 1; break }
+        }
+
+        let NEG_INF = Int.min / 2
+        let absGap = 1
+
+        var prevRow = [Int](repeating: NEG_INF, count: cLen)
+        var currRow = [Int](repeating: NEG_INF, count: cLen)
+        var prevFromFlat = [Int](repeating: -1, count: qLen * cLen)
+
+        for qi in 0..<qLen {
+            var runMax = NEG_INF
+            var runMaxIdx = -1
+            let rowOff = qi * cLen
+            let qb = qLower[qi]
+
+            for ci in qi..<cLen {
+                if qi > 0, ci > 0, prevRow[ci - 1] > NEG_INF {
+                    let adj = prevRow[ci - 1] + (ci - 1) * absGap
+                    if adj > runMax { runMax = adj; runMaxIdx = ci - 1 }
+                }
+
+                guard asciiLower(cBytes[ci]) == qb else { continue }
+
+                var score = matchBase
+                if boundaries[ci] { score += boundaryBonus }
+                if ci == 0 { score += firstCharBonus }
+                if ci >= filenameStart { score += filenameBonus }
+
+                if qi == 0 {
+                    if ci > 0 { score += ci * gapPenalty }
+                } else {
+                    guard runMax > NEG_INF else { continue }
+                    let best = runMax + (ci - 1) * gapPenalty
+                    if runMaxIdx == ci - 1 { score += consecutiveBonus }
+                    score += best
+                    prevFromFlat[rowOff + ci] = runMaxIdx
+                }
+
+                currRow[ci] = score
+            }
+
+            let tmp = prevRow; prevRow = currRow; currRow = tmp
+            for i in 0..<cLen { currRow[i] = NEG_INF }
+        }
+
+        var bestScore = NEG_INF
+        var bestEnd = -1
+        for ci in (qLen - 1)..<cLen where prevRow[ci] > bestScore {
+            bestScore = prevRow[ci]; bestEnd = ci
+        }
+        guard bestScore > NEG_INF else { return nil }
+
+        var positions = [Int](repeating: 0, count: qLen)
+        var ci = bestEnd
+        for qi in stride(from: qLen - 1, through: 0, by: -1) {
+            positions[qi] = ci
+            ci = prevFromFlat[qi * cLen + ci]
+        }
+
+        return Result(score: bestScore, positions: positions)
+    }
+
+    // MARK: - Legacy Internals (kept for non-UTF8 paths)
 
     private static func charScore(
-        qi: Int,
-        ci: Int,
-        consecutive: Bool,
-        boundaries: [Bool],
-        filenameStart: Int
+        qi: Int, ci: Int, consecutive: Bool,
+        boundaries: [Bool], filenameStart: Int
     ) -> Int {
         var score = matchBase
-
-        if consecutive {
-            score += consecutiveBonus
-        }
-
-        if ci < boundaries.count, boundaries[ci] {
-            score += boundaryBonus
-        }
-
-        if ci == 0 {
-            score += firstCharBonus
-        }
-
-        if ci >= filenameStart {
-            score += filenameBonus
-        }
-
+        if consecutive { score += consecutiveBonus }
+        if ci < boundaries.count, boundaries[ci] { score += boundaryBonus }
+        if ci == 0 { score += firstCharBonus }
+        if ci >= filenameStart { score += filenameBonus }
         return score
     }
 
-    /// Compute word boundary flags for each character position.
-    /// A position is a boundary if the character follows a separator (/ . _ - space)
-    /// or is an uppercase letter preceded by a lowercase letter (camelCase).
     private static func computeBoundaries(_ chars: [Unicode.Scalar]) -> [Bool] {
         var result = [Bool](repeating: false, count: chars.count)
-        if !chars.isEmpty {
-            result[0] = true // first char is always a boundary
-        }
+        if !chars.isEmpty { result[0] = true }
         for i in 1..<chars.count {
             let prev = chars[i - 1]
             let curr = chars[i]
-            if isSeparator(prev) {
+            if prev == "/" || prev == "." || prev == "_" || prev == "-" || prev == " " {
                 result[i] = true
             } else if CharacterProperties.isUppercase(curr) && CharacterProperties.isLowercase(prev) {
                 result[i] = true
@@ -268,26 +364,19 @@ enum FuzzyMatch {
         return result
     }
 
-    /// Find the index where the filename starts (after the last `/`).
     private static func computeFilenameStart(_ chars: [Unicode.Scalar]) -> Int {
         for i in stride(from: chars.count - 1, through: 0, by: -1) where chars[i] == "/" {
             return i + 1
         }
         return 0
     }
-
-    private static func isSeparator(_ c: Unicode.Scalar) -> Bool {
-        c == "/" || c == "." || c == "_" || c == "-" || c == " "
-    }
 }
 
-/// Lightweight Unicode property checks without Foundation overhead.
 private enum CharacterProperties {
     static func isUppercase(_ s: Unicode.Scalar) -> Bool {
-        s.value >= 0x41 && s.value <= 0x5A // A-Z
+        s.value >= 0x41 && s.value <= 0x5A
     }
-
     static func isLowercase(_ s: Unicode.Scalar) -> Bool {
-        s.value >= 0x61 && s.value <= 0x7A // a-z
+        s.value >= 0x61 && s.value <= 0x7A
     }
 }
