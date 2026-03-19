@@ -435,6 +435,36 @@ enum SyntaxHighlighter {
         scanTokenRangesFromChars(characters, language: language)
     }
 
+    /// ASCII-optimized scanner using raw UTF-8 bytes.
+    ///
+    /// For ASCII text (which covers >99% of source code), byte offsets equal
+    /// character/UTF-16 offsets, so we can skip the expensive `[Character]`
+    /// array conversion entirely. Falls back to the character-based scanner
+    /// for non-ASCII input.
+    ///
+    /// Used by `DiffAttributedStringBuilder` for batch syntax scanning.
+    static func scanTokenRangesUTF8(
+        _ text: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        guard language != .unknown else { return [] }
+
+        // Shell has complex state; JSON is already fast. Use existing scanner.
+        if language == .shell || language == .json {
+            return scanTokenRangesInternal(text, language: language)
+        }
+
+        let utf8 = Array(text.utf8)
+
+        // Verify all-ASCII. Any non-ASCII byte → fall back to [Character] scanner
+        // where byte offsets ≠ character offsets.
+        for b in utf8 where b >= 0x80 {
+            return scanTokenRangesInternal(text, language: language)
+        }
+
+        return scanTokenRangesFromUTF8(utf8, language: language)
+    }
+
     /// Highlight source code using range-based attribute application.
     ///
     /// Builds a single NSMutableAttributedString from the full text with default
@@ -586,6 +616,237 @@ enum SyntaxHighlighter {
         }
 
         return tokenRanges
+    }
+
+    // MARK: - UTF-8 Byte Scanner (ASCII fast path)
+
+    /// Top-level UTF-8 scanner. Input must be verified all-ASCII by the caller.
+    private static func scanTokenRangesFromUTF8(
+        _ bytes: [UInt8],
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        var tokenRanges: [TokenRange] = []
+        tokenRanges.reserveCapacity(bytes.count / 4)
+
+        let keywords = language.keywords
+        let commentPrefix: [UInt8]? = language.lineCommentPrefix.map { $0.compactMap(\.asciiValue) }
+
+        var inBlockComment = false
+        var pos = 0
+        let count = bytes.count
+
+        while pos <= count {
+            var lineEnd = pos
+            while lineEnd < count, bytes[lineEnd] != 0x0A { lineEnd += 1 }
+
+            if lineEnd > pos {
+                scanLineRangesUTF8Slice(
+                    bytes, start: pos, end: lineEnd,
+                    language: language,
+                    keywords: keywords,
+                    commentPrefix: commentPrefix,
+                    inBlockComment: &inBlockComment,
+                    ranges: &tokenRanges
+                )
+            }
+
+            pos = lineEnd + 1
+        }
+
+        return tokenRanges
+    }
+
+    /// Scan a single line within bytes[start..<end] for token ranges.
+    /// All offsets are byte positions (== character positions for ASCII input).
+    private static func scanLineRangesUTF8Slice(
+        _ bytes: [UInt8],
+        start: Int,
+        end: Int,
+        language: SyntaxLanguage,
+        keywords: Set<String>,
+        commentPrefix: [UInt8]?,
+        inBlockComment: inout Bool,
+        ranges: inout [TokenRange]
+    ) {
+        var i = start
+
+        while i < end {
+            let b = bytes[i]
+
+            // Inside block comment — scan for */
+            if inBlockComment {
+                let commentStart = i
+                while i < end {
+                    if i + 1 < end, bytes[i] == 0x2A, bytes[i + 1] == 0x2F { // */
+                        i += 2
+                        inBlockComment = false
+                        break
+                    }
+                    i += 1
+                }
+                if i > commentStart {
+                    ranges.append(TokenRange(location: commentStart, length: i - commentStart, kind: .comment))
+                }
+                continue
+            }
+
+            // Block comment open: /*
+            if language.hasBlockComments,
+               i + 1 < end, b == 0x2F, bytes[i + 1] == 0x2A {
+                inBlockComment = true
+                let commentStart = i
+                i += 2
+                while i < end {
+                    if i + 1 < end, bytes[i] == 0x2A, bytes[i + 1] == 0x2F {
+                        i += 2
+                        inBlockComment = false
+                        break
+                    }
+                    i += 1
+                }
+                ranges.append(TokenRange(location: commentStart, length: i - commentStart, kind: .comment))
+                continue
+            }
+
+            // Line comment
+            if let prefix = commentPrefix, matchesBytesAt(bytes, offset: i, end: end, pattern: prefix) {
+                ranges.append(TokenRange(location: i, length: end - i, kind: .comment))
+                return
+            }
+
+            // Preprocessor for C/C++
+            if b == 0x23, language == .c || language == .cpp { // #
+                ranges.append(TokenRange(location: i, length: end - i, kind: .keyword))
+                return
+            }
+
+            // Decorator @
+            if b == 0x40 {
+                let tokenStart = i
+                i += 1
+                while i < end, isIdentByteASCII(bytes[i]) { i += 1 }
+                ranges.append(TokenRange(location: tokenStart, length: i - tokenStart, kind: .type))
+                continue
+            }
+
+            // String literal: " ' `
+            if b == 0x22 || b == 0x27 || b == 0x60 {
+                let tokenEnd = scanStringEndUTF8(bytes, from: i, end: end, quote: b)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
+                i = tokenEnd
+                continue
+            }
+
+            // Number: 0-9
+            if b >= 0x30, b <= 0x39 {
+                let tokenEnd = scanNumberEndUTF8(bytes, from: i, end: end)
+                ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .number))
+                i = tokenEnd
+                continue
+            }
+
+            // Identifier / keyword
+            if isIdentStartByteASCII(b) {
+                var wordEnd = i + 1
+                while wordEnd < end, isIdentByteASCII(bytes[wordEnd]) { wordEnd += 1 }
+                let wordLen = wordEnd - i
+
+                if wordLen >= 2, wordLen <= 12 {
+                    let word = String(decoding: bytes[i..<wordEnd], as: UTF8.self)
+                    if keywords.contains(word) {
+                        ranges.append(TokenRange(location: i, length: wordLen, kind: .keyword))
+                        i = wordEnd
+                        continue
+                    }
+                }
+
+                // Type-like: starts uppercase, has lowercase
+                if wordLen >= 2, b >= 0x41, b <= 0x5A {
+                    let hasLower = ((i + 1)..<wordEnd).contains { bytes[$0] >= 0x61 && bytes[$0] <= 0x7A }
+                    if hasLower {
+                        ranges.append(TokenRange(location: i, length: wordLen, kind: .type))
+                    }
+                }
+                i = wordEnd
+                continue
+            }
+
+            i += 1
+        }
+    }
+
+    // MARK: - UTF-8 Byte Helpers
+
+    @inline(__always)
+    private static func isIdentByteASCII(_ b: UInt8) -> Bool {
+        (b >= 0x61 && b <= 0x7A) || // a-z
+        (b >= 0x41 && b <= 0x5A) || // A-Z
+        (b >= 0x30 && b <= 0x39) || // 0-9
+        b == 0x5F                    // _
+    }
+
+    @inline(__always)
+    private static func isIdentStartByteASCII(_ b: UInt8) -> Bool {
+        (b >= 0x61 && b <= 0x7A) || // a-z
+        (b >= 0x41 && b <= 0x5A) || // A-Z
+        b == 0x5F                    // _
+    }
+
+    private static func matchesBytesAt(_ bytes: [UInt8], offset: Int, end: Int, pattern: [UInt8]) -> Bool {
+        guard offset + pattern.count <= end else { return false }
+        for j in 0..<pattern.count where bytes[offset + j] != pattern[j] {
+            return false
+        }
+        return true
+    }
+
+    private static func scanStringEndUTF8(_ bytes: [UInt8], from start: Int, end: Int, quote: UInt8) -> Int {
+        var i = start + 1
+        while i < end {
+            let b = bytes[i]
+            if b == 0x5C { // backslash escape
+                i += 2
+                continue
+            }
+            if b == quote {
+                return i + 1
+            }
+            i += 1
+        }
+        return end
+    }
+
+    private static func scanNumberEndUTF8(_ bytes: [UInt8], from start: Int, end: Int) -> Int {
+        var i = start
+        // Hex prefix: 0x
+        if bytes[i] == 0x30, i + 1 < end, bytes[i + 1] == 0x78 || bytes[i + 1] == 0x58 {
+            i += 2
+            while i < end {
+                let b = bytes[i]
+                if (b >= 0x30 && b <= 0x39) || (b >= 0x61 && b <= 0x66) ||
+                   (b >= 0x41 && b <= 0x46) || b == 0x5F {
+                    i += 1
+                } else { break }
+            }
+            return i
+        }
+        // Decimal
+        var hasDot = false
+        while i < end {
+            let b = bytes[i]
+            if (b >= 0x30 && b <= 0x39) || b == 0x5F { // 0-9 _
+                i += 1
+            } else if b == 0x2E, !hasDot, i + 1 < end, bytes[i + 1] >= 0x30, bytes[i + 1] <= 0x39 { // .
+                hasDot = true
+                i += 1
+            } else if b == 0x65 || b == 0x45 { // e E
+                i += 1
+                if i < end, bytes[i] == 0x2B || bytes[i] == 0x2D { i += 1 } // + -
+            } else {
+                break
+            }
+        }
+        return i
     }
 
     private static func truncatedCode(_ code: String) -> String {
