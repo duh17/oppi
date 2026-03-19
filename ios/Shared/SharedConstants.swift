@@ -29,4 +29,10 @@ enum SharedConstants {
 
     /// Keychain account prefix for paired server entries.
     static let serverAccountPrefix = "server-"
+
+    /// UserDefaults key for pending quick session request from widget extension.
+    static let quickSessionPendingKey = "quickSession.pending"
+
+    /// ControlWidget kind identifier for the Quick Session button.
+    static let quickSessionControlKind = "dev.chenda.Oppi.QuickSessionControl"
 }
