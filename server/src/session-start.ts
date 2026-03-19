@@ -55,6 +55,7 @@ export interface SessionStartCoordinatorDeps {
     params: { name?: string; model?: string; thinking?: string; prompt: string },
   ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
+  subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
 }
 
 export class SessionStartCoordinator {
@@ -94,6 +95,7 @@ export class SessionStartCoordinator {
               this.deps.storage
                 .listSessions()
                 .filter((s) => s.workspaceId === identity.workspaceId),
+            subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
           }),
         );
 
