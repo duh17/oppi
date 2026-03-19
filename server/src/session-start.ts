@@ -8,6 +8,7 @@ import { SdkBackend, resolveSdkSessionCwd } from "./sdk-backend.js";
 import type { ExtensionUIRequest } from "./session-events.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
+import { createSpawnAgentFactory } from "./spawn-agent-extension.js";
 import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "./types.js";
@@ -48,6 +49,12 @@ export interface SessionStartCoordinatorDeps {
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
+  // spawn_agent support
+  spawnChildSession: (
+    parentSessionId: string,
+    params: { name?: string; model?: string; thinking?: string; prompt: string },
+  ) => Promise<Session>;
+  listChildSessions: (parentSessionId: string) => Session[];
 }
 
 export class SessionStartCoordinator {
@@ -74,6 +81,16 @@ export class SessionStartCoordinator {
         // Inject autoresearch extension for all workspace sessions
         const workspaceCwd = resolveSdkSessionCwd(workspace);
         extraExtensionFactories.push(createAutoresearchFactory(workspaceCwd));
+
+        // Inject spawn_agent extension for all workspace sessions
+        extraExtensionFactories.push(
+          createSpawnAgentFactory({
+            workspaceId: identity.workspaceId,
+            sessionId: session.id,
+            spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
+            listChildren: () => this.deps.listChildSessions(session.id),
+          }),
+        );
 
         const sdkBackend = await SdkBackend.create({
           session,

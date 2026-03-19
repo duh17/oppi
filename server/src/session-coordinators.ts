@@ -80,6 +80,12 @@ export interface SessionCoordinatorBundleDeps {
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
+  // spawn_agent support
+  spawnChildSession: (
+    parentSessionId: string,
+    params: { name?: string; model?: string; thinking?: string; prompt: string },
+  ) => Promise<Session>;
+  listChildSessions: (parentSessionId: string) => Session[];
 }
 
 export function createSessionCoordinatorBundle(
@@ -146,6 +152,8 @@ export function createSessionCoordinatorBundle(
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
+    spawnChildSession: (parentSessionId, params) => deps.spawnChildSession(parentSessionId, params),
+    listChildSessions: (parentSessionId) => deps.listChildSessions(parentSessionId),
   });
 
   const activationCoordinator = new SessionActivationCoordinator({
