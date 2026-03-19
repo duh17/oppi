@@ -13,7 +13,7 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import { Type, type Static } from "@sinclair/typebox";
-import type { Session } from "./types.js";
+import type { ServerMessage, Session } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Context interface — thin abstraction over SessionManager
@@ -37,6 +37,8 @@ export interface SpawnAgentContext {
   getSession(sessionId: string): Session | undefined;
   /** List all sessions in the workspace (for tree cost aggregation). */
   listWorkspaceSessions(): Session[];
+  /** Subscribe to a child session's ServerMessage stream. Returns unsubscribe fn. */
+  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,19 @@ const spawnAgentParams = Type.Object({
         "Thinking level override: off, minimal, low, medium, high, xhigh. Inherits from parent if omitted.",
     }),
   ),
+  wait: Type.Optional(
+    Type.Boolean({
+      description:
+        "If true, block until the child session finishes and return its final result. " +
+        "Default: false (fire-and-forget).",
+    }),
+  ),
+  timeout_seconds: Type.Optional(
+    Type.Number({
+      description:
+        "Maximum seconds to wait for the child to finish (only when wait=true). Default: 1800 (30 minutes).",
+    }),
+  ),
 });
 
 const checkAgentsParams = Type.Object({});
@@ -170,6 +185,9 @@ interface SpawnAgentDetails {
   name: string;
   status: string;
   model?: string;
+  waited?: boolean;
+  cost?: number;
+  durationMs?: number;
 }
 
 interface CheckAgentsDetails {
@@ -539,6 +557,147 @@ function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): stri
 }
 
 // ---------------------------------------------------------------------------
+// Wait mode — poll child session until terminal status
+// ---------------------------------------------------------------------------
+
+const DEFAULT_WAIT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const POLL_INTERVAL_MS = 3_000;
+
+/** Terminal session statuses — the child is done. */
+function isTerminal(status: string): boolean {
+  return status === "stopped" || status === "error";
+}
+
+interface WaitResult {
+  status: string;
+  lastMessage?: string;
+  cost: number;
+  changeStats?: Session["changeStats"];
+  messageCount: number;
+  durationMs: number;
+  timedOut: boolean;
+}
+
+/**
+ * Block until child reaches terminal status. Streams lightweight progress
+ * updates to the parent via onUpdate. Respects AbortSignal and timeout.
+ */
+function waitForChildCompletion(
+  ctx: SpawnAgentContext,
+  childId: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  onUpdate?: (update: {
+    content: Array<{ type: "text"; text: string }>;
+    details: SpawnAgentDetails;
+  }) => void,
+  childName?: string,
+): Promise<WaitResult> {
+  return new Promise<WaitResult>((resolve) => {
+    const startTime = Date.now();
+    let lastStatus = "";
+    let lastMsgCount = 0;
+    let resolved = false;
+
+    const cleanup = () => {
+      resolved = true;
+      clearInterval(pollTimer);
+      unsubscribe();
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const finalize = (timedOut: boolean) => {
+      if (resolved) return;
+      const session = ctx.getSession(childId);
+      cleanup();
+      resolve({
+        status: session?.status ?? "unknown",
+        lastMessage: session?.lastMessage ?? undefined,
+        cost: session?.cost ?? 0,
+        changeStats: session?.changeStats,
+        messageCount: session?.messageCount ?? 0,
+        durationMs: Date.now() - startTime,
+        timedOut,
+      });
+    };
+
+    // Check if already terminal (fast path)
+    const initial = ctx.getSession(childId);
+    if (initial && isTerminal(initial.status)) {
+      resolve({
+        status: initial.status,
+        lastMessage: initial.lastMessage ?? undefined,
+        cost: initial.cost,
+        changeStats: initial.changeStats,
+        messageCount: initial.messageCount,
+        durationMs: 0,
+        timedOut: false,
+      });
+      return;
+    }
+
+    // Abort signal handler
+    const onAbort = () => finalize(false);
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    // Subscribe to child events for fast terminal detection.
+    // We only care about session_ended / state messages — NOT streaming content.
+    const unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
+      if (resolved) return;
+      if (
+        msg.type === "session_ended" ||
+        (msg.type === "state" && isTerminal(msg.session.status))
+      ) {
+        finalize(false);
+      }
+    });
+
+    // Periodic poll — drives progress updates and acts as fallback for
+    // terminal detection (in case subscribe misses the transition).
+    const pollTimer = setInterval(() => {
+      if (resolved) return;
+
+      // Timeout check
+      if (Date.now() - startTime > timeoutMs) {
+        finalize(true);
+        return;
+      }
+
+      const session = ctx.getSession(childId);
+      if (!session) return;
+
+      // Terminal check (fallback)
+      if (isTerminal(session.status)) {
+        finalize(false);
+        return;
+      }
+
+      // Only emit progress when something changed
+      const statusChanged = session.status !== lastStatus;
+      const msgCountChanged = session.messageCount !== lastMsgCount;
+      if (!statusChanged && !msgCountChanged) return;
+
+      lastStatus = session.status;
+      lastMsgCount = session.messageCount;
+
+      const elapsed = formatDuration(Date.now() - startTime);
+      const cost = formatCost(session.cost);
+      const name = childName ?? childId.slice(0, 8);
+      const progressText = `[${name}] ${session.status} — ${session.messageCount} msgs, ${cost}, ${elapsed}`;
+
+      onUpdate?.({
+        content: [{ type: "text", text: progressText }],
+        details: {
+          agentId: childId,
+          name: childName ?? childId.slice(0, 8),
+          status: session.status,
+        },
+      });
+    }, POLL_INTERVAL_MS);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -556,14 +715,17 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "Create a new agent session in the current workspace. The child session runs " +
         "independently with its own context window. The user monitors spawned sessions " +
         "from their phone. Use for parallelizable tasks, delegation, or specialized work " +
-        "that benefits from a fresh context.",
+        "that benefits from a fresh context. Set wait=true to block until the child " +
+        "finishes and get its result inline.",
       promptSnippet:
-        "spawn_agent(message, name?, model?, thinking?) — spawn an independent child agent session",
+        "spawn_agent(message, name?, model?, thinking?, wait?, timeout_seconds?) — spawn a child agent session",
       promptGuidelines: [
         "Use spawn_agent for tasks that can run independently without blocking the current conversation.",
         "Give each spawned agent a clear, self-contained task description with all needed context.",
         "The child agent cannot see the parent's conversation history — include relevant context in the message.",
         "Use check_agents to poll child status, inspect_agent to drill into a child's execution trace.",
+        "Set wait=true when you need the child's result before continuing (sequential dependency). Default is fire-and-forget.",
+        "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
         "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
         `Max spawn depth is ${MAX_SPAWN_DEPTH}. Avoid spawning agents from within spawned agents unless the task genuinely requires hierarchical decomposition.`,
       ],
@@ -614,18 +776,99 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
 
           spawnedIds.push(session.id);
 
-          const text =
-            `Spawned agent "${session.name ?? name}" (${session.id}).\n` +
-            `Status: ${session.status}, Model: ${session.model ?? "inherited"}\n` +
-            `The session is now running independently. Use check_agents to monitor progress.`;
+          // ─── Fire-and-forget (default) ───
+          if (!params.wait) {
+            const text =
+              `Spawned agent "${session.name ?? name}" (${session.id}).\n` +
+              `Status: ${session.status}, Model: ${session.model ?? "inherited"}\n` +
+              `The session is now running independently. Use check_agents to monitor progress.`;
 
-          return {
-            content: [{ type: "text", text }],
+            return {
+              content: [{ type: "text", text }],
+              details: {
+                agentId: session.id,
+                name: session.name ?? name,
+                status: session.status,
+                model: session.model,
+              },
+            };
+          }
+
+          // ─── Wait mode — block until child finishes ───
+          onUpdate?.({
+            content: [
+              {
+                type: "text",
+                text: `Spawned agent "${session.name ?? name}" (${session.id}). Waiting for completion...`,
+              },
+            ],
             details: {
               agentId: session.id,
               name: session.name ?? name,
-              status: session.status,
+              status: "waiting",
               model: session.model,
+            },
+          });
+
+          const timeoutMs = params.timeout_seconds
+            ? params.timeout_seconds * 1000
+            : DEFAULT_WAIT_TIMEOUT_MS;
+
+          const result = await waitForChildCompletion(
+            ctx,
+            session.id,
+            timeoutMs,
+            signal,
+            onUpdate,
+            session.name ?? name,
+          );
+
+          // Build final result text
+          const lines: string[] = [];
+          lines.push(
+            `Agent "${session.name ?? name}" (${session.id}) finished: ${result.status.toUpperCase()}`,
+          );
+          lines.push(
+            `${result.messageCount} messages, ${formatCost(result.cost)}, ${formatDuration(result.durationMs)}`,
+          );
+
+          if (result.timedOut) {
+            lines.push(
+              `WARNING: Timed out after ${formatDuration(timeoutMs)}. The child may still be running.`,
+            );
+          }
+
+          if (result.changeStats && result.changeStats.filesChanged > 0) {
+            const cs = result.changeStats;
+            lines.push(
+              `Changes: ${cs.filesChanged} file${cs.filesChanged !== 1 ? "s" : ""}, +${cs.addedLines}/-${cs.removedLines} lines`,
+            );
+            if (cs.changedFiles.length > 0) {
+              for (const f of cs.changedFiles.slice(0, 10)) {
+                lines.push(`  ${shortenPath(f)}`);
+              }
+              if (cs.changedFilesOverflow && cs.changedFilesOverflow > 0) {
+                lines.push(`  ... and ${cs.changedFilesOverflow} more`);
+              }
+            }
+          }
+
+          if (result.lastMessage) {
+            lines.push("");
+            lines.push("Last message:");
+            lines.push(result.lastMessage);
+          }
+
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: {
+              agentId: session.id,
+              name: session.name ?? name,
+              status: result.status,
+              model: session.model,
+              waited: true,
+              cost: result.cost,
+              durationMs: result.durationMs,
             },
           };
         } catch (err: unknown) {
