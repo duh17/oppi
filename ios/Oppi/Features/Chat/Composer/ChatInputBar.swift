@@ -21,6 +21,7 @@ import UIKit
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
+    @Binding var pendingFiles: [PendingFileReference]
     var contextPills: [ContextPill] = []
     var onContextPillTap: ((ContextPill) -> Void)?
     let isBusy: Bool
@@ -82,8 +83,9 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
+        let hasFiles = !pendingFiles.isEmpty
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText || hasImages
+        return hasText || hasImages || hasFiles
     }
 
     private var accentColor: Color { .themeBlue }
@@ -125,10 +127,10 @@ struct ChatInputBar<ActionRow: View>: View {
         return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
     }
 
-    /// Effective max lines — reduced when images are present to prevent the
+    /// Effective max lines — reduced when images or files are present to prevent the
     /// capsule from growing tall enough to push the send button off-screen.
     private var effectiveMaxLines: Int {
-        pendingImages.isEmpty ? inlineMaxLines : inlineMaxLinesWithImages
+        (pendingImages.isEmpty && pendingFiles.isEmpty) ? inlineMaxLines : inlineMaxLinesWithImages
     }
 
     /// Show manual expand only when input is getting long.
@@ -139,7 +141,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        isBusy || isInputFocused || !pendingImages.isEmpty
+        isBusy || isInputFocused || !pendingImages.isEmpty || !pendingFiles.isEmpty
     }
 
     /// Tapping the input while voice is active should switch back to typing:
@@ -263,6 +265,14 @@ struct ChatInputBar<ActionRow: View>: View {
                     .padding(.bottom, 4)
             }
 
+            // File reference pills
+            if !pendingFiles.isEmpty {
+                filePillStrip
+                    .padding(.horizontal, composerHorizontalPadding)
+                    .padding(.top, pendingImages.isEmpty ? 8 : 2)
+                    .padding(.bottom, 4)
+            }
+
             // Text row with mic + text + send/stop
             HStack(alignment: .bottom, spacing: 6) {
                 if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
@@ -316,6 +326,11 @@ struct ChatInputBar<ActionRow: View>: View {
             if showsComposerActionRow {
                 HStack(spacing: 6) {
                     attachButton
+
+                    if !isBusy {
+                        slashActionButton
+                        atFileActionButton
+                    }
 
                     if isBusy {
                         busyModeSelector
@@ -481,6 +496,78 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
             }
         }
+    }
+
+    private var filePillStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(pendingFiles) { file in
+                    filePillView(file)
+                }
+            }
+        }
+    }
+
+    private func filePillView(_ file: PendingFileReference) -> some View {
+        let icon = file.isDirectory
+            ? FileIcon(symbolName: "folder.fill", color: .themeYellow)
+            : FileIcon.forPath(file.path)
+
+        return HStack(spacing: 4) {
+            Image(systemName: icon.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(icon.color)
+
+            Text(file.displayName)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .fixedSize()
+
+            Button {
+                removeFile(file.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.themeComment)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(.themeComment.opacity(0.1), in: Capsule())
+    }
+
+    private var slashActionButton: some View {
+        Button {
+            text += "/"
+            focusRequestID += 1
+        } label: {
+            Text("/")
+                .font(.subheadline.weight(.semibold).monospaced())
+                .foregroundStyle(.themeFg)
+                .frame(width: 28, height: 28)
+                .glassEffect(.regular, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var atFileActionButton: some View {
+        Button {
+            if !text.isEmpty, !text.hasSuffix(" "), !text.hasSuffix("\n") {
+                text += " "
+            }
+            text += "@"
+            focusRequestID += 1
+        } label: {
+            Text("@")
+                .font(.subheadline.weight(.semibold).monospaced())
+                .foregroundStyle(.themeFg)
+                .frame(width: 28, height: 28)
+                .glassEffect(.regular, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var expandButton: some View {
@@ -740,7 +827,24 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func insertFileSuggestion(_ suggestion: FileSuggestion) {
-        text = ComposerAutocomplete.insertFileSuggestion(suggestion, into: text)
+        // Add as pill instead of inline text. Remove the @query token from text.
+        if let tokenRange = ComposerAutocomplete.activeAtTokenRange(in: text) {
+            text.replaceSubrange(tokenRange, with: "")
+        }
+
+        let ref = PendingFileReference(path: suggestion.path, isDirectory: suggestion.isDirectory)
+        if !pendingFiles.contains(where: { $0.path == ref.path }) {
+            pendingFiles.append(ref)
+        }
+
+        // If it's a directory, re-trigger autocomplete for its contents
+        if suggestion.isDirectory {
+            text += "@\(suggestion.path)"
+        }
+    }
+
+    private func removeFile(_ id: String) {
+        pendingFiles.removeAll { $0.id == id }
     }
 
     private func notifyFileSuggestionContext(for newText: String) {
