@@ -105,15 +105,6 @@ struct WorkspaceDetailView: View {
             }
     }
 
-    /// Active sessions as a tree structure, filtering by search and sorting by turn-ended date.
-    private var activeTreeRows: [SessionTreeHelper.FlatRow] {
-        let active = activeSessions
-        let tree = SessionTreeHelper.buildTree(from: active)
-        return SessionTreeHelper.flattenTree(nodes: tree) { sessionId in
-            isTreeNodeExpanded(sessionId: sessionId, nodes: tree)
-        }
-    }
-
     /// Build a lookup from session ID to tree node for status count computation.
     private var activeTreeNodes: [SessionTreeHelper.TreeNode] {
         SessionTreeHelper.buildTree(from: activeSessions)
@@ -129,12 +120,11 @@ struct WorkspaceDetailView: View {
         return result
     }
 
-    private func isTreeNodeExpanded(sessionId: String, nodes: [SessionTreeHelper.TreeNode]) -> Bool {
+    private func isTreeNodeExpanded(sessionId: String, lookup: [String: SessionTreeHelper.TreeNode]) -> Bool {
         if let override = treeExpandedOverrides[sessionId] {
             return override
         }
         // Default: expanded if any child is active
-        let lookup = treeNodeLookup(nodes: nodes)
         guard let node = lookup[sessionId] else { return false }
         return SessionTreeHelper.hasActiveChild(node)
     }
@@ -190,7 +180,16 @@ struct WorkspaceDetailView: View {
 
     // MARK: - Body
 
-    var body: some View {
+    private struct ViewData {
+        let active: [Session]
+        let stopped: [Session]
+        let localFiltered: [LocalSession]
+        let wsEmpty: Bool
+        let treeRows: [SessionTreeHelper.FlatRow]
+        let treeLookup: [String: SessionTreeHelper.TreeNode]
+    }
+
+    private var viewData: ViewData {
         // Evaluate expensive computed properties once — each involves filter+sort
         // over all sessions. Without local bindings, SwiftUI re-evaluates them
         // on every access (activeSessions is read 3× per body, stoppedSessions 2×).
@@ -204,26 +203,40 @@ struct WorkspaceDetailView: View {
             isTreeNodeExpanded(sessionId: sessionId, lookup: treeLookup)
         }
 
+        return ViewData(
+            active: active,
+            stopped: stopped,
+            localFiltered: localFiltered,
+            wsEmpty: wsEmpty,
+            treeRows: treeRows,
+            treeLookup: treeLookup
+        )
+    }
+
+    var body: some View {
+        let data = viewData
+
         List {
-            if !active.isEmpty {
+            if !data.active.isEmpty {
                 Section("Active") {
-                    ForEach(treeRows) { row in
+                    ForEach(data.treeRows) { row in
                         NavigationLink(value: row.session.id) {
                             SessionTreeRow(
                                 row: row,
                                 pendingCount: permissionStore.pending(for: row.session.id).count,
-                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: treeLookup),
-                                statusCounts: treeLookup[row.session.id].map {
+                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup),
+                                statusCounts: data.treeLookup[row.session.id].map {
                                     SessionTreeHelper.childStatusCounts($0)
                                 },
                                 onToggleExpand: {
                                     withAnimation(.easeInOut(duration: 0.2)) {
-                                        let current = isTreeNodeExpanded(sessionId: row.session.id, nodes: treeNodes)
+                                        let current = isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup)
                                         treeExpandedOverrides[row.session.id] = !current
                                     }
                                 }
                             )
                         }
+                        .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
@@ -238,8 +251,8 @@ struct WorkspaceDetailView: View {
             }
 
             WorkspaceStoppedSessionsSection(
-                stoppedSessions: stopped,
-                localSessions: localFiltered,
+                stoppedSessions: data.stopped,
+                localSessions: data.localFiltered,
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
                 lineageHint: { session in lineageHint(for: session) },
@@ -256,7 +269,7 @@ struct WorkspaceDetailView: View {
                 collapsedGroupIDs: $collapsedStoppedGroupIDs
             )
 
-            if wsEmpty {
+            if data.wsEmpty {
                 Section {
                     ContentUnavailableView(
                         "No Sessions",
@@ -266,9 +279,9 @@ struct WorkspaceDetailView: View {
                     .listRowBackground(Color.themeBg)
                 }
             } else if hasSessionSearchQuery,
-                      active.isEmpty,
-                      stopped.isEmpty,
-                      localFiltered.isEmpty {
+                      data.active.isEmpty,
+                      data.stopped.isEmpty,
+                      data.localFiltered.isEmpty {
                 Section {
                     ContentUnavailableView(
                         "No Matching Sessions",
