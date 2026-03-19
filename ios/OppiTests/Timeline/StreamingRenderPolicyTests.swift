@@ -504,11 +504,11 @@ struct StreamingRenderPolicyInconsistencyTests {
             code re-enables auto-follow for the new content, but diff DISABLES \
             it. This means reused diff cells won't auto-scroll to show new \
             streaming content, while code cells will.
-            
+
             Code strategy (line ~134):
                 } else if !isStreamingContinuation, shouldRerender {
                     expandedShouldAutoFollow = true  // re-enable
-            
+
             Diff strategy (line ~90):
                 } else if !isStreamingContinuation {
                     expandedShouldAutoFollow = false  // disable (opposite!)
@@ -583,7 +583,7 @@ struct StreamingRenderPolicyInconsistencyTests {
             scroll position (including during streaming signature changes caused \
             by error state or language changes). Code and diff only reset when \
             !isStreaming, preserving the user's scroll position during streaming. \
-            
+
             Text strategy (line ~88):
                 if shouldRerender {
                     if expandedShouldAutoFollow {
@@ -593,7 +593,7 @@ struct StreamingRenderPolicyInconsistencyTests {
                     }
                 }
             // ^ No !isStreaming guard — always enters this block on re-render.
-            
+
             Code strategy (line ~140):
                 if shouldRerender {
                     if expandedShouldAutoFollow {

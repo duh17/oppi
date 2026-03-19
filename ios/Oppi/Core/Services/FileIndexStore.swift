@@ -66,8 +66,8 @@ final class FileIndexStore {
 
     // MARK: - Testing
 
-    /// Set paths directly for unit tests. Not for production use.
     // periphery:ignore - used by tests via @testable import
+    /// Set paths directly for unit tests. Not for production use.
     func setPathsForTesting(_ paths: [String]) {
         self.paths = paths
         self.dirty = false

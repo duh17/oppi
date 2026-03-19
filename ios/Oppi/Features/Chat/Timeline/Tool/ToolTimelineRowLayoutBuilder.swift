@@ -20,8 +20,8 @@ enum ToolTimelineRowLayoutBuilder {
         languageBadgeIconView: UIImageView
     ) -> [NSLayoutConstraint] {
         [
-            languageBadgeIconView.widthAnchor.constraint(equalToConstant: 10),
-            languageBadgeIconView.heightAnchor.constraint(equalToConstant: 10),
+            languageBadgeIconView.widthAnchor.constraint(equalToConstant: 14),
+            languageBadgeIconView.heightAnchor.constraint(equalToConstant: 14),
         ]
     }
 

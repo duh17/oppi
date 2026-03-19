@@ -12,7 +12,7 @@ extension ServerConnection {
         /// Whether this message type was handled by the shared helper.
         var handled: Bool
 
-        static let notHandled = StoreUpdateResult(handled: false)
+        static let notHandled = Self(handled: false)
     }
 
     /// Apply store-level mutations shared by both active-session and cross-session paths.
