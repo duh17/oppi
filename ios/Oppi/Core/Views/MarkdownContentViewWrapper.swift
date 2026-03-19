@@ -11,6 +11,8 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
+    @Environment(\.selectedTextPiActionRouter) private var selectedTextPiRouter
+
     func makeUIView(context: Context) -> AssistantMarkdownContentView {
         let view = AssistantMarkdownContentView()
         view.backgroundColor = .clear
@@ -27,6 +29,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: textSelectionEnabled,
             plainTextFallbackThreshold: plainTextFallbackThreshold,
+            selectedTextPiRouter: selectedTextPiRouter,
             workspaceID: workspaceID,
             serverBaseURL: serverBaseURL
         ))

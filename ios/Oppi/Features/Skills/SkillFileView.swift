@@ -15,9 +15,18 @@ struct SkillFileView: View {
     let filePath: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(AppNavigation.self) private var navigation
     @State private var content: String?
     @State private var isLoading = true
     @State private var error: String?
+
+    private var piRouter: SelectedTextPiActionRouter {
+        let nav = navigation
+        return SelectedTextPiActionRouter { request in
+            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.showQuickSession = true
+        }
+    }
 
     private var fileName: String {
         filePath.components(separatedBy: "/").last ?? filePath
@@ -28,6 +37,7 @@ struct SkillFileView: View {
             if let content {
                 FileContentView(content: content, filePath: filePath, presentation: Self.contentPresentation)
                     .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
+                    .environment(\.selectedTextPiActionRouter, piRouter)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else if isLoading {
                 ProgressView("Loading…")

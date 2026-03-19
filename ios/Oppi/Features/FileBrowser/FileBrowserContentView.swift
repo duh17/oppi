@@ -15,6 +15,7 @@ struct FileBrowserContentView: View {
     let fileName: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(AppNavigation.self) private var navigation
     @State private var content: FileContentPhase = .loading
 
     private var fileExtension: String {
@@ -27,6 +28,15 @@ struct FileBrowserContentView: View {
 
     private var isPDF: Bool {
         fileExtension == "pdf"
+    }
+
+    /// Router that triggers a quick session with the selected text.
+    private var piRouter: SelectedTextPiActionRouter {
+        let nav = navigation
+        return SelectedTextPiActionRouter { request in
+            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.showQuickSession = true
+        }
     }
 
     var body: some View {
@@ -47,6 +57,7 @@ struct FileBrowserContentView: View {
                     filePath: filePath,
                     presentation: .document
                 )
+                .environment(\.selectedTextPiActionRouter, piRouter)
             case .image(let data):
                 imageView(data)
             case .pdf(let data):
@@ -163,7 +174,7 @@ private enum FileContentPhase: Equatable {
     case pdf(Data)
     case binary
 
-    static func == (lhs: FileContentPhase, rhs: FileContentPhase) -> Bool {
+    static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
         case (.loading, .loading): true
         case (.error(let a), .error(let b)): a == b

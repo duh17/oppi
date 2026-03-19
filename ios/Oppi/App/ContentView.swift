@@ -4,6 +4,7 @@ struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
+    @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var showCrossSessionPermissionSheet = false
 
     /// Pending permissions from ALL servers, excluding the active session's
@@ -39,7 +40,7 @@ struct ContentView: View {
             } else {
                 TabView(selection: $nav.selectedTab) {
                     SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
-                        NavigationStack {
+                        NavigationStack(path: $nav.workspacePath) {
                             WorkspaceHomeView()
                         }
                     }
@@ -106,6 +107,31 @@ struct ContentView: View {
             WhatsNewView {
                 navigation.showWhatsNew = false
             }
+        }
+        .sheet(isPresented: $nav.showQuickSession, onDismiss: {
+            // Navigate to the pending session after the sheet animation completes
+            if let pending = navigation.pendingQuickSessionNav {
+                navigation.pendingQuickSessionNav = nil
+                // Step 1: switch tab and push to workspace
+                navigation.selectedTab = .workspaces
+                navigation.workspacePath = NavigationPath()
+                navigation.workspacePath.append(pending.target)
+                // Step 2: push to session after the workspace view renders
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(300))
+                    navigation.workspacePath.append(pending.sessionId)
+                }
+            }
+        }) {
+            QuickSessionSheet()
+                .presentationDetents([.height(130), .medium])
+                .presentationDragIndicator(.hidden)
+                .presentationBackgroundInteraction(.enabled(upThrough: .height(130)))
+                .presentationCornerRadius(24)
+        }
+        .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
+            guard newValue > 0, !navigation.showOnboarding else { return }
+            navigation.showQuickSession = true
         }
     }
 

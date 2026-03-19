@@ -18,6 +18,7 @@ struct RemoteFileView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
@@ -26,6 +27,14 @@ struct RemoteFileView: View {
 
     private var filename: String {
         (path as NSString).lastPathComponent
+    }
+
+    private var piRouter: SelectedTextPiActionRouter {
+        let nav = navigation
+        return SelectedTextPiActionRouter { request in
+            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.showQuickSession = true
+        }
     }
 
     private var isImagePath: Bool {
@@ -61,6 +70,7 @@ struct RemoteFileView: View {
                 } else if let content {
                     FileContentView(content: content, filePath: path, presentation: Self.contentPresentation)
                         .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
+                        .environment(\.selectedTextPiActionRouter, piRouter)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }

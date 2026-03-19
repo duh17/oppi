@@ -5,12 +5,12 @@ import SwiftUI
 /// Renders file content with type-appropriate formatting.
 ///
 /// Dispatches to specialized sub-views based on detected file type:
-/// - Code: line numbers + syntax highlighting + horizontal scroll
+/// - Code: UIKit-backed line numbers + syntax highlighting (NativeFullScreenCodeBody)
 /// - Markdown: rendered prose with raw toggle
-/// - JSON: pretty-printed with colored keys/values
+/// - JSON: pretty-printed with UIKit-backed colored keys/values
 /// - Images: inline preview with tap-to-zoom
 /// - Audio: inline playback rows for extracted data URIs
-/// - Plain text: monospaced with line numbers
+/// - Plain text: UIKit-backed monospaced with line numbers
 struct FileContentView: View {
     let content: String
     let filePath: String?
@@ -18,7 +18,7 @@ struct FileContentView: View {
     let isError: Bool
     let presentation: FileContentPresentation
 
-    /// Maximum lines to render (performance bound).
+    /// Maximum lines to render inline (performance bound).
     nonisolated static let maxDisplayLines = 300
 
     init(
@@ -53,15 +53,15 @@ struct FileContentView: View {
         case .html:
             HTMLFileView(content: content, filePath: filePath, presentation: presentation)
         case .code(let language):
-            CodeFileView(content: content, language: language, startLine: startLine, presentation: presentation)
+            CodeFileView(content: content, language: language, startLine: startLine, presentation: presentation, filePath: filePath)
         case .json:
-            JSONFileView(content: content, startLine: startLine, presentation: presentation)
+            JSONFileView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
         case .image:
             ImageOutputView(content: content)
         case .audio:
             AudioOutputView(content: content)
         case .plain:
-            PlainTextView(content: content, startLine: startLine, presentation: presentation)
+            PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
         }
     }
 
@@ -86,37 +86,38 @@ struct FileContentView: View {
 // MARK: - CodeFileView
 
 /// Source code with line numbers and syntax highlighting.
+///
+/// Uses ``NativeCodeBodyView`` (UIKit `UITextView` + gutter) for all
+/// presentation modes. Inline wraps with SwiftUI chrome (header,
+/// truncation notice, code block border).
 private struct CodeFileView: View {
     let content: String
     let language: SyntaxLanguage
     let startLine: Int
     let presentation: FileContentPresentation
+    let filePath: String?
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
-    @State private var highlighted: AttributedString?
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showFullScreen = false
 
-    private var displayContent: String {
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        return lines.prefix(lineCount).joined(separator: "\n")
+    private var sourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenCode,
+            filePath: filePath,
+            languageHint: language.displayName
+        )
     }
 
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let isTruncated = lines.count > FileContentView.maxDisplayLines
+        let displayContent = isTruncated
+            ? lines.prefix(lineCount).joined(separator: "\n")
+            : content
         let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
-
-        let codeBody = codeArea(
-            highlighted: highlighted ?? AttributedString(displayContent),
-            lineCount: lineCount,
-            startLine: startLine,
-            maxHeight: presentation.viewportMaxHeight,
-            inlineSelectionEnabled: ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
-                hasFullScreenAffordance: hasFullScreenAffordance
-            )
-        )
 
         Group {
             if presentation.usesInlineChrome {
@@ -129,7 +130,12 @@ private struct CodeFileView: View {
                         onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
                     )
 
-                    codeBody
+                    NativeCodeBodyView(
+                        content: displayContent,
+                        language: language.displayName,
+                        startLine: startLine,
+                        maxHeight: presentation.viewportMaxHeight
+                    )
 
                     if isTruncated {
                         TruncationNotice(showing: lineCount, total: lines.count)
@@ -137,29 +143,23 @@ private struct CodeFileView: View {
                 }
                 .codeBlockChrome(showBorder: false)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    codeBody
-
-                    if isTruncated {
-                        TruncationNotice(showing: lineCount, total: lines.count)
-                    }
-                }
+                NativeCodeBodyView(
+                    content: content,
+                    language: language.displayName,
+                    startLine: startLine,
+                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                )
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .code(
-                content: content, language: language.displayName, filePath: nil, startLine: startLine
-            ))
+            FullScreenCodeView(
+                content: .code(
+                    content: content, language: language.displayName, filePath: filePath, startLine: startLine
+                ),
+                selectedTextPiRouter: piRouter
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
-        }
-        .task(id: content.count) {
-            let lang = language
-            let text = displayContent
-            let result = await Task.detached(priority: .userInitiated) {
-                AttributedString(SyntaxHighlighter.highlight(text, language: lang))
-            }.value
-            highlighted = result
         }
     }
 }
@@ -173,6 +173,7 @@ private struct MarkdownFileView: View {
     let presentation: FileContentPresentation
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showRaw = false
     @State private var showFullScreen = false
 
@@ -189,7 +190,10 @@ private struct MarkdownFileView: View {
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .markdown(content: content, filePath: filePath))
+            FullScreenCodeView(
+                content: .markdown(content: content, filePath: filePath),
+                selectedTextPiRouter: piRouter
+            )
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -382,31 +386,28 @@ private struct FullScreenMarkdownView: View {
 /// Rendered HTML with source toggle and full-screen support.
 ///
 /// - Document mode: renders WebKit by default with a floating Source/Preview toggle
-/// - Inline mode: shows syntax-highlighted source with a "Preview" button that opens
-///   full-screen rendered view (avoids heavy WebKit views inline in the timeline)
+/// - Inline mode: shows UIKit syntax-highlighted source with a "Preview" button
+///   that opens full-screen rendered view (avoids heavy WebKit views inline in
+///   the timeline)
 private struct HTMLFileView: View {
     let content: String
     let filePath: String?
     let presentation: FileContentPresentation
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showSource = false
     @State private var showFullScreen = false
-    @State private var highlighted: AttributedString?
 
     private var lineCount: Int {
         content.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 
-    private var displayContent: String {
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        return lines.prefix(lineCount).joined(separator: "\n")
-    }
-
-    /// Clipboard fallback for pi actions outside chat context.
-    private var piClipboardHandler: (String, SelectedTextPiActionKind) -> Void {
+    /// Pi action handler for WKWebView text selection.
+    /// Routes through the environment router when available, falls back to clipboard.
+    private var piWebViewHandler: (String, SelectedTextPiActionKind) -> Void {
         let path = filePath
+        let router = piRouter
         return { text, actionKind in
             let request = SelectedTextPiRequest(
                 action: actionKind,
@@ -417,7 +418,11 @@ private struct HTMLFileView: View {
                     filePath: path
                 )
             )
-            UIPasteboard.general.string = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            if let router {
+                router.dispatch(request)
+            } else {
+                UIPasteboard.general.string = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            }
         }
     }
 
@@ -430,9 +435,12 @@ private struct HTMLFileView: View {
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .html(content: content, filePath: filePath))
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            FullScreenCodeView(
+                content: .html(content: content, filePath: filePath),
+                selectedTextPiRouter: piRouter
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -443,9 +451,7 @@ private struct HTMLFileView: View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let displayLineCount = min(lines.count, FileContentView.maxDisplayLines)
         let isTruncated = lines.count > FileContentView.maxDisplayLines
-        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
-            hasFullScreenAffordance: hasFullScreenAffordance
-        )
+        let displayContent = lines.prefix(displayLineCount).joined(separator: "\n")
 
         return VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -489,12 +495,11 @@ private struct HTMLFileView: View {
             .background(Color.themeBgHighlight)
 
             // Source code (always source in inline mode for performance)
-            codeArea(
-                highlighted: highlighted ?? AttributedString(displayContent),
-                lineCount: displayLineCount,
+            NativeCodeBodyView(
+                content: displayContent,
+                language: "html",
                 startLine: 1,
-                maxHeight: presentation.viewportMaxHeight,
-                inlineSelectionEnabled: inlineSelectionEnabled
+                maxHeight: presentation.viewportMaxHeight
             )
 
             if isTruncated {
@@ -514,13 +519,6 @@ private struct HTMLFileView: View {
             Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
-        }
-        .task(id: content.count) {
-            let text = displayContent
-            let result = await Task.detached(priority: .userInitiated) {
-                AttributedString(SyntaxHighlighter.highlight(text, language: .html))
-            }.value
-            highlighted = result
         }
     }
 
@@ -542,7 +540,7 @@ private struct HTMLFileView: View {
                 HTMLWebView(
                     htmlString: content,
                     baseFileName: filePath ?? "preview.html",
-                    piActionHandler: piClipboardHandler
+                    piActionHandler: piWebViewHandler
                 )
                 .ignoresSafeArea(edges: .bottom)
             }
@@ -572,47 +570,58 @@ private struct HTMLFileView: View {
 
 /// Pretty-printed JSON with colored keys and values.
 ///
-/// Both pretty-printing (JSONSerialization) and syntax highlighting run
-/// off the main thread to avoid blocking scrolling on large JSON files.
+/// Pretty-printing runs off the main thread. The UIKit code body
+/// handles syntax highlighting internally.
 private struct JSONFileView: View {
     let content: String
     let startLine: Int
     let presentation: FileContentPresentation
+    let filePath: String?
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
-
-    /// Combined pretty-print + highlight result, computed off main thread.
-    @State private var prepared: JSONPrepared?
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @State private var prettyContent: String?
     @State private var showFullScreen = false
 
-    var body: some View {
-        let info = prepared ?? JSONPrepared.placeholder(from: content)
-        let isTruncated = info.totalLines > FileContentView.maxDisplayLines
-        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
-        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
-            hasFullScreenAffordance: hasFullScreenAffordance
+    private var sourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenCode,
+            filePath: filePath,
+            languageHint: "json"
         )
+    }
+
+    var body: some View {
+        let effectiveContent = prettyContent ?? content
+        let lines = effectiveContent.split(separator: "\n", omittingEmptySubsequences: false)
+        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
 
         Group {
             if presentation.usesInlineChrome {
+                let lineCount = min(lines.count, FileContentView.maxDisplayLines)
+                let isTruncated = lines.count > FileContentView.maxDisplayLines
+                let displayContent = isTruncated
+                    ? lines.prefix(lineCount).joined(separator: "\n")
+                    : effectiveContent
+
                 VStack(alignment: .leading, spacing: 0) {
                     FileHeader(
                         label: "JSON",
-                        lineCount: info.totalLines,
+                        lineCount: lines.count,
                         copyContent: content,
                         onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
                     )
 
-                    codeArea(
-                        highlighted: info.highlighted ?? AttributedString(info.displayText),
-                        lineCount: info.displayLineCount,
+                    NativeCodeBodyView(
+                        content: displayContent,
+                        language: "json",
                         startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight,
-                        inlineSelectionEnabled: inlineSelectionEnabled
+                        maxHeight: presentation.viewportMaxHeight
                     )
 
                     if isTruncated {
-                        TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
+                        TruncationNotice(showing: lineCount, total: lines.count)
                     }
                 }
                 .codeBlockChrome()
@@ -622,103 +631,86 @@ private struct JSONFileView: View {
                     }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    codeArea(
-                        highlighted: info.highlighted ?? AttributedString(info.displayText),
-                        lineCount: info.displayLineCount,
-                        startLine: startLine,
-                        maxHeight: nil,
-                        inlineSelectionEnabled: true
-                    )
-
-                    if isTruncated {
-                        TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
-                    }
-                }
+                NativeCodeBodyView(
+                    content: effectiveContent,
+                    language: "json",
+                    startLine: startLine,
+                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                )
             }
         }
+        .id(prettyContent != nil ? 1 : 0)
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .code(
-                content: content, language: "json", filePath: nil, startLine: startLine
-            ))
+            FullScreenCodeView(
+                content: .code(
+                    content: content, language: "json", filePath: filePath, startLine: startLine
+                ),
+                selectedTextPiRouter: piRouter
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .task(id: content.count) {
             let raw = content
-            prepared = await Task.detached(priority: .userInitiated) {
-                JSONPrepared.prepare(raw)
+            prettyContent = await Task.detached(priority: .userInitiated) {
+                Self.prettyPrint(raw)
             }.value
         }
     }
-}
 
-/// Pre-computed JSON display data — all expensive work done off main thread.
-private struct JSONPrepared: Sendable {
-    let displayText: String
-    let displayLineCount: Int
-    let totalLines: Int
-    let highlighted: AttributedString?
-
-    /// Quick placeholder from raw content (no parsing, no highlighting).
-    static func placeholder(from content: String) -> Self {
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        let text = lines.prefix(lineCount).joined(separator: "\n")
-        return Self(displayText: text, displayLineCount: lineCount, totalLines: lines.count, highlighted: nil)
-    }
-
-    /// Full preparation: pretty-print + syntax highlight.
-    static func prepare(_ content: String) -> Self {
-        let pretty: String
-        if let data = content.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data),
-           let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
-           let result = String(data: prettyData, encoding: .utf8) {
-            pretty = result
-        } else {
-            pretty = content
+    /// Pretty-print JSON, returning the original if parsing fails.
+    nonisolated private static func prettyPrint(_ content: String) -> String {
+        guard let data = content.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data),
+              let prettyData = try? JSONSerialization.data(
+                  withJSONObject: json, options: [.prettyPrinted, .sortedKeys]
+              ),
+              let result = String(data: prettyData, encoding: .utf8) else {
+            return content
         }
-
-        let lines = pretty.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        let displayText = lines.prefix(lineCount).joined(separator: "\n")
-        let highlighted = AttributedString(SyntaxHighlighter.highlight(displayText, language: .json))
-
-        return Self(displayText: displayText, displayLineCount: lineCount, totalLines: lines.count, highlighted: highlighted)
+        return result
     }
 }
 
 // MARK: - PlainTextView
 
-/// Monospaced text with line numbers.
+/// Monospaced text with line numbers (no syntax highlighting).
 private struct PlainTextView: View {
     let content: String
     let startLine: Int
     let presentation: FileContentPresentation
+    let filePath: String?
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showFullScreen = false
+
+    private var sourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenSource,
+            filePath: filePath
+        )
+    }
 
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        let displayText = lines.prefix(lineCount).joined(separator: "\n")
-        let isTruncated = lines.count > FileContentView.maxDisplayLines
         let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
-        let inlineSelectionEnabled = ExpandableInlineTextSelectionPolicy.allowsInlineSelection(
-            hasFullScreenAffordance: hasFullScreenAffordance
-        )
 
         Group {
             if presentation.usesInlineChrome {
+                let lineCount = min(lines.count, FileContentView.maxDisplayLines)
+                let isTruncated = lines.count > FileContentView.maxDisplayLines
+                let displayContent = isTruncated
+                    ? lines.prefix(lineCount).joined(separator: "\n")
+                    : content
+
                 VStack(alignment: .leading, spacing: 0) {
-                    codeArea(
-                        text: displayText,
-                        lineCount: lineCount,
+                    NativeCodeBodyView(
+                        content: displayContent,
+                        language: nil,
                         startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight,
-                        inlineSelectionEnabled: inlineSelectionEnabled
+                        maxHeight: presentation.viewportMaxHeight
                     )
 
                     if isTruncated {
@@ -737,25 +729,19 @@ private struct PlainTextView: View {
                     }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    codeArea(
-                        text: displayText,
-                        lineCount: lineCount,
-                        startLine: startLine,
-                        maxHeight: nil,
-                        inlineSelectionEnabled: true
-                    )
-
-                    if isTruncated {
-                        TruncationNotice(showing: lineCount, total: lines.count)
-                    }
-                }
+                NativeCodeBodyView(
+                    content: content,
+                    language: nil,
+                    startLine: startLine,
+                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                )
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .plainText(
-                content: content, filePath: nil
-            ))
+            FullScreenCodeView(
+                content: .plainText(content: content, filePath: filePath),
+                selectedTextPiRouter: piRouter
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -928,104 +914,6 @@ private struct TruncationNotice: View {
     }
 }
 
-// MARK: - Code Area Builder
-
-/// Two-column code area: line number gutter + horizontally-scrollable code.
-///
-/// Used by `codeArea(highlighted:...)` and `codeArea(text:...)` below.
-/// Line numbers stay fixed while code scrolls horizontally.
-private struct CodeArea: View {
-    let lineNumbers: String
-    let gutterWidth: CGFloat
-    let codeContent: AnyView
-    let maxHeight: CGFloat?
-
-    var body: some View {
-        Group {
-            if let maxHeight {
-                codeScrollView
-                    .frame(maxHeight: maxHeight)
-            } else {
-                codeScrollView
-            }
-        }
-    }
-
-    private var codeScrollView: some View {
-        ScrollView(.vertical) {
-            HStack(alignment: .top, spacing: 0) {
-                // Gutter
-                Text(lineNumbers)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.themeComment)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: gutterWidth, alignment: .trailing)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-
-                // Separator
-                Rectangle()
-                    .fill(Color.themeComment.opacity(0.2))
-                    .frame(width: 1)
-
-                // Code
-                ScrollView(.horizontal, showsIndicators: false) {
-                    codeContent
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                }
-            }
-        }
-    }
-}
-
-/// Build a code area with syntax-highlighted `AttributedString`.
-@MainActor @ViewBuilder
-private func codeArea(
-    highlighted: AttributedString,
-    lineCount: Int,
-    startLine: Int,
-    maxHeight: CGFloat?,
-    inlineSelectionEnabled: Bool
-) -> some View {
-    let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
-    CodeArea(
-        lineNumbers: numbers,
-        gutterWidth: width,
-        codeContent: AnyView(
-            Text(highlighted)
-                .font(.system(size: 11, design: .monospaced))
-                .fixedSize(horizontal: true, vertical: false)
-                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
-        ),
-        maxHeight: maxHeight
-    )
-}
-
-/// Build a code area with plain (unhighlighted) text.
-@MainActor @ViewBuilder
-private func codeArea(
-    text: String,
-    lineCount: Int,
-    startLine: Int,
-    maxHeight: CGFloat?,
-    inlineSelectionEnabled: Bool
-) -> some View {
-    let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
-    CodeArea(
-        lineNumbers: numbers,
-        gutterWidth: width,
-        codeContent: AnyView(
-            Text(text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: true, vertical: false)
-                .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
-        ),
-        maxHeight: maxHeight
-    )
-}
-
 /// Generate line number string and compute gutter width.
 func lineNumberInfo(lineCount: Int, startLine: Int) -> (numbers: String, width: CGFloat) {
     let endLine = startLine + lineCount - 1
@@ -1050,5 +938,57 @@ private extension View {
                         .stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
                 }
             }
+    }
+}
+
+// MARK: - Native Code Body (UIKit-backed)
+
+/// UIKit-backed code renderer wrapping ``NativeFullScreenCodeBody``.
+///
+/// Used by all code/JSON/plain-text views for both inline and document
+/// presentation. Provides gutter line numbers, syntax highlighting
+/// (off main thread), and bidirectional scrolling via `UITextView`.
+///
+/// When `maxHeight` is set (inline mode), reports estimated content
+/// height via `sizeThatFits` so the view shrinks for short snippets.
+/// Vertical bounce is disabled in inline mode.
+private struct NativeCodeBodyView: UIViewRepresentable {
+    let content: String
+    let language: String?
+    let startLine: Int
+    var maxHeight: CGFloat? = nil
+    var selectedTextSourceContext: SelectedTextSourceContext? = nil
+
+    @Environment(\.selectedTextPiActionRouter) private var selectedTextPiRouter
+
+    /// Approximate line height for FullScreenCodeTypography.codeFont (12pt mono).
+    private static let estimatedLineHeight: CGFloat = 15.0
+    /// textContainerInset top + bottom (8 + 8).
+    private static let estimatedVerticalPadding: CGFloat = 16.0
+
+    func makeUIView(context: Context) -> NativeFullScreenCodeBody {
+        NativeFullScreenCodeBody(
+            content: content,
+            language: language,
+            startLine: startLine,
+            palette: ThemeRuntimeState.currentThemeID().palette,
+            alwaysBounceVertical: maxHeight == nil,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: selectedTextSourceContext
+        )
+    }
+
+    func updateUIView(_ uiView: NativeFullScreenCodeBody, context: Context) {}
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: NativeFullScreenCodeBody,
+        context: Context
+    ) -> CGSize? {
+        guard let maxHeight else { return nil }
+        let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
+        let naturalHeight = CGFloat(lineCount) * Self.estimatedLineHeight + Self.estimatedVerticalPadding
+        let width = proposal.width ?? UIScreen.main.bounds.width
+        return CGSize(width: width, height: min(naturalHeight, maxHeight))
     }
 }

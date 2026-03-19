@@ -27,6 +27,7 @@ struct WorkspaceReviewFileDetailView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var selectedTab: DetailTab = .diff
     @State private var diff: WorkspaceReviewDiffResponse?
@@ -36,6 +37,13 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
 
+    private var piRouter: SelectedTextPiActionRouter {
+        let nav = navigation
+        return SelectedTextPiActionRouter { request in
+            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.showQuickSession = true
+        }
+    }
 
     private enum DetailTab: String, CaseIterable, Identifiable {
         case diff = "Diff"
@@ -140,6 +148,7 @@ struct WorkspaceReviewFileDetailView: View {
                     filePath: file.path,
                     presentation: .document
                 )
+                .environment(\.selectedTextPiActionRouter, piRouter)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isDeletedFile {
                 // Deleted file: skip tabs, show diff (the only useful view)
@@ -179,6 +188,7 @@ struct WorkspaceReviewFileDetailView: View {
             filePath: file.path,
             presentation: .document
         )
+        .environment(\.selectedTextPiActionRouter, piRouter)
     }
 
     private var fileIcon: FileIcon {
