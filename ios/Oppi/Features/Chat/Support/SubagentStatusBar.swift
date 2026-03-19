@@ -145,7 +145,9 @@ struct SubagentStatusBar: View {
                         Text(costString(child.cost))
                     }
                     if child.status != .stopped, child.status != .error {
-                        Text(durationString(child.createdAt))
+                        TimelineView(.periodic(from: .now, by: 5)) { _ in
+                            Text(durationString(child.createdAt))
+                        }
                     }
                 }
                 .font(.caption2.monospaced())
