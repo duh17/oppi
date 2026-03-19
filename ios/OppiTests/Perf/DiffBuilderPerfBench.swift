@@ -151,4 +151,26 @@ struct DiffBuilderPerfBench {
         print("METRIC diffBuild_plain_500=\(us)")
         #expect(us < 500_000, "diffBuild plain 500 lines: \(us)μs")
     }
+
+    // MARK: - SyntaxHighlighter benchmarks (secondary metrics)
+
+    static let swiftSource500 = RenderStrategyPerfTests.syntheticSwiftSource(lineCount: 500)
+
+    @Test("Benchmark: SyntaxHighlighter.highlight 500 lines Swift")
+    func highlight500() {
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.highlight(Self.swiftSource500, language: .swift)
+        }
+        print("METRIC highlight_500=\(us)")
+        #expect(us < 500_000, "highlight 500 lines: \(us)μs")
+    }
+
+    @Test("Benchmark: SyntaxHighlighter.scanTokenRanges 500 lines Swift")
+    func scanTokens500() {
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.scanTokenRanges(Self.swiftSource500, language: .swift)
+        }
+        print("METRIC scanTokens_500=\(us)")
+        #expect(us < 500_000, "scanTokenRanges 500 lines: \(us)μs")
+    }
 }
