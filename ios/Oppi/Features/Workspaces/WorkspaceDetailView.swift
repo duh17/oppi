@@ -27,6 +27,9 @@ struct WorkspaceDetailView: View {
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
 
+    // Parent-child tree expansion state
+    @State private var treeExpandedOverrides: [String: Bool] = [:]
+
     private struct SessionLineageSummary {
         let parentSessionName: String?
         let parentSessionStatus: SessionStatus?
@@ -102,6 +105,40 @@ struct WorkspaceDetailView: View {
             }
     }
 
+    /// Active sessions as a tree structure, filtering by search and sorting by turn-ended date.
+    private var activeTreeRows: [SessionTreeHelper.FlatRow] {
+        let active = activeSessions
+        let tree = SessionTreeHelper.buildTree(from: active)
+        return SessionTreeHelper.flattenTree(nodes: tree) { sessionId in
+            isTreeNodeExpanded(sessionId: sessionId, nodes: tree)
+        }
+    }
+
+    /// Build a lookup from session ID to tree node for status count computation.
+    private var activeTreeNodes: [SessionTreeHelper.TreeNode] {
+        SessionTreeHelper.buildTree(from: activeSessions)
+    }
+
+    private func treeNodeLookup(nodes: [SessionTreeHelper.TreeNode]) -> [String: SessionTreeHelper.TreeNode] {
+        var result: [String: SessionTreeHelper.TreeNode] = [:]
+        func visit(_ node: SessionTreeHelper.TreeNode) {
+            result[node.session.id] = node
+            for child in node.children { visit(child) }
+        }
+        for node in nodes { visit(node) }
+        return result
+    }
+
+    private func isTreeNodeExpanded(sessionId: String, nodes: [SessionTreeHelper.TreeNode]) -> Bool {
+        if let override = treeExpandedOverrides[sessionId] {
+            return override
+        }
+        // Default: expanded if any child is active
+        let lookup = treeNodeLookup(nodes: nodes)
+        guard let node = lookup[sessionId] else { return false }
+        return SessionTreeHelper.hasActiveChild(node)
+    }
+
     private var stoppedSessions: [Session] {
         workspaceSessions
             .filter { $0.status == .stopped && matchesSessionSearch($0) }
@@ -161,22 +198,36 @@ struct WorkspaceDetailView: View {
         let stopped = stoppedSessions
         let localFiltered = filteredLocalSessions
         let wsEmpty = workspaceSessions.isEmpty
+        let treeNodes = activeTreeNodes
+        let treeLookup = treeNodeLookup(nodes: treeNodes)
+        let treeRows = SessionTreeHelper.flattenTree(nodes: treeNodes) { sessionId in
+            isTreeNodeExpanded(sessionId: sessionId, nodes: treeNodes)
+        }
 
         List {
             if !active.isEmpty {
                 Section("Active") {
-                    ForEach(active) { session in
-                        NavigationLink(value: session.id) {
-                            SessionRow(
-                                session: session,
-                                pendingCount: permissionStore.pending(for: session.id).count,
-                                lineageHint: lineageHint(for: session)
+                    ForEach(treeRows) { row in
+                        NavigationLink(value: row.session.id) {
+                            SessionTreeRow(
+                                row: row,
+                                pendingCount: permissionStore.pending(for: row.session.id).count,
+                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, nodes: treeNodes),
+                                statusCounts: treeLookup[row.session.id].map {
+                                    SessionTreeHelper.childStatusCounts($0)
+                                },
+                                onToggleExpand: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        let current = isTreeNodeExpanded(sessionId: row.session.id, nodes: treeNodes)
+                                        treeExpandedOverrides[row.session.id] = !current
+                                    }
+                                }
                             )
                         }
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
-                                Task { await stopSession(session) }
+                                Task { await stopSession(row.session) }
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
@@ -486,8 +537,8 @@ struct WorkspaceDetailView: View {
         error = nil
 
         do {
-            let session = try await api.createWorkspaceSession(workspaceId: workspace.id)
-            sessionStore.upsert(session)
+            let response = try await api.createWorkspaceSession(workspaceId: workspace.id)
+            sessionStore.upsert(response.session)
             await refreshLineage()
             isCreating = false
         } catch {

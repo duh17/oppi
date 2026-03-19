@@ -29,6 +29,9 @@ struct ChatView: View {
     @State private var showModelSwitchWarning = false
     @State private var pendingModelSwitch: ModelInfo?
     @State private var showComposer = false
+    @State private var subagentBarExpanded = false
+    @State private var childSessionToOpen: ChildSessionRoute?
+    @State private var parentSessionToOpen: ParentSessionRoute?
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var copiedSessionID = false
@@ -58,8 +61,27 @@ struct ChatView: View {
         let id: String
     }
 
+    private struct ChildSessionRoute: Identifiable, Hashable {
+        let id: String
+    }
+
+    private struct ParentSessionRoute: Identifiable, Hashable {
+        let id: String
+    }
+
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
+    }
+
+    /// Child sessions spawned by this session.
+    private var childSessions: [Session] {
+        sessionStore.sessions.filter { $0.parentSessionId == sessionId }
+    }
+
+    /// The parent session, if this session was spawned by another.
+    private var parentSession: Session? {
+        guard let parentId = session?.parentSessionId else { return nil }
+        return sessionStore.sessions.first { $0.id == parentId }
     }
 
     private var sessionDisplayName: String {
@@ -135,14 +157,22 @@ struct ChatView: View {
                 }
             }
             .overlay(alignment: .top) {
-                WorkspaceContextBar(
-                    gitStatus: connection.gitStatusStore.gitStatus,
-                    isLoading: connection.gitStatusStore.isLoading,
-                    workspaceId: session?.workspaceId,
-                    sessionId: sessionId,
-                    collapseToken: contextBarCollapseToken,
-                    onExpandedChanged: { contextBarExpanded = $0 }
-                )
+                VStack(spacing: 0) {
+                    WorkspaceContextBar(
+                        gitStatus: connection.gitStatusStore.gitStatus,
+                        isLoading: connection.gitStatusStore.isLoading,
+                        workspaceId: session?.workspaceId,
+                        sessionId: sessionId,
+                        collapseToken: contextBarCollapseToken,
+                        onExpandedChanged: { contextBarExpanded = $0 }
+                    )
+
+                    if let parent = parentSession {
+                        ParentBreadcrumb(parentSession: parent) {
+                            parentSessionToOpen = ParentSessionRoute(id: parent.id)
+                        }
+                    }
+                }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             }
             .overlay(alignment: .bottom) {
@@ -314,6 +344,12 @@ struct ChatView: View {
         .navigationDestination(item: $forkedSessionToOpen) { route in
             Self(sessionId: route.id)
         }
+        .navigationDestination(item: $childSessionToOpen) { route in
+            Self(sessionId: route.id)
+        }
+        .navigationDestination(item: $parentSessionToOpen) { route in
+            Self(sessionId: route.id)
+        }
         .toolbar(.hidden, for: .tabBar)
         .toolbar(.hidden, for: .bottomBar)
         .toolbar(.visible, for: .navigationBar)
@@ -363,6 +399,14 @@ struct ChatView: View {
                     )
                     .padding(.horizontal, 16)
                 }
+
+                SubagentStatusBar(
+                    childSessions: childSessions,
+                    isExpanded: $subagentBarExpanded,
+                    onSelectChild: { childId in
+                        childSessionToOpen = ChildSessionRoute(id: childId)
+                    }
+                )
 
                 ChatInputBar(
                     text: $inputText,
