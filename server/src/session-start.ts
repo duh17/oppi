@@ -90,6 +90,10 @@ export class SessionStartCoordinator {
             spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
             listChildren: () => this.deps.listChildSessions(session.id),
             getSession: (id) => this.deps.storage.getSession(id),
+            listWorkspaceSessions: () =>
+              this.deps.storage
+                .listSessions()
+                .filter((s) => s.workspaceId === identity.workspaceId),
           }),
         );
 

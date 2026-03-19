@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>spawn_agent iOS UI — Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-body: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'Fira Code', 'SF Mono', monospace;
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2128;
+    --surface3: #21262d;
+    --border: rgba(255,255,255,0.06);
+    --border-bright: rgba(255,255,255,0.12);
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --text-muted: #6e7681;
+    --accent: #58a6ff;
+    --accent-dim: rgba(88,166,255,0.1);
+    --green: #3fb950;
+    --green-dim: rgba(63,185,80,0.12);
+    --orange: #d29922;
+    --orange-dim: rgba(210,153,34,0.12);
+    --red: #f85149;
+    --red-dim: rgba(248,81,73,0.12);
+    --teal: #39d2c0;
+    --teal-dim: rgba(57,210,192,0.1);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f0f2f5;
+      --surface: #ffffff;
+      --surface2: #f6f8fa;
+      --surface3: #ebedf0;
+      --border: rgba(0,0,0,0.06);
+      --border-bright: rgba(0,0,0,0.12);
+      --text: #1f2328;
+      --text-dim: #656d76;
+      --text-muted: #8b949e;
+      --accent: #0969da;
+      --accent-dim: rgba(9,105,218,0.08);
+      --green: #1a7f37;
+      --green-dim: rgba(26,127,55,0.08);
+      --orange: #9a6700;
+      --orange-dim: rgba(154,103,0,0.08);
+      --red: #cf222e;
+      --red-dim: rgba(207,34,46,0.08);
+      --teal: #0e8a7d;
+      --teal-dim: rgba(14,138,125,0.08);
+    }
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 32px 24px 80px;
+  }
+
+  h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  h2 { font-size: 20px; font-weight: 600; margin: 48px 0 16px; color: var(--text); }
+  h3 { font-size: 15px; font-weight: 600; margin: 32px 0 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  p.subtitle { color: var(--text-dim); font-size: 15px; margin-bottom: 32px; max-width: 640px; }
+  .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); }
+
+  /* ── Phone frames ── */
+  .screens { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; justify-content: center; }
+  .screen-wrapper { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .screen-label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+
+  .phone {
+    width: 375px;
+    background: var(--surface);
+    border-radius: 32px;
+    border: 2px solid var(--border-bright);
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .phone-notch {
+    height: 54px;
+    background: var(--surface);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 8px;
+    position: relative;
+  }
+  .phone-notch::before {
+    content: '';
+    width: 126px; height: 28px;
+    background: var(--bg);
+    border-radius: 16px;
+    position: absolute;
+    top: 8px;
+  }
+  .phone-notch .nav-title {
+    font-size: 17px;
+    font-weight: 600;
+    z-index: 1;
+  }
+  .phone-content {
+    min-height: 580px;
+    background: var(--bg);
+  }
+
+  /* ── iOS List ── */
+  .ios-section { padding: 0 16px; }
+  .ios-section-header {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 16px 0 6px;
+    letter-spacing: 0.3px;
+  }
+  .ios-group {
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .ios-row {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .ios-row:last-child { border-bottom: none; }
+  .ios-row:hover { background: var(--accent-dim); }
+
+  .ios-row .icon {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-xs);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .ios-row .content { flex: 1; min-width: 0; }
+  .ios-row .title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ios-row .detail { font-size: 12px; color: var(--text-dim); margin-top: 1px; }
+  .ios-row .chevron { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.busy { background: var(--orange); animation: pulse 2s infinite; }
+  .status-dot.ready { background: var(--green); }
+  .status-dot.stopped { background: var(--text-muted); }
+  .status-dot.error { background: var(--red); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ── Child indent ── */
+  .ios-row.child {
+    padding-left: 44px;
+    position: relative;
+  }
+  .ios-row.child::before {
+    content: '';
+    position: absolute;
+    left: 28px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: var(--border-bright);
+  }
+  .ios-row.child:last-child::before {
+    bottom: 50%;
+  }
+  .ios-row.child .tree-branch {
+    position: absolute;
+    left: 28px;
+    top: 50%;
+    width: 10px;
+    height: 2px;
+    background: var(--border-bright);
+  }
+  /* Grandchild (depth 2) */
+  .ios-row.grandchild {
+    padding-left: 68px;
+    position: relative;
+  }
+  .ios-row.grandchild::before {
+    content: '';
+    position: absolute;
+    left: 52px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: var(--border-bright);
+  }
+  .ios-row.grandchild:last-child::before { bottom: 50%; }
+  .ios-row.grandchild .tree-branch {
+    position: absolute;
+    left: 52px;
+    top: 50%;
+    width: 10px;
+    height: 2px;
+    background: var(--border-bright);
+  }
+  /* Also draw the parent-level connector through grandchild rows */
+  .ios-row.grandchild::after {
+    content: '';
+    position: absolute;
+    left: 28px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: var(--border-bright);
+  }
+
+  /* Disclosure toggle on parent rows */
+  .disclosure {
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  .disclosure:hover { background: var(--accent-dim); }
+
+  /* ── Child count badge ── */
+  .child-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--teal);
+    background: var(--teal-dim);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* ── Chat view elements ── */
+  .chat-area {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .chat-bubble {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .chat-bubble.user {
+    background: var(--accent);
+    color: #fff;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-bubble.assistant {
+    background: var(--surface);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+
+  /* ── Tool call row ── */
+  .tool-row {
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    max-width: 90%;
+  }
+  .tool-row .tool-icon {
+    font-size: 14px;
+    width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-xs);
+    background: var(--accent-dim);
+    flex-shrink: 0;
+  }
+  .tool-row .tool-text { color: var(--text-dim); font-family: var(--font-mono); font-size: 12px; }
+  .tool-row .tool-result { color: var(--green); font-size: 12px; }
+
+  /* ── Subagent status bar ── */
+  .subagent-bar {
+    margin: 0 16px 8px;
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .subagent-bar-header {
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .subagent-bar-header:hover { background: var(--accent-dim); }
+  .subagent-bar-detail {
+    border-top: 1px solid var(--border);
+  }
+  .subagent-bar-row {
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .subagent-bar-row:last-child { border-bottom: none; }
+  .subagent-bar-row:hover { background: var(--accent-dim); }
+  .subagent-bar-row .name { flex: 1; font-weight: 500; }
+  .subagent-bar-row .meta { color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; }
+
+  /* ── Composer ── */
+  .composer {
+    padding: 8px 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+  }
+  .composer-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+  .composer-send {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    font-size: 14px;
+  }
+
+  /* ── Annotation pointers ── */
+  .annotation {
+    position: relative;
+    margin: 8px 0;
+  }
+  .callout {
+    background: var(--accent-dim);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--accent);
+    margin: 8px 16px;
+  }
+
+  /* ── Section flow ── */
+  .flow-section {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .flow-arrow {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 8px 0;
+    font-size: 20px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 860px) {
+    .screens { flex-direction: column; align-items: center; }
+  }
+
+  /* ── Fade in ── */
+  .fade-in {
+    opacity: 0;
+    transform: translateY(12px);
+    animation: fadeUp 0.5s ease forwards;
+    animation-delay: calc(var(--i, 0) * 0.1s);
+  }
+  @keyframes fadeUp { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .fade-in { opacity: 1; transform: none; animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="flow-section">
+  <h1 class="fade-in" style="--i:0">spawn_agent iOS UI</h1>
+  <p class="subtitle fade-in" style="--i:1">
+    Three UI surfaces for multi-agent sessions: workspace session list with parent-child grouping,
+    a collapsible status bar in the parent's ChatView, and tap-to-navigate to any child.
+  </p>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 class="fade-in" style="--i:2">Screen 1: Workspace Detail</h2>
+  <p class="subtitle fade-in" style="--i:3" style="margin-bottom: 16px;">
+    Child sessions are visually nested under their parent with tree lines and indentation.
+    The parent row shows a badge with the child count. Tapping any row navigates into that session's chat.
+  </p>
+
+  <div class="screens fade-in" style="--i:4">
+    <!-- Expanded parent tree -->
+    <div class="screen-wrapper">
+      <div class="phone">
+        <div class="phone-notch">
+          <span class="nav-title">oppi</span>
+        </div>
+        <div class="phone-content">
+
+          <div class="ios-section">
+            <div class="ios-section-header">Active</div>
+            <div class="ios-group">
+              <!-- Parent (expanded) with disclosure triangle -->
+              <div class="ios-row">
+                <div class="disclosure">▼</div>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Refactor auth module</div>
+                  <div class="detail">
+                    opus &middot; 24 msgs &middot; $1.42 &middot; 8m
+                    <span class="child-badge" style="margin-left: 4px;">3 children</span>
+                  </div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+
+              <!-- Child 1 (also a parent — has a grandchild) -->
+              <div class="ios-row child">
+                <span class="tree-branch"></span>
+                <div class="disclosure">▼</div>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Extract token service</div>
+                  <div class="detail">codex &middot; 12 msgs &middot; $0.31 &middot; 3m <span class="child-badge">1 child</span></div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+
+              <!-- Grandchild -->
+              <div class="ios-row grandchild">
+                <span class="tree-branch"></span>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Write token cache tests</div>
+                  <div class="detail">spark &middot; 4 msgs &middot; $0.05 &middot; 1m</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+
+              <!-- Child 2 -->
+              <div class="ios-row child">
+                <span class="tree-branch"></span>
+                <div class="status-dot ready"></div>
+                <div class="content">
+                  <div class="title">Write auth tests</div>
+                  <div class="detail">codex &middot; 8 msgs &middot; $0.18 &middot; 2m ✓</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+
+              <!-- Child 3 -->
+              <div class="ios-row child">
+                <span class="tree-branch"></span>
+                <div class="status-dot error"></div>
+                <div class="content">
+                  <div class="title">Migrate OAuth providers</div>
+                  <div class="detail" style="color: var(--red);">error &middot; 5 msgs &middot; $0.09</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+
+              <!-- Standalone session (no disclosure, no children) -->
+              <div class="ios-row">
+                <div style="width: 20px;"></div>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Fix scroll jank in timeline</div>
+                  <div class="detail">sonnet &middot; 6 msgs &middot; $0.22 &middot; 1m</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ios-section">
+            <div class="ios-section-header">Stopped</div>
+            <div class="ios-group">
+              <div class="ios-row">
+                <div style="width: 20px;"></div>
+                <div class="status-dot stopped"></div>
+                <div class="content">
+                  <div class="title">Update ARCHITECTURE.md</div>
+                  <div class="detail">opus &middot; 45 msgs &middot; $2.10 &middot; 15m</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <span class="screen-label">Tree Expanded</span>
+    </div>
+
+    <!-- Collapsed parent tree -->
+    <div class="screen-wrapper">
+      <div class="phone">
+        <div class="phone-notch">
+          <span class="nav-title">oppi</span>
+        </div>
+        <div class="phone-content">
+
+          <div class="ios-section">
+            <div class="ios-section-header">Active</div>
+            <div class="ios-group">
+              <!-- Parent (collapsed) — children hidden -->
+              <div class="ios-row">
+                <div class="disclosure">▶</div>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Refactor auth module</div>
+                  <div class="detail">
+                    opus &middot; 24 msgs &middot; $1.42 &middot; 8m
+                    <span class="child-badge" style="margin-left: 4px;">⏳1 ✓1 ✗1</span>
+                  </div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+              <!-- Children hidden when collapsed -->
+
+              <div class="ios-row">
+                <div style="width: 20px;"></div>
+                <div class="status-dot busy"></div>
+                <div class="content">
+                  <div class="title">Fix scroll jank in timeline</div>
+                  <div class="detail">sonnet &middot; 6 msgs &middot; $0.22 &middot; 1m</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ios-section">
+            <div class="ios-section-header">Stopped</div>
+            <div class="ios-group">
+              <!-- Stopped parent with stopped children (collapsed) -->
+              <div class="ios-row">
+                <div class="disclosure">▶</div>
+                <div class="status-dot stopped"></div>
+                <div class="content">
+                  <div class="title">Update ARCHITECTURE.md</div>
+                  <div class="detail">
+                    opus &middot; 45 msgs &middot; $2.10
+                    <span class="child-badge" style="margin-left: 4px;">2 children</span>
+                  </div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+              <div class="ios-row">
+                <div style="width: 20px;"></div>
+                <div class="status-dot stopped"></div>
+                <div class="content">
+                  <div class="title">Workspace creation flow</div>
+                  <div class="detail">codex &middot; 33 msgs &middot; $0.89</div>
+                </div>
+                <span class="chevron">›</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <span class="screen-label">Tree Collapsed</span>
+    </div>
+  </div>
+
+  <div class="callout fade-in" style="--i:5; max-width: 600px; margin: 16px auto;">
+    <strong>Design notes:</strong><br>
+    <strong>Collapsible:</strong> Disclosure triangle on parent rows toggles children visibility.
+    Collapsed badge shows condensed status counts (⏳1 ✓1 ✗1). Default: expanded if any child is active,
+    collapsed if all children are stopped.<br><br>
+    <strong>Nested spawns:</strong> Children can spawn grandchildren — same tree pattern, deeper indent.
+    "Extract token service" has its own disclosure triangle and one child ("Write token cache tests").
+    The tree line connector runs through all depth levels.<br><br>
+    <strong>Non-parent rows:</strong> Standalone sessions have an empty spacer where the disclosure triangle would be,
+    keeping text alignment consistent.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 class="fade-in" style="--i:6">Screen 2: Parent ChatView — Status Bar</h2>
+  <p class="subtitle fade-in" style="--i:7">
+    The parent's chat shows spawn_agent tool calls inline. Above the composer, a collapsible status bar
+    shows live child counts. Expanding it reveals per-child rows with tap-to-navigate.
+  </p>
+
+  <div class="screens fade-in" style="--i:8">
+    <!-- Collapsed state -->
+    <div class="screen-wrapper">
+      <div class="phone">
+        <div class="phone-notch">
+          <span class="nav-title">Refactor auth module</span>
+        </div>
+        <div class="phone-content" style="display: flex; flex-direction: column;">
+          <div class="chat-area" style="flex: 1;">
+            <div class="chat-bubble user">
+              Refactor the auth module. Split it into 3 parallel tasks: token service, tests, and OAuth migration.
+            </div>
+            <div class="chat-bubble assistant" style="font-size: 13px;">
+              I'll spawn 3 agents to handle this in parallel.
+            </div>
+
+            <!-- Tool calls -->
+            <div class="tool-row">
+              <div class="tool-icon">⚡</div>
+              <div>
+                <div class="tool-text">spawn_agent</div>
+                <div class="tool-result">→ "Extract token service" spawned</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon">⚡</div>
+              <div>
+                <div class="tool-text">spawn_agent</div>
+                <div class="tool-result">→ "Write auth tests" spawned</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon">⚡</div>
+              <div>
+                <div class="tool-text">spawn_agent</div>
+                <div class="tool-result">→ "Migrate OAuth providers" spawned</div>
+              </div>
+            </div>
+
+            <div class="chat-bubble assistant" style="font-size: 13px;">
+              All 3 agents are running. You can monitor them from your session list, or I can check their status anytime with check_agents.
+            </div>
+          </div>
+
+          <!-- Status bar (collapsed) -->
+          <div class="subagent-bar">
+            <div class="subagent-bar-header">
+              <span><span style="color: var(--orange);">⏳ 1 working</span> · <span style="color: var(--green);">✓ 1 done</span> · <span style="color: var(--red);">✗ 1 error</span></span>
+              <span style="color: var(--text-muted); font-size: 11px;">▼</span>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-input">Message...</div>
+            <div class="composer-send">↑</div>
+          </div>
+        </div>
+      </div>
+      <span class="screen-label">ChatView — Status Bar (Collapsed)</span>
+    </div>
+
+    <!-- Expanded state -->
+    <div class="screen-wrapper">
+      <div class="phone">
+        <div class="phone-notch">
+          <span class="nav-title">Refactor auth module</span>
+        </div>
+        <div class="phone-content" style="display: flex; flex-direction: column;">
+          <div class="chat-area" style="flex: 1;">
+            <div class="chat-bubble user">
+              Refactor the auth module. Split into 3 parallel tasks.
+            </div>
+            <div class="chat-bubble assistant" style="font-size: 13px;">
+              All 3 agents are running...
+            </div>
+          </div>
+
+          <!-- Status bar (expanded) -->
+          <div class="subagent-bar">
+            <div class="subagent-bar-header">
+              <span><span style="color: var(--orange);">⏳ 1 working</span> · <span style="color: var(--green);">✓ 1 done</span> · <span style="color: var(--red);">✗ 1 error</span></span>
+              <span style="color: var(--text-muted); font-size: 11px;">▲</span>
+            </div>
+            <div class="subagent-bar-detail">
+              <div class="subagent-bar-row">
+                <div class="status-dot busy"></div>
+                <span class="name">Extract token service</span>
+                <span class="meta">codex · $0.31 · 3m</span>
+                <span class="chevron" style="color: var(--text-muted); font-size: 11px;">›</span>
+              </div>
+              <div class="subagent-bar-row">
+                <div class="status-dot ready"></div>
+                <span class="name">Write auth tests</span>
+                <span class="meta">codex · $0.18 · 2m</span>
+                <span class="chevron" style="color: var(--text-muted); font-size: 11px;">›</span>
+              </div>
+              <div class="subagent-bar-row">
+                <div class="status-dot error"></div>
+                <span class="name" style="color: var(--red);">Migrate OAuth providers</span>
+                <span class="meta">$0.09</span>
+                <span class="chevron" style="color: var(--text-muted); font-size: 11px;">›</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-input">Message...</div>
+            <div class="composer-send">↑</div>
+          </div>
+        </div>
+      </div>
+      <span class="screen-label">ChatView — Status Bar (Expanded)</span>
+    </div>
+  </div>
+
+  <div class="callout fade-in" style="--i:9; max-width: 600px; margin: 16px auto;">
+    <strong>Design note:</strong> The status bar sits between the chat timeline and the composer.
+    Collapsed shows aggregate counts. Expanded reveals per-child rows with status dots,
+    model, cost, and duration. Tapping a row navigates to that child's ChatView.
+    The bar only appears when the current session has children.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 class="fade-in" style="--i:10">Screen 3: Child ChatView</h2>
+  <p class="subtitle fade-in" style="--i:11">
+    The child's chat looks like any session — full tool calls, text, thinking.
+    A small "parent" breadcrumb in the nav bar links back to the parent session.
+  </p>
+
+  <div class="screens fade-in" style="--i:12">
+    <div class="screen-wrapper">
+      <div class="phone">
+        <div class="phone-notch">
+          <span class="nav-title" style="font-size: 15px;">Extract token service</span>
+        </div>
+        <div class="phone-content" style="display: flex; flex-direction: column;">
+          <!-- Parent breadcrumb -->
+          <div style="padding: 4px 16px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent); background: var(--surface);">
+            <span style="font-size: 10px;">‹</span>
+            <span>Refactor auth module</span>
+            <span style="color: var(--text-muted); margin-left: 4px;">(parent)</span>
+          </div>
+
+          <div class="chat-area" style="flex: 1;">
+            <!-- System-injected context shown as a subtle block -->
+            <div style="font-size: 12px; color: var(--text-dim); padding: 8px 12px; background: var(--surface2); border-radius: var(--radius-sm); align-self: flex-start;">
+              Spawned by "Refactor auth module"
+            </div>
+
+            <div class="chat-bubble user" style="font-size: 13px;">
+              Extract the token refresh logic from auth.ts into a new TokenService class...
+            </div>
+
+            <!-- Tool calls in child -->
+            <div class="tool-row">
+              <div class="tool-icon" style="background: var(--green-dim); color: var(--green);">R</div>
+              <div>
+                <div class="tool-text">read src/auth.ts</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon" style="background: var(--green-dim); color: var(--green);">R</div>
+              <div>
+                <div class="tool-text">read src/token-cache.ts</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon" style="background: var(--orange-dim); color: var(--orange);">W</div>
+              <div>
+                <div class="tool-text">write src/token-service.ts</div>
+                <div class="tool-result">89 lines</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon" style="background: var(--teal-dim); color: var(--teal);">E</div>
+              <div>
+                <div class="tool-text">edit src/auth.ts</div>
+                <div class="tool-result">−34 +8 lines</div>
+              </div>
+            </div>
+            <div class="tool-row">
+              <div class="tool-icon" style="background: var(--accent-dim); color: var(--accent);">$</div>
+              <div>
+                <div class="tool-text">bash: npm test</div>
+                <div class="tool-result" style="color: var(--green);">✓ 142 tests passed</div>
+              </div>
+            </div>
+
+            <div class="chat-bubble assistant" style="font-size: 13px;">
+              Extracted TokenService with refresh, revoke, and cache methods. All 142 tests pass. Committed as <code style="font-family: var(--font-mono); font-size: 11px; background: var(--surface2); padding: 1px 4px; border-radius: 3px;">a3f2c1d</code>.
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-input">Message...</div>
+            <div class="composer-send">↑</div>
+          </div>
+        </div>
+      </div>
+      <span class="screen-label">Child ChatView — Full Session</span>
+    </div>
+  </div>
+
+  <div class="callout fade-in" style="--i:13; max-width: 600px; margin: 16px auto;">
+    <strong>Design note:</strong> The child session is a full ChatView — same rendering pipeline as any session.
+    The "parent" breadcrumb is a tappable back link to the parent's chat.
+    A subtle "Spawned by..." label gives context without taking up space.
+    The child session has its own composer — you can interact with it independently.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 class="fade-in" style="--i:14">Navigation Flow</h2>
+  <div style="max-width: 600px; margin: 16px auto; padding: 20px; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border);" class="fade-in" style="--i:15">
+    <div style="font-family: var(--font-mono); font-size: 13px; line-height: 2;">
+      <div>Workspace Detail</div>
+      <div style="color: var(--text-dim); padding-left: 16px;">├── <span style="color: var(--accent);">Parent Session</span> → ChatView (with status bar)</div>
+      <div style="color: var(--text-dim); padding-left: 16px;">│   ├── status bar row tap → <span style="color: var(--teal);">Child ChatView</span></div>
+      <div style="color: var(--text-dim); padding-left: 16px;">│   │   └── parent breadcrumb ← <span style="color: var(--accent);">back to Parent</span></div>
+      <div style="color: var(--text-dim); padding-left: 16px;">│   └── spawn_agent tool row tap → <span style="color: var(--teal);">Child ChatView</span></div>
+      <div style="color: var(--text-dim); padding-left: 16px;">├── <span style="color: var(--teal);">Child Session</span> (directly) → ChatView</div>
+      <div style="color: var(--text-dim); padding-left: 16px;">│   └── parent breadcrumb ← <span style="color: var(--accent);">back to Parent</span></div>
+      <div style="color: var(--text-dim); padding-left: 16px;">└── Standalone Session → ChatView (no status bar)</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -31,10 +31,87 @@ export interface SpawnAgentContext {
     thinking?: string;
     prompt: string;
   }): Promise<Session>;
-  /** List child sessions of the current session. */
+  /** List direct child sessions of the current session. */
   listChildren(): Session[];
-  /** Get a session by ID (for inspect_agent trace access). */
+  /** Get a session by ID (for inspect_agent trace access and tree walks). */
   getSession(sessionId: string): Session | undefined;
+  /** List all sessions in the workspace (for tree cost aggregation). */
+  listWorkspaceSessions(): Session[];
+}
+
+// ---------------------------------------------------------------------------
+// Tree utilities
+// ---------------------------------------------------------------------------
+
+/** Maximum spawn depth. 0 = root (no spawning), 1 = parent→child, 2 = parent→child→grandchild. */
+const MAX_SPAWN_DEPTH = 2;
+
+/** Walk parentSessionId chain upward to compute depth. Root = 0. */
+function getSpawnDepth(ctx: SpawnAgentContext): number {
+  let depth = 0;
+  let currentId: string | undefined = ctx.sessionId;
+  while (currentId) {
+    const session = ctx.getSession(currentId);
+    if (!session?.parentSessionId) break;
+    depth++;
+    currentId = session.parentSessionId;
+  }
+  return depth;
+}
+
+/** Find the root session ID of the spawn tree. */
+function getRootSessionId(ctx: SpawnAgentContext): string {
+  let currentId = ctx.sessionId;
+  while (true) {
+    const session = ctx.getSession(currentId);
+    if (!session?.parentSessionId) return currentId;
+    currentId = session.parentSessionId;
+  }
+}
+
+/** Collect all descendant sessions of a given root (breadth-first). */
+function getDescendants(rootId: string, allSessions: Session[]): Session[] {
+  const descendants: Session[] = [];
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const parentId = queue.shift();
+    if (!parentId) continue;
+    for (const s of allSessions) {
+      if (s.parentSessionId === parentId) {
+        descendants.push(s);
+        queue.push(s.id);
+      }
+    }
+  }
+  return descendants;
+}
+
+interface TreeCostSummary {
+  totalSessions: number;
+  totalCost: number;
+  totalTokensInput: number;
+  totalTokensOutput: number;
+  totalMessages: number;
+  busyCount: number;
+  stoppedCount: number;
+  errorCount: number;
+}
+
+function computeTreeCost(rootId: string, allSessions: Session[]): TreeCostSummary {
+  const root = allSessions.find((s) => s.id === rootId);
+  const descendants = getDescendants(rootId, allSessions);
+  const tree = root ? [root, ...descendants] : descendants;
+
+  return {
+    totalSessions: tree.length,
+    totalCost: tree.reduce((s, t) => s + t.cost, 0),
+    totalTokensInput: tree.reduce((s, t) => s + t.tokens.input, 0),
+    totalTokensOutput: tree.reduce((s, t) => s + t.tokens.output, 0),
+    totalMessages: tree.reduce((s, t) => s + t.messageCount, 0),
+    busyCount: tree.filter((t) => t.status === "busy" || t.status === "starting").length,
+    stoppedCount: tree.filter((t) => t.status === "stopped" || t.status === "ready").length,
+    errorCount: tree.filter((t) => t.status === "error").length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +564,8 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "Give each spawned agent a clear, self-contained task description with all needed context.",
         "The child agent cannot see the parent's conversation history — include relevant context in the message.",
         "Use check_agents to poll child status, inspect_agent to drill into a child's execution trace.",
+        "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
+        `Max spawn depth is ${MAX_SPAWN_DEPTH}. Avoid spawning agents from within spawned agents unless the task genuinely requires hierarchical decomposition.`,
       ],
       parameters: spawnAgentParams,
 
@@ -497,6 +576,23 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         onUpdate,
       ) {
         const name = params.name || params.message.slice(0, 80);
+
+        // Depth check: prevent unbounded recursive spawning
+        const currentDepth = getSpawnDepth(ctx);
+        if (currentDepth >= MAX_SPAWN_DEPTH) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  `Cannot spawn: max depth reached (${MAX_SPAWN_DEPTH}). ` +
+                  `This session is at depth ${currentDepth} in the spawn tree. ` +
+                  `Do the work directly instead of delegating further.`,
+              },
+            ],
+            details: { agentId: "", name, status: "error" },
+          };
+        }
 
         onUpdate?.({
           content: [{ type: "text", text: `Creating session "${name}"...` }],
@@ -569,7 +665,11 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           const duration = formatDuration(a.durationMs);
           const cost = formatCost(a.cost);
           const name = a.name ?? a.id.slice(0, 8);
-          return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}`;
+          // Show grandchild count if this child has its own children
+          const allSessions = ctx.listWorkspaceSessions();
+          const grandchildren = allSessions.filter((s) => s.parentSessionId === a.id);
+          const gcMark = grandchildren.length > 0 ? ` (+${grandchildren.length} children)` : "";
+          return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}${gcMark}`;
         });
 
         const busyCount = agents.filter(
@@ -589,7 +689,17 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           .filter(Boolean)
           .join(", ");
 
-        const text = `${summary}\n\n${lines.join("\n")}`;
+        // Tree-wide cost aggregation
+        const rootId = getRootSessionId(ctx);
+        const allSessions = ctx.listWorkspaceSessions();
+        const treeCost = computeTreeCost(rootId, allSessions);
+
+        const treeLine =
+          `Tree total: ${treeCost.totalSessions} sessions, ` +
+          `${treeCost.totalMessages} msgs, ` +
+          `${formatCost(treeCost.totalCost)}`;
+
+        const text = `${summary}\n\n${lines.join("\n")}\n\n${treeLine}`;
 
         return {
           content: [{ type: "text", text }],
