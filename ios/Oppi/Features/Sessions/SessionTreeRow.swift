@@ -62,6 +62,24 @@ struct SessionTreeRow: View {
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
 
+                // Change stats (files touched, lines added/removed)
+                if let stats = row.session.changeStats {
+                    HStack(spacing: 8) {
+                        Text(filesTouchedSummary(stats.filesChanged))
+                            .foregroundStyle(changeSummaryColor(stats))
+
+                        Text("+\(stats.addedLines)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(.themeDiffAdded)
+
+                        Text("-\(stats.removedLines)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(.themeDiffRemoved)
+                    }
+                    .font(.caption2)
+                    .lineLimit(1)
+                }
+
                 HStack(spacing: 6) {
                     if let model = shortModelName(row.session.model) {
                         Text(model)
@@ -177,6 +195,20 @@ struct SessionTreeRow: View {
     private func shortModelName(_ model: String?) -> String? {
         guard let model, !model.isEmpty else { return nil }
         return model.split(separator: "/").last.map(String.init) ?? model
+    }
+
+    private func filesTouchedSummary(_ filesChanged: Int) -> String {
+        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
+    }
+
+    private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
+        if stats.filesChanged >= 25 || stats.mutatingToolCalls >= 80 {
+            return .themeRed
+        }
+        if stats.filesChanged >= 10 || stats.mutatingToolCalls >= 30 {
+            return .themeOrange
+        }
+        return .themeGreen
     }
 
     private func costString(_ cost: Double) -> String {
