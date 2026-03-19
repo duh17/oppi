@@ -40,6 +40,8 @@ cd ios && bash scripts/install.sh -d DEVICE_UDID --launch
 
 **sim-pool.sh** manages a pool of simulators with slot-based locking so multiple agents can build/test in parallel without colliding. It auto-injects `-destination` and `-derivedDataPath`. Do NOT pass your own `-destination` — the pool handles it. Simulators are lazy-created on first claim. Stale locks from crashed processes are auto-reaped.
 
+**Build failure output:** On failure, sim-pool.sh automatically prints a `BUILD FAILED` summary with deduped compiler errors, linker errors, and error/warning counts. It also prints the full log path (e.g. `/tmp/sim-pool-build-XXXXXX.log`). Do NOT pipe build output through `grep`, `tail`, `head`, or other filters — the summary is already agent-friendly. To investigate further, use `read(path="/tmp/sim-pool-build-XXXXXX.log")` with the path from the summary.
+
 After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
 
 See [`docs/testing/`](docs/testing/) for full test strategy, pyramid, and required gates by change type.
