@@ -56,10 +56,9 @@ function actionConfig(action: WorkspaceReviewSessionAction): ReviewActionConfig 
         visiblePrompt: "Review these selected changes.",
         instructions: [
           "Analyze the selected git-backed changes for bugs, regressions, risky assumptions, and missing tests.",
-          "For each finding, call the review_annotate tool with the file path, line number, side, body, and severity.",
-          "Use severity 'error' for bugs and regressions, 'warn' for risky patterns or missing validation, 'info' for style suggestions.",
-          "One annotation per distinct finding. Be concise — the reviewer reads these on a phone screen.",
-          "After posting all annotations, provide a brief summary of what you found.",
+          "For each finding, cite the file path, line number, and severity (error for bugs, warn for risky patterns, info for suggestions).",
+          "Be concise — the reviewer reads these on a phone screen.",
+          "After listing all findings, provide a brief summary.",
           "Do not edit code unless the user explicitly asks for changes.",
         ],
       };
@@ -70,7 +69,7 @@ function actionConfig(action: WorkspaceReviewSessionAction): ReviewActionConfig 
         instructions: [
           "Summarize what changed and infer the likely intent from the selected diffs.",
           "Identify missing follow-ups, cleanup work, validation gaps, and next steps.",
-          "For actionable items tied to specific lines, use the review_annotate tool to create inline annotations.",
+          "For actionable items tied to specific lines, cite the file path and line number.",
           "Prioritize recommendations so the user knows what to do next.",
           "Do not edit code unless the user explicitly asks for changes.",
         ],

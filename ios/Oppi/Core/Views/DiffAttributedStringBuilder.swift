@@ -3,20 +3,6 @@ import UIKit
 /// Attribute key for tagging diff line kind (added/removed/header) for full-width background rendering.
 let diffLineKindAttributeKey = NSAttributedString.Key("unifiedDiffLineKind")
 
-/// Attribute key embedding line metadata for tap-to-annotate.
-/// Value is a `DiffLineTapInfo` struct.
-let diffLineTapInfoKey = NSAttributedString.Key("diffLineTapInfo")
-
-/// Metadata attached to each diff line's character range for tap detection.
-struct DiffLineTapInfo: Sendable {
-    let newLine: Int?
-    let oldLine: Int?
-    let side: AnnotationSide
-
-    /// The primary line number for annotation anchoring.
-    var anchorLine: Int? { newLine ?? oldLine }
-}
-
 /// Builds the attributed string for a unified diff from structured hunks.
 ///
 /// Uses a fused two-phase approach:
@@ -261,14 +247,6 @@ enum DiffAttributedStringBuilder {
                 }
             }
 
-            // Tap metadata
-            let tapSide: AnnotationSide = info.kind == .removed ? .old : .new
-            let tapInfo = DiffLineTapInfo(
-                newLine: info.newLine,
-                oldLine: info.oldLine,
-                side: tapSide
-            )
-            result.addAttribute(diffLineTapInfoKey, value: tapInfo, range: rowRange)
         }
 
         // --- Phase 5: Syntax highlighting via batched scan ---
