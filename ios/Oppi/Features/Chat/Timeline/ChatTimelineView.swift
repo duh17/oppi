@@ -29,6 +29,7 @@ struct ChatTimelineView: View {
     let sessionManager: ChatSessionManager
     let onFork: (String) -> Void
     let selectedTextPiRouter: SelectedTextPiActionRouter?
+    let piQuickActionStore: PiQuickActionStore?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
 
@@ -102,6 +103,7 @@ struct ChatTimelineView: View {
                 audioPlayer: audioPlayer,
                 themeID: ThemeRuntimeState.currentThemeID(),
                 selectedTextPiRouter: selectedTextPiRouter,
+                piQuickActionStore: piQuickActionStore,
                 topOverlap: topOverlap,
                 bottomOverlap: bottomOverlap
             )

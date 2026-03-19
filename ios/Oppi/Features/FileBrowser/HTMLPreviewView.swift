@@ -48,12 +48,12 @@ struct HTMLPreviewView: View {
     }
 
     /// Routes selected text to a quick session via AppNavigation.
-    private var piActionHandler: (String, SelectedTextPiActionKind) -> Void {
+    private var piActionHandler: (String, PiQuickAction) -> Void {
         let path = filePath
         let nav = navigation
-        return { text, actionKind in
+        return { text, quickAction in
             let request = SelectedTextPiRequest(
-                action: actionKind,
+                action: quickAction,
                 selectedText: text,
                 source: SelectedTextSourceContext(
                     sessionId: "",
@@ -93,7 +93,7 @@ struct HTMLPreviewView: View {
 struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
-    var piActionHandler: ((String, SelectedTextPiActionKind) -> Void)?
+    var piActionHandler: ((String, PiQuickAction) -> Void)?
 
     func makeUIView(context: Context) -> PiWKWebView {
         let config = WKWebViewConfiguration()

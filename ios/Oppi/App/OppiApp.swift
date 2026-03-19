@@ -72,6 +72,7 @@ struct OppiApp: App {
     @State private var coordinator = ConnectionCoordinator(serverStore: ServerStore())
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
+    @State private var piQuickActionStore = PiQuickActionStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
@@ -119,6 +120,8 @@ struct OppiApp: App {
             .environment(navigation)
             .environment(coordinator.serverStore)
             .environment(themeStore)
+            .environment(piQuickActionStore)
+            .environment(\.piQuickActionStore, piQuickActionStore)
             .environment(\.theme, themeStore.appTheme)
             .preferredColorScheme(themeStore.preferredColorScheme)
             .onChange(of: scenePhase) { _, phase in
@@ -331,6 +334,9 @@ struct OppiApp: App {
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recoverIfNeeded()
             }
+
+            // Check for pending quick session request from widget extension.
+            QuickSessionTrigger.shared.checkForPendingRequest()
 
             backgroundKeepAlive.end()
 
