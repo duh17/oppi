@@ -7,6 +7,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     var isStreaming = false
     var textSelectionEnabled = true
     var plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold
+    var selectedTextSourceContext: SelectedTextSourceContext? = nil
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
@@ -30,6 +31,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             textSelectionEnabled: textSelectionEnabled,
             plainTextFallbackThreshold: plainTextFallbackThreshold,
             selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSourceContext: selectedTextSourceContext,
             workspaceID: workspaceID,
             serverBaseURL: serverBaseURL
         ))
