@@ -39,26 +39,19 @@ struct SubagentStatusBar: View {
                 // Expanded detail
                 if isExpanded {
                     Divider()
-                        .overlay(Color.themeBgHighlight)
 
                     VStack(spacing: 0) {
                         ForEach(childSessions) { child in
                             childRow(child)
                             if child.id != childSessions.last?.id {
                                 Divider()
-                                    .overlay(Color.themeBgHighlight)
                             }
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .background(Color.themeBg)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.themeBgHighlight, lineWidth: 1)
-            )
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.horizontal, 16)
             .padding(.bottom, 4)
         }
@@ -168,31 +161,14 @@ struct SubagentStatusBar: View {
     // MARK: - Helpers
 
     private func shortModelName(_ model: String?) -> String? {
-        guard let model, !model.isEmpty else { return nil }
-        return model.split(separator: "/").last.map(String.init) ?? model
+        SessionFormatting.shortModelName(model)
     }
 
     private func costString(_ cost: Double) -> String {
-        if cost >= 0.01 {
-            let cents = Int((cost * 100).rounded())
-            let d = cents / 100
-            let r = cents % 100
-            return "$\(d).\(r < 10 ? "0" : "")\(r)"
-        } else {
-            let mils = Int((cost * 1000).rounded())
-            if mils < 10 { return "$0.00\(mils)" }
-            if mils < 100 { return "$0.0\(mils)" }
-            return "$0.\(mils)"
-        }
+        SessionFormatting.costString(cost)
     }
 
     private func durationString(_ createdAt: Date) -> String {
-        let elapsed = Int(Date().timeIntervalSince(createdAt))
-        if elapsed < 60 { return "\(elapsed)s" }
-        let minutes = elapsed / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        let remainingMinutes = minutes % 60
-        return "\(hours)h\(remainingMinutes)m"
+        SessionFormatting.durationString(since: createdAt)
     }
 }
