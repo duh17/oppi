@@ -311,7 +311,6 @@ struct ChatInputBar<ActionRow: View>: View {
                         allowKeyboardRestoreOnTap: allowKeyboardRestoreOnTap,
                         onKeyboardRestoreRequest: handleKeyboardRestore,
                         accessibilityIdentifier: "chat.input",
-                        showsShortcutAccessory: !isBusy,
                         keyboardLanguage: $keyboardLanguage
                     )
                 }
