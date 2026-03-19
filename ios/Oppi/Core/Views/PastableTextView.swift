@@ -136,6 +136,11 @@ struct PastableTextView: UIViewRepresentable {
     let allowKeyboardRestoreOnTap: Bool
     let onKeyboardRestoreRequest: (() -> Void)?
     let accessibilityIdentifier: String?
+    /// Bumped to programmatically insert text at the cursor.
+    /// Works together with `insertTextContent`.
+    var insertTextRequestID: Int = 0
+    /// Text to insert at the cursor when `insertTextRequestID` changes.
+    var insertTextContent: String = ""
     /// BCP 47 language code of the text view's active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated when the keyboard input mode changes. Used by voice input to
     /// select the correct speech model.
@@ -246,6 +251,18 @@ struct PastableTextView: UIViewRepresentable {
             }
         }
 
+        if insertTextRequestID != context.coordinator.lastInsertTextRequestID {
+            context.coordinator.lastInsertTextRequestID = insertTextRequestID
+            let content = insertTextContent
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                if !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
+                textView.insertText(content)
+            }
+        }
+
         // Refresh line count for programmatic text changes (e.g. voice transcription)
         // so the expand button tracks streamed content.
         if textChanged {
@@ -331,6 +348,7 @@ struct PastableTextView: UIViewRepresentable {
         var lastFocusRequestID = 0
         var lastBlurRequestID = 0
         var lastDictationRequestID = 0
+        var lastInsertTextRequestID = 0
         var lastAutocorrectionEnabled: Bool?
         private var lastOverflowState = false
         private var lastDictationState = false
