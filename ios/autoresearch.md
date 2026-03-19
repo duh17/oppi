@@ -1,4 +1,4 @@
-## Status: CONVERGED
+## Status: CONVERGED (session 3)
 
 # Autoresearch: DiffAttributedStringBuilder Performance
 
@@ -134,20 +134,85 @@ Hoist dictionary literals out of the inner loop. Within noise — Swift COW dict
 ### Run 7 — Cached UIColors ❌ DISCARD (too small)
 ~110μs out of 14,700μs (<1%). Not worth the cache invalidation complexity.
 
-### Final Summary
+### Session 2 (continued optimization from converged state)
 
-| Metric | Baseline | Final | Improvement |
-|--------|----------|-------|-------------|
-| `diffBuild_500` | 39,572 | ~14,500 | **-63.4%** |
-| `diffBuild_300` | 23,660 | ~9,500 | **-59.8%** |
-| `diffBuild_100` | 7,905 | ~3,000 | **-62.0%** |
-| `diffBuild_plain_500` | 6,011 | ~5,500 | **-8.5%** |
+Fresh baseline re-measured at ~10,470μs (lower than session 1 due to warm caches / different machine conditions).
 
-4 keeps, 3 discards across 7 experiments.
+### Run 8 — UTF-8 byte scanner for batch syntax highlighting ✅ KEEP
+Added `SyntaxHighlighter.scanTokenRangesUTF8()` that operates on raw UTF-8 bytes
+instead of `[Character]` array. For ASCII code (>99%), byte offsets equal character/UTF-16
+offsets, so the expensive Array<Character> conversion is eliminated entirely.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 10,470 | 8,861 | **-15.4%** |
+
+### Run 9 — Fused text build: eliminate pre-built NSAttributedStrings ✅ KEEP
+Replace per-line NSAttributedString appends with a single NSMutableString build pass
+followed by setAttributes by range. Eliminates ~1500 pre-built NSAttributedString objects
+and ~2500 appends.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 8,861 | 8,546 | **-3.6%** |
+| `diffBuild_plain_500` | 2,863 | 2,598 | **-9.3%** |
+
+### Run 10 — Merge batch code string build with text assembly loop ✅ KEEP
+Build the batch code NSMutableString inline during Phase 1 instead of maintaining a
+separate `[String]` array + `joined()`. Eliminates the array allocation, per-line
+String copies, and the `joined()` String creation.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 8,546 | 7,793 | **-8.8%** |
+
+### Run 11 — Merge context code+newline setAttributes ✅ KEEP
+Context lines use the same dim attrs for both code and newline. Combined into one
+setAttributes call, saving ~250 calls.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 7,793 | 7,653 | **-1.8%** |
+| `diffBuild_plain_500` | 2,562 | 2,265 | **-11.6%** |
+
+### Run 12 — Swift String for batch code ✅ KEEP
+Replace NSMutableString with native Swift String for batch code accumulation.
+Avoids the NSMutableString→String bridging copy when passing to the UTF-8 scanner.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| `diffBuild_500` | 7,653 | 7,461 | **-2.5%** |
+
+### Final Summary (Session 1 + 2)
+
+| Metric | Original Baseline | Session 1 Final | Session 2 Final | Total Improvement |
+|--------|-------------------|-----------------|-----------------|-------------------|
+| `diffBuild_500` | 39,572 | ~14,500 | 7,461 | **-81.1%** |
+| `diffBuild_300` | 23,660 | ~9,500 | 4,376 | **-81.5%** |
+| `diffBuild_100` | 7,905 | ~3,000 | 1,385 | **-82.5%** |
+| `diffBuild_plain_500` | 6,011 | ~5,500 | 2,203 | **-63.4%** |
+
+Session 1: 4 keeps, 3 discards across 7 experiments.
+Session 2: 5 keeps across 5 experiments. All from fresh baseline of 10,470μs.
 
 Remaining cost dominated by:
-- `SyntaxHighlighter.scanTokenRanges`: Array(text) conversion + token scan (~8,500μs for 500 lines)
-- NSMutableAttributedString creation from string (~1,000μs)
-- addAttribute calls for gutter/lineNum/bg/spans/tap (~4,500μs, ~2500 calls)
+- `addAttribute(.foregroundColor)` calls for ~3000 syntax tokens (~3,500μs, ~47% of total)
+- `setAttributes` calls for gutter/lineNum/code per line (~1,200μs, ~16%)
+- UTF-8 token scanner loop (~1,500μs, ~20%)
+- NSMutableString text build + NSMutableAttributedString creation (~900μs, ~12%)
 
-Further gains require: C-level scanner (avoid Character abstraction), reduce addAttribute call count (hard without changing visual output).
+Further gains require: C-level scanner, reduce addAttribute call count (inherent to NSAttributedString API), or move off main thread entirely.
+
+### Session 3 (verification of convergence)
+
+Phase-level instrumentation revealed actual cost breakdown (see autoresearch.ideas.md).
+The scan phase (51.5%) dominates, not token application as previously estimated.
+5 experiments tried — all regressed or within noise:
+
+- Byte-level keyword matching: +17% regression (String SSO + Set hash faster than manual byte comparison)
+- addAttribute for code segments: 0% (primary), -6.6% (plain) — within noise on primary
+- Single-pass scanner: +7.7% regression (line-by-line bounds help optimizer)
+- (firstByte, length) keyword pre-screen: 0.6% — within noise
+
+**Conclusion**: Swift's String SSO + Set<String>.contains is the performance floor for
+the keyword lookup path. Further gains require C-level scanner or moving off main thread.
