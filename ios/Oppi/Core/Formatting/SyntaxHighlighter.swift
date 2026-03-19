@@ -298,7 +298,7 @@ enum SyntaxHighlighter {
         // Cache: UIColor(Color) is expensive (~10μs each × 9 = ~90μs per call).
         // Invalidated on theme change via resetCachedAttrs().
         // Safe: only accessed from @MainActor context (all call sites are @MainActor).
-        nonisolated(unsafe) private static var cached: TokenAttrs?
+        nonisolated(unsafe) private static var cached: Self?
 
         static func current() -> Self {
             if let cached { return cached }
@@ -426,6 +426,15 @@ enum SyntaxHighlighter {
         scanTokenRangesInternal(truncatedCode(code), language: language)
     }
 
+    /// Scan pre-built character array for token ranges.
+    /// Avoids the `Array(text)` conversion cost when the caller already has characters.
+    static func scanTokenRanges(
+        characters: [Character],
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        scanTokenRangesFromChars(characters, language: language)
+    }
+
     /// Highlight source code using range-based attribute application.
     ///
     /// Builds a single NSMutableAttributedString from the full text with default
@@ -477,14 +486,11 @@ enum SyntaxHighlighter {
         return result
     }
 
-    /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
-    /// Converts text to `[Character]` once and scans line-by-line using
-    /// newline detection (no per-line `Array(line)` allocation).
-    private static func scanTokenRangesInternal(
-        _ text: String,
+    /// Scanner taking pre-built [Character] array (avoids Array(text) conversion).
+    private static func scanTokenRangesFromChars(
+        _ allChars: [Character],
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        let allChars = Array(text)
         var tokenRanges: [TokenRange] = []
         tokenRanges.reserveCapacity(allChars.count / 4)
 
@@ -492,6 +498,10 @@ enum SyntaxHighlighter {
             scanJSONRanges(allChars, ranges: &tokenRanges)
             return tokenRanges
         }
+
+        // Pre-compute per-language values once (avoids per-line [Character] alloc for commentPrefix)
+        let keywords = language.keywords
+        let commentPrefix = language.lineCommentPrefix
 
         var inBlockComment = false
         var pos = 0
@@ -512,6 +522,60 @@ enum SyntaxHighlighter {
                     scanLineRangesSlice(
                         allChars, start: pos, end: lineEnd,
                         language: language,
+                        keywords: keywords,
+                        commentPrefix: commentPrefix,
+                        inBlockComment: &inBlockComment,
+                        ranges: &tokenRanges
+                    )
+                }
+            }
+
+            pos = lineEnd + 1
+        }
+
+        return tokenRanges
+    }
+
+    /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
+    /// Converts text to `[Character]` once and scans line-by-line using
+    /// newline detection (no per-line `Array(line)` allocation).
+    private static func scanTokenRangesInternal(
+        _ text: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        let allChars = Array(text)
+        var tokenRanges: [TokenRange] = []
+        tokenRanges.reserveCapacity(allChars.count / 4)
+
+        if language == .json {
+            scanJSONRanges(allChars, ranges: &tokenRanges)
+            return tokenRanges
+        }
+
+        let keywords = language.keywords
+        let commentPrefix = language.lineCommentPrefix
+
+        var inBlockComment = false
+        var pos = 0
+
+        while pos <= allChars.count {
+            var lineEnd = pos
+            while lineEnd < allChars.count, allChars[lineEnd] != "\n" {
+                lineEnd += 1
+            }
+
+            if lineEnd > pos {
+                if language == .shell {
+                    scanShellLineRangesSlice(
+                        allChars, start: pos, end: lineEnd,
+                        ranges: &tokenRanges
+                    )
+                } else {
+                    scanLineRangesSlice(
+                        allChars, start: pos, end: lineEnd,
+                        language: language,
+                        keywords: keywords,
+                        commentPrefix: commentPrefix,
                         inBlockComment: &inBlockComment,
                         ranges: &tokenRanges
                     )
@@ -536,17 +600,18 @@ enum SyntaxHighlighter {
 
     /// Scan a line within allChars[start..<end] for token ranges.
     /// Positions are absolute indices into allChars (= character offsets in the original text).
+    /// `keywords` and `commentPrefix` are pre-computed by the caller to avoid per-line allocation.
     private static func scanLineRangesSlice(
         _ allChars: [Character],
         start: Int,
         end: Int,
         language: SyntaxLanguage,
+        keywords: Set<String>,
+        commentPrefix: [Character]?,
         inBlockComment: inout Bool,
         ranges: inout [TokenRange]
     ) {
         var i = start
-        let keywords = language.keywords
-        let commentPrefix = language.lineCommentPrefix
 
         while i < end {
             if inBlockComment {
@@ -595,7 +660,7 @@ enum SyntaxHighlighter {
             if allChars[i] == "@" {
                 let tokenStart = i
                 i += 1
-                while i < end, allChars[i].isLetter || allChars[i].isNumber || allChars[i] == "_" {
+                while i < end, isIdentChar(allChars[i]) {
                     i += 1
                 }
                 ranges.append(TokenRange(location: tokenStart, length: i - tokenStart, kind: .type))
@@ -604,27 +669,41 @@ enum SyntaxHighlighter {
 
             let ch = allChars[i]
             if ch == "\"" || ch == "'" || ch == "`" {
-                let (_, tokenEnd) = scanString(allChars, from: i, quote: ch)
+                let tokenEnd = scanStringEndPos(allChars, from: i, quote: ch)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
                 i = tokenEnd
                 continue
             }
 
-            if ch.isNumber {
-                let (_, tokenEnd) = scanNumber(allChars, from: i)
+            if isDigitASCII(ch) {
+                let tokenEnd = scanNumberEnd(allChars, from: i)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .number))
                 i = tokenEnd
                 continue
             }
 
-            if ch.isLetter || ch == "_" {
-                let (word, tokenEnd) = scanWord(allChars, from: i)
-                if keywords.contains(word) {
-                    ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .keyword))
-                } else if isTypeLike(word) {
-                    ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .type))
+            if isIdentStart(ch) {
+                // Scan word boundary using fast ASCII checks
+                var wordEnd = i + 1
+                while wordEnd < end, isIdentChar(allChars[wordEnd]) {
+                    wordEnd += 1
                 }
-                i = tokenEnd
+                let wordLen = wordEnd - i
+
+                // Quick length check: keywords are 2-12 chars. Skip String alloc for longer words.
+                if wordLen >= 2, wordLen <= 12, keywords.contains(String(allChars[i..<wordEnd])) {
+                    ranges.append(TokenRange(location: i, length: wordLen, kind: .keyword))
+                } else if wordLen >= 2, isUpperASCII(allChars[i]) {
+                    // Check isTypeLike without String allocation
+                    var hasLower = false
+                    for ci in (i + 1)..<wordEnd {
+                        if isLowerASCII(allChars[ci]) { hasLower = true; break }
+                    }
+                    if hasLower {
+                        ranges.append(TokenRange(location: i, length: wordLen, kind: .type))
+                    }
+                }
+                i = wordEnd
                 continue
             }
 
@@ -1100,7 +1179,102 @@ enum SyntaxHighlighter {
         return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 
-    // MARK: - Token Scanners
+    // MARK: - Fast ASCII Classification
+
+    /// Fast ASCII identifier check. For the 99%+ ASCII case, avoids Unicode
+    /// property lookups that Character.isLetter/isNumber perform.
+    @inline(__always)
+    private static func isIdentChar(_ ch: Character) -> Bool {
+        guard let ascii = ch.asciiValue else {
+            return ch.isLetter || ch.isNumber
+        }
+        // a-z, A-Z, 0-9, _
+        return (ascii >= 0x61 && ascii <= 0x7A) ||
+               (ascii >= 0x41 && ascii <= 0x5A) ||
+               (ascii >= 0x30 && ascii <= 0x39) ||
+               ascii == 0x5F
+    }
+
+    @inline(__always)
+    private static func isIdentStart(_ ch: Character) -> Bool {
+        guard let ascii = ch.asciiValue else {
+            return ch.isLetter
+        }
+        return (ascii >= 0x61 && ascii <= 0x7A) ||
+               (ascii >= 0x41 && ascii <= 0x5A) ||
+               ascii == 0x5F
+    }
+
+    @inline(__always)
+    private static func isUpperASCII(_ ch: Character) -> Bool {
+        guard let ascii = ch.asciiValue else { return ch.isUppercase }
+        return ascii >= 0x41 && ascii <= 0x5A
+    }
+
+    @inline(__always)
+    private static func isLowerASCII(_ ch: Character) -> Bool {
+        guard let ascii = ch.asciiValue else { return ch.isLowercase }
+        return ascii >= 0x61 && ascii <= 0x7A
+    }
+
+    @inline(__always)
+    private static func isDigitASCII(_ ch: Character) -> Bool {
+        guard let ascii = ch.asciiValue else { return ch.isNumber }
+        return ascii >= 0x30 && ascii <= 0x39
+    }
+
+    // MARK: - Position-only Scanners (no String allocation)
+
+    /// Scan string literal, return end position only (no String allocation).
+    private static func scanStringEndPos(_ chars: [Character], from start: Int, quote: Character) -> Int {
+        var i = start + 1
+        var escaped = false
+        while i < chars.count {
+            if escaped {
+                escaped = false
+            } else if chars[i] == "\\" {
+                escaped = true
+            } else if chars[i] == quote {
+                return i + 1
+            }
+            i += 1
+        }
+        return chars.count
+    }
+
+    /// Scan number literal, return end position only (no String allocation).
+    /// Uses ASCII checks for the hot inner loop.
+    private static func scanNumberEnd(_ chars: [Character], from start: Int) -> Int {
+        var i = start
+        if chars[i] == "0", i + 1 < chars.count, chars[i + 1] == "x" || chars[i + 1] == "X" {
+            i += 2
+            while i < chars.count {
+                let c = chars[i]
+                if isDigitASCII(c) || (c.asciiValue.map { ($0 >= 0x61 && $0 <= 0x66) || ($0 >= 0x41 && $0 <= 0x46) } ?? c.isHexDigit) || c == "_" {
+                    i += 1
+                } else { break }
+            }
+            return i
+        }
+        var hasDot = false
+        while i < chars.count {
+            let c = chars[i]
+            if isDigitASCII(c) || c == "_" {
+                i += 1
+            } else if c == ".", !hasDot, i + 1 < chars.count, isDigitASCII(chars[i + 1]) {
+                hasDot = true
+                i += 1
+            } else if c == "e" || c == "E" {
+                i += 1
+                if i < chars.count, chars[i] == "+" || chars[i] == "-" { i += 1 }
+            } else {
+                break
+            }
+        }
+        return i
+    }
+
+    // MARK: - Token Scanners (legacy, returns String for appendHighlightedLine)
 
     private static func scanString(_ chars: [Character], from start: Int, quote: Character) -> (String, Int) {
         var i = start + 1
