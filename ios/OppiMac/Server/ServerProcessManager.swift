@@ -44,6 +44,14 @@ final class ServerProcessManager {
     private(set) var state: State = .stopped
     private(set) var logBuffer: [LogLine] = []
 
+    #if DEBUG
+    /// Test-only: override state for unit test setup.
+    func _setStateForTesting(_ newState: State) { state = newState }
+
+    /// Test-only: inject log lines for buffer cap / clear testing.
+    func _appendLogLinesForTesting(_ lines: [LogLine]) { appendLogLines(lines) }
+    #endif
+
     // MARK: - Configuration
 
     static let maxLogLines = 5000
@@ -99,6 +107,64 @@ final class ServerProcessManager {
     }
 
     // MARK: - Lifecycle
+
+    /// Kill any existing server process and stale Bonjour advertisements.
+    ///
+    /// On launch the Mac app may find orphaned `node cli.js serve` or `dns-sd`
+    /// processes from a prior app instance. This cleans them up so we can spawn
+    /// a fresh server with full lifecycle control (termination handler, pipes, logs).
+    static func killExistingServer() {
+        // Find server processes matching our CLI pattern.
+        // Use pgrep to avoid false positives from other node processes.
+        let serverPids = pidsMatching(pattern: "node.*cli\\.js.*serve")
+        for pid in serverPids {
+            logger.info("Killing existing server process (pid \(pid))")
+            kill(pid, SIGTERM)
+        }
+
+        // Find stale dns-sd Bonjour advertisements for oppi.
+        let dnsPids = pidsMatching(pattern: "dns-sd.*_oppi._tcp")
+        for pid in dnsPids {
+            logger.info("Killing stale dns-sd process (pid \(pid))")
+            kill(pid, SIGTERM)
+        }
+
+        // Brief wait for processes to exit.
+        if !serverPids.isEmpty {
+            Thread.sleep(forTimeInterval: 1)
+            // Force-kill any survivors.
+            for pid in serverPids {
+                if kill(pid, 0) == 0 { // still alive
+                    logger.warning("Force-killing server process (pid \(pid))")
+                    kill(pid, SIGKILL)
+                }
+            }
+        }
+    }
+
+    /// Find PIDs matching a grep pattern via pgrep.
+    private static func pidsMatching(pattern: String) -> [pid_t] {
+        let proc = Foundation.Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        proc.arguments = ["-f", pattern]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        return output.split(separator: "\n")
+            .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { $0 != ProcessInfo.processInfo.processIdentifier } // exclude self
+    }
 
     /// Start the server using default resolved paths.
     func startWithDefaults() {
@@ -207,11 +273,21 @@ final class ServerProcessManager {
     }
 
     /// Notify that the server is healthy (called by health monitor).
+    ///
+    /// Accepts `.starting` (normal startup), `.stopped` (adopt existing server),
+    /// and `.failed` (recovery after crash auto-restart).
     func markRunning() {
-        if state == .starting {
+        switch state {
+        case .running:
+            return
+        case .stopping:
+            // Don't override an intentional stop in progress.
+            return
+        case .starting, .stopped, .failed:
+            let previous = state
             state = .running
             restartAttempts = 0
-            logger.info("Server marked as running")
+            logger.info("Server marked as running (was \(String(describing: previous)))")
         }
     }
 

@@ -41,6 +41,15 @@ final class TCCPermissionState {
         var id: String { kind.rawValue }
     }
 
+    #if DEBUG
+    /// Test-only: override a permission status without calling OS APIs.
+    func _setPermissionStatusForTesting(kind: PermissionKind, status: PermissionStatus) {
+        if let i = permissions.firstIndex(where: { $0.kind == kind }) {
+            permissions[i].status = status
+        }
+    }
+    #endif
+
     // MARK: - Public state
 
     private(set) var permissions: [Permission] = PermissionKind.allCases.map { kind in
@@ -95,7 +104,14 @@ final class TCCPermissionState {
     private func checkPermission(_ kind: PermissionKind) async -> PermissionStatus {
         switch kind {
         case .fullDiskAccess:
+            #if DEBUG
+            // FDA cannot be prompted — only checked passively. Debug builds run from
+            // DerivedData paths that change every build, so FDA grants never persist.
+            // Skip the check to avoid a non-actionable warning during development.
+            return .granted
+            #else
             return checkFullDiskAccess()
+            #endif
         case .accessibility:
             return checkAccessibility()
         case .screenRecording:
