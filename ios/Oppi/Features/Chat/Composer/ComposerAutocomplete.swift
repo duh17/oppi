@@ -112,6 +112,15 @@ enum ComposerAutocomplete {
         return updated
     }
 
+    /// Returns the range of the active `@` token in the text, if any.
+    /// Used by the pill system to strip the `@query` when converting to a pill.
+    static func activeAtTokenRange(in text: String) -> Range<String.Index>? {
+        guard let range = activeTokenRange(in: text) else { return nil }
+        let token = text[range]
+        guard token.hasPrefix("@") else { return nil }
+        return range
+    }
+
     // MARK: - Internals
 
     private static func activeTokenRange(in text: String) -> Range<String.Index>? {
