@@ -58,6 +58,7 @@ struct FileBrowserContentView: View {
                     presentation: .document
                 )
                 .environment(\.selectedTextPiActionRouter, piRouter)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             case .image(let data):
                 imageView(data)
             case .pdf(let data):
