@@ -76,7 +76,7 @@ struct WorkspaceReviewFileDetailView: View {
             await loadDiff()
         }
         .navigationDestination(item: $navigateToReview) { dest in
-            ChatView(sessionId: dest.id, initialInputText: dest.inputText, initialContextPills: dest.pills)
+            ChatView(sessionId: dest.id, initialInputText: dest.inputText)
         }
         .overlay {
             if let launchActionInFlight {
@@ -284,10 +284,8 @@ struct WorkspaceReviewFileDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            let pills = response.contextSummary.map { ContextPill(from: $0) }
             navigateToReview = ReviewSessionNavDestination(
                 id: response.session.id,
-                pills: pills,
                 inputText: response.visiblePrompt
             )
         } catch {
