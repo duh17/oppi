@@ -831,10 +831,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
-        trailingStack.addArrangedSubview(languageBadgeIconView)
         trailingStack.addArrangedSubview(addedLabel)
         trailingStack.addArrangedSubview(removedLabel)
         trailingStack.addArrangedSubview(trailingLabel)
+        trailingStack.addArrangedSubview(languageBadgeIconView)
 
         NSLayoutConstraint.activate(
             ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints(
