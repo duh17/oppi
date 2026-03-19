@@ -45,18 +45,27 @@ enum SessionTreeHelper {
         let roots = sessions.filter { session in
             guard let parentId = session.parentSessionId else { return true }
             return byId[parentId] == nil
-        }
+        }.sorted { $0.createdAt < $1.createdAt }
 
-        func buildNode(session: Session, depth: Int, isLast: Bool) -> TreeNode {
-            let kids = childrenByParent[session.id] ?? []
+        func buildNode(session: Session, depth: Int, isLast: Bool, visited: inout Set<String>) -> TreeNode {
+            // Guard against circular references and self-referential parentSessionId
+            guard !visited.contains(session.id) else {
+                // If we've already visited this session, return a node with no children to break the cycle
+                return TreeNode(session: session, depth: depth, children: [], isLastChild: isLast)
+            }
+
+            visited.insert(session.id)
+            defer { visited.remove(session.id) }
+            let kids = (childrenByParent[session.id] ?? []).sorted { $0.createdAt < $1.createdAt }
             let childNodes = kids.enumerated().map { index, child in
-                buildNode(session: child, depth: depth + 1, isLast: index == kids.count - 1)
+                buildNode(session: child, depth: depth + 1, isLast: index == kids.count - 1, visited: &visited)
             }
             return TreeNode(session: session, depth: depth, children: childNodes, isLastChild: isLast)
         }
 
         return roots.enumerated().map { index, session in
-            buildNode(session: session, depth: 0, isLast: index == roots.count - 1)
+            var visited = Set<String>()
+            return buildNode(session: session, depth: 0, isLast: index == roots.count - 1, visited: &visited)
         }
     }
 

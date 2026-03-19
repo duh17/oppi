@@ -11,7 +11,8 @@ struct SessionTreeHelperTests {
         id: String,
         parentId: String? = nil,
         status: SessionStatus = .busy,
-        name: String? = nil
+        name: String? = nil,
+        createdAt: Date = Date()
     ) -> Session {
         Session(
             id: id,
@@ -19,7 +20,7 @@ struct SessionTreeHelperTests {
             workspaceName: "Test",
             name: name ?? "Session \(id)",
             status: status,
-            createdAt: Date(),
+            createdAt: createdAt,
             lastActivity: Date(),
             model: "test/model",
             messageCount: 5,
@@ -297,5 +298,96 @@ struct SessionTreeHelperTests {
         #expect(grandchildRow != nil)
         // child1 is NOT the last child of root, so depth 0 line continues
         #expect(grandchildRow?.parentLinesContinue.contains(0) == true)
+    }
+
+    // MARK: - Safety and determinism tests
+
+    @Test func buildTree_selfReferentialParent() {
+        // Session with parentId pointing to itself should not crash and should be filtered out
+        let sessions = [
+            makeSession(id: "self-ref", parentId: "self-ref"),
+        ]
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        // Self-referential session is filtered out because its parent exists in the list (itself)
+        #expect(tree.isEmpty)
+    }
+
+    @Test func buildTree_circularReferences() {
+        // A→B, B→A circular reference should not crash
+        let sessions = [
+            makeSession(id: "a", parentId: "b"),
+            makeSession(id: "b", parentId: "a"),
+        ]
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        // Both sessions are filtered out because their parents exist in the list
+        #expect(tree.isEmpty)
+    }
+
+    @Test func buildTree_multipleIndependentTrees() {
+        // Multiple root sessions each with their own children
+        let sessions = [
+            makeSession(id: "root1"),
+            makeSession(id: "child1a", parentId: "root1"),
+            makeSession(id: "child1b", parentId: "root1"),
+            makeSession(id: "root2"),
+            makeSession(id: "child2a", parentId: "root2"),
+            makeSession(id: "root3"),
+            makeSession(id: "child3a", parentId: "root3"),
+            makeSession(id: "child3b", parentId: "root3"),
+            makeSession(id: "child3c", parentId: "root3"),
+        ]
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        #expect(tree.count == 3) // Three independent trees
+
+        let tree1 = tree.first { $0.session.id == "root1" }
+        let tree2 = tree.first { $0.session.id == "root2" }
+        let tree3 = tree.first { $0.session.id == "root3" }
+
+        #expect(tree1?.children.count == 2)
+        #expect(tree2?.children.count == 1)
+        #expect(tree3?.children.count == 3)
+    }
+
+    @Test func buildTree_childOrderingStability() {
+        // Children should be sorted by createdAt in ascending order
+        let baseTime = Date()
+        let sessions = [
+            makeSession(id: "parent", createdAt: baseTime),
+            makeSession(id: "child-third", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
+            makeSession(id: "child-first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
+            makeSession(id: "child-second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
+        ]
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        #expect(tree.count == 1)
+        #expect(tree[0].children.count == 3)
+
+        // Should be ordered by createdAt: first, second, third
+        #expect(tree[0].children[0].session.id == "child-first")
+        #expect(tree[0].children[1].session.id == "child-second")
+        #expect(tree[0].children[2].session.id == "child-third")
+    }
+
+    @Test func buildTree_rootOrderingStability() {
+        // Root sessions should be sorted by createdAt in ascending order
+        let baseTime = Date()
+        let sessions = [
+            makeSession(id: "root-third", createdAt: baseTime.addingTimeInterval(30)),
+            makeSession(id: "root-first", createdAt: baseTime.addingTimeInterval(10)),
+            makeSession(id: "root-second", createdAt: baseTime.addingTimeInterval(20)),
+        ]
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        #expect(tree.count == 3)
+
+        // Should be ordered by createdAt: first, second, third
+        #expect(tree[0].session.id == "root-first")
+        #expect(tree[1].session.id == "root-second")
+        #expect(tree[2].session.id == "root-third")
+    }
+
+    @Test func buildTree_emptySessions() {
+        // Empty sessions array should return empty tree
+        let sessions: [Session] = []
+        let tree = SessionTreeHelper.buildTree(from: sessions)
+        #expect(tree.isEmpty)
     }
 }
