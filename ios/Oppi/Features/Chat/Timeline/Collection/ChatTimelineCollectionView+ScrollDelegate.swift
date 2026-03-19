@@ -101,17 +101,24 @@ extension ChatTimelineCollectionHost.Controller {
 
         if !isUserDriven,
            alreadyAttached,
-           contentHeightDelta > 0.5,
-           abs(deltaY) < 2 {
+           contentHeightDelta > 0.5 {
             let insets = scrollView.adjustedContentInset
             let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
             if visibleHeight > 0 {
                 // Keep the viewport pinned to the bottom when content grows
-                // passively (cell resize during streaming, post-stream reflow).
-                // This fills the gap between throttled scroll commands so the
-                // bottom of the streaming message stays visible above the input bar.
+                // during non-user-driven layout changes. The previous
+                // abs(deltaY) < 2 guard was too restrictive — self-sizing
+                // cascades where cells above the viewport resolve estimated
+                // -> actual heights shift contentOffset by > 2pt per pass.
+                // The old guard missed these corrections, slowly accumulating
+                // a gap between the last item and the viewport bottom until
+                // the user got false-detached past the 200pt exit threshold.
+                //
+                // Forward-only: never snap the user upward (away from new
+                // content). Content shrinking during estimate resolution is
+                // transient and handled by UIKit's natural layout.
                 let desiredBottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
-                if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
+                if desiredBottomOffsetY - scrollView.contentOffset.y > 0.5 {
                     scrollView.contentOffset.y = desiredBottomOffsetY
                     lastDistanceFromBottom = 0
                 }
