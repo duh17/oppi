@@ -442,12 +442,12 @@ private struct HTMLFileView: View {
 
     /// Pi action handler for WKWebView text selection.
     /// Routes through the environment router when available, falls back to clipboard.
-    private var piWebViewHandler: (String, SelectedTextPiActionKind) -> Void {
+    private var piWebViewHandler: (String, PiQuickAction) -> Void {
         let path = filePath
         let router = piRouter
-        return { text, actionKind in
+        return { text, quickAction in
             let request = SelectedTextPiRequest(
-                action: actionKind,
+                action: quickAction,
                 selectedText: text,
                 source: SelectedTextSourceContext(
                     sessionId: "",

@@ -39,6 +39,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let audioPlayer: AudioPlayerService
         let themeID: ThemeID
         let selectedTextPiRouter: SelectedTextPiActionRouter?
+        let piQuickActionStore: PiQuickActionStore?
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
 
@@ -63,6 +64,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             audioPlayer: AudioPlayerService,
             themeID: ThemeID,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+            piQuickActionStore: PiQuickActionStore? = nil,
             topOverlap: CGFloat = 0,
             bottomOverlap: CGFloat = 0
         ) {
@@ -86,6 +88,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.audioPlayer = audioPlayer
             self.themeID = themeID
             self.selectedTextPiRouter = selectedTextPiRouter
+            self.piQuickActionStore = piQuickActionStore
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
         }

@@ -14,7 +14,10 @@ import WebKit
 /// UIMenuController items entirely, so chat-timeline π menus are unaffected.
 final class PiWKWebView: WKWebView {
     /// Called when the user picks a pi action on selected text.
-    var piActionHandler: ((String, SelectedTextPiActionKind) -> Void)?
+    var piActionHandler: ((String, PiQuickAction) -> Void)?
+
+    /// Store for user-configured actions. Set externally before the menu is shown.
+    var piActionStore: PiQuickActionStore?
 
     // Register the π selector once per process. UIEditMenuInteraction discovers
     // custom actions from UIMenuController.shared.menuItems via the responder chain.
@@ -58,10 +61,12 @@ final class PiWKWebView: WKWebView {
     private func presentPiActionSheet(selectedText: String) {
         guard let viewController = findViewController() else { return }
 
+        let quickActions = piActionStore?.actions ?? PiQuickAction.builtInDefaults
+
         let sheet = UIAlertController(title: "π", message: nil, preferredStyle: .actionSheet)
-        for kind in SelectedTextPiActionKind.allCases {
-            sheet.addAction(UIAlertAction(title: kind.title, style: .default) { [weak self] _ in
-                self?.piActionHandler?(selectedText, kind)
+        for action in quickActions {
+            sheet.addAction(UIAlertAction(title: action.title, style: .default) { [weak self] _ in
+                self?.piActionHandler?(selectedText, action)
             })
         }
         sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
@@ -98,15 +103,18 @@ extension PiWKWebView {
     /// Wire a `SelectedTextPiActionRouter` as the handler.
     func configurePiRouter(
         _ router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?
+        sourceContext: SelectedTextSourceContext?,
+        actionStore: PiQuickActionStore? = nil
     ) {
         guard let router, let sourceContext else {
             piActionHandler = nil
+            piActionStore = nil
             return
         }
-        piActionHandler = { text, actionKind in
+        piActionStore = actionStore
+        piActionHandler = { text, quickAction in
             router.dispatch(SelectedTextPiRequest(
-                action: actionKind,
+                action: quickAction,
                 selectedText: text,
                 source: sourceContext
             ))

@@ -15,6 +15,7 @@ final class ChatTimelineControllerContext {
     var connection: ServerConnection?
     var currentThemeID: ThemeID = .dark
     var selectedTextPiRouter: SelectedTextPiActionRouter?
+    var piQuickActionStore: PiQuickActionStore?
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
         sessionId != configuration.sessionId || workspaceId != configuration.workspaceId
@@ -34,5 +35,6 @@ final class ChatTimelineControllerContext {
         connection = configuration.connection
         currentThemeID = configuration.themeID
         selectedTextPiRouter = configuration.selectedTextPiRouter
+        piQuickActionStore = configuration.piQuickActionStore
     }
 }

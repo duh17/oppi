@@ -162,6 +162,7 @@ struct ReadySessionScrollToBottomTests {
                 sessionManager: sessionManager,
                 onFork: { _ in },
                 selectedTextPiRouter: nil,
+                piQuickActionStore: nil,
                 topOverlap: 0,
                 bottomOverlap: 0
             )

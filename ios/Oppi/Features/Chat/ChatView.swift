@@ -9,6 +9,8 @@ struct ChatView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(AppNavigation.self) private var appNavigation
+    @Environment(PiQuickActionStore.self) private var piQuickActionStore
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var sessionManager: ChatSessionManager
@@ -18,6 +20,7 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
+    @State private var pendingFiles: [PendingFileReference] = []
     @State private var contextPills: [ContextPill]
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
@@ -113,6 +116,7 @@ struct ChatView: View {
             sessionManager: sessionManager,
             onFork: forkFromMessage,
             selectedTextPiRouter: selectedTextPiRouter,
+            piQuickActionStore: piQuickActionStore,
             topOverlap: headerHeight,
             bottomOverlap: footerHeight
         )
@@ -202,6 +206,35 @@ struct ChatView: View {
                 if ReleaseFeatures.voiceInputEnabled {
                     await voiceInputManager.prewarm(source: "chat_view_task")
                 }
+            }
+            .task {
+                // Auto-send pending message from QuickSessionSheet.
+                // Pre-fill immediately, wait for connection, then dispatch.
+                guard let message = appNavigation.pendingQuickSessionMessage else { return }
+                let images = appNavigation.pendingQuickSessionImages ?? []
+
+                // Consume immediately so it doesn't re-fire
+                appNavigation.pendingQuickSessionMessage = nil
+                appNavigation.pendingQuickSessionImages = nil
+
+                // Pre-fill the composer so the user sees their message while connecting
+                inputText = message
+                pendingImages = images
+
+                // Wait for the session stream to be established (max 10s)
+                let deadline = ContinuousClock.now + .seconds(10)
+                while sessionManager.entryState != .streaming {
+                    if Task.isCancelled { return }
+                    if ContinuousClock.now >= deadline { return } // Timeout — user can send manually
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+
+                // Brief settle for UI
+                try? await Task.sleep(for: .milliseconds(150))
+                if Task.isCancelled { return }
+
+                // Auto-send through the normal WebSocket flow
+                sendPrompt()
             }
             .onAppear {
                 sessionManager.markAppeared()
@@ -334,6 +367,7 @@ struct ChatView: View {
                 ChatInputBar(
                     text: $inputText,
                     pendingImages: $pendingImages,
+                    pendingFiles: $pendingFiles,
                     contextPills: contextPills,
                     onContextPillTap: session?.workspaceId != nil ? { pill in
                         contextPillDetailFile = pill.toReviewFile()
@@ -497,6 +531,16 @@ struct ChatView: View {
 
     @MainActor
     private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
+        // "New Session" actions always route through the quick session sheet,
+        // even when triggered from inside an active chat.
+        if request.action.behavior == .newSession {
+            let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            guard !addition.isEmpty else { return }
+            appNavigation.pendingQuickSessionDraft = addition
+            appNavigation.showQuickSession = true
+            return
+        }
+
         let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
         guard !addition.isEmpty else { return }
 
@@ -528,7 +572,13 @@ struct ChatView: View {
     }
 
     private func sendPrompt() {
-        let text = inputText
+        // Inject pending file references as @path prefixes
+        var text = inputText
+        if !pendingFiles.isEmpty {
+            let fileRefs = pendingFiles.map { "@\($0.path)" }.joined(separator: " ")
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = trimmed.isEmpty ? fileRefs : "\(fileRefs) \(trimmed)"
+        }
         let images = pendingImages
 
         let reducerRef = reducer
@@ -547,6 +597,7 @@ struct ChatView: View {
             onDispatchStarted: {
                 inputText = ""
                 pendingImages = []
+                pendingFiles = []
                 contextPills = []
                 // Scroll to bottom after sending
                 scrollRef.requestScrollToBottom()
@@ -749,6 +800,7 @@ struct ChatView: View {
         ExpandedComposerView(
             text: $inputText,
             pendingImages: $pendingImages,
+            pendingFiles: $pendingFiles,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
             slashCommands: chatState.slashCommands,

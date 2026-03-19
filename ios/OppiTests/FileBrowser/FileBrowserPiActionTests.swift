@@ -114,7 +114,7 @@ struct FileBrowserPiActionTests {
 
         let piMenu = try #require(menu.children.first as? UIMenu)
         #expect(piMenu.title == "π")
-        #expect(piMenu.children.count == SelectedTextPiActionKind.allCases.count)
+        #expect(piMenu.children.count == PiQuickAction.builtInDefaults.count)
     }
 
     @Test func codeBodyNoPiMenuWhenRouterNil() throws {

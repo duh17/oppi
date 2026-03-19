@@ -209,7 +209,7 @@ struct UserTimelineRowContentTests {
 
         let piMenu = try #require(menu.children.first as? UIMenu)
         #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt"])
+        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
     }
 
     @MainActor
