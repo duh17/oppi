@@ -69,6 +69,7 @@ final class ChatSessionManager {
     private var loadedFromCacheAtConnect = false
     private var observedTransportPath: ConnectionTransportPath = .paired
 
+    private var hasConnectedBefore = false
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
 
@@ -300,61 +301,74 @@ final class ChatSessionManager {
         observedTransportPath = connection.transportPath
         beginFreshContentLagMeasurement(hadCache: false)
 
+        // Re-entry from a different session (e.g. parent→child→parent):
+        // skip the cache to avoid a 200-500ms flash of stale data. The
+        // background trace fetch is the source of truth and will populate
+        // the timeline. The loading spinner shows via entryState in the
+        // meantime.
+        let isReentry = hasConnectedBefore && switchingSessions
+        hasConnectedBefore = true
+
         transitionTo(.loadingCache)
 
-        // Show cached timeline immediately (before network).
-        let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
-        let cached = await TimelineCache.shared.loadTrace(sessionId)
-        let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
-        if let cached {
-            latestTraceSignature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
-        } else {
-            latestTraceSignature = nil
-        }
-
-        ChatSessionTelemetry.recordCacheLoad(
-            durationMs: cacheLoadDurationMs,
-            sessionId: sessionId,
-            hit: cached != nil,
-            eventCount: cached?.eventCount ?? 0
-        )
-
-        if let cached, !cached.events.isEmpty {
-            loadedFromCacheAtConnect = true
-
-            // Skip cache load when the reducer already has items (same-session
-            // re-entry). The live items are strictly more recent than the cache.
-            // Loading a stale cache would trigger a full rebuild whose orphan
-            // detection preserves user messages but drops their corresponding
-            // assistant responses — producing a wall of user-only messages at
-            // the bottom. The scheduled fresh trace load will reconcile properly.
-            if reducer.items.isEmpty {
-                let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
-                reducer.loadSession(cached.events)
-                let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
-
-                ChatSessionTelemetry.recordReducerLoad(
-                    durationMs: reducerLoadDurationMs,
-                    sessionId: sessionId,
-                    source: "cache",
-                    eventCount: cached.eventCount,
-                    itemCount: reducer.items.count
-                )
-
-                let footprint = SentryService.currentFootprintMB()
-                ClientLog.info("Memory", "Session loaded (cache)", metadata: [
-                    "footprintMB": footprint.map(String.init) ?? "n/a",
-                    "traceEvents": String(cached.events.count),
-                    "timelineItems": String(reducer.items.count),
-                    "sessionId": sessionId,
-                ])
-
-                log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+        if !isReentry {
+            // Show cached timeline immediately (before network).
+            let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
+            let cached = await TimelineCache.shared.loadTrace(sessionId)
+            let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
+            if let cached {
+                latestTraceSignature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
             } else {
-                log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
+                latestTraceSignature = nil
             }
 
-            needsInitialScroll = true
+            ChatSessionTelemetry.recordCacheLoad(
+                durationMs: cacheLoadDurationMs,
+                sessionId: sessionId,
+                hit: cached != nil,
+                eventCount: cached?.eventCount ?? 0
+            )
+
+            if let cached, !cached.events.isEmpty {
+                loadedFromCacheAtConnect = true
+
+                // Skip cache load when the reducer already has items (same-session
+                // re-entry). The live items are strictly more recent than the cache.
+                // Loading a stale cache would trigger a full rebuild whose orphan
+                // detection preserves user messages but drops their corresponding
+                // assistant responses — producing a wall of user-only messages at
+                // the bottom. The scheduled fresh trace load will reconcile properly.
+                if reducer.items.isEmpty {
+                    let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
+                    reducer.loadSession(cached.events)
+                    let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
+
+                    ChatSessionTelemetry.recordReducerLoad(
+                        durationMs: reducerLoadDurationMs,
+                        sessionId: sessionId,
+                        source: "cache",
+                        eventCount: cached.eventCount,
+                        itemCount: reducer.items.count
+                    )
+
+                    let footprint = SentryService.currentFootprintMB()
+                    ClientLog.info("Memory", "Session loaded (cache)", metadata: [
+                        "footprintMB": footprint.map(String.init) ?? "n/a",
+                        "traceEvents": String(cached.events.count),
+                        "timelineItems": String(reducer.items.count),
+                        "sessionId": sessionId,
+                    ])
+
+                    log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+                } else {
+                    log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
+                }
+
+                needsInitialScroll = true
+            }
+        } else {
+            latestTraceSignature = nil
+            log.info("Re-entry for \(self.sessionId) — skipping stale cache, awaiting trace fetch")
         }
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
@@ -482,12 +496,12 @@ final class ChatSessionManager {
                     unexpectedStreamExitCount = 0
                     transitionTo(.streaming)
 
-                    // Start replay buffering if the session is busy and we loaded
-                    // from cache. This captures live WS events so they survive the
-                    // upcoming trace rebuild in loadHistory().
+                    // Start replay buffering if the session is busy and we have a
+                    // pending trace rebuild (from cache or re-entry). This captures
+                    // live WS events so they survive the loadHistory() rebuild.
                     let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
                         || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
-                    if sessionIsBusy, loadedFromCacheAtConnect {
+                    if sessionIsBusy, loadedFromCacheAtConnect || isReentry {
                         reducer.startReplayBuffer()
                     }
                 }
