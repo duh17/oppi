@@ -544,8 +544,22 @@ export class SessionManager extends EventEmitter {
       await this.sendPrompt(session.id, params.prompt);
       session.firstMessage = params.prompt.slice(0, 200);
       this.storage.saveSession(session);
+
+      // Broadcast child session state to the parent's subscribers so the iOS
+      // client learns about the new child immediately (enables SubagentStatusBar
+      // to appear without waiting for a session list REST poll).
+      // Re-read from storage to get the latest state (SDK may have updated
+      // status/messageCount since sendPrompt).
+      const freshSession = this.storage.getSession(session.id) ?? session;
+      this.broadcast(this.sessionKey(parentSessionId), { type: "state", session: freshSession });
     } catch (err: unknown) {
-      // Session created but failed to start or prompt — mark as error
+      // Session created but failed to start or prompt — mark as error.
+      // Stop the session to release the SDK process and workspace slot.
+      try {
+        await this.stopSession(session.id);
+      } catch {
+        // Best-effort cleanup — don't mask the original error.
+      }
       session.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
       session.warnings = [...(session.warnings ?? []), `Spawn failed: ${msg}`];

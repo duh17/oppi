@@ -80,12 +80,14 @@ function getRootSessionId(ctx: SpawnAgentContext): string {
 /** Collect all descendant sessions of a given root (breadth-first). */
 function getDescendants(rootId: string, allSessions: Session[]): Session[] {
   const descendants: Session[] = [];
+  const visited = new Set<string>([rootId]);
   const queue = [rootId];
   while (queue.length > 0) {
     const parentId = queue.shift();
     if (!parentId) continue;
     for (const s of allSessions) {
-      if (s.parentSessionId === parentId) {
+      if (s.parentSessionId === parentId && !visited.has(s.id)) {
+        visited.add(s.id);
         descendants.push(s);
         queue.push(s.id);
       }
@@ -732,8 +734,8 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
         "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
         `Max spawn depth is ${MAX_SPAWN_DEPTH}. Avoid spawning agents from within spawned agents unless the task genuinely requires hierarchical decomposition.`,
-        "Model selection: omit model to inherit from parent (usually best). Use 'anthropic/claude-sonnet-4-6' for mechanical/well-defined tasks (refactors, simple tests, pattern replacements). Keep parent's model for complex reasoning, architecture, or multi-file changes.",
-        "Thinking selection: omit to inherit. Use 'medium' for well-defined tasks, 'low' for purely mechanical work, 'high' (default) for complex implementation, 'xhigh' for architecture/deep review.",
+        "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
+        "Thinking selection: omit to inherit from parent (usually best). Only override when the user explicitly requests a specific thinking level.",
       ],
       parameters: spawnAgentParams,
 
@@ -984,17 +986,18 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
-        // Verify it's a child of this session
+        // Verify the session is a descendant of this session's tree
         if (session.parentSessionId !== ctx.sessionId) {
-          // Also allow inspecting any session in the workspace for flexibility
-          const children = ctx.listChildren();
-          const isChild = children.some((c) => c.id === params.id);
-          if (!isChild) {
+          const rootId = getRootSessionId(ctx);
+          const allSessions = ctx.listWorkspaceSessions();
+          const descendants = getDescendants(rootId, allSessions);
+          const isInTree = descendants.some((d) => d.id === params.id);
+          if (!isInTree) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Session ${params.id} is not a child of this session. Use check_agents() to list children.`,
+                  text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
                 },
               ],
               details: { sessionId: params.id, level: "overview" },
