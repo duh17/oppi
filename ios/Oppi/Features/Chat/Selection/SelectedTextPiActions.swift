@@ -14,6 +14,9 @@ final class SelectedTextPiActionRouter {
     }
 }
 
+/// Shim for backward compatibility with tests and call sites that
+/// reference the old hardcoded action kinds.  Maps 1:1 to built-in
+/// `PiQuickAction` entries via their stable UUIDs.
 enum SelectedTextPiActionKind: String, CaseIterable, Equatable {
     case explain
     case doIt
@@ -21,33 +24,14 @@ enum SelectedTextPiActionKind: String, CaseIterable, Equatable {
     case refactor
     case addToPrompt
 
-    var title: String {
+    /// Convert to the matching built-in `PiQuickAction`.
+    var builtInAction: PiQuickAction {
         switch self {
-        case .explain:
-            "Explain"
-        case .doIt:
-            "Do it"
-        case .fix:
-            "Fix"
-        case .refactor:
-            "Refactor"
-        case .addToPrompt:
-            "Add to Prompt"
-        }
-    }
-
-    var systemImageName: String {
-        switch self {
-        case .explain:
-            "questionmark.bubble"
-        case .doIt:
-            "play.circle"
-        case .fix:
-            "wrench.and.screwdriver"
-        case .refactor:
-            "arrow.triangle.branch"
-        case .addToPrompt:
-            "plus.bubble"
+        case .explain: PiQuickAction.builtInDefaults[0]
+        case .doIt: PiQuickAction.builtInDefaults[1]
+        case .fix: PiQuickAction.builtInDefaults[2]
+        case .refactor: PiQuickAction.builtInDefaults[3]
+        case .addToPrompt: PiQuickAction.builtInDefaults[4]
         }
     }
 }
@@ -104,9 +88,22 @@ struct SelectedTextSourceContext: Equatable {
 }
 
 struct SelectedTextPiRequest: Equatable {
-    let action: SelectedTextPiActionKind
+    let action: PiQuickAction
     let selectedText: String
     let source: SelectedTextSourceContext
+
+    /// Convenience initializer for backward compatibility with old enum-based callers.
+    init(action: SelectedTextPiActionKind, selectedText: String, source: SelectedTextSourceContext) {
+        self.action = action.builtInAction
+        self.selectedText = selectedText
+        self.source = source
+    }
+
+    init(action: PiQuickAction, selectedText: String, source: SelectedTextSourceContext) {
+        self.action = action
+        self.selectedText = selectedText
+        self.source = source
+    }
 }
 
 enum SelectedTextPiTextViewSupport {
@@ -134,12 +131,14 @@ enum SelectedTextPiMenuBuilder {
         suggestedActions: [UIMenuElement],
         selectedText: String,
         sourceContext: SelectedTextSourceContext,
-        router: SelectedTextPiActionRouter
+        router: SelectedTextPiActionRouter,
+        actionStore: PiQuickActionStore? = nil
     ) -> UIMenu? {
         guard let piSubmenu = piSubmenu(
             selectedText: selectedText,
             sourceContext: sourceContext,
-            router: router
+            router: router,
+            actionStore: actionStore
         ) else {
             return nil
         }
@@ -153,25 +152,28 @@ enum SelectedTextPiMenuBuilder {
     static func piSubmenu(
         selectedText: String,
         sourceContext: SelectedTextSourceContext,
-        router: SelectedTextPiActionRouter
+        router: SelectedTextPiActionRouter,
+        actionStore: PiQuickActionStore? = nil
     ) -> UIMenu? {
         let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
 
-        let actions = SelectedTextPiActionKind.allCases.map { actionKind in
+        let quickActions = actionStore?.actions ?? PiQuickAction.builtInDefaults
+
+        let menuActions = quickActions.map { quickAction in
             UIAction(
-                title: actionKind.title,
-                image: UIImage(systemName: actionKind.systemImageName)
+                title: quickAction.title,
+                image: UIImage(systemName: quickAction.systemImage)
             ) { _ in
                 router.dispatch(.init(
-                    action: actionKind,
+                    action: quickAction,
                     selectedText: normalized,
                     source: sourceContext
                 ))
             }
         }
 
-        return UIMenu(title: "π", children: actions)
+        return UIMenu(title: "π", children: menuActions)
     }
 }
 
@@ -182,7 +184,8 @@ enum SelectedTextPiEditMenuSupport {
         range: NSRange,
         suggestedActions: [UIMenuElement],
         router: SelectedTextPiActionRouter?,
-        sourceContext: SelectedTextSourceContext?
+        sourceContext: SelectedTextSourceContext?,
+        actionStore: PiQuickActionStore? = nil
     ) -> UIMenu? {
         guard let router,
               let sourceContext,
@@ -194,7 +197,8 @@ enum SelectedTextPiEditMenuSupport {
             suggestedActions: suggestedActions,
             selectedText: selectedText,
             sourceContext: sourceContext,
-            router: router
+            router: router,
+            actionStore: actionStore
         )
     }
 }
@@ -218,16 +222,30 @@ extension EnvironmentValues {
     }
 }
 
+private struct PiQuickActionStoreEnvironmentKey: EnvironmentKey {
+    static let defaultValue: PiQuickActionStore? = nil
+}
+
+extension EnvironmentValues {
+    /// Store for user-configured π quick actions.
+    var piQuickActionStore: PiQuickActionStore? {
+        get { self[PiQuickActionStoreEnvironmentKey.self] }
+        set { self[PiQuickActionStoreEnvironmentKey.self] = newValue }
+    }
+}
+
 enum SelectedTextPiPromptFormatter {
     static let maxInsertedCharacters = 12_000
 
     static func composeDraftAddition(for request: SelectedTextPiRequest) -> String {
         let snippet = formattedSnippet(for: request.selectedText, source: request.source)
-        guard let actionTitle = draftActionTitle(for: request.action) else {
+        let prefix = request.action.isRawInsert ? nil : nonEmpty(request.action.promptPrefix)
+
+        guard let prefix else {
             return snippet
         }
 
-        return [actionTitle, sourceMetadataBlock(for: request.source), snippet]
+        return [prefix, sourceMetadataBlock(for: request.source), snippet]
             .compactMap(nonEmpty)
             .joined(separator: "\n\n")
     }
@@ -247,21 +265,6 @@ enum SelectedTextPiPromptFormatter {
             return fencedCodeBlock(clamped.text, languageHint: source.languageHint) + clamped.noticeSuffix
         }
         return quotedBlock(clamped.text) + clamped.noticeSuffix
-    }
-
-    private static func draftActionTitle(for action: SelectedTextPiActionKind) -> String? {
-        switch action {
-        case .explain:
-            return "Explain this:"
-        case .doIt:
-            return "Do this:"
-        case .fix:
-            return "Fix this:"
-        case .refactor:
-            return "Refactor this:"
-        case .addToPrompt:
-            return nil
-        }
     }
 
     private static func prefersCodeBlockFormatting(for source: SelectedTextSourceContext) -> Bool {

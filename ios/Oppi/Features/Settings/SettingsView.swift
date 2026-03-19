@@ -132,6 +132,14 @@ struct SettingsView: View {
                 )
             }
 
+            Section("Pi Actions") {
+                NavigationLink {
+                    PiActionsSettingsView()
+                } label: {
+                    Label("Text Selection Actions", systemImage: "contextualmenu.and.cursorarrow")
+                }
+            }
+
             Section {
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
@@ -485,7 +493,7 @@ struct SettingsView: View {
         }
     }
 
-    private func testVoiceEndpoint() {
+    func testVoiceEndpoint() {
         let trimmed = remoteASREndpointText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let endpoint = VoiceInputPreferences.normalizedEndpointURL(from: trimmed) else {
             voiceEndpointProbeState = .unreachable
