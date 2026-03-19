@@ -222,6 +222,13 @@ export interface ServerConfig {
 
   // Per-model thinking preferences (synced from iOS)
   thinkingLevelByModel?: Record<string, string>;
+
+  /**
+   * Optional model allowlist. When set, only these models (plus custom provider
+   * models from ~/.pi/agent/models.json) are shown in the model picker.
+   * Format: array of "provider/model-id" strings.
+   */
+  modelAllowlist?: string[];
 }
 
 // ─── API Types ───

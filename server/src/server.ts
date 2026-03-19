@@ -280,7 +280,11 @@ export class Server {
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     this.modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
-    this.models = new ModelCatalog(this.modelRegistry, this.storage);
+    this.models = new ModelCatalog(
+      this.modelRegistry,
+      this.storage,
+      storage.getConfig().modelAllowlist,
+    );
     this.runtimeUpdates = new RuntimeUpdateManager({
       packageName: process.env.OPPI_RUNTIME_PACKAGE || "@mariozechner/pi-coding-agent",
       currentVersion: Server.detectPiAgentVersion(),
