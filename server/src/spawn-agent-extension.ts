@@ -599,14 +599,14 @@ function waitForChildCompletion(
     let lastMsgCount = 0;
     let resolved = false;
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       resolved = true;
       clearInterval(pollTimer);
       unsubscribe();
       signal?.removeEventListener("abort", onAbort);
     };
 
-    const finalize = (timedOut: boolean) => {
+    const finalize = (timedOut: boolean): void => {
       if (resolved) return;
       const session = ctx.getSession(childId);
       cleanup();
@@ -637,7 +637,7 @@ function waitForChildCompletion(
     }
 
     // Abort signal handler
-    const onAbort = () => finalize(false);
+    const onAbort = (): void => finalize(false);
     signal?.addEventListener("abort", onAbort, { once: true });
 
     // Subscribe to child events for fast terminal detection.

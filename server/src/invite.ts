@@ -5,11 +5,7 @@
 import type { Storage } from "./storage.js";
 import type { InviteData, InvitePayloadV3 } from "./types.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
-import {
-  isTailscaleHostname,
-  prepareTlsForServer,
-  readCertificateFingerprint,
-} from "./tls.js";
+import { isTailscaleHostname, prepareTlsForServer, readCertificateFingerprint } from "./tls.js";
 
 /** Structured invite result returned by generateInvite(). */
 export interface GeneratedInvite {

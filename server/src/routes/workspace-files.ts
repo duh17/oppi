@@ -416,7 +416,6 @@ export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResp
   return { paths, truncated };
 }
 
-
 export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,

@@ -204,13 +204,19 @@ function sanitizeChartRows(value: unknown, warnings: string[]): SanitizedRows {
       const rawValue = rowRecord[rawKey];
       const t = typeof rawValue;
       if (t === "number") {
-        if (!Number.isFinite(rawValue as number)) { isClean = false; break; }
+        if (!Number.isFinite(rawValue as number)) {
+          isClean = false;
+          break;
+        }
         rowBytes += 20;
       } else if (t === "boolean") {
         rowBytes += (rawValue as boolean) ? 4 : 5;
       } else if (t === "string") {
         const sLen = (rawValue as string).length;
-        if (sLen > MAX_ROW_STRING_LENGTH) { isClean = false; break; }
+        if (sLen > MAX_ROW_STRING_LENGTH) {
+          isClean = false;
+          break;
+        }
         rowBytes += sLen + 2;
       } else {
         isClean = false;

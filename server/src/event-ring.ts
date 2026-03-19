@@ -64,6 +64,7 @@ export class EventRing {
     let hi = this.len;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ring buffer slot guaranteed occupied within [0, len)
       if (this.buf[(this.head + mid) % this.cap]!.seq > sinceSeq) {
         hi = mid;
       } else {
@@ -77,6 +78,7 @@ export class EventRing {
     const count = this.len - lo;
     const result: SequencedEvent[] = new Array(count);
     for (let i = 0; i < count; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ring buffer slot guaranteed occupied
       result[i] = this.buf[(this.head + lo + i) % this.cap]!;
     }
     return result;
@@ -88,10 +90,12 @@ export class EventRing {
 
   get oldestSeq(): number {
     if (this.len === 0) return 0;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- head always occupied when len > 0
     return this.buf[this.head]!.seq;
   }
 
   canServe(sinceSeq: number): boolean {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- head always occupied when len > 0
     return this.len === 0 || sinceSeq >= this.buf[this.head]!.seq - 1;
   }
 }

@@ -65,7 +65,11 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   const storage = {
     getWorkspace: vi.fn().mockReturnValue(ws),
     createSession: vi.fn().mockImplementation((name?: string, model?: string) =>
-      makeSession({ id: `sess-${Date.now()}`, name: name ?? undefined, model: model ?? "test-model" }),
+      makeSession({
+        id: `sess-${Date.now()}`,
+        name: name ?? undefined,
+        model: model ?? "test-model",
+      }),
     ),
     saveSession: vi.fn(),
     getSession: vi.fn(),
@@ -73,9 +77,11 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   };
 
   const sessions = {
-    startSession: vi.fn().mockImplementation(async (sessionId: string) =>
-      makeSession({ id: sessionId, status: "ready" }),
-    ),
+    startSession: vi
+      .fn()
+      .mockImplementation(async (sessionId: string) =>
+        makeSession({ id: sessionId, status: "ready" }),
+      ),
     sendPrompt: vi.fn().mockResolvedValue(undefined),
     isActive: vi.fn().mockReturnValue(false),
     getActiveSession: vi.fn().mockReturnValue(undefined),
@@ -317,9 +323,7 @@ describe("POST /workspaces/:id/sessions", () => {
 
   it("passes images to sendPrompt when provided", async () => {
     const mock = createMockContext();
-    const images = [
-      { type: "image" as const, data: "base64data", mimeType: "image/jpeg" },
-    ];
+    const images = [{ type: "image" as const, data: "base64data", mimeType: "image/jpeg" }];
 
     await dispatchCreate(mock, { prompt: "look at this", images });
 

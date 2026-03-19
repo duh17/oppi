@@ -116,7 +116,8 @@ describe("stripAnsiEscapes", () => {
 
   it("preserves vitest-style colored output", () => {
     // Green checkmark + test name — the real-world case that was broken
-    const input = "\x1b[32m✓\x1b[39m src/file.test.ts \x1b[2m(5 tests)\x1b[22m \x1b[33m34ms\x1b[39m";
+    const input =
+      "\x1b[32m✓\x1b[39m src/file.test.ts \x1b[2m(5 tests)\x1b[22m \x1b[33m34ms\x1b[39m";
     expect(stripAnsiEscapes(input)).toBe(input);
   });
 
