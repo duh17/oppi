@@ -136,11 +136,8 @@ struct PastableTextView: UIViewRepresentable {
     let allowKeyboardRestoreOnTap: Bool
     let onKeyboardRestoreRequest: (() -> Void)?
     let accessibilityIdentifier: String?
-    /// Bumped to programmatically insert text at the cursor.
-    /// Works together with `insertTextContent`.
-    var insertTextRequestID: Int = 0
-    /// Text to insert at the cursor when `insertTextRequestID` changes.
-    var insertTextContent: String = ""
+    /// Show `/` and `@` shortcut buttons above the keyboard.
+    var showsShortcutAccessory: Bool = false
     /// BCP 47 language code of the text view's active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated when the keyboard input mode changes. Used by voice input to
     /// select the correct speech model.
@@ -180,6 +177,7 @@ struct PastableTextView: UIViewRepresentable {
         textView.isAccessibilityElement = true
         textView.accessibilityIdentifier = accessibilityIdentifier
 
+        textView.showsShortcutAccessory = showsShortcutAccessory
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
         textView.setAllowKeyboardRestoreOnTap(allowKeyboardRestoreOnTap)
         textView.installKeyboardRestoreGesture()
@@ -213,6 +211,7 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         textView.accessibilityIdentifier = accessibilityIdentifier
+        textView.showsShortcutAccessory = showsShortcutAccessory
 
         // Manage keyboard suppression — must apply before focus request so
         // inputView is set before becomeFirstResponder fires.
@@ -248,18 +247,6 @@ struct PastableTextView: UIViewRepresentable {
             DispatchQueue.main.async {
                 guard textView.window != nil else { return }
                 requestSystemDictation(for: textView)
-            }
-        }
-
-        if insertTextRequestID != context.coordinator.lastInsertTextRequestID {
-            context.coordinator.lastInsertTextRequestID = insertTextRequestID
-            let content = insertTextContent
-            DispatchQueue.main.async {
-                guard textView.window != nil else { return }
-                if !textView.isFirstResponder {
-                    textView.becomeFirstResponder()
-                }
-                textView.insertText(content)
             }
         }
 
@@ -348,7 +335,6 @@ struct PastableTextView: UIViewRepresentable {
         var lastFocusRequestID = 0
         var lastBlurRequestID = 0
         var lastDictationRequestID = 0
-        var lastInsertTextRequestID = 0
         var lastAutocorrectionEnabled: Bool?
         private var lastOverflowState = false
         private var lastDictationState = false
@@ -680,8 +666,60 @@ final class PastableUITextView: UITextView {
     /// suppression is active (used during active voice recording).
     private(set) var allowsKeyboardRestoreOnTap = true
 
+    /// Whether to show `/` and `@` shortcut buttons above the keyboard.
+    var showsShortcutAccessory: Bool = false {
+        didSet {
+            guard oldValue != showsShortcutAccessory else { return }
+            inputAccessoryView = showsShortcutAccessory ? shortcutAccessoryBar : nil
+            if window != nil { reloadInputViews() }
+        }
+    }
+
     private var cachedPasteboardChangeCount: Int = -1
     private var cachedPasteboardHasImages = false
+
+    /// Keyboard accessory bar with `/` and `@` quick-insert buttons.
+    private lazy var shortcutAccessoryBar: UIInputView = {
+        let bar = UIInputView(frame: CGRect(x: 0, y: 0, width: 0, height: 36), inputViewStyle: .keyboard)
+
+        let slash = makeShortcutButton(title: "/", action: #selector(insertSlashAtCursor))
+        let at = makeShortcutButton(title: "@", action: #selector(insertAtAtCursor))
+
+        let stack = UIStackView(arrangedSubviews: [slash, at])
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        bar.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 8),
+            stack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+        ])
+
+        return bar
+    }()
+
+    private func makeShortcutButton(title: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .monospacedSystemFont(ofSize: 15, weight: .semibold)
+        button.tintColor = .white
+        button.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        button.layer.cornerRadius = 14
+        button.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 36),
+            button.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return button
+    }
+
+    @objc private func insertSlashAtCursor() {
+        insertText("/")
+    }
+
+    @objc private func insertAtAtCursor() {
+        insertText("@")
+    }
 
     /// Tap gesture that restores the keyboard when the user taps the text view
     /// while keyboard is suppressed (e.g. during voice recording).

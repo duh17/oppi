@@ -55,10 +55,6 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Bumped to programmatically focus the text field.
     @State private var focusRequestID = 0
 
-    /// Bumped to insert text at the cursor via PastableTextView.
-    @State private var insertTextRequestID = 0
-    @State private var insertTextContent = ""
-
     /// When true, the keyboard is hidden while the cursor remains visible.
     /// Used during voice recording to show cursor without keyboard.
     @State private var suppressKeyboard = false
@@ -315,8 +311,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         allowKeyboardRestoreOnTap: allowKeyboardRestoreOnTap,
                         onKeyboardRestoreRequest: handleKeyboardRestore,
                         accessibilityIdentifier: "chat.input",
-                        insertTextRequestID: insertTextRequestID,
-                        insertTextContent: insertTextContent,
+                        showsShortcutAccessory: !isBusy,
                         keyboardLanguage: $keyboardLanguage
                     )
                 }
@@ -332,11 +327,6 @@ struct ChatInputBar<ActionRow: View>: View {
             if showsComposerActionRow {
                 HStack(spacing: 6) {
                     attachButton
-
-                    if !isBusy {
-                        slashInsertButton
-                        atInsertButton
-                    }
 
                     if isBusy {
                         busyModeSelector
@@ -543,34 +533,6 @@ struct ChatInputBar<ActionRow: View>: View {
         .padding(.trailing, 4)
         .padding(.vertical, 4)
         .background(.themeComment.opacity(0.1), in: Capsule())
-    }
-
-    private var slashInsertButton: some View {
-        Button {
-            insertTextContent = "/"
-            insertTextRequestID += 1
-        } label: {
-            Text("/")
-                .font(.subheadline.weight(.semibold).monospaced())
-                .foregroundStyle(.themeFg)
-                .frame(width: 28, height: 28)
-                .glassEffect(.regular, in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var atInsertButton: some View {
-        Button {
-            insertTextContent = "@"
-            insertTextRequestID += 1
-        } label: {
-            Text("@")
-                .font(.subheadline.weight(.semibold).monospaced())
-                .foregroundStyle(.themeFg)
-                .frame(width: 28, height: 28)
-                .glassEffect(.regular, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var expandButton: some View {
