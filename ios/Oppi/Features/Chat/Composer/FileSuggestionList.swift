@@ -35,15 +35,23 @@ struct FileSuggestionList: View {
             onSelect(suggestion)
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: suggestion.isDirectory ? "folder" : "doc")
-                    .font(.caption)
-                    .foregroundStyle(suggestion.isDirectory ? .themeYellow : .themeComment)
-                    .frame(width: 16)
+                Group {
+                    if suggestion.isDirectory {
+                        Image(systemName: "folder.fill")
+                            .foregroundStyle(.themeYellow)
+                    } else {
+                        let icon = FileIcon.forPath(suggestion.path)
+                        Image(systemName: icon.symbolName)
+                            .foregroundStyle(icon.color)
+                    }
+                }
+                .font(.caption)
+                .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
                     if suggestion.matchPositions.isEmpty {
                         Text(suggestion.displayName)
-                            .font(.system(.body, design: .monospaced).weight(.medium))
+                            .font(.system(.subheadline, design: .monospaced).weight(.medium))
                             .foregroundStyle(.themeFg)
                             .lineLimit(1)
                     } else {
@@ -98,7 +106,7 @@ private struct HighlightedSuggestionText: View {
                 }
                 var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
                 segment.foregroundColor = .themeYellow
-                segment.font = .system(.body, design: .monospaced).bold()
+                segment.font = .system(.subheadline, design: .monospaced).bold()
                 result.append(segment)
                 i = end + 1
             } else {
@@ -108,7 +116,7 @@ private struct HighlightedSuggestionText: View {
                 }
                 var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
                 segment.foregroundColor = .themeFgDim
-                segment.font = .system(.body, design: .monospaced)
+                segment.font = .system(.subheadline, design: .monospaced)
                 result.append(segment)
                 i = end + 1
             }

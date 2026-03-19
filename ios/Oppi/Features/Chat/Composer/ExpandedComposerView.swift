@@ -27,6 +27,7 @@ import UIKit
 struct ExpandedComposerView: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
+    @Binding var pendingFiles: [PendingFileReference]
     let isBusy: Bool
     let busyStreamingBehavior: StreamingBehavior
     let slashCommands: [SlashCommand]
@@ -61,8 +62,9 @@ struct ExpandedComposerView: View {
 
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
+        let hasFiles = !pendingFiles.isEmpty
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText || hasImages
+        return hasText || hasImages || hasFiles
     }
 
     private var accentColor: Color { .themeBlue }
@@ -219,6 +221,10 @@ struct ExpandedComposerView: View {
                 imageStrip
             }
 
+            if !pendingFiles.isEmpty {
+                filePillStrip
+            }
+
             HStack(spacing: 6) {
                 attachMenu
 
@@ -286,6 +292,48 @@ struct ExpandedComposerView: View {
             }
             .padding(.horizontal, 16)
         }
+    }
+
+    private var filePillStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(pendingFiles) { file in
+                    filePillView(file)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func filePillView(_ file: PendingFileReference) -> some View {
+        let icon = file.isDirectory
+            ? FileIcon(symbolName: "folder.fill", color: .themeYellow)
+            : FileIcon.forPath(file.path)
+
+        return HStack(spacing: 4) {
+            Image(systemName: icon.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(icon.color)
+
+            Text(file.displayName)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .fixedSize()
+
+            Button {
+                removeFile(file.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.themeComment)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(.themeComment.opacity(0.1), in: Capsule())
     }
 
     private var attachMenu: some View {
@@ -442,7 +490,24 @@ struct ExpandedComposerView: View {
     }
 
     private func insertFileSuggestion(_ suggestion: FileSuggestion) {
-        text = ComposerAutocomplete.insertFileSuggestion(suggestion, into: text)
+        // Add as pill instead of inline text. Remove the @query token from text.
+        if let tokenRange = ComposerAutocomplete.activeAtTokenRange(in: text) {
+            text.replaceSubrange(tokenRange, with: "")
+        }
+
+        let ref = PendingFileReference(path: suggestion.path, isDirectory: suggestion.isDirectory)
+        if !pendingFiles.contains(where: { $0.path == ref.path }) {
+            pendingFiles.append(ref)
+        }
+
+        // If it's a directory, re-trigger autocomplete for its contents
+        if suggestion.isDirectory {
+            text += "@\(suggestion.path)"
+        }
+    }
+
+    private func removeFile(_ id: String) {
+        pendingFiles.removeAll { $0.id == id }
     }
 
     private func notifyFileSuggestionContext(for newText: String) {
