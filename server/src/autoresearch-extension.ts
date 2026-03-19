@@ -329,7 +329,19 @@ function inferUnit(name: string): string {
 // Extension Factory
 // ---------------------------------------------------------------------------
 
-export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactory {
+export interface AutoresearchFactoryOptions {
+  /** When true, the session is a child spawned by another session.
+   *  Child sessions never enter autoresearch mode — even if autoresearch.jsonl
+   *  exists in the workspace. This prevents contamination where a child agent
+   *  completes its task, gets compacted, and then starts running unrelated
+   *  experiments because the parent's autoresearch files are in the shared cwd. */
+  isChildSession?: boolean;
+}
+
+export function createAutoresearchFactory(
+  workspaceCwd: string,
+  options?: AutoresearchFactoryOptions,
+): ExtensionFactory {
   return (pi) => {
     let state: ExperimentState = {
       results: [],
@@ -367,6 +379,15 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
         name: null,
         currentSegment: 0,
       };
+
+      // Child sessions never enter autoresearch mode. The parent's
+      // autoresearch.jsonl may be in the shared workspace cwd, but the
+      // child was spawned for a different task. Without this guard, a child
+      // that gets context-compacted would resume into the autoresearch loop.
+      if (options?.isChildSession) {
+        autoresearchMode = false;
+        return;
+      }
 
       // Try effectiveCwd first (worktree), fall back to workspaceCwd (main checkout).
       let jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");

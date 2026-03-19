@@ -79,9 +79,16 @@ export class SessionStartCoordinator {
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
-        // Inject autoresearch extension for all workspace sessions
+        // Inject autoresearch extension for all workspace sessions.
+        // Child sessions get the isChildSession flag so they never enter
+        // autoresearch mode — prevents contamination from the parent's
+        // autoresearch.jsonl in the shared workspace cwd.
         const workspaceCwd = resolveSdkSessionCwd(workspace);
-        extraExtensionFactories.push(createAutoresearchFactory(workspaceCwd));
+        extraExtensionFactories.push(
+          createAutoresearchFactory(workspaceCwd, {
+            isChildSession: !!session.parentSessionId,
+          }),
+        );
 
         // Inject spawn_agent extension for all workspace sessions
         extraExtensionFactories.push(

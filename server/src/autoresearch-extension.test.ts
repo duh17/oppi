@@ -96,11 +96,12 @@ describe("autoresearch-extension", () => {
 
   async function loadFactory(
     cwd: string,
+    options?: { isChildSession?: boolean },
   ): Promise<{ api: MockExtensionAPI; tool: (name: string) => RegisteredTool }> {
     // Dynamic import to avoid issues with module state
     const { createAutoresearchFactory } = await import("./autoresearch-extension.js");
     const api = createMockAPI();
-    const factory = createAutoresearchFactory(cwd);
+    const factory = createAutoresearchFactory(cwd, options);
     await factory(api as unknown as Parameters<typeof factory>[0]);
     const tool = (name: string): RegisteredTool => {
       const t = api.tools.get(name);
@@ -431,6 +432,86 @@ describe("autoresearch-extension", () => {
       })) as { systemPrompt?: string } | undefined;
 
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe("child session contamination guard", () => {
+    it("does not enter autoresearch mode when isChildSession is true", async () => {
+      // Pre-populate jsonl — normally this would activate autoresearch mode
+      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
+      fs.writeFileSync(
+        jsonlPath,
+        JSON.stringify({
+          type: "config",
+          name: "Parent Experiment",
+          metricName: "total_us",
+          metricUnit: "us",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+
+      const { api } = await loadFactory(tmpDir, { isChildSession: true });
+      await fireEvent(api, "session_start");
+
+      // before_agent_start should NOT inject autoresearch context
+      const result = (await fireEvent(api, "before_agent_start", {
+        prompt: "fix a bug",
+        systemPrompt: "You are an assistant.",
+      })) as { systemPrompt?: string } | undefined;
+
+      expect(result).toBeUndefined();
+    });
+
+    it("does not send auto-resume messages for child sessions", async () => {
+      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
+      fs.writeFileSync(
+        jsonlPath,
+        JSON.stringify({
+          type: "config",
+          name: "Parent Experiment",
+          metricName: "val",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+
+      const { api } = await loadFactory(tmpDir, { isChildSession: true });
+      await fireEvent(api, "session_start");
+
+      // Even if agent_end fires, no resume message should be sent
+      await fireEvent(api, "agent_end");
+      expect(api.sentMessages).toHaveLength(0);
+    });
+
+    it("still enters autoresearch mode for non-child sessions", async () => {
+      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
+      fs.writeFileSync(
+        jsonlPath,
+        JSON.stringify({
+          type: "config",
+          name: "Test",
+          metricName: "val",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+
+      const { api } = await loadFactory(tmpDir, { isChildSession: false });
+      await fireEvent(api, "session_start");
+
+      const result = (await fireEvent(api, "before_agent_start", {
+        prompt: "continue",
+        systemPrompt: "You are an assistant.",
+      })) as { systemPrompt?: string } | undefined;
+
+      expect(result).toBeDefined();
+      expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
+    });
+
+    it("tools still register for child sessions (no-op but available)", async () => {
+      const { api } = await loadFactory(tmpDir, { isChildSession: true });
+      // Tools are registered regardless — they just won't be triggered by autoresearch mode
+      expect(api.tools.has("init_experiment")).toBe(true);
+      expect(api.tools.has("run_experiment")).toBe(true);
+      expect(api.tools.has("log_experiment")).toBe(true);
     });
   });
 
