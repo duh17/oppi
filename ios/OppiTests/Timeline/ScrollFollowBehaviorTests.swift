@@ -6,9 +6,11 @@ import UIKit
 @Suite("Scroll follow behavior")
 struct ScrollFollowBehaviorTests {
     @MainActor
-    @Test func nearBottomHysteresisKeepsFollowStableForSmallTailGrowth() {
-        // Thresholds: enter=120, exit=200.
-        // When already near-bottom, distances ≤ 200 keep follow stable.
+    @Test func passiveBottomPinPreventsLayoutDriftDetachment() {
+        // Non-user-driven scroll events where content grew always pin to
+        // the bottom. This prevents cumulative drift from self-sizing
+        // cascades (estimated -> actual height resolution) from slowly
+        // false-detaching the user past the exit threshold.
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
@@ -16,15 +18,35 @@ struct ScrollFollowBehaviorTests {
 
         harness.scrollController.updateNearBottom(true)
 
-        // Distance 150 — within exit threshold (200), stays near-bottom.
-        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 150, in: metricsView))
+        // Seed lastObservedContentOffsetY at the bottom.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 0, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
-        #expect(harness.scrollController.isCurrentlyNearBottom)
 
-        // Distance 250 — exceeds exit threshold (200), detaches.
-        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 250, in: metricsView))
+        // Simulate a self-sizing cascade: content grew (cell above resolved
+        // from estimated -> actual, increasing contentSize) AND offset
+        // shifted by > 2pt (the old abs(deltaY) < 2 guard would have
+        // missed this). The passive pin corrects the drift.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 150, in: metricsView))
+        metricsView.testContentSize = CGSize(width: 390, height: 1_250) // content grew
         harness.coordinator.scrollViewDidScroll(metricsView)
-        #expect(!harness.scrollController.isCurrentlyNearBottom)
+        #expect(harness.scrollController.isCurrentlyNearBottom,
+                "non-user-driven drift with content growth must stay attached")
+
+        // Even a large drift past exit threshold (250 > 200) is corrected
+        // when accompanied by content growth.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 250, in: metricsView))
+        metricsView.testContentSize = CGSize(width: 390, height: 1_400) // more growth
+        harness.coordinator.scrollViewDidScroll(metricsView)
+        #expect(harness.scrollController.isCurrentlyNearBottom,
+                "non-user-driven drift past exit threshold with content growth must stay attached")
+
+        // Without content growth (pure offset change, e.g. programmatic
+        // scroll), the passive pin does NOT fire — hysteresis applies.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 250, in: metricsView))
+        // testContentSize unchanged → contentHeightDelta = 0
+        harness.coordinator.scrollViewDidScroll(metricsView)
+        #expect(!harness.scrollController.isCurrentlyNearBottom,
+                "non-user-driven drift without content growth allows detach past exit threshold")
     }
 
     @MainActor
@@ -208,9 +230,17 @@ struct ScrollFollowBehaviorTests {
         metricsView.testContentSize = CGSize(width: 390, height: 3_000)
         metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
 
+        // User scrolls up — detach via user-driven scroll so the passive
+        // bottom pin doesn't override the position.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 0, in: metricsView))
+        harness.coordinator.scrollViewDidScroll(metricsView)
+        metricsView.testIsTracking = true
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
         // Distance 800 — well past the 500pt minimum for showing the button.
         metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 800, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
+        metricsView.testIsTracking = false
+        harness.coordinator.scrollViewDidEndDragging(metricsView, willDecelerate: false)
         #expect(harness.scrollController.isDetachedStreamingHintVisible)
 
         let nonStreamingConfig = makeTimelineConfiguration(
