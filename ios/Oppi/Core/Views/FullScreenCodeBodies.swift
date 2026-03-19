@@ -94,6 +94,7 @@ final class NativeFullScreenCodeBody: UIView {
     private let language: String?
     private let startLine: Int
     private let palette: ThemePalette
+    private let alwaysBounceVertical: Bool
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
     private var highlightTask: Task<Void, Never>?
@@ -103,6 +104,7 @@ final class NativeFullScreenCodeBody: UIView {
         language: String?,
         startLine: Int,
         palette: ThemePalette,
+        alwaysBounceVertical: Bool = true,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
         selectedTextSourceContext: SelectedTextSourceContext?
     ) {
@@ -110,6 +112,7 @@ final class NativeFullScreenCodeBody: UIView {
         self.language = language
         self.startLine = startLine
         self.palette = palette
+        self.alwaysBounceVertical = alwaysBounceVertical
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
         super.init(frame: .zero)
@@ -126,7 +129,7 @@ final class NativeFullScreenCodeBody: UIView {
         backgroundColor = UIColor(palette.bgDark)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.alwaysBounceVertical = true
+        scrollView.alwaysBounceVertical = alwaysBounceVertical
         scrollView.alwaysBounceHorizontal = true
         scrollView.showsHorizontalScrollIndicator = true
         scrollView.showsVerticalScrollIndicator = true
