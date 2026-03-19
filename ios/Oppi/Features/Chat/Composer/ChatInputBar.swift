@@ -327,11 +327,6 @@ struct ChatInputBar<ActionRow: View>: View {
                 HStack(spacing: 6) {
                     attachButton
 
-                    if !isBusy {
-                        slashActionButton
-                        atFileActionButton
-                    }
-
                     if isBusy {
                         busyModeSelector
                     }
@@ -537,37 +532,6 @@ struct ChatInputBar<ActionRow: View>: View {
         .padding(.trailing, 4)
         .padding(.vertical, 4)
         .background(.themeComment.opacity(0.1), in: Capsule())
-    }
-
-    private var slashActionButton: some View {
-        Button {
-            text += "/"
-            focusRequestID += 1
-        } label: {
-            Text("/")
-                .font(.subheadline.weight(.semibold).monospaced())
-                .foregroundStyle(.themeFg)
-                .frame(width: 28, height: 28)
-                .glassEffect(.regular, in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var atFileActionButton: some View {
-        Button {
-            if !text.isEmpty, !text.hasSuffix(" "), !text.hasSuffix("\n") {
-                text += " "
-            }
-            text += "@"
-            focusRequestID += 1
-        } label: {
-            Text("@")
-                .font(.subheadline.weight(.semibold).monospaced())
-                .foregroundStyle(.themeFg)
-                .frame(width: 28, height: 28)
-                .glassEffect(.regular, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var expandButton: some View {
