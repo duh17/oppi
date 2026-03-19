@@ -199,6 +199,25 @@ enum SelectedTextPiEditMenuSupport {
     }
 }
 
+// MARK: - SwiftUI Environment
+
+import SwiftUI
+
+private struct SelectedTextPiRouterEnvironmentKey: EnvironmentKey {
+    static let defaultValue: SelectedTextPiActionRouter? = nil
+}
+
+extension EnvironmentValues {
+    /// Pi action router for text selection menus.
+    ///
+    /// Injected by `FileBrowserContentView` (routes to quick session)
+    /// and `ChatTimelineView` (routes to active session composer).
+    var selectedTextPiActionRouter: SelectedTextPiActionRouter? {
+        get { self[SelectedTextPiRouterEnvironmentKey.self] }
+        set { self[SelectedTextPiRouterEnvironmentKey.self] = newValue }
+    }
+}
+
 enum SelectedTextPiPromptFormatter {
     static let maxInsertedCharacters = 12_000
 

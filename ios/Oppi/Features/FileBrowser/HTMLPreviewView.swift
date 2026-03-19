@@ -17,6 +17,7 @@ struct HTMLPreviewView: View {
     let fileName: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(AppNavigation.self) private var navigation
     @State private var htmlContent: String?
     @State private var error: String?
 
@@ -26,7 +27,7 @@ struct HTMLPreviewView: View {
                 HTMLWebView(
                     htmlString: html,
                     baseFileName: fileName,
-                    piActionHandler: piClipboardHandler
+                    piActionHandler: piActionHandler
                 )
                 .ignoresSafeArea(edges: .bottom)
             } else if let error {
@@ -46,9 +47,10 @@ struct HTMLPreviewView: View {
         .task { await loadHTML() }
     }
 
-    /// Clipboard fallback: composes the pi-formatted text and copies it.
-    private var piClipboardHandler: (String, SelectedTextPiActionKind) -> Void {
+    /// Routes selected text to a quick session via AppNavigation.
+    private var piActionHandler: (String, SelectedTextPiActionKind) -> Void {
         let path = filePath
+        let nav = navigation
         return { text, actionKind in
             let request = SelectedTextPiRequest(
                 action: actionKind,
@@ -59,7 +61,8 @@ struct HTMLPreviewView: View {
                     filePath: path
                 )
             )
-            UIPasteboard.general.string = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            nav.showQuickSession = true
         }
     }
 
