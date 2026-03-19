@@ -120,6 +120,7 @@ export class SessionManager extends EventEmitter {
       spawnChildSession: (parentSessionId, params) =>
         this.spawnChildSession(parentSessionId, params),
       listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
+      subscribeToSession: (sessionId, callback) => this.subscribe(sessionId, callback),
     });
 
     this.broadcaster = bundle.broadcaster;
