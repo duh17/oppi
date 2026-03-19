@@ -75,7 +75,7 @@ struct ChatView: View {
 
     /// Child sessions spawned by this session.
     private var childSessions: [Session] {
-        sessionStore.sessions.filter { $0.parentSessionId == sessionId }
+        sessionStore.sessions.filter { $0.parentSessionId == sessionId }.sorted(by: { $0.createdAt < $1.createdAt })
     }
 
     /// The parent session, if this session was spawned by another.
