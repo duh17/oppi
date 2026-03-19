@@ -36,7 +36,7 @@ final class ServerHealthMonitor {
     // MARK: - Private
 
     private var pollingTask: Task<Void, Never>?
-    private var consecutiveFailures = 0
+    private(set) var consecutiveFailures = 0
     private weak var apiClient: MacAPIClient?
     private weak var processManager: ServerProcessManager?
 
@@ -117,6 +117,9 @@ final class ServerHealthMonitor {
             let healthy = await checkHealth(client: client)
             if healthy {
                 consecutiveFailures = 0
+                // Recover state after crash auto-restart — startupPoll already
+                // exited, but the process manager may still be in .starting/.failed.
+                processManager?.markRunning()
                 await fetchServerInfo(client: client)
             } else {
                 consecutiveFailures += 1
@@ -125,9 +128,10 @@ final class ServerHealthMonitor {
                 if consecutiveFailures >= Self.consecutiveFailuresForRestart {
                     logger.error("Triggering restart after \(self.consecutiveFailures) consecutive health check failures")
                     consecutiveFailures = 0
-                    Task { [weak self] in
-                        await self?.processManager?.restart()
-                    }
+                    await processManager?.restart()
+                    // Re-enter startup polling to wait for the restarted server
+                    // instead of exiting the loop (which leaves no one to call markRunning).
+                    await startupPoll(client: client)
                     return
                 }
             }
