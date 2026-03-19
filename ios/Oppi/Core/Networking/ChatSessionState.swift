@@ -43,8 +43,6 @@ final class ChatSessionState {
     var fileSuggestions: [FileSuggestion] = []
     var fileSuggestionTask: Task<Void, Never>?
 
-
-
     // MARK: - Lifecycle
 
     /// Cancel all in-flight background tasks.

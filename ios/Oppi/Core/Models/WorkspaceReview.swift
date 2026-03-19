@@ -539,5 +539,3 @@ private extension WorkspaceReviewDiffLine {
         WorkspaceReviewDiffLine(kind: kind, text: text, oldLine: oldLine, newLine: newLine, spans: spans)
     }
 }
-
-

@@ -264,7 +264,7 @@ final class NativeTableBlockView: UIView {
         tv.isEditable = false
         tv.isScrollEnabled = false
         tv.isSelectable = false
-        tv.textContainerInset = .zero
+        tv.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         tv.textContainer.lineFragmentPadding = 0
         tv.backgroundColor = .clear
         tv.translatesAutoresizingMaskIntoConstraints = false
@@ -479,7 +479,7 @@ final class NativeTableBlockView: UIView {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byClipping
-        paragraph.lineSpacing = 3
+        paragraph.lineSpacing = 5
 
         let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
         let cellFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -494,7 +494,7 @@ final class NativeTableBlockView: UIView {
         for (index, header) in headers.enumerated() {
             let text = plainText(from: header)
             let padded = monoPad(text, toColumnWidth: colWidths[index])
-            let prefix = index == 0 ? " " : " │ "
+            let prefix = index == 0 ? "  " : "  │  "
             result.append(NSAttributedString(string: prefix, attributes: [
                 .font: cellFont,
                 .foregroundColor: dimColor,
@@ -506,7 +506,7 @@ final class NativeTableBlockView: UIView {
                 .paragraphStyle: paragraph,
             ]))
         }
-        result.append(NSAttributedString(string: " ", attributes: [
+        result.append(NSAttributedString(string: "  ", attributes: [
             .font: cellFont,
             .paragraphStyle: paragraph,
         ]))
@@ -523,7 +523,7 @@ final class NativeTableBlockView: UIView {
 
             for index in 0..<colCount {
                 let inlines: [MarkdownInline] = index < row.count ? row[index] : [.text("")]
-                let prefix = index == 0 ? " " : " │ "
+                let prefix = index == 0 ? "  " : "  │  "
                 result.append(NSAttributedString(string: prefix, attributes: [
                     .font: cellFont,
                     .foregroundColor: dimColor,
@@ -547,7 +547,7 @@ final class NativeTableBlockView: UIView {
                     ))
                 }
             }
-            result.append(NSAttributedString(string: " ", attributes: [
+            result.append(NSAttributedString(string: "  ", attributes: [
                 .font: cellFont,
                 .paragraphStyle: paragraph,
             ]))

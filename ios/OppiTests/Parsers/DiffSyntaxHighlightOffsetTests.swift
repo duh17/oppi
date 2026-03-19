@@ -12,7 +12,7 @@ struct DiffSyntaxHighlightOffsetTests {
     /// off-by-one in batchCharOffsets where the offset was recorded before the
     /// inter-line newline, causing all lines after the first to shift tokens
     /// right by one character.
-    @Test func firstCharOfEachLineGetsCorrectColor() {
+    @Test func firstCharOfEachLineGetsCorrectColor() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(
                 oldStart: 1,
@@ -54,8 +54,8 @@ struct DiffSyntaxHighlightOffsetTests {
 
         let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
         let text = result.string as NSString
-        let keywordColor = SyntaxHighlighter.color(for: .keyword)!
-        let commentColor = SyntaxHighlighter.color(for: .comment)!
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let commentColor = try #require(SyntaxHighlighter.color(for: .comment))
 
         // Line 2 (removed): "// periphery:ignore" — first "/" must be comment color
         let commentRange = text.range(of: "// periphery:ignore")
@@ -93,7 +93,7 @@ struct DiffSyntaxHighlightOffsetTests {
         #expect(rColor == keywordColor, "'r' of 'var' must be keyword color")
     }
 
-    @Test func decoratorFirstCharOnNonFirstLine() {
+    @Test func decoratorFirstCharOnNonFirstLine() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(
                 oldStart: 1,
@@ -135,8 +135,8 @@ struct DiffSyntaxHighlightOffsetTests {
 
         let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
         let text = result.string as NSString
-        let typeColor = SyntaxHighlighter.color(for: .type)!
-        let keywordColor = SyntaxHighlighter.color(for: .keyword)!
+        let typeColor = try #require(SyntaxHighlighter.color(for: .type))
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
 
         // Second line: "@Observable" — the "@" must be type color
         let observableRange = text.range(of: "@Observable")
@@ -161,7 +161,7 @@ struct DiffSyntaxHighlightOffsetTests {
         #expect(fColor == keywordColor, "'f' of 'final' must be keyword color, got \(String(describing: fColor))")
     }
 
-    @Test func multiHunkOffsetCorrectness() {
+    @Test func multiHunkOffsetCorrectness() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(
                 oldStart: 1,
@@ -211,7 +211,7 @@ struct DiffSyntaxHighlightOffsetTests {
 
         let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
         let text = result.string as NSString
-        let keywordColor = SyntaxHighlighter.color(for: .keyword)!
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
 
         // "return" in second hunk — first char must be keyword
         let returnRange = text.range(of: "return")

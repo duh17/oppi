@@ -327,5 +327,3 @@ struct WorkspaceReviewDiffView: View {
         )
     }
 }
-
-

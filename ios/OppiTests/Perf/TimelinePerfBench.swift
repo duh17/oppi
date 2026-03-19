@@ -492,7 +492,7 @@ struct TimelinePerfBench {
         let trace10 = Self.realisticTraceHistory(turnCount: 10)
         let trace50 = Self.realisticTraceHistory(turnCount: 50)
         let coalescerEvents: [AgentEvent] = (0..<100).map { i in
-            .textDelta(sessionId: "bench", delta: TimelinePerfBench.textDeltaChunk(index: i))
+            .textDelta(sessionId: "bench", delta: Self.textDeltaChunk(index: i))
         }
 
         // processBatch_realistic

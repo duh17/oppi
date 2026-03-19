@@ -64,7 +64,6 @@ extension UnifiedDiffView {
         let contentWidth: CGFloat
     }
 
-
 }
 
 // MARK: - Layout Manager
