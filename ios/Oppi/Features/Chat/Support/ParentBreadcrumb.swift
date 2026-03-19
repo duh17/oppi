@@ -11,7 +11,7 @@ struct ParentBreadcrumb: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 4) {
-                Image(systemName: "chevron.left")
+                Image(systemName: "arrow.up.backward")
                     .font(.caption2.weight(.semibold))
 
                 Text(parentSession.displayTitle)
@@ -26,7 +26,7 @@ struct ParentBreadcrumb: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.themeBg)
+            .glassEffect(.regular, in: Rectangle())
         }
         .buttonStyle(.plain)
     }

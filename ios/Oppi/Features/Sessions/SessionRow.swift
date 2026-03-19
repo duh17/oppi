@@ -123,18 +123,7 @@ struct SessionRow: View {
     }
 
     private func costString(_ cost: Double) -> String {
-        // Manual fixed-point formatting avoids String(format:) overhead.
-        if cost >= 0.01 {
-            let cents = Int((cost * 100).rounded())
-            let d = cents / 100
-            let r = cents % 100
-            return "$\(d).\(r < 10 ? "0" : "")\(r)"
-        } else {
-            let mils = Int((cost * 1000).rounded())
-            if mils < 10 { return "$0.00\(mils)" }
-            if mils < 100 { return "$0.0\(mils)" }
-            return "$0.\(mils)"
-        }
+        SessionFormatting.costString(cost)
     }
 
     private func filesTouchedSummary(_ filesChanged: Int) -> String {
