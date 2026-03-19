@@ -37,12 +37,14 @@ struct OppiMacApp: App {
             let baseURL = URL(string: "https://localhost:7749")!
             let client = MacAPIClient(baseURL: baseURL, token: token)
 
-            let alreadyRunning = await client.checkHealth()
-            if alreadyRunning {
-                pm.markRunning()
-            } else {
-                pm.startWithDefaults()
+            // Always kill any existing server and spawn a fresh one so we have
+            // full lifecycle control (termination handler, pipe capture, log file).
+            // Adopting an orphaned server leaves us blind to crashes.
+            // Skip during unit tests — the test host should not kill the dev server.
+            if !Self.isRunningTests {
+                ServerProcessManager.killExistingServer()
             }
+            pm.startWithDefaults()
             hm.startMonitoring(baseURL: baseURL, token: token, processManager: pm)
             hm.checkPiCLIVersion()
         }
@@ -101,9 +103,9 @@ struct OppiMacApp: App {
 
     /// Auto-start the server on subsequent launches (config already exists).
     ///
-    /// First checks if a server is already running (e.g. started from CLI).
-    /// If healthy, adopts it — starts monitoring without spawning a child process.
-    /// If not, spawns one.
+    /// Always kills any existing server process first and spawns a fresh one.
+    /// This ensures we have full lifecycle control (termination handler, log pipes,
+    /// crash recovery) instead of adopting an orphan we can't monitor.
     private func autoStartServer() {
         guard processManager.state == .stopped else { return }
 
@@ -111,30 +113,25 @@ struct OppiMacApp: App {
         guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
 
         let baseURL = URL(string: "https://localhost:7749")!
-        let client = MacAPIClient(baseURL: baseURL, token: token)
 
-        // Check if a server is already running before spawning
         Task {
-            let alreadyRunning = await client.checkHealth()
-            if alreadyRunning {
-                // Adopt the existing server — monitor it but don't spawn a child
-                processManager.markRunning()
-                healthMonitor.startMonitoring(
-                    baseURL: baseURL,
-                    token: token,
-                    processManager: processManager
-                )
-                healthMonitor.checkPiCLIVersion()
-            } else {
-                processManager.startWithDefaults()
-                healthMonitor.startMonitoring(
-                    baseURL: baseURL,
-                    token: token,
-                    processManager: processManager
-                )
-                healthMonitor.checkPiCLIVersion()
+            if !Self.isRunningTests {
+                ServerProcessManager.killExistingServer()
             }
+            processManager.startWithDefaults()
+            healthMonitor.startMonitoring(
+                baseURL: baseURL,
+                token: token,
+                processManager: processManager
+            )
+            healthMonitor.checkPiCLIVersion()
         }
+    }
+
+    /// True when the app is launched as a test host (xcodebuild test).
+    private static var isRunningTests: Bool {
+        NSClassFromString("XCTestCase") != nil
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
     private var menuBarIcon: String {

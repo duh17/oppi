@@ -103,7 +103,11 @@ final class MacAPIClient: Sendable {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
-    private nonisolated func parseServerInfo(_ data: Data) -> ServerHealthMonitor.ServerInfo? {
+    /// Parse raw JSON into a ``ServerHealthMonitor/ServerInfo``.
+    ///
+    /// Internal (not private) so tests can validate uptime formatting
+    /// and field fallback logic without hitting the network.
+    nonisolated func parseServerInfo(_ data: Data) -> ServerHealthMonitor.ServerInfo? {
         struct InfoResponse: Decodable {
             let version: String?
             let serverUrl: String?
@@ -116,7 +120,7 @@ final class MacAPIClient: Sendable {
             let uptimeString: String? = info.uptime.map { seconds in
                 let hours = Int(seconds) / 3600
                 let minutes = (Int(seconds) % 3600) / 60
-                if hours > 24 {
+                if hours >= 24 {
                     return "\(hours / 24)d \(hours % 24)h"
                 } else if hours > 0 {
                     return "\(hours)h \(minutes)m"

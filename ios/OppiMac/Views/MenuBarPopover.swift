@@ -25,14 +25,39 @@ struct MenuBarPopover: View {
                     .foregroundStyle(.secondary)
             }
 
-            // TCC permission summary
-            HStack(spacing: 4) {
-                Image(systemName: permissionState.requiredGranted ? "checkmark.shield" : "exclamationmark.shield")
-                    .foregroundStyle(permissionState.requiredGranted ? .green : .orange)
-                    .font(.caption)
-                Text("Permissions: \(permissionState.summary)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // TCC permission summary — clickable to open System Settings when action needed.
+            if permissionState.requiredGranted {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.shield")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                    Text("Permissions: \(permissionState.summary)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Button {
+                    if let url = TCCPermissionState.PermissionKind.fullDiskAccess.systemSettingsURL {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.shield")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text("Permissions: \(permissionState.summary)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
             }
 
             Divider()
