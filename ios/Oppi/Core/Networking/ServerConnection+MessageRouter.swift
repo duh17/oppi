@@ -202,10 +202,17 @@ extension ServerConnection {
         let previousWorkspaceId = previous?.workspaceId
         let previousStatus = previous?.status
 
-        // Shared store mutations (upsert + metrics + live activity sync)
+        // Shared store mutations (upsert + metrics + live activity sync).
+        // This also handles child session state messages broadcast to the parent's
+        // key by spawn_agent — they get upserted into sessionStore so SubagentStatusBar
+        // discovers them immediately.
         applySharedStoreUpdate(for: .state(session: session), sessionId: session.id)
 
-        // Active-session-only: thinking level, slash commands
+        // Active-session-only: thinking level, slash commands, recovery hardening.
+        // Skip for child sessions whose state arrives via the parent's broadcast key —
+        // they should not overwrite the active session's UI state.
+        guard session.id == activeSessionId else { return }
+
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
