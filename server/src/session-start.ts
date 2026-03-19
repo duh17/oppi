@@ -89,6 +89,7 @@ export class SessionStartCoordinator {
             sessionId: session.id,
             spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
             listChildren: () => this.deps.listChildSessions(session.id),
+            getSession: (id) => this.deps.storage.getSession(id),
           }),
         );
 
