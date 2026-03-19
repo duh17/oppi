@@ -12,6 +12,12 @@
  *   run_experiment   — runs a command, times wall-clock, captures output, runs checks
  *   log_experiment   — records result, auto-commits on keep, updates state + chart
  *
+ * Isolation:
+ *   init_experiment creates a git worktree so all autoresearch state lives
+ *   outside the main checkout. A `.autoresearch-worktree` marker at the
+ *   workspace root (JSONL, keyed by session ID) lets the extension rediscover
+ *   its worktree on session restart without contaminating other sessions.
+ *
  * Persistence:
  *   autoresearch.jsonl  — append-only log (config headers + result lines)
  *   autoresearch.md     — living session document (agent reads each turn)
@@ -146,6 +152,48 @@ const BENCHMARK_GUARDRAIL =
   "Be careful not to overfit to the benchmarks and do not cheat on the benchmarks.";
 const MAX_AUTORESUME_TURNS = 20;
 
+/** Marker file at workspace root. JSONL format, keyed by session ID. */
+export const WORKTREE_MARKER = ".autoresearch-worktree";
+
+interface WorktreeMarkerEntry {
+  sessionId: string;
+  worktreePath: string;
+}
+
+/** Read all marker entries from the workspace root. */
+function readMarkerEntries(workspaceCwd: string): WorktreeMarkerEntry[] {
+  const markerPath = path.join(workspaceCwd, WORKTREE_MARKER);
+  try {
+    if (!fs.existsSync(markerPath)) return [];
+    const content = fs.readFileSync(markerPath, "utf-8").trim();
+    if (!content) return [];
+
+    // Try JSONL format first (new format)
+    const entries: WorktreeMarkerEntry[] = [];
+    for (const line of content.split("\n")) {
+      try {
+        const entry = JSON.parse(line.trim());
+        if (entry.sessionId && entry.worktreePath) {
+          entries.push(entry as WorktreeMarkerEntry);
+        }
+      } catch {
+        // Legacy format: plain path on a single line. Ignore — can't match by sessionId.
+      }
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+/** Write a marker entry, replacing any existing entry for the same session. */
+function writeMarkerEntry(workspaceCwd: string, entry: WorktreeMarkerEntry): void {
+  const entries = readMarkerEntries(workspaceCwd).filter((e) => e.sessionId !== entry.sessionId);
+  entries.push(entry);
+  const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  fs.writeFileSync(path.join(workspaceCwd, WORKTREE_MARKER), content);
+}
+
 function formatNum(value: number | null, unit: string): string {
   if (value === null) return "—";
   const u = unit || "";
@@ -198,6 +246,27 @@ function findBaselineSecondary(
     }
   }
   return base;
+}
+
+/** Compute the worktree branch name and path for an experiment. */
+export function computeWorktreePaths(
+  workspaceCwd: string,
+  name: string,
+): { branch: string; worktreePath: string } {
+  const sanitized =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "experiment";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const branch = `autoresearch/${sanitized}-${dateStr}`;
+  const worktreeBase = path.resolve(
+    workspaceCwd,
+    "..",
+    `${path.basename(workspaceCwd)}-autoresearch`,
+  );
+  const worktreePath = path.join(worktreeBase, branch);
+  return { branch, worktreePath };
 }
 
 /** Build a details.ui[] chart payload from experiment state. */
@@ -330,17 +399,14 @@ function inferUnit(name: string): string {
 // ---------------------------------------------------------------------------
 
 export interface AutoresearchFactoryOptions {
-  /** When true, the session is a child spawned by another session.
-   *  Child sessions never enter autoresearch mode — even if autoresearch.jsonl
-   *  exists in the workspace. This prevents contamination where a child agent
-   *  completes its task, gets compacted, and then starts running unrelated
-   *  experiments because the parent's autoresearch files are in the shared cwd. */
-  isChildSession?: boolean;
+  /** Session ID — used to scope the worktree marker so different sessions
+   *  in the same workspace don't contaminate each other. */
+  sessionId: string;
 }
 
 export function createAutoresearchFactory(
   workspaceCwd: string,
-  options?: AutoresearchFactoryOptions,
+  options: AutoresearchFactoryOptions,
 ): ExtensionFactory {
   return (pi) => {
     let state: ExperimentState = {
@@ -357,9 +423,9 @@ export function createAutoresearchFactory(
     let autoresearchMode = false;
     let lastRunChecks: { pass: boolean; output: string; duration: number } | null = null;
 
-    // Effective cwd for git operations. Updated by run_experiment when the
-    // command starts with `cd <path> &&`. This lets worktree-based sessions
-    // commit to the worktree instead of the workspace root.
+    // Effective cwd for all autoresearch operations. Set by init_experiment
+    // (worktree creation) or by reconstructState (marker file). Updated by
+    // run_experiment when the command starts with `cd <path> &&`.
     let effectiveCwd = workspaceCwd;
     let experimentsThisSession = 0;
     let autoResumeTurns = 0;
@@ -380,20 +446,18 @@ export function createAutoresearchFactory(
         currentSegment: 0,
       };
 
-      // Child sessions never enter autoresearch mode. The parent's
-      // autoresearch.jsonl may be in the shared workspace cwd, but the
-      // child was spawned for a different task. Without this guard, a child
-      // that gets context-compacted would resume into the autoresearch loop.
-      if (options?.isChildSession) {
-        autoresearchMode = false;
-        return;
+      // Check for worktree marker scoped to THIS session.
+      // Each session gets its own marker entry, so a parent's autoresearch
+      // worktree won't be picked up by child sessions (and vice versa).
+      const entries = readMarkerEntries(workspaceCwd);
+      const myEntry = entries.find((e) => e.sessionId === options.sessionId);
+      if (myEntry && fs.existsSync(myEntry.worktreePath)) {
+        effectiveCwd = myEntry.worktreePath;
       }
 
-      // Try effectiveCwd first (worktree), fall back to workspaceCwd (main checkout).
-      let jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
-      if (!fs.existsSync(jsonlPath)) {
-        jsonlPath = path.join(workspaceCwd, "autoresearch.jsonl");
-      }
+      // Look for autoresearch.jsonl in effectiveCwd (which may be the worktree
+      // from the marker, or the workspace root if no marker matched).
+      const jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
       try {
         if (fs.existsSync(jsonlPath)) {
           let segment = 0;
@@ -464,6 +528,14 @@ export function createAutoresearchFactory(
         "\nWrite promising but deferred optimizations as bullet points to autoresearch.ideas.md." +
         `\n${BENCHMARK_GUARDRAIL}` +
         "\nIf the user sends a follow-on message while an experiment is running, finish the current run_experiment + log_experiment cycle first, then address their message in the next iteration.";
+
+      // Tell the agent where the worktree is so it knows where files live
+      if (effectiveCwd !== workspaceCwd) {
+        extra +=
+          `\n\nWorktree: ${effectiveCwd}` +
+          "\nAll autoresearch files (autoresearch.md, autoresearch.sh, etc.) live in the worktree." +
+          " Use absolute worktree paths for read/write/edit. run_experiment already runs in the worktree.";
+      }
 
       if (hasChecks) {
         extra +=
@@ -541,6 +613,64 @@ export function createAutoresearchFactory(
         state.bestMetric = null;
         state.secondaryMetrics = [];
 
+        // ── Create git worktree for isolation (new sessions only) ──
+        // On reinit, we reuse the existing worktree (effectiveCwd already set).
+        if (!isReinit) {
+          const { branch, worktreePath } = computeWorktreePaths(workspaceCwd, params.name);
+
+          if (fs.existsSync(worktreePath)) {
+            // Worktree already exists (previous session with same name) — reuse it
+            effectiveCwd = worktreePath;
+          } else {
+            // Create parent directory
+            fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+
+            // Try creating new branch + worktree
+            let gitResult = await pi.exec("git", ["worktree", "add", "-b", branch, worktreePath], {
+              cwd: workspaceCwd,
+              timeout: 30000,
+            });
+
+            if (gitResult.code !== 0) {
+              // Branch might already exist — try attaching to existing branch
+              gitResult = await pi.exec("git", ["worktree", "add", worktreePath, branch], {
+                cwd: workspaceCwd,
+                timeout: 30000,
+              });
+            }
+
+            if (gitResult.code !== 0) {
+              const errMsg = (gitResult.stderr || gitResult.stdout).trim();
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text:
+                      `Failed to create git worktree for isolation:\n${errMsg}\n\n` +
+                      `Ensure the workspace is a git repo with at least one commit.`,
+                  },
+                ],
+                isError: true,
+                details: { state: { ...state }, worktreePath: workspaceCwd },
+              };
+            }
+
+            effectiveCwd = worktreePath;
+          }
+
+          // Write session-scoped marker so this session can rediscover its worktree
+          // on restart. Other sessions in the same workspace won't match.
+          try {
+            writeMarkerEntry(workspaceCwd, {
+              sessionId: options.sessionId,
+              worktreePath,
+            });
+          } catch {
+            // Non-fatal — marker just aids session resume
+          }
+        }
+
+        // ── Write config to worktree ──
         try {
           const jsonlPath = path.join(effectiveCwd, "autoresearch.jsonl");
           const config = JSON.stringify({
@@ -564,7 +694,7 @@ export function createAutoresearchFactory(
               },
             ],
             isError: true,
-            details: { state: { ...state } },
+            details: { state: { ...state }, worktreePath: effectiveCwd },
           };
         }
 
@@ -573,17 +703,24 @@ export function createAutoresearchFactory(
         const reinitNote = isReinit
           ? " (re-initialized — previous results archived, new baseline needed)"
           : "";
+
+        const worktreeNote = effectiveCwd !== workspaceCwd ? `\nWorktree: ${effectiveCwd}` : "";
+
         return {
           content: [
             {
               type: "text" as const,
               text:
                 `Experiment initialized: "${state.name}"${reinitNote}\n` +
-                `Metric: ${state.metricName} (${state.metricUnit || "unitless"}, ${state.bestDirection} is better)\n` +
-                `Config written to autoresearch.jsonl. Now run the baseline with run_experiment.`,
+                `Metric: ${state.metricName} (${state.metricUnit || "unitless"}, ${state.bestDirection} is better)` +
+                worktreeNote +
+                `\nConfig written to autoresearch.jsonl.` +
+                (worktreeNote
+                  ? ` Write autoresearch.md and autoresearch.sh to the worktree, then run the baseline.`
+                  : ` Now run the baseline with run_experiment.`),
             },
           ],
-          details: { state: { ...state } },
+          details: { state: { ...state }, worktreePath: effectiveCwd },
         };
       },
     });

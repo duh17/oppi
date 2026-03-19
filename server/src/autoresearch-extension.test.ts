@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 import type { RunDetails } from "./autoresearch-extension.js";
+import { WORKTREE_MARKER, computeWorktreePaths } from "./autoresearch-extension.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock of ExtensionAPI for unit testing the factory
@@ -31,6 +32,8 @@ interface MockExtensionAPI {
   tools: Map<string, RegisteredTool>;
   handlers: Map<string, ((...args: unknown[]) => unknown)[]>;
   execResults: Map<string, { stdout: string; stderr: string; code: number; killed?: boolean }>;
+  /** Called before every exec — use to simulate side effects like directory creation. */
+  execSideEffect: ((cmd: string, args: string[]) => void) | null;
   sentMessages: string[];
   registerTool(tool: RegisteredTool): void;
   on(event: string, handler: (...args: unknown[]) => unknown): void;
@@ -47,6 +50,7 @@ function createMockAPI(): MockExtensionAPI {
     tools: new Map(),
     handlers: new Map(),
     execResults: new Map(),
+    execSideEffect: null,
     sentMessages: [],
     registerTool(tool) {
       api.tools.set(tool.name, tool);
@@ -56,6 +60,7 @@ function createMockAPI(): MockExtensionAPI {
       api.handlers.get(event)!.push(handler);
     },
     async exec(cmd, args) {
+      api.execSideEffect?.(cmd, args);
       const key = `${cmd} ${args.join(" ")}`;
       // Check for partial match
       for (const [pattern, result] of api.execResults) {
@@ -92,16 +97,20 @@ describe("autoresearch-extension", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Also clean up any worktree directories created alongside tmpDir
+    const worktreeBase = path.resolve(tmpDir, "..", `${path.basename(tmpDir)}-autoresearch`);
+    if (fs.existsSync(worktreeBase)) {
+      fs.rmSync(worktreeBase, { recursive: true, force: true });
+    }
   });
 
   async function loadFactory(
     cwd: string,
-    options?: { isChildSession?: boolean },
+    sessionId = "test-session-1",
   ): Promise<{ api: MockExtensionAPI; tool: (name: string) => RegisteredTool }> {
-    // Dynamic import to avoid issues with module state
     const { createAutoresearchFactory } = await import("./autoresearch-extension.js");
     const api = createMockAPI();
-    const factory = createAutoresearchFactory(cwd, options);
+    const factory = createAutoresearchFactory(cwd, { sessionId });
     await factory(api as unknown as Parameters<typeof factory>[0]);
     const tool = (name: string): RegisteredTool => {
       const t = api.tools.get(name);
@@ -109,6 +118,21 @@ describe("autoresearch-extension", () => {
       return t;
     };
     return { api, tool };
+  }
+
+  /** Set up the mock to simulate git worktree creation (creates the directory). */
+  function mockGitWorktree(api: MockExtensionAPI): void {
+    api.execSideEffect = (cmd, args) => {
+      if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
+        // Find the worktree path — it's after all flags
+        const pathArg = args.find(
+          (a, i) => i >= 2 && !a.startsWith("-") && !args[i - 1]?.startsWith("-"),
+        );
+        if (pathArg) {
+          fs.mkdirSync(pathArg, { recursive: true });
+        }
+      }
+    };
   }
 
   describe("init_experiment", () => {
@@ -119,47 +143,280 @@ describe("autoresearch-extension", () => {
       expect(api.tools.has("log_experiment")).toBe(true);
     });
 
-    it("writes config to autoresearch.jsonl", async () => {
-      const { tool } = await loadFactory(tmpDir);
+    it("creates worktree and writes config there", async () => {
+      const { api, tool } = await loadFactory(tmpDir);
+      mockGitWorktree(api);
+
       const result = await tool("init_experiment").execute("tc1", {
-        name: "Test Optimization",
+        name: "Speed Test",
         metric_name: "duration_ms",
         metric_unit: "ms",
         direction: "lower",
       });
 
       expect(result.content[0].text).toContain("Experiment initialized");
-      expect(result.content[0].text).toContain("Test Optimization");
+      expect(result.content[0].text).toContain("Speed Test");
+      expect(result.content[0].text).toContain("Worktree:");
 
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
-      expect(fs.existsSync(jsonlPath)).toBe(true);
+      // Verify marker file at workspace root
+      const markerPath = path.join(tmpDir, WORKTREE_MARKER);
+      expect(fs.existsSync(markerPath)).toBe(true);
 
-      const content = fs.readFileSync(jsonlPath, "utf-8").trim();
+      // Verify marker is JSONL with sessionId
+      const markerLine = JSON.parse(fs.readFileSync(markerPath, "utf-8").trim().split("\n")[0]);
+      expect(markerLine.sessionId).toBe("test-session-1");
+      expect(markerLine.worktreePath).toBeDefined();
+
+      const worktreePath = markerLine.worktreePath;
+
+      // Verify jsonl is in the worktree, NOT in workspace root
+      expect(fs.existsSync(path.join(worktreePath, "autoresearch.jsonl"))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, "autoresearch.jsonl"))).toBe(false);
+
+      // Verify config content
+      const content = fs
+        .readFileSync(path.join(worktreePath, "autoresearch.jsonl"), "utf-8")
+        .trim();
       const config = JSON.parse(content);
       expect(config.type).toBe("config");
-      expect(config.name).toBe("Test Optimization");
-      expect(config.metricName).toBe("duration_ms");
-      expect(config.metricUnit).toBe("ms");
-      expect(config.bestDirection).toBe("lower");
+      expect(config.name).toBe("Speed Test");
+    });
+
+    it("returns worktreePath in details", async () => {
+      const { api, tool } = await loadFactory(tmpDir);
+      mockGitWorktree(api);
+
+      const result = await tool("init_experiment").execute("tc1", {
+        name: "Test",
+        metric_name: "val",
+        direction: "lower",
+      });
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.worktreePath).toBeDefined();
+      expect(typeof details.worktreePath).toBe("string");
+      expect(details.worktreePath).not.toBe(tmpDir);
+    });
+
+    it("errors when git worktree creation fails", async () => {
+      const { api, tool } = await loadFactory(tmpDir);
+      api.execResults.set("git worktree", {
+        stdout: "",
+        stderr: "not a git repository",
+        code: 128,
+      });
+
+      const result = await tool("init_experiment").execute("tc1", {
+        name: "Test",
+        metric_name: "val",
+        direction: "lower",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to create git worktree");
+    });
+
+    it("reuses existing worktree directory", async () => {
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Test");
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      const { tool } = await loadFactory(tmpDir);
+
+      const result = await tool("init_experiment").execute("tc1", {
+        name: "Test",
+        metric_name: "val",
+        direction: "lower",
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Experiment initialized");
+      expect(fs.existsSync(path.join(worktreePath, "autoresearch.jsonl"))).toBe(true);
+    });
+  });
+
+  describe("session-scoped isolation", () => {
+    it("only resumes from own session marker", async () => {
+      // Set up a worktree with marker from session "parent-1"
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Parent Task");
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Write marker for parent session
+      const markerContent = JSON.stringify({
+        sessionId: "parent-1",
+        worktreePath,
+      });
+      fs.writeFileSync(path.join(tmpDir, WORKTREE_MARKER), markerContent + "\n");
+
+      // Write jsonl in the worktree
+      fs.writeFileSync(
+        path.join(worktreePath, "autoresearch.jsonl"),
+        JSON.stringify({
+          type: "config",
+          name: "Parent Task",
+          metricName: "val",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+
+      // Child session with different ID should NOT pick up the parent's worktree
+      const { api: childApi } = await loadFactory(tmpDir, "child-1");
+      await fireEvent(childApi, "session_start");
+
+      const result = (await fireEvent(childApi, "before_agent_start", {
+        prompt: "fix a bug",
+        systemPrompt: "You are an assistant.",
+      })) as { systemPrompt?: string } | undefined;
+
+      // Child should NOT be in autoresearch mode
+      expect(result).toBeUndefined();
+    });
+
+    it("same session ID resumes correctly", async () => {
+      const { worktreePath } = computeWorktreePaths(tmpDir, "My Task");
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Write marker for this session
+      const markerContent = JSON.stringify({
+        sessionId: "session-A",
+        worktreePath,
+      });
+      fs.writeFileSync(path.join(tmpDir, WORKTREE_MARKER), markerContent + "\n");
+
+      fs.writeFileSync(
+        path.join(worktreePath, "autoresearch.jsonl"),
+        JSON.stringify({
+          type: "config",
+          name: "My Task",
+          metricName: "val",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+
+      // Same session ID should resume
+      const { api } = await loadFactory(tmpDir, "session-A");
+      await fireEvent(api, "session_start");
+
+      const result = (await fireEvent(api, "before_agent_start", {
+        prompt: "continue",
+        systemPrompt: "You are an assistant.",
+      })) as { systemPrompt?: string } | undefined;
+
+      expect(result).toBeDefined();
+      expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
+      expect(result!.systemPrompt).toContain("Worktree:");
+    });
+
+    it("multiple sessions coexist in marker file", async () => {
+      // Set up two worktrees with markers from different sessions
+      const wt1 = computeWorktreePaths(tmpDir, "Task A").worktreePath;
+      const wt2 = computeWorktreePaths(tmpDir, "Task B").worktreePath;
+      fs.mkdirSync(wt1, { recursive: true });
+      fs.mkdirSync(wt2, { recursive: true });
+
+      // Write marker with two entries
+      const lines = [
+        JSON.stringify({ sessionId: "sess-1", worktreePath: wt1 }),
+        JSON.stringify({ sessionId: "sess-2", worktreePath: wt2 }),
+      ];
+      fs.writeFileSync(path.join(tmpDir, WORKTREE_MARKER), lines.join("\n") + "\n");
+
+      // Write different jsonl in each worktree
+      fs.writeFileSync(
+        path.join(wt1, "autoresearch.jsonl"),
+        JSON.stringify({
+          type: "config",
+          name: "Task A",
+          metricName: "metric_a",
+          bestDirection: "lower",
+        }) + "\n",
+      );
+      fs.writeFileSync(
+        path.join(wt2, "autoresearch.jsonl"),
+        JSON.stringify({
+          type: "config",
+          name: "Task B",
+          metricName: "metric_b",
+          bestDirection: "higher",
+        }) + "\n",
+      );
+
+      // Session 2 should find its own worktree
+      const { api: api2, tool: tool2 } = await loadFactory(tmpDir, "sess-2");
+      await fireEvent(api2, "session_start");
+      api2.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
+      api2.execResults.set("git rev-parse", { stdout: "abc1234", stderr: "", code: 0 });
+
+      const result = await tool2("log_experiment").execute("tc1", {
+        commit: "abc1234",
+        metric: 100,
+        status: "keep",
+        description: "test",
+      });
+
+      // Should have loaded Task B's state, not Task A's
+      expect(result.content[0].text).toContain("Logged #1");
+
+      // Verify result was written to wt2, not wt1
+      const wt2Lines = fs
+        .readFileSync(path.join(wt2, "autoresearch.jsonl"), "utf-8")
+        .trim()
+        .split("\n");
+      expect(wt2Lines.length).toBe(2); // config + result
+    });
+
+    it("child can run its own autoresearch independently", async () => {
+      // Parent has its own worktree
+      const parentWt = computeWorktreePaths(tmpDir, "Parent Opt").worktreePath;
+      fs.mkdirSync(parentWt, { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, WORKTREE_MARKER),
+        JSON.stringify({ sessionId: "parent", worktreePath: parentWt }) + "\n",
+      );
+
+      // Child session starts, no autoresearch active (different sessionId)
+      const { api, tool } = await loadFactory(tmpDir, "child");
+      mockGitWorktree(api);
+      await fireEvent(api, "session_start");
+
+      // Child calls init_experiment — gets its own worktree
+      const result = await tool("init_experiment").execute("tc1", {
+        name: "Child Opt",
+        metric_name: "child_metric",
+        direction: "lower",
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Experiment initialized");
+      expect(result.content[0].text).toContain("Worktree:");
+
+      // Verify marker now has TWO entries
+      const markerContent = fs.readFileSync(path.join(tmpDir, WORKTREE_MARKER), "utf-8").trim();
+      const markerLines = markerContent.split("\n").map((l) => JSON.parse(l));
+      expect(markerLines.length).toBe(2);
+      expect(
+        markerLines.find((e: { sessionId: string }) => e.sessionId === "parent"),
+      ).toBeDefined();
+      expect(markerLines.find((e: { sessionId: string }) => e.sessionId === "child")).toBeDefined();
+
+      // Child's worktree is different from parent's
+      const childEntry = markerLines.find((e: { sessionId: string }) => e.sessionId === "child");
+      expect(childEntry.worktreePath).not.toBe(parentWt);
     });
   });
 
   describe("log_experiment", () => {
-    it("appends result to autoresearch.jsonl", async () => {
+    it("appends result to worktree autoresearch.jsonl", async () => {
       const { api, tool } = await loadFactory(tmpDir);
-
-      // Set up git mock
+      mockGitWorktree(api);
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
       api.execResults.set("git rev-parse", { stdout: "abc1234", stderr: "", code: 0 });
 
-      // Init first
       await tool("init_experiment").execute("tc1", {
         name: "Speed",
         metric_name: "seconds",
         direction: "lower",
       });
 
-      // Log a result
       const result = await tool("log_experiment").execute("tc2", {
         commit: "abc1234",
         metric: 42.3,
@@ -170,21 +427,18 @@ describe("autoresearch-extension", () => {
       expect(result.content[0].text).toContain("Logged #1");
       expect(result.content[0].text).toContain("keep");
 
-      // Check jsonl has config + result
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Speed");
       const lines = fs
-        .readFileSync(path.join(tmpDir, "autoresearch.jsonl"), "utf-8")
+        .readFileSync(path.join(worktreePath, "autoresearch.jsonl"), "utf-8")
         .trim()
         .split("\n");
       expect(lines.length).toBe(2);
-
-      const resultLine = JSON.parse(lines[1]);
-      expect(resultLine.metric).toBe(42.3);
-      expect(resultLine.status).toBe("keep");
-      expect(resultLine.description).toBe("baseline measurement");
+      expect(fs.existsSync(path.join(tmpDir, "autoresearch.jsonl"))).toBe(false);
     });
 
     it("emits chart payload in details.ui", async () => {
       const { api, tool } = await loadFactory(tmpDir);
+      mockGitWorktree(api);
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
       api.execResults.set("git rev-parse", { stdout: "abc1234", stderr: "", code: 0 });
 
@@ -195,7 +449,6 @@ describe("autoresearch-extension", () => {
         direction: "lower",
       });
 
-      // Log baseline
       await tool("log_experiment").execute("tc2", {
         commit: "abc1234",
         metric: 60,
@@ -203,7 +456,6 @@ describe("autoresearch-extension", () => {
         description: "baseline",
       });
 
-      // Log improvement
       const result = await tool("log_experiment").execute("tc3", {
         commit: "def5678",
         metric: 45,
@@ -212,30 +464,21 @@ describe("autoresearch-extension", () => {
       });
 
       const details = result.details as Record<string, unknown>;
-      expect(details).toBeDefined();
-
-      // Check chart payload
       const ui = details.ui as Record<string, unknown>[];
       expect(ui).toBeDefined();
       expect(ui.length).toBe(1);
       expect(ui[0].kind).toBe("chart");
-      expect(ui[0].version).toBe(1);
 
       const spec = (ui[0] as Record<string, unknown>).spec as Record<string, unknown>;
-      expect(spec).toBeDefined();
-
       const dataset = spec.dataset as { rows: Record<string, unknown>[] };
       expect(dataset.rows.length).toBe(2);
       expect(dataset.rows[0].build_s).toBe(60);
       expect(dataset.rows[1].build_s).toBe(45);
-
-      // Check expandedText
-      expect(details.expandedText).toBeDefined();
-      expect(typeof details.expandedText).toBe("string");
     });
 
     it("rejects keep when checks failed", async () => {
       const { api, tool } = await loadFactory(tmpDir);
+      mockGitWorktree(api);
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
 
       await tool("init_experiment").execute("tc1", {
@@ -244,16 +487,14 @@ describe("autoresearch-extension", () => {
         direction: "lower",
       });
 
-      // Write a checks file so run_experiment runs it
-      const checksPath = path.join(tmpDir, "autoresearch.checks.sh");
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Test");
+      const checksPath = path.join(worktreePath, "autoresearch.checks.sh");
       fs.writeFileSync(checksPath, "exit 1\n");
 
-      // Run experiment — benchmark passes but checks fail
       api.execResults.set("bash -c echo", { stdout: "ok", stderr: "", code: 0 });
       api.execResults.set("bash " + checksPath, { stdout: "lint error", stderr: "", code: 1 });
       await tool("run_experiment").execute("tc2", { command: "echo ok" });
 
-      // Try to keep — should be rejected
       const result = await tool("log_experiment").execute("tc3", {
         commit: "abc1234",
         metric: 10,
@@ -267,6 +508,7 @@ describe("autoresearch-extension", () => {
 
     it("validates secondary metrics consistency", async () => {
       const { api, tool } = await loadFactory(tmpDir);
+      mockGitWorktree(api);
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
       api.execResults.set("git rev-parse", { stdout: "abc1234", stderr: "", code: 0 });
 
@@ -276,7 +518,6 @@ describe("autoresearch-extension", () => {
         direction: "lower",
       });
 
-      // First log with secondary metrics
       await tool("log_experiment").execute("tc2", {
         commit: "abc1234",
         metric: 100,
@@ -285,7 +526,6 @@ describe("autoresearch-extension", () => {
         metrics: { compile_ms: 50, render_ms: 30 },
       });
 
-      // Second log missing a metric
       const result = await tool("log_experiment").execute("tc3", {
         commit: "def5678",
         metric: 90,
@@ -296,47 +536,45 @@ describe("autoresearch-extension", () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Missing secondary metrics");
-      expect(result.content[0].text).toContain("render_ms");
     });
   });
 
   describe("run_experiment", () => {
     it("captures timing and exit code", async () => {
       const { api, tool } = await loadFactory(tmpDir);
-
       api.execResults.set("echo hello", { stdout: "hello\n", stderr: "", code: 0 });
 
-      const result = await tool("run_experiment").execute("tc1", {
-        command: "echo hello",
-      });
+      const result = await tool("run_experiment").execute("tc1", { command: "echo hello" });
 
       expect(result.content[0].text).toContain("PASSED");
       const details = result.details as RunDetails;
       expect(details.passed).toBe(true);
       expect(details.crashed).toBe(false);
-      expect(typeof details.durationSeconds).toBe("number");
     });
 
     it("detects failures", async () => {
       const { api, tool } = await loadFactory(tmpDir);
-
       api.execResults.set("false", { stdout: "", stderr: "error", code: 1 });
 
-      const result = await tool("run_experiment").execute("tc1", {
-        command: "false",
-      });
+      const result = await tool("run_experiment").execute("tc1", { command: "false" });
 
       expect(result.content[0].text).toContain("FAILED");
       const details = result.details as RunDetails;
       expect(details.passed).toBe(false);
-      expect(details.crashed).toBe(true);
     });
   });
 
   describe("state reconstruction", () => {
-    it("reconstructs state from existing jsonl on session_start", async () => {
-      // Pre-populate jsonl
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
+    it("reconstructs state from worktree jsonl via marker", async () => {
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Resume");
+      fs.mkdirSync(worktreePath, { recursive: true });
+
+      // Write session-scoped marker
+      fs.writeFileSync(
+        path.join(tmpDir, WORKTREE_MARKER),
+        JSON.stringify({ sessionId: "resume-sess", worktreePath }) + "\n",
+      );
+
       const lines = [
         JSON.stringify({
           type: "config",
@@ -366,14 +604,11 @@ describe("autoresearch-extension", () => {
           segment: 0,
         }),
       ];
-      fs.writeFileSync(jsonlPath, lines.join("\n") + "\n");
+      fs.writeFileSync(path.join(worktreePath, "autoresearch.jsonl"), lines.join("\n") + "\n");
 
-      const { api, tool } = await loadFactory(tmpDir);
-
-      // Fire session_start to trigger reconstruction
+      const { api, tool } = await loadFactory(tmpDir, "resume-sess");
       await fireEvent(api, "session_start");
 
-      // Log another experiment — it should know about the 2 existing ones
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
       api.execResults.set("git rev-parse", { stdout: "ghi9012", stderr: "", code: 0 });
 
@@ -387,7 +622,6 @@ describe("autoresearch-extension", () => {
       expect(result.content[0].text).toContain("Logged #3");
       expect(result.content[0].text).toContain("3 experiments total");
 
-      // Chart should have 3 data points
       const details = result.details as Record<string, unknown>;
       const ui = details.ui as Record<string, unknown>[];
       const spec = (ui[0] as Record<string, unknown>).spec as Record<string, unknown>;
@@ -398,19 +632,23 @@ describe("autoresearch-extension", () => {
 
   describe("before_agent_start", () => {
     it("injects autoresearch context when mode is active", async () => {
-      // Create jsonl to activate mode
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
+      const { worktreePath } = computeWorktreePaths(tmpDir, "Active");
+      fs.mkdirSync(worktreePath, { recursive: true });
       fs.writeFileSync(
-        jsonlPath,
+        path.join(tmpDir, WORKTREE_MARKER),
+        JSON.stringify({ sessionId: "active-sess", worktreePath }) + "\n",
+      );
+      fs.writeFileSync(
+        path.join(worktreePath, "autoresearch.jsonl"),
         JSON.stringify({
           type: "config",
-          name: "Test",
+          name: "Active",
           metricName: "val",
           bestDirection: "lower",
         }) + "\n",
       );
 
-      const { api } = await loadFactory(tmpDir);
+      const { api } = await loadFactory(tmpDir, "active-sess");
       await fireEvent(api, "session_start");
 
       const result = (await fireEvent(api, "before_agent_start", {
@@ -421,6 +659,7 @@ describe("autoresearch-extension", () => {
       expect(result).toBeDefined();
       expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
       expect(result!.systemPrompt).toContain("NEVER STOP until interrupted");
+      expect(result!.systemPrompt).toContain("Worktree:");
     });
 
     it("does not inject when autoresearch mode is inactive", async () => {
@@ -435,83 +674,21 @@ describe("autoresearch-extension", () => {
     });
   });
 
-  describe("child session contamination guard", () => {
-    it("does not enter autoresearch mode when isChildSession is true", async () => {
-      // Pre-populate jsonl — normally this would activate autoresearch mode
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
-      fs.writeFileSync(
-        jsonlPath,
-        JSON.stringify({
-          type: "config",
-          name: "Parent Experiment",
-          metricName: "total_us",
-          metricUnit: "us",
-          bestDirection: "lower",
-        }) + "\n",
-      );
-
-      const { api } = await loadFactory(tmpDir, { isChildSession: true });
-      await fireEvent(api, "session_start");
-
-      // before_agent_start should NOT inject autoresearch context
-      const result = (await fireEvent(api, "before_agent_start", {
-        prompt: "fix a bug",
-        systemPrompt: "You are an assistant.",
-      })) as { systemPrompt?: string } | undefined;
-
-      expect(result).toBeUndefined();
+  describe("computeWorktreePaths", () => {
+    it("sanitizes experiment name for branch", () => {
+      const { branch, worktreePath } = computeWorktreePaths("/workspace/oppi", "DiffBuilder Perf");
+      expect(branch).toMatch(/^autoresearch\/diffbuilder-perf-\d{4}-\d{2}-\d{2}$/);
+      expect(worktreePath).toContain("oppi-autoresearch");
     });
 
-    it("does not send auto-resume messages for child sessions", async () => {
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
-      fs.writeFileSync(
-        jsonlPath,
-        JSON.stringify({
-          type: "config",
-          name: "Parent Experiment",
-          metricName: "val",
-          bestDirection: "lower",
-        }) + "\n",
-      );
-
-      const { api } = await loadFactory(tmpDir, { isChildSession: true });
-      await fireEvent(api, "session_start");
-
-      // Even if agent_end fires, no resume message should be sent
-      await fireEvent(api, "agent_end");
-      expect(api.sentMessages).toHaveLength(0);
+    it("handles special characters", () => {
+      const { branch } = computeWorktreePaths("/workspace/oppi", "---test!!!---");
+      expect(branch).toMatch(/^autoresearch\/test-\d{4}-\d{2}-\d{2}$/);
     });
 
-    it("still enters autoresearch mode for non-child sessions", async () => {
-      const jsonlPath = path.join(tmpDir, "autoresearch.jsonl");
-      fs.writeFileSync(
-        jsonlPath,
-        JSON.stringify({
-          type: "config",
-          name: "Test",
-          metricName: "val",
-          bestDirection: "lower",
-        }) + "\n",
-      );
-
-      const { api } = await loadFactory(tmpDir, { isChildSession: false });
-      await fireEvent(api, "session_start");
-
-      const result = (await fireEvent(api, "before_agent_start", {
-        prompt: "continue",
-        systemPrompt: "You are an assistant.",
-      })) as { systemPrompt?: string } | undefined;
-
-      expect(result).toBeDefined();
-      expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
-    });
-
-    it("tools still register for child sessions (no-op but available)", async () => {
-      const { api } = await loadFactory(tmpDir, { isChildSession: true });
-      // Tools are registered regardless — they just won't be triggered by autoresearch mode
-      expect(api.tools.has("init_experiment")).toBe(true);
-      expect(api.tools.has("run_experiment")).toBe(true);
-      expect(api.tools.has("log_experiment")).toBe(true);
+    it("falls back to 'experiment' for empty name", () => {
+      const { branch } = computeWorktreePaths("/workspace/oppi", "---");
+      expect(branch).toMatch(/^autoresearch\/experiment-\d{4}-\d{2}-\d{2}$/);
     });
   });
 

@@ -80,13 +80,12 @@ export class SessionStartCoordinator {
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
         // Inject autoresearch extension for all workspace sessions.
-        // Child sessions get the isChildSession flag so they never enter
-        // autoresearch mode — prevents contamination from the parent's
-        // autoresearch.jsonl in the shared workspace cwd.
+        // Session ID scopes the worktree marker so different sessions
+        // (parent, child, siblings) each get their own isolated worktree.
         const workspaceCwd = resolveSdkSessionCwd(workspace);
         extraExtensionFactories.push(
           createAutoresearchFactory(workspaceCwd, {
-            isChildSession: !!session.parentSessionId,
+            sessionId: session.id,
           }),
         );
 
