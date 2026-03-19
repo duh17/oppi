@@ -201,7 +201,7 @@ struct WorkspaceDetailView: View {
         let treeNodes = activeTreeNodes
         let treeLookup = treeNodeLookup(nodes: treeNodes)
         let treeRows = SessionTreeHelper.flattenTree(nodes: treeNodes) { sessionId in
-            isTreeNodeExpanded(sessionId: sessionId, nodes: treeNodes)
+            isTreeNodeExpanded(sessionId: sessionId, lookup: treeLookup)
         }
 
         List {
@@ -212,7 +212,7 @@ struct WorkspaceDetailView: View {
                             SessionTreeRow(
                                 row: row,
                                 pendingCount: permissionStore.pending(for: row.session.id).count,
-                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, nodes: treeNodes),
+                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: treeLookup),
                                 statusCounts: treeLookup[row.session.id].map {
                                     SessionTreeHelper.childStatusCounts($0)
                                 },
