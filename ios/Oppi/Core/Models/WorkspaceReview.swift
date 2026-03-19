@@ -38,7 +38,7 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     ) -> Self {
         let lines = precomputedLines ?? DiffEngine.compute(old: baselineText, new: currentText)
         let stats = DiffEngine.stats(lines)
-        return WorkspaceReviewDiffResponse(
+        return Self(
             workspaceId: "local-history",
             path: path,
             baselineText: baselineText,
@@ -405,8 +405,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                 index = end
             } else if startScalar.properties.isAlphabetic
                 || startScalar.properties.numericType != nil
-                || startScalar == "_"
-            {
+                || startScalar == "_" {
                 // Word (letters, digits, underscores)
                 var end = scalars.index(after: index)
                 while end < scalars.endIndex {
@@ -429,8 +428,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                     if !s.properties.isWhitespace
                         && !s.properties.isAlphabetic
                         && s.properties.numericType == nil
-                        && s != "_"
-                    {
+                        && s != "_" {
                         end = scalars.index(after: end)
                     } else {
                         break
@@ -542,120 +540,4 @@ private extension WorkspaceReviewDiffLine {
     }
 }
 
-// MARK: - Annotations
 
-enum AnnotationSide: String, Codable, Sendable {
-    case old
-    case new
-    case file
-}
-
-enum AnnotationAuthor: String, Codable, Sendable {
-    case human
-    case agent
-
-    var isAgent: Bool { self == .agent }
-    var isHuman: Bool { self == .human }
-
-    var displayLabel: String {
-        switch self {
-        case .human: return "You"
-        case .agent: return "Agent"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .human: return "person.fill"
-        case .agent: return "cpu"
-        }
-    }
-}
-
-enum AnnotationSeverity: String, Codable, Sendable {
-    case info
-    case warn
-    case error
-
-    var displayLabel: String {
-        switch self {
-        case .info: return "Info"
-        case .warn: return "Warning"
-        case .error: return "Error"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .info: return "info.circle"
-        case .warn: return "exclamationmark.triangle"
-        case .error: return "exclamationmark.triangle.fill"
-        }
-    }
-}
-
-enum AnnotationResolution: String, Codable, Sendable {
-    case pending
-    case accepted
-    case rejected
-
-    var isPending: Bool { self == .pending }
-    var isResolved: Bool { self != .pending }
-}
-
-struct AnnotationImageAttachment: Codable, Sendable, Equatable {
-    let data: String
-    let mimeType: String
-}
-
-struct DiffAnnotation: Codable, Sendable, Equatable, Identifiable {
-    let id: String
-    let workspaceId: String
-    let path: String
-    let side: AnnotationSide
-    let startLine: Int?
-    let endLine: Int?
-    let body: String
-    let author: AnnotationAuthor
-    let sessionId: String?
-    let severity: AnnotationSeverity?
-    let resolution: AnnotationResolution
-    let attachments: [AnnotationImageAttachment]?
-    let createdAt: Double
-    let updatedAt: Double
-
-    /// The primary line number for anchoring in the diff view.
-    var anchorLine: Int? { startLine }
-
-    /// True when the annotation targets a whole file, not a specific line.
-    var isFileLevel: Bool { side == .file }
-}
-
-struct AnnotationsResponse: Codable, Sendable {
-    let workspaceId: String
-    let annotations: [DiffAnnotation]
-}
-
-struct CreateAnnotationBody: Encodable, Sendable {
-    let path: String
-    let side: AnnotationSide
-    let startLine: Int?
-    let endLine: Int?
-    let body: String
-    let author: AnnotationAuthor
-    let sessionId: String?
-    let severity: AnnotationSeverity?
-    let attachments: [AnnotationImageAttachment]?
-}
-
-struct UpdateAnnotationBody: Encodable, Sendable {
-    let body: String?
-    let resolution: AnnotationResolution?
-    let severity: AnnotationSeverity?
-
-    init(body: String? = nil, resolution: AnnotationResolution? = nil, severity: AnnotationSeverity? = nil) {
-        self.body = body
-        self.resolution = resolution
-        self.severity = severity
-    }
-}

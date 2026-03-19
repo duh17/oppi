@@ -125,7 +125,7 @@ actor APIClient {
     /// If `workspaceId` is nil, the first available workspace is used.
     func createSession(name: String? = nil, model: String? = nil, workspaceId: String? = nil) async throws -> Session {
         if let workspaceId, !workspaceId.isEmpty {
-            return try await createWorkspaceSession(workspaceId: workspaceId, name: name, model: model)
+            return try await createWorkspaceSession(workspaceId: workspaceId, name: name, model: model).session
         }
 
         let workspaces = try await listWorkspaces()
@@ -137,7 +137,7 @@ actor APIClient {
             workspaceId: fallbackWorkspace.id,
             name: name,
             model: model
-        )
+        ).session
     }
 
     struct SequencedServerEvent: Sendable, Equatable {
@@ -394,64 +394,6 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceReviewSessionResponse.self, from: data)
     }
 
-    // MARK: - Annotations
-
-    /// Fetch annotations for a workspace, optionally filtered by file path or session.
-    func getAnnotations(
-        workspaceId: String,
-        path: String? = nil,
-        sessionId: String? = nil
-    ) async throws -> AnnotationsResponse {
-        var route = "/workspaces/\(workspaceId)/annotations"
-        var queryParts: [String] = []
-        if let path, !path.isEmpty {
-            queryParts.append("path=\(try encodeQueryPath(path))")
-        }
-        if let sessionId, !sessionId.isEmpty {
-            queryParts.append("sessionId=\(sessionId)")
-        }
-        if !queryParts.isEmpty {
-            route += "?" + queryParts.joined(separator: "&")
-        }
-        let data = try await get(route)
-        return try JSONDecoder().decode(AnnotationsResponse.self, from: data)
-    }
-
-    /// Create a new annotation on a diff line.
-    func createAnnotation(
-        workspaceId: String,
-        body: CreateAnnotationBody
-    ) async throws -> DiffAnnotation {
-        struct Response: Decodable { let annotation: DiffAnnotation }
-        let data = try await post("/workspaces/\(workspaceId)/annotations", body: body)
-        return try JSONDecoder().decode(Response.self, from: data).annotation
-    }
-
-    /// Update an annotation's body, resolution, or severity.
-    func updateAnnotation(
-        workspaceId: String,
-        annotationId: String,
-        body: UpdateAnnotationBody
-    ) async throws -> DiffAnnotation {
-        struct Response: Decodable { let annotation: DiffAnnotation }
-        let (data, response) = try await request(
-            "PATCH",
-            path: "/workspaces/\(workspaceId)/annotations/\(annotationId)",
-            body: body
-        )
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(Response.self, from: data).annotation
-    }
-
-    /// Delete an annotation.
-    func deleteAnnotation(workspaceId: String, annotationId: String) async throws {
-        let (_, response) = try await request(
-            "DELETE",
-            path: "/workspaces/\(workspaceId)/annotations/\(annotationId)"
-        )
-        try checkStatus(response, data: Data())
-    }
-
     // MARK: - Safety Policy
 
     /// Get the global default fallback action when no rule matches.
@@ -609,11 +551,43 @@ actor APIClient {
     }
 
     /// Create a new session in a specific workspace.
-    func createWorkspaceSession(workspaceId: String, name: String? = nil, model: String? = nil) async throws -> Session {
-        struct Body: Encodable { let name: String?; let model: String? }
-        let data = try await post("/workspaces/\(workspaceId)/sessions", body: Body(name: name, model: model))
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
+    /// Create a new session in a workspace.
+    ///
+    /// When `prompt` is provided, the server auto-resumes the session and delivers
+    /// the first message — no WebSocket round-trip needed. The response includes
+    /// `prompted: true` on success.
+    func createWorkspaceSession(
+        workspaceId: String,
+        name: String? = nil,
+        model: String? = nil,
+        prompt: String? = nil,
+        thinking: String? = nil,
+        images: [ImageAttachment]? = nil
+    ) async throws -> CreateSessionResponse {
+        struct ImageBody: Encodable {
+            let type: String
+            let data: String
+            let mimeType: String
+        }
+        struct Body: Encodable {
+            let name: String?
+            let model: String?
+            let prompt: String?
+            let thinking: String?
+            let images: [ImageBody]?
+        }
+        let imagesBodies = images?.map { ImageBody(type: "image", data: $0.data, mimeType: $0.mimeType) }
+        let data = try await post(
+            "/workspaces/\(workspaceId)/sessions",
+            body: Body(name: name, model: model, prompt: prompt, thinking: thinking, images: imagesBodies)
+        )
+        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
+    }
+
+    /// Response from session creation. Includes `prompted` when a prompt was provided.
+    struct CreateSessionResponse: Decodable, Sendable {
+        let session: Session
+        let prompted: Bool?
     }
 
     /// Create a session that resumes an existing local pi TUI session.
