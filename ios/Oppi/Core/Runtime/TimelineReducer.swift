@@ -560,7 +560,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Cached fallback formatter — lazily initialized, reused across loadSession calls.
     /// The fast parser handles 99%+ of timestamps; the formatter is only used for
     /// non-standard formats, so lazy init avoids paying creation cost every call.
-    private nonisolated(unsafe) static let sharedTraceDateFormatter: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let sharedTraceDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
@@ -1178,6 +1178,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     // MARK: - User Message (from local prompt)
+
+    /// Check if a user message with the given text already exists in the timeline.
+    /// Used to avoid duplicating the user bubble when a server-side prompt is echoed back.
+    func hasUserMessage(matching text: String) -> Bool {
+        items.contains { item in
+            if case .userMessage(_, let existingText, _, _) = item {
+                return existingText == text
+            }
+            return false
+        }
+    }
 
     @discardableResult
     func appendUserMessage(_ text: String, images: [ImageAttachment] = []) -> String {

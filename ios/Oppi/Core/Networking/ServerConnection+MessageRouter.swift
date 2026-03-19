@@ -99,6 +99,13 @@ extension ServerConnection {
         case .messageEnd(let role, let content):
             if role == "assistant" {
                 coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
+            } else if role == "user", !content.isEmpty {
+                // Server-initiated prompts (e.g. quick session) — the client
+                // didn't send the message locally, so no optimistic bubble exists.
+                // Insert one now if the timeline doesn't already have it.
+                if !reducer.hasUserMessage(matching: content) {
+                    reducer.appendUserMessage(content)
+                }
             }
 
         case .textDelta(let delta):
