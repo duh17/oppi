@@ -8,7 +8,7 @@ struct FileBrowserPiActionTests {
 
     // MARK: - Router dispatch
 
-    @Test func routerSetsDraftAndShowsQuickSession() {
+    @Test func routerSetsDraftAndShowsQuickSession() throws {
         let nav = AppNavigation()
         nav.showOnboarding = false
 
@@ -31,9 +31,9 @@ struct FileBrowserPiActionTests {
         router.dispatch(request)
 
         #expect(nav.showQuickSession == true)
-        #expect(nav.pendingQuickSessionDraft != nil)
-        #expect(nav.pendingQuickSessionDraft!.contains("Explain this:"))
-        #expect(nav.pendingQuickSessionDraft!.contains("let x = 42"))
+        let draft = try #require(nav.pendingQuickSessionDraft)
+        #expect(draft.contains("Explain this:"))
+        #expect(draft.contains("let x = 42"))
     }
 
     @Test func addToPromptSetsCodeBlockDraft() {
@@ -146,7 +146,7 @@ struct FileBrowserPiActionTests {
 
     // MARK: - Prompt formatting includes file metadata
 
-    @Test func draftIncludesFilePathMetadata() {
+    @Test func draftIncludesFilePathMetadata() throws {
         let nav = AppNavigation()
         let router = SelectedTextPiActionRouter { request in
             nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
@@ -166,7 +166,7 @@ struct FileBrowserPiActionTests {
 
         router.dispatch(request)
 
-        let draft = nav.pendingQuickSessionDraft!
+        let draft = try #require(nav.pendingQuickSessionDraft)
         #expect(draft.contains("File: src/utils/parser.ts"))
         #expect(draft.contains("Language: typescript"))
     }

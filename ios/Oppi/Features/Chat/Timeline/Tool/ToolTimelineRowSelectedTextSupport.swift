@@ -22,7 +22,7 @@ enum ToolTimelineRowSelectedTextSupport {
         /// When true, tap-copy gestures and pinch should be disabled.
         let disableGestureInterception: Bool
 
-        static let none = SelectionFlags(
+        static let none = Self(
             commandSelectable: false,
             outputSelectable: false,
             expandedLabelSelectable: false,

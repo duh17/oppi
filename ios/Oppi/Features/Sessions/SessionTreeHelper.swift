@@ -11,7 +11,7 @@ enum SessionTreeHelper {
     struct TreeNode: Identifiable {
         let session: Session
         let depth: Int
-        let children: [TreeNode]
+        let children: [Self]
         /// Whether this node is the last child of its parent at this depth.
         let isLastChild: Bool
 

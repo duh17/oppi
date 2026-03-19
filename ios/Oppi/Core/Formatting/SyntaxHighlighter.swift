@@ -695,10 +695,7 @@ enum SyntaxHighlighter {
                     ranges.append(TokenRange(location: i, length: wordLen, kind: .keyword))
                 } else if wordLen >= 2, isUpperASCII(allChars[i]) {
                     // Check isTypeLike without String allocation
-                    var hasLower = false
-                    for ci in (i + 1)..<wordEnd {
-                        if isLowerASCII(allChars[ci]) { hasLower = true; break }
-                    }
+                    let hasLower = ((i + 1)..<wordEnd).contains { isLowerASCII(allChars[$0]) }
                     if hasLower {
                         ranges.append(TokenRange(location: i, length: wordLen, kind: .type))
                     }

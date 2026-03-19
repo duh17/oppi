@@ -246,12 +246,10 @@ enum ToolPresentationBuilder {
             result.toolNameColor = UIColor(Color.themeCyan)
             result.titleLineBreakMode = .byTruncatingMiddle
 
-            if normalizedTool == "read" || normalizedTool == "write" {
-                if fileMetadata.fileType == .markdown {
-                    result.languageBadge = fileMetadata.fileType?.displayLabel
-                } else {
-                    result.languageBadge = fileMetadata.language?.displayName
-                }
+            if fileMetadata.fileType == .markdown {
+                result.languageBadge = fileMetadata.fileType?.displayLabel
+            } else {
+                result.languageBadge = fileMetadata.language?.displayName
             }
 
             if normalizedTool == "edit" {

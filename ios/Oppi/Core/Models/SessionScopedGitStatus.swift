@@ -35,9 +35,9 @@ struct SessionScopedGitStatus: Sendable, Equatable {
     static func filter(
         gitStatus: GitStatus,
         sessionChangedFiles: [String]
-    ) -> SessionScopedGitStatus {
+    ) -> Self {
         guard !sessionChangedFiles.isEmpty else {
-            return SessionScopedGitStatus(
+            return Self(
                 gitStatus: gitStatus,
                 sessionFiles: [],
                 sessionFileCount: 0,
@@ -59,7 +59,7 @@ struct SessionScopedGitStatus: Sendable, Equatable {
         let addedLines = filtered.compactMap(\.addedLines).reduce(0, +)
         let removedLines = filtered.compactMap(\.removedLines).reduce(0, +)
 
-        return SessionScopedGitStatus(
+        return Self(
             gitStatus: gitStatus,
             sessionFiles: filtered,
             sessionFileCount: filtered.count,

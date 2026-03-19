@@ -11,19 +11,16 @@ struct SubagentStatusBar: View {
     @Binding var isExpanded: Bool
     let onSelectChild: (String) -> Void
 
-    private var statusCounts: (working: Int, done: Int, error: Int) {
-        var w = 0, d = 0, e = 0
-        for child in childSessions {
-            switch child.status {
-            case .starting, .busy, .stopping:
-                w += 1
-            case .ready, .stopped:
-                d += 1
-            case .error:
-                e += 1
-            }
-        }
-        return (w, d, e)
+    private var workingCount: Int {
+        childSessions.count { $0.status == .starting || $0.status == .busy || $0.status == .stopping }
+    }
+
+    private var doneCount: Int {
+        childSessions.count { $0.status == .ready || $0.status == .stopped }
+    }
+
+    private var errorCount: Int {
+        childSessions.count { $0.status == .error }
     }
 
     var body: some View {
@@ -72,33 +69,32 @@ struct SubagentStatusBar: View {
     private var headerContent: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
-                let counts = statusCounts
-                if counts.working > 0 {
+                if workingCount > 0 {
                     HStack(spacing: 3) {
                         Text("\u{23F3}")
-                        Text("\(counts.working) working")
+                        Text("\(workingCount) working")
                     }
                     .foregroundStyle(.themeOrange)
                 }
-                if counts.done > 0 {
-                    if counts.working > 0 {
+                if doneCount > 0 {
+                    if workingCount > 0 {
                         Text("\u{00B7}")
                             .foregroundStyle(.themeComment)
                     }
                     HStack(spacing: 3) {
                         Text("\u{2713}")
-                        Text("\(counts.done) done")
+                        Text("\(doneCount) done")
                     }
                     .foregroundStyle(.themeGreen)
                 }
-                if counts.error > 0 {
-                    if counts.working > 0 || counts.done > 0 {
+                if errorCount > 0 {
+                    if workingCount > 0 || doneCount > 0 {
                         Text("\u{00B7}")
                             .foregroundStyle(.themeComment)
                     }
                     HStack(spacing: 3) {
                         Text("\u{2717}")
-                        Text("\(counts.error) error")
+                        Text("\(errorCount) error")
                     }
                     .foregroundStyle(.themeRed)
                 }

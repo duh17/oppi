@@ -118,9 +118,9 @@ struct FileBrowserView: View {
                                 .lineLimit(1)
                             }
                         } icon: {
-                            let fileName = result.path.split(separator: "/").last.map(String.init) ?? result.path
-                            Image(systemName: fileIconName(for: fileName))
-                                .foregroundStyle(.themeFgDim)
+                            let icon = FileIcon.forPath(result.path)
+                            Image(systemName: icon.symbolName)
+                                .foregroundStyle(icon.color)
                         }
                     }
                 }
@@ -172,8 +172,9 @@ struct FileBrowserView: View {
                             .foregroundStyle(.themeComment)
                     }
                 } icon: {
-                    Image(systemName: fileIconName(for: entry.name))
-                        .foregroundStyle(.themeFgDim)
+                    let icon = FileIcon.forPath(entry.name)
+                    Image(systemName: icon.symbolName)
+                        .foregroundStyle(icon.color)
                 }
             }
         }
@@ -261,33 +262,5 @@ private struct HighlightedPathText: View {
         }
 
         return result
-    }
-}
-
-// MARK: - File icon mapping
-
-private func fileIconName(for filename: String) -> String {
-    let ext = filename.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
-    switch ext {
-    case "swift", "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "kt", "c", "cpp", "h", "rb", "php", "lua":
-        return "chevron.left.forwardslash.chevron.right"
-    case "json", "yml", "yaml", "toml", "xml", "plist":
-        return "doc.text"
-    case "md", "markdown", "txt", "rst":
-        return "doc.plaintext"
-    case "html", "htm", "css", "scss":
-        return "globe"
-    case "png", "jpg", "jpeg", "gif", "webp", "svg":
-        return "photo"
-    case "pdf":
-        return "doc.richtext"
-    case "sh", "bash", "zsh":
-        return "terminal"
-    case "lock":
-        return "lock"
-    case "gitignore", "gitattributes":
-        return "arrow.triangle.branch"
-    default:
-        return "doc"
     }
 }

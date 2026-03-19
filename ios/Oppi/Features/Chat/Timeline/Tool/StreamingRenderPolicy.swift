@@ -257,7 +257,7 @@ enum StreamingRenderPolicy {
 
         /// Build a profile by scanning UTF-8 bytes. Matches the code strategy's
         /// `highlightProfile(for:)` implementation.
-        static func from(text: String) -> ContentProfile {
+        static func from(text: String) -> Self {
             var byteCount = 0
             var lineCount = 1
             var currentLineByteCount = 0
@@ -275,7 +275,7 @@ enum StreamingRenderPolicy {
             }
 
             maxLineByteCount = max(maxLineByteCount, currentLineByteCount)
-            return ContentProfile(
+            return Self(
                 byteCount: byteCount,
                 lineCount: lineCount,
                 maxLineByteCount: maxLineByteCount
