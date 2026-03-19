@@ -301,7 +301,14 @@ private struct MarkdownFileView: View {
                 ScrollView(.vertical) {
                     MarkdownContentViewWrapper(
                         content: content,
-                        plainTextFallbackThreshold: nil
+                        plainTextFallbackThreshold: nil,
+                        selectedTextSourceContext: piRouter != nil
+                            ? SelectedTextSourceContext(
+                                sessionId: "",
+                                surface: .fullScreenMarkdown,
+                                filePath: filePath
+                            )
+                            : nil
                     )
                     .allowsFullScreenExpansion(false)
                     .padding(.horizontal, 14)
@@ -353,7 +360,14 @@ private struct FullScreenMarkdownView: View {
                     ScrollView(.vertical) {
                         MarkdownContentViewWrapper(
                             content: content,
-                            plainTextFallbackThreshold: nil
+                            plainTextFallbackThreshold: nil,
+                            selectedTextSourceContext: piRouter != nil
+                                ? SelectedTextSourceContext(
+                                    sessionId: "",
+                                    surface: .fullScreenMarkdown,
+                                    filePath: filePath
+                                )
+                                : nil
                         )
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
