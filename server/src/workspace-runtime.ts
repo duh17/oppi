@@ -83,8 +83,8 @@ export interface RuntimeLimits {
 }
 
 const DEFAULTS: RuntimeLimits = {
-  maxSessionsPerWorkspace: 3,
-  maxSessionsGlobal: 5,
+  maxSessionsPerWorkspace: 10,
+  maxSessionsGlobal: 20,
   sessionIdleTimeoutMs: 10 * 60_000, // 10 min
   workspaceIdleTimeoutMs: 30 * 60_000, // 30 min
 };
