@@ -21,7 +21,6 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
     @State private var pendingFiles: [PendingFileReference] = []
-    @State private var contextPills: [ContextPill]
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
     @State private var showOutline = false
@@ -50,11 +49,10 @@ struct ChatView: View {
     @State private var contextBarExpanded = false
     @State private var contextPillDetailFile: WorkspaceReviewFile?
 
-    init(sessionId: String, initialInputText: String = "", initialContextPills: [ContextPill] = []) {
+    init(sessionId: String, initialInputText: String = "") {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
         _inputText = State(initialValue: initialInputText)
-        _contextPills = State(initialValue: initialContextPills)
     }
 
     private struct ForkRoute: Identifiable, Hashable {
@@ -71,6 +69,11 @@ struct ChatView: View {
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
+    }
+
+    /// Context pills derived from the session's persisted contextSummary.
+    private var contextPills: [ContextPill] {
+        session?.contextSummary?.map { ContextPill(from: $0) } ?? []
     }
 
     /// Child sessions spawned by this session.
@@ -251,11 +254,16 @@ struct ChatView: View {
                 inputText = message
                 pendingImages = images
 
-                // Wait for the session stream to be established (max 10s)
-                let deadline = ContinuousClock.now + .seconds(10)
-                while sessionManager.entryState != .streaming {
+                // Wait for the session stream to be established AND the WebSocket
+                // to be connected. The stream can briefly reach .streaming then
+                // drop during app launch; retry the wait if it bounces.
+                let deadline = ContinuousClock.now + .seconds(15)
+                while true {
                     if Task.isCancelled { return }
                     if ContinuousClock.now >= deadline { return } // Timeout — user can send manually
+                    let isStreaming = sessionManager.entryState == .streaming
+                    let wsConnected = connection.wsClient?.status == .connected
+                    if isStreaming && wsConnected { break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
 
@@ -642,7 +650,6 @@ struct ChatView: View {
                 inputText = ""
                 pendingImages = []
                 pendingFiles = []
-                contextPills = []
                 // Scroll to bottom after sending
                 scrollRef.requestScrollToBottom()
             },

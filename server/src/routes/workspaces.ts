@@ -379,10 +379,18 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       selectedSession,
     });
 
+    const contextSummary: ContextSummary[] = launch.files.map((f) => ({
+      kind: "file_diff" as const,
+      path: f.path,
+      addedLines: f.addedLines ?? 0,
+      removedLines: f.removedLines ?? 0,
+    }));
+
     const model = workspace.lastUsedModel || workspace.defaultModel;
     const session = ctx.storage.createSession(launch.sessionName, model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
+    session.contextSummary = contextSummary;
     ctx.storage.saveSession(session);
 
     try {
@@ -397,12 +405,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const launchedSession =
       ctx.sessions.getActiveSession(session.id) || ctx.storage.getSession(session.id) || session;
-    const contextSummary: ContextSummary[] = launch.files.map((f) => ({
-      kind: "file_diff" as const,
-      path: f.path,
-      addedLines: f.addedLines ?? 0,
-      removedLines: f.removedLines ?? 0,
-    }));
+    // Ensure contextSummary survives even if getActiveSession returned a copy without it
+    if (!launchedSession.contextSummary && contextSummary.length > 0) {
+      launchedSession.contextSummary = contextSummary;
+    }
     const response: WorkspaceReviewSessionResponse = {
       action: body.action,
       selectedPathCount: launch.files.length,

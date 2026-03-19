@@ -209,7 +209,7 @@ struct WorkspaceContextBar: View {
             }
         }
         .navigationDestination(item: $navigateToReview) { dest in
-            ChatView(sessionId: dest.id, initialInputText: dest.inputText, initialContextPills: dest.pills)
+            ChatView(sessionId: dest.id, initialInputText: dest.inputText)
         }
     }
 
@@ -624,10 +624,8 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
-            let pills = response.contextSummary.map { ContextPill(from: $0) }
             navigateToReview = ReviewSessionNavDestination(
                 id: response.session.id,
-                pills: pills,
                 inputText: response.visiblePrompt
             )
         } catch {

@@ -162,11 +162,10 @@ struct ContextPill: Identifiable, Sendable, Equatable, Hashable {
     }
 }
 
-/// Navigation destination for a created review session, carrying pill context
-/// and the pre-filled input text to show in ChatView.
+/// Navigation destination for a created review session.
+/// Pills are now derived from `session.contextSummary` in ChatView.
 struct ReviewSessionNavDestination: Identifiable, Hashable {
     let id: String
-    let pills: [ContextPill]
     let inputText: String
 }
 

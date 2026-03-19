@@ -107,6 +107,9 @@ export interface Session {
 
   // Parent-child tree (spawn_agent)
   parentSessionId?: string; // set when spawned by another session
+
+  // Review context (persisted so iOS can restore pills on re-entry)
+  contextSummary?: ContextSummary[];
 }
 
 export interface SessionMessage {
