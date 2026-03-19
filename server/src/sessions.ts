@@ -117,6 +117,9 @@ export class SessionManager extends EventEmitter {
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
+      spawnChildSession: (parentSessionId, params) =>
+        this.spawnChildSession(parentSessionId, params),
+      listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -492,6 +495,71 @@ export class SessionManager extends EventEmitter {
 
   hasPendingUIRequest(sessionId: string, requestId: string): boolean {
     return this.uiCoordinator.hasPendingUIRequest(this.sessionKey(sessionId), requestId);
+  }
+
+  // ─── Spawn Agent ───
+
+  /**
+   * Create a child session, start it, and send its first prompt.
+   * Used by the spawn_agent extension to create fire-and-forget children.
+   */
+  async spawnChildSession(
+    parentSessionId: string,
+    params: {
+      name?: string;
+      model?: string;
+      thinking?: string;
+      prompt: string;
+    },
+  ): Promise<Session> {
+    const parentSession = this.storage.getSession(parentSessionId);
+    if (!parentSession?.workspaceId) {
+      throw new Error(`Parent session not found or has no workspace: ${parentSessionId}`);
+    }
+
+    const workspace = this.storage.getWorkspace(parentSession.workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${parentSession.workspaceId}`);
+    }
+
+    const model = params.model || parentSession.model || workspace.defaultModel;
+    const session = this.storage.createSession(params.name, model);
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    session.parentSessionId = parentSessionId;
+    this.storage.saveSession(session);
+
+    try {
+      await this.startSession(session.id, workspace);
+
+      if (params.thinking) {
+        await this.forwardClientCommand(session.id, {
+          type: "set_thinking_level",
+          level: params.thinking,
+        });
+        session.thinkingLevel = params.thinking;
+      }
+
+      await this.sendPrompt(session.id, params.prompt);
+      session.firstMessage = params.prompt.slice(0, 200);
+      this.storage.saveSession(session);
+    } catch (err: unknown) {
+      // Session created but failed to start or prompt — mark as error
+      session.status = "error";
+      const msg = err instanceof Error ? err.message : String(err);
+      session.warnings = [...(session.warnings ?? []), `Spawn failed: ${msg}`];
+      this.storage.saveSession(session);
+      throw err;
+    }
+
+    return session;
+  }
+
+  /**
+   * List child sessions spawned by a given parent session.
+   */
+  listChildSessions(parentSessionId: string): Session[] {
+    return this.storage.listSessions().filter((s) => s.parentSessionId === parentSessionId);
   }
 
   // ─── Idle Management ───

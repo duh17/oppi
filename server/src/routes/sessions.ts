@@ -64,9 +64,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const body = await helpers.parseBody<{ name?: string; model?: string; piSessionFile?: string }>(
-      req,
-    );
+    const body = await helpers.parseBody<{
+      name?: string;
+      model?: string;
+      piSessionFile?: string;
+      prompt?: string;
+      thinking?: string;
+      parentSessionId?: string;
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+    }>(req);
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
@@ -128,7 +134,44 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
+    if (body.parentSessionId) {
+      session.parentSessionId = body.parentSessionId;
+    }
     ctx.storage.saveSession(session);
+
+    // ── Optional prompt: auto-resume + send first message ──
+    const prompt = body.prompt?.trim();
+    if (prompt) {
+      try {
+        await ctx.sessions.startSession(session.id, workspace);
+        if (body.thinking) {
+          await ctx.sessions.forwardClientCommand(session.id, {
+            type: "set_thinking_level",
+            level: body.thinking,
+          });
+          // Keep our local reference in sync — forwardClientCommand persists
+          // on the active session object (a different reference read from disk
+          // during startSession), so without this the final saveSession below
+          // would overwrite the thinking level with undefined.
+          session.thinkingLevel = body.thinking;
+        }
+        await ctx.sessions.sendPrompt(session.id, prompt, {
+          images: body.images,
+        });
+        session.firstMessage = prompt.slice(0, 200);
+        ctx.storage.saveSession(session);
+      } catch (_err: unknown) {
+        // Session was created but prompt delivery failed — return it
+        // with prompted: false so the client knows to retry or send manually.
+        const started = ctx.ensureSessionContextWindow(session);
+        helpers.json(res, { session: started, prompted: false }, 201);
+        return;
+      }
+
+      const started = ctx.ensureSessionContextWindow(session);
+      helpers.json(res, { session: started, prompted: true }, 201);
+      return;
+    }
 
     const hydrated = ctx.ensureSessionContextWindow(session);
     helpers.json(res, { session: hydrated }, 201);
