@@ -193,6 +193,7 @@ targets:
         CURRENT_PROJECT_VERSION: 22
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
+        CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
 
   OppiTests:
     type: bundle.unit-test
