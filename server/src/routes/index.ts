@@ -10,7 +10,6 @@ import { createStreamingRoutes } from "./streaming.js";
 import { createPolicyRoutes } from "./policy.js";
 import { createThemeRoutes } from "./themes.js";
 import { createTelemetryRoutes } from "./telemetry.js";
-import { createAnnotationRoutes } from "./annotations.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
 
 export type { RouteContext } from "./types.js";
@@ -29,7 +28,6 @@ export class RouteHandler {
       createSessionRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),
-      createAnnotationRoutes(this.ctx, this.helpers),
       createWorkspaceFileRoutes(this.ctx, this.helpers),
     ];
   }

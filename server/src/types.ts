@@ -388,58 +388,6 @@ export interface WorkspaceReviewSessionResponse {
   contextSummary: ContextSummary[];
 }
 
-// ─── Annotations ───
-
-export type AnnotationSide = "old" | "new" | "file";
-export type AnnotationAuthor = "human" | "agent";
-export type AnnotationSeverity = "info" | "warn" | "error";
-export type AnnotationResolution = "pending" | "accepted" | "rejected";
-
-export interface DiffAnnotation {
-  id: string;
-  workspaceId: string;
-  path: string;
-  side: AnnotationSide;
-  startLine: number | null;
-  endLine: number | null;
-  body: string;
-  author: AnnotationAuthor;
-  sessionId: string | null;
-  severity: AnnotationSeverity | null;
-  resolution: AnnotationResolution;
-  attachments?: ImageAttachment[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface ImageAttachment {
-  data: string;
-  mimeType: string;
-}
-
-export interface CreateAnnotationRequest {
-  path: string;
-  side: AnnotationSide;
-  startLine: number | null;
-  endLine?: number | null;
-  body: string;
-  author: AnnotationAuthor;
-  sessionId?: string | null;
-  severity?: AnnotationSeverity | null;
-  attachments?: ImageAttachment[];
-}
-
-export interface UpdateAnnotationRequest {
-  body?: string;
-  resolution?: AnnotationResolution;
-  severity?: AnnotationSeverity | null;
-}
-
-export interface AnnotationsResponse {
-  workspaceId: string;
-  annotations: DiffAnnotation[];
-}
-
 // ─── Workspace File Browser ───
 
 export interface FileEntry {

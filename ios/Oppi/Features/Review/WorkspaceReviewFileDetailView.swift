@@ -35,8 +35,7 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var launchActionInFlight: WorkspaceReviewSessionAction?
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
-    @State private var annotationStore: AnnotationStore?
-    @State private var composerContext: AnnotationComposerContext?
+
 
     private enum DetailTab: String, CaseIterable, Identifiable {
         case diff = "Diff"
@@ -67,7 +66,6 @@ struct WorkspaceReviewFileDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: workspaceId + "|" + file.path) {
             await loadDiff()
-            await loadAnnotations()
         }
         .navigationDestination(item: $navigateToReview) { dest in
             ChatView(sessionId: dest.id, initialInputText: dest.inputText, initialContextPills: dest.pills)
@@ -105,26 +103,6 @@ struct WorkspaceReviewFileDetailView: View {
                 .disabled(launchActionInFlight != nil)
             }
         }
-        .sheet(item: $composerContext) { context in
-            AnnotationComposerSheet(context: context) { body, severity, images in
-                guard let api = apiClient, let store = annotationStore else { return }
-                let attachments: [AnnotationImageAttachment]? = images.isEmpty ? nil : images.map {
-                    AnnotationImageAttachment(data: $0.attachment.data, mimeType: $0.attachment.mimeType)
-                }
-                Task {
-                    await store.create(
-                        side: context.side,
-                        startLine: context.line,
-                        body: body,
-                        severity: severity,
-                        attachments: attachments,
-                        api: api
-                    )
-                }
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
         .alert(
             "Unable to start review session",
             isPresented: Binding(
@@ -153,10 +131,6 @@ struct WorkspaceReviewFileDetailView: View {
         VStack(spacing: 0) {
             summaryBar(diff: diff)
 
-            if let store = annotationStore, store.totalCount > 0 {
-                annotationSummaryBar(store: store)
-            }
-
             if isNewFile {
                 // New file: skip tabs, show syntax-highlighted content directly
                 Divider().overlay(Color.themeComment.opacity(0.2))
@@ -171,7 +145,7 @@ struct WorkspaceReviewFileDetailView: View {
                 // Deleted file: skip tabs, show diff (the only useful view)
                 Divider().overlay(Color.themeComment.opacity(0.2))
 
-                annotatedDiffView(diff: diff)
+                WorkspaceReviewDiffView(diff: diff, filePath: file.path)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Picker("View", selection: $selectedTab) {
@@ -188,7 +162,7 @@ struct WorkspaceReviewFileDetailView: View {
                 Group {
                     switch selectedTab {
                     case .diff:
-                        annotatedDiffView(diff: diff)
+                        WorkspaceReviewDiffView(diff: diff, filePath: file.path)
                     case .current:
                         currentContent(diff: diff)
                     }
@@ -309,104 +283,6 @@ struct WorkspaceReviewFileDetailView: View {
         } catch {
             launchError = error.localizedDescription
         }
-    }
-
-    private func annotationSummaryBar(store: AnnotationStore) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: store.allResolved ? "checkmark.circle.fill" : "text.bubble")
-                .font(.caption2)
-                .foregroundStyle(store.allResolved ? .themeDiffAdded : .themeComment)
-
-            Text("\(store.totalCount) annotation\(store.totalCount == 1 ? "" : "s")")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.themeFg)
-
-            if store.pendingCount > 0 {
-                Text("\(store.pendingCount) pending")
-                    .font(.caption2)
-                    .foregroundStyle(.themeOrange)
-            }
-
-            if store.acceptedCount > 0 {
-                Text("\(store.acceptedCount) accepted")
-                    .font(.caption2)
-                    .foregroundStyle(.themeDiffAdded)
-            }
-
-            if store.rejectedCount > 0 {
-                Text("\(store.rejectedCount) rejected")
-                    .font(.caption2)
-                    .foregroundStyle(.themeDiffRemoved)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(store.allResolved ? Color.themeDiffAdded.opacity(0.08) : Color.themeBgHighlight)
-    }
-
-    @ViewBuilder
-    private func annotatedDiffView(diff: WorkspaceReviewDiffResponse) -> some View {
-        let currentAnnotations = annotationStore?.annotations ?? []
-        AnnotatedDiffView(
-            hunks: diff.hunks,
-            filePath: file.path,
-            annotations: currentAnnotations,
-            onLineTap: { tapInfo in
-                let snippet = findCodeSnippet(in: diff, for: tapInfo)
-                composerContext = AnnotationComposerContext(
-                    filePath: file.path,
-                    side: tapInfo.side,
-                    line: tapInfo.anchorLine,
-                    codeSnippet: snippet
-                )
-            },
-            onAccept: { annotation in
-                guard let api = apiClient, let store = annotationStore else { return }
-                Task {
-                    await store.resolve(annotationId: annotation.id, resolution: .accepted, api: api)
-                }
-            },
-            onReject: { annotation in
-                guard let api = apiClient, let store = annotationStore else { return }
-                Task {
-                    await store.resolve(annotationId: annotation.id, resolution: .rejected, api: api)
-                }
-            },
-            onDelete: { annotation in
-                guard let api = apiClient, let store = annotationStore else { return }
-                Task {
-                    await store.delete(annotationId: annotation.id, api: api)
-                }
-            }
-        )
-    }
-
-    /// Look up the code text for a tapped line from the diff hunks.
-    private func findCodeSnippet(
-        in diff: WorkspaceReviewDiffResponse,
-        for tapInfo: DiffLineTapInfo
-    ) -> String? {
-        for hunk in diff.hunks {
-            for line in hunk.lines {
-                if tapInfo.side == .old, let oldLine = line.oldLine, oldLine == tapInfo.oldLine {
-                    return line.text
-                }
-                if tapInfo.side == .new, let newLine = line.newLine, newLine == tapInfo.newLine {
-                    return line.text
-                }
-            }
-        }
-        return nil
-    }
-
-    private func loadAnnotations() async {
-        guard let api = apiClient else { return }
-
-        let store = AnnotationStore(workspaceId: workspaceId, path: file.path)
-        annotationStore = store
-        await store.load(api: api)
     }
 
     private func loadDiff() async {
