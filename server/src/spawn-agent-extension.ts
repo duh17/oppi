@@ -52,7 +52,10 @@ const MAX_SPAWN_DEPTH = 2;
 function getSpawnDepth(ctx: SpawnAgentContext): number {
   let depth = 0;
   let currentId: string | undefined = ctx.sessionId;
+  const visited = new Set<string>();
   while (currentId) {
+    if (visited.has(currentId)) break; // Circular reference detected
+    visited.add(currentId);
     const session = ctx.getSession(currentId);
     if (!session?.parentSessionId) break;
     depth++;
@@ -64,7 +67,10 @@ function getSpawnDepth(ctx: SpawnAgentContext): number {
 /** Find the root session ID of the spawn tree. */
 function getRootSessionId(ctx: SpawnAgentContext): string {
   let currentId = ctx.sessionId;
+  const visited = new Set<string>();
   while (true) {
+    if (visited.has(currentId)) return currentId; // Circular reference detected
+    visited.add(currentId);
     const session = ctx.getSession(currentId);
     if (!session?.parentSessionId) return currentId;
     currentId = session.parentSessionId;
@@ -153,6 +159,7 @@ const spawnAgentParams = Type.Object({
     Type.Number({
       description:
         "Maximum seconds to wait for the child to finish (only when wait=true). Default: 1800 (30 minutes).",
+      minimum: 1,
     }),
   ),
 });
@@ -703,9 +710,6 @@ function waitForChildCompletion(
 
 export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactory {
   return (pi) => {
-    // Track spawned children in this session for quick lookup
-    const spawnedIds: string[] = [];
-
     // ─── spawn_agent ───
 
     pi.registerTool<typeof spawnAgentParams, SpawnAgentDetails>({
@@ -728,6 +732,8 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
         "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
         `Max spawn depth is ${MAX_SPAWN_DEPTH}. Avoid spawning agents from within spawned agents unless the task genuinely requires hierarchical decomposition.`,
+        "Model selection: omit model to inherit from parent (usually best). Use 'anthropic/claude-sonnet-4-6' for mechanical/well-defined tasks (refactors, simple tests, pattern replacements). Keep parent's model for complex reasoning, architecture, or multi-file changes.",
+        "Thinking selection: omit to inherit. Use 'medium' for well-defined tasks, 'low' for purely mechanical work, 'high' (default) for complex implementation, 'xhigh' for architecture/deep review.",
       ],
       parameters: spawnAgentParams,
 
@@ -773,8 +779,6 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
             thinking: params.thinking,
             prompt: params.message,
           });
-
-          spawnedIds.push(session.id);
 
           // ─── Fire-and-forget (default) ───
           if (!params.wait) {
@@ -903,13 +907,13 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
+        const allSessions = ctx.listWorkspaceSessions();
         const lines = agents.map((a) => {
           const icon = STATUS_ICONS[a.status] ?? "?";
           const duration = formatDuration(a.durationMs);
           const cost = formatCost(a.cost);
           const name = a.name ?? a.id.slice(0, 8);
           // Show grandchild count if this child has its own children
-          const allSessions = ctx.listWorkspaceSessions();
           const grandchildren = allSessions.filter((s) => s.parentSessionId === a.id);
           const gcMark = grandchildren.length > 0 ? ` (+${grandchildren.length} children)` : "";
           return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}${gcMark}`;
@@ -934,7 +938,6 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
 
         // Tree-wide cost aggregation
         const rootId = getRootSessionId(ctx);
-        const allSessions = ctx.listWorkspaceSessions();
         const treeCost = computeTreeCost(rootId, allSessions);
 
         const treeLine =
