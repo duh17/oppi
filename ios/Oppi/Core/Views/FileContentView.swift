@@ -585,6 +585,7 @@ private struct HTMLFileView: View {
                     baseFileName: filePath ?? "preview.html",
                     piActionHandler: piWebViewHandler
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
             }
 
