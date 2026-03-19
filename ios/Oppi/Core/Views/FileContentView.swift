@@ -279,25 +279,36 @@ private struct MarkdownFileView: View {
         }
     }
 
+    private var markdownSourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenCode,
+            filePath: filePath,
+            languageHint: "markdown"
+        )
+    }
+
     private var documentBody: some View {
-        ScrollView(.vertical) {
-            Group {
-                if showRaw {
-                    Text(content)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.themeFg)
-                } else {
+        Group {
+            if showRaw {
+                NativeCodeBodyView(
+                    content: content,
+                    language: "markdown",
+                    startLine: 1,
+                    selectedTextSourceContext: piRouter != nil ? markdownSourceContext : nil
+                )
+            } else {
+                ScrollView(.vertical) {
                     MarkdownContentViewWrapper(
                         content: content,
                         plainTextFallbackThreshold: nil
                     )
                     .allowsFullScreenExpansion(false)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .textSelection(.enabled)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -311,6 +322,7 @@ private struct FullScreenMarkdownView: View {
 
     @State private var showSource: Bool
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
 
     init(content: String, filePath: String?, showSource: Bool = false) {
         self.content = content
@@ -318,25 +330,36 @@ private struct FullScreenMarkdownView: View {
         _showSource = State(initialValue: showSource)
     }
 
+    private var sourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenCode,
+            filePath: filePath,
+            languageHint: "markdown"
+        )
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView(.vertical) {
-                Group {
-                    if showSource {
-                        Text(content)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.themeFg)
-                    } else {
+            Group {
+                if showSource {
+                    NativeCodeBodyView(
+                        content: content,
+                        language: "markdown",
+                        startLine: 1,
+                        selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                    )
+                } else {
+                    ScrollView(.vertical) {
                         MarkdownContentViewWrapper(
                             content: content,
                             plainTextFallbackThreshold: nil
                         )
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color.themeBg)
             .allowsFullScreenExpansion(false)
@@ -524,18 +547,24 @@ private struct HTMLFileView: View {
 
     // MARK: - Document body (file browser, remote file)
 
+    private var sourceContext: SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: "",
+            surface: .fullScreenCode,
+            filePath: filePath,
+            languageHint: "html"
+        )
+    }
+
     private var documentBody: some View {
         ZStack(alignment: .topTrailing) {
             if showSource {
-                ScrollView(.vertical) {
-                    Text(content)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.themeFg)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                NativeCodeBodyView(
+                    content: content,
+                    language: "html",
+                    startLine: 1,
+                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                )
             } else {
                 HTMLWebView(
                     htmlString: content,
