@@ -105,12 +105,19 @@ enum DiffAttributedStringBuilder {
 
     /// Per-line metadata tracked during assembly.
     private struct LineInfo {
-        let rowStart: Int
-        let rowEnd: Int
+        let gutterStart: Int
+        let numStart: Int   // start of old+new line number block
         let codeStart: Int
         let codeLen: Int
+        let rowEnd: Int
         let kind: WorkspaceReviewDiffLine.Kind
         let spans: [WorkspaceReviewDiffSpan]?
+    }
+
+    /// Header (hunk separator) position.
+    private struct HeaderInfo {
+        let start: Int
+        let length: Int
     }
 
     // MARK: - Build
@@ -131,125 +138,132 @@ enum DiffAttributedStringBuilder {
             }
         }
         let numDigits = max(3, String(maxLineNum).count)
-        let blankNum = String(repeating: " ", count: numDigits)
 
-        // Pre-compute padded number strings (avoid per-line String allocation)
+        // Pre-compute padded number strings with trailing space.
+        // Index 0 = blank (for nil line numbers).
         var paddedNums = [String](repeating: "", count: maxLineNum + 1)
+        paddedNums[0] = String(repeating: " ", count: numDigits) + " "
         for i in 1...maxLineNum {
-            paddedNums[i] = paddedNumber(i, digits: numDigits)
+            paddedNums[i] = paddedNumber(i, digits: numDigits) + " "
         }
 
-        // --- Batch syntax scan (build [Character] directly, skip String→Array conversion) ---
+        // --- Phase 1: Build entire text + batch syntax scan in one pass ---
+        // Build all text via mutableString, simultaneously building the
+        // batch code Swift String for syntax scanning. Using a Swift String
+        // avoids the NSMutableString→String bridge copy at scan time.
+        let text = NSMutableString()
+        var batchCode = ""
         var allTokens: [SyntaxHighlighter.TokenRange] = []
-        var batchCharOffsets: [Int] = []
-
-        if language != .unknown {
-            var batchChars: [Character] = []
-            batchChars.reserveCapacity(totalLines * 60)
-            batchCharOffsets.reserveCapacity(totalLines)
-
-            for hunk in hunks {
-                for line in hunk.lines {
-                    if !batchChars.isEmpty {
-                        batchChars.append("\n")
-                    }
-                    batchCharOffsets.append(batchChars.count)
-                    let codeText = line.text.isEmpty ? " " : line.text
-                    batchChars.append(contentsOf: codeText)
-                }
-            }
-
-            allTokens = SyntaxHighlighter.scanTokenRanges(characters: batchChars, language: language)
-        }
-
-        // --- Phase 1: Build string via appends with correct per-segment attributes ---
-        // Each append gets its final font/foreground color, eliminating the need
-        // for Phase 4's 1300+ addAttribute overrides.
-        let result = NSMutableAttributedString()
+        var batchOffsets: [Int] = []
         var lineInfos: [LineInfo] = []
         lineInfos.reserveCapacity(totalLines)
+        var headers: [HeaderInfo] = []
 
-        // Pre-build shared immutable NSAttributedStrings for gutter/newline.
-        // Three variants per element: context (plain), added (with bg), removed (with bg).
-        let gutterContext = NSAttributedString(string: "   ", attributes: style.gutterContextAttrs)
-        let gutterAdded = NSAttributedString(string: "▎+ ", attributes: style.gutterAddedAttrs)
-        let gutterRemoved = NSAttributedString(string: "▎− ", attributes: style.gutterRemovedAttrs)
-        let newlineContext = NSAttributedString(string: "\n", attributes: style.codeDimAttrs)
-        let newlineDefault = NSAttributedString(string: "\n", attributes: style.codeDefaultAttrs)
-
-        // Pre-compute line number NSAttributedStrings.
-        // Three arrays: plain, added-bg, removed-bg. Index 0 = blank.
-        func buildNumAttrs(_ attrs: [NSAttributedString.Key: Any]) -> [NSAttributedString] {
-            var arr: [NSAttributedString] = []
-            arr.reserveCapacity(maxLineNum + 1)
-            arr.append(NSAttributedString(string: "\(blankNum) ", attributes: attrs))
-            for i in 1...maxLineNum {
-                arr.append(NSAttributedString(string: "\(paddedNums[i]) ", attributes: attrs))
-            }
-            return arr
+        if language != .unknown {
+            batchCode.reserveCapacity(totalLines * 60)
+            batchOffsets.reserveCapacity(totalLines)
         }
-        let numPlain = buildNumAttrs(style.lineNumAttrs)
-        let numAdded = buildNumAttrs(style.lineNumAddedAttrs)
-        let numRemoved = buildNumAttrs(style.lineNumRemovedAttrs)
 
-        result.beginEditing()
-
+        var batchByteOffset = 0
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
-                result.append(newlineDefault)
+                text.append("\n")
             }
-            result.append(NSAttributedString(string: " \(hunk.headerText) \n", attributes: style.headerAttrs))
+            let headerStart = text.length
+            text.append(" ")
+            text.append(hunk.headerText)
+            text.append(" \n")
+            headers.append(HeaderInfo(start: headerStart, length: text.length - headerStart))
 
             for line in hunk.lines {
-                let rowStart = result.length
-
-                // Gutter, line numbers, code, newline — all with bg baked in for added/removed.
-                // This eliminates the Phase 2 row-level addAttributes calls.
-                let nums: [NSAttributedString]
-                let codeAttrs: [NSAttributedString.Key: Any]
-
+                let gutterStart = text.length
                 switch line.kind {
-                case .added:
-                    result.append(gutterAdded)
-                    nums = numAdded
-                    codeAttrs = style.codeAddedAttrs
-                case .removed:
-                    result.append(gutterRemoved)
-                    nums = numRemoved
-                    codeAttrs = style.codeRemovedAttrs
-                case .context:
-                    result.append(gutterContext)
-                    nums = numPlain
-                    codeAttrs = style.codeDimAttrs
+                case .added: text.append("▎+ ")
+                case .removed: text.append("▎− ")
+                case .context: text.append("   ")
                 }
 
-                result.append(nums[line.oldLine ?? 0])
-                result.append(nums[line.newLine ?? 0])
+                let numStart = text.length
+                text.append(paddedNums[line.oldLine ?? 0])
+                text.append(paddedNums[line.newLine ?? 0])
 
-                // Code text
-                let codeStart = result.length
+                let codeStart = text.length
                 let codeText = line.text.isEmpty ? " " : line.text
-                result.mutableString.append(codeText)
-                let codeLen = result.length - codeStart
-                result.setAttributes(codeAttrs, range: NSRange(location: codeStart, length: codeLen))
+                text.append(codeText)
+                let codeLen = text.length - codeStart
 
-                // Newline
-                result.append(line.kind == .context ? newlineContext : newlineDefault)
-                let rowEnd = result.length
+                if language != .unknown {
+                    if batchByteOffset > 0 {
+                        batchCode.append("\n")
+                        batchByteOffset += 1
+                    }
+                    batchOffsets.append(batchByteOffset)
+                    batchCode.append(codeText)
+                    batchByteOffset += codeText.utf8.count
+                }
+
+                text.append("\n")
+                let rowEnd = text.length
 
                 lineInfos.append(LineInfo(
-                    rowStart: rowStart,
-                    rowEnd: rowEnd,
+                    gutterStart: gutterStart,
+                    numStart: numStart,
                     codeStart: codeStart,
                     codeLen: codeLen,
+                    rowEnd: rowEnd,
                     kind: line.kind,
                     spans: line.spans
                 ))
             }
         }
 
-        // --- Phase 2: Word-level span backgrounds only ---
-        // Row-level backgrounds are now baked into the append-phase attributes above.
+        if language != .unknown {
+            allTokens = SyntaxHighlighter.scanTokenRangesUTF8(batchCode, language: language)
+        }
+
+        // --- Phase 2: Create attributed string and apply segment attributes ---
+        let result = NSMutableAttributedString(string: text as String, attributes: style.codeDefaultAttrs)
+        result.beginEditing()
+
+        // Headers
+        for header in headers {
+            result.setAttributes(style.headerAttrs, range: NSRange(location: header.start, length: header.length))
+        }
+
+        // Per-line segments: gutter, line numbers, code
+        for info in lineInfos {
+            let gutterAttrs: [NSAttributedString.Key: Any]
+            let numAttrs: [NSAttributedString.Key: Any]
+            let codeAttrs: [NSAttributedString.Key: Any]
+
+            switch info.kind {
+            case .added:
+                gutterAttrs = style.gutterAddedAttrs
+                numAttrs = style.lineNumAddedAttrs
+                codeAttrs = style.codeAddedAttrs
+            case .removed:
+                gutterAttrs = style.gutterRemovedAttrs
+                numAttrs = style.lineNumRemovedAttrs
+                codeAttrs = style.codeRemovedAttrs
+            case .context:
+                gutterAttrs = style.gutterContextAttrs
+                numAttrs = style.lineNumAttrs
+                codeAttrs = style.codeDimAttrs
+            }
+
+            result.setAttributes(gutterAttrs, range: NSRange(location: info.gutterStart, length: info.numStart - info.gutterStart))
+            result.setAttributes(numAttrs, range: NSRange(location: info.numStart, length: info.codeStart - info.numStart))
+
+            // Context: code + newline share the same dim attrs → one call.
+            // Non-context: newline keeps default attrs (no bg leak).
+            if info.kind == .context {
+                result.setAttributes(codeAttrs, range: NSRange(location: info.codeStart, length: info.codeLen + 1))
+            } else {
+                result.setAttributes(codeAttrs, range: NSRange(location: info.codeStart, length: info.codeLen))
+            }
+        }
+
+        // --- Phase 3: Word-level span backgrounds ---
         for info in lineInfos {
             guard let spans = info.spans, !spans.isEmpty else { continue }
             let wordBg = info.kind == .removed ? style.wordRemovedBg : style.wordAddedBg
@@ -262,7 +276,7 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        // --- Phase 3: Syntax highlighting ---
+        // --- Phase 4: Syntax highlighting ---
         if !allTokens.isEmpty {
             let colorArray = style.syntaxColorArray
             var lineIdx = 0
@@ -271,11 +285,11 @@ enum DiffAttributedStringBuilder {
                 guard let color = colorArray[Int(token.kind.rawValue)] else { continue }
 
                 while lineIdx + 1 < lineCount,
-                      batchCharOffsets[lineIdx + 1] <= token.location {
+                      batchOffsets[lineIdx + 1] <= token.location {
                     lineIdx += 1
                 }
 
-                let offsetInLine = token.location - batchCharOffsets[lineIdx]
+                let offsetInLine = token.location - batchOffsets[lineIdx]
                 result.addAttribute(
                     .foregroundColor, value: color,
                     range: NSRange(location: lineInfos[lineIdx].codeStart + offsetInLine, length: token.length)
@@ -283,7 +297,7 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        // --- Phase 4: Word-level foreground override ---
+        // --- Phase 5: Word-level foreground override ---
         let fgColor = style.fgColor
         for info in lineInfos {
             guard let spans = info.spans, !spans.isEmpty else { continue }
