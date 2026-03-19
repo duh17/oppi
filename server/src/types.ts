@@ -104,6 +104,9 @@ export interface Session {
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
   piSessionId?: string; // pi internal session UUID reported by get_state
+
+  // Parent-child tree (spawn_agent)
+  parentSessionId?: string; // set when spawned by another session
 }
 
 export interface SessionMessage {
