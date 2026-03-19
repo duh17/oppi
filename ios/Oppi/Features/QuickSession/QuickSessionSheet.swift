@@ -527,7 +527,10 @@ struct QuickSessionSheet: View {
                     model: modelId
                 )
                 let session = response.session
-                sessionStore.upsert(session)
+                // Upsert into the target server's session store — not the
+                // environment's store (which belongs to the currently active
+                // server and may differ for cross-server quick sessions).
+                targetConnection.sessionStore.upsert(session)
 
                 // Save defaults for next time
                 QuickSessionDefaults.saveWorkspaceId(workspace.id)
@@ -542,7 +545,8 @@ struct QuickSessionSheet: View {
 
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
-                // Stage navigation — ContentView's onDismiss will execute the two-step push
+                // Stage navigation — ContentView's onDismiss pushes the workspace,
+                // WorkspaceDetailView consumes the session ID on appear.
                 nav.pendingQuickSessionNav = QuickSessionNav(
                     target: WorkspaceNavTarget(serverId: serverId, workspace: workspace),
                     sessionId: session.id

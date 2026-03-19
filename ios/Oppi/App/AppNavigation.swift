@@ -34,8 +34,14 @@ final class AppNavigation {
     var pendingQuickSessionDraft: String?
 
     /// Pending navigation from QuickSessionSheet.
-    /// Set before sheet dismiss; consumed in onDismiss to do the two-step nav push.
+    /// Set before sheet dismiss; consumed in onDismiss to push the workspace target.
     var pendingQuickSessionNav: QuickSessionNav?
+
+    /// Session ID to navigate to after a quick session workspace push.
+    /// Set in onDismiss alongside the workspace path push. Consumed by
+    /// WorkspaceDetailView once it appears, avoiding the fragile two-step
+    /// path push that races with navigationDestination registration.
+    var quickSessionPendingSessionId: String?
 }
 
 /// Navigation payload for quick session deep-link.

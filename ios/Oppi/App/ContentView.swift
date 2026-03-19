@@ -112,15 +112,13 @@ struct ContentView: View {
             // Navigate to the pending session after the sheet animation completes
             if let pending = navigation.pendingQuickSessionNav {
                 navigation.pendingQuickSessionNav = nil
-                // Step 1: switch tab and push to workspace
+                // Push to workspace — WorkspaceDetailView picks up the session ID
+                // from quickSessionPendingSessionId once it renders, avoiding the
+                // fragile two-step path push that races with navigationDestination.
                 navigation.selectedTab = .workspaces
                 navigation.workspacePath = NavigationPath()
                 navigation.workspacePath.append(pending.target)
-                // Step 2: push to session after the workspace view renders
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(300))
-                    navigation.workspacePath.append(pending.sessionId)
-                }
+                navigation.quickSessionPendingSessionId = pending.sessionId
             }
         }, content: {
             QuickSessionSheet()

@@ -10,6 +10,7 @@ struct WorkspaceDetailView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
+    @Environment(AppNavigation.self) private var navigation
 
     @State private var isCreating = false
     @State private var error: String?
@@ -380,6 +381,14 @@ struct WorkspaceDetailView: View {
             }
         }
         .onAppear {
+            // Consume pending quick session navigation — pushed by ContentView
+            // onDismiss after the workspace target is in the path. We navigate
+            // from here instead of a second path push to avoid racing with
+            // navigationDestination registration.
+            if let pendingId = navigation.quickSessionPendingSessionId {
+                navigation.quickSessionPendingSessionId = nil
+                navigateToSessionId = pendingId
+            }
             Task {
                 await refreshSessions()
                 await refreshLocalSessions()
