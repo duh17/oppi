@@ -122,13 +122,13 @@ struct ContentView: View {
                     navigation.workspacePath.append(pending.sessionId)
                 }
             }
-        }) {
+        }, content: {
             QuickSessionSheet()
                 .presentationDetents([.height(130), .medium])
                 .presentationDragIndicator(.hidden)
                 .presentationBackgroundInteraction(.enabled(upThrough: .height(130)))
                 .presentationCornerRadius(24)
-        }
+        })
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             guard newValue > 0, !navigation.showOnboarding else { return }
             navigation.showQuickSession = true
