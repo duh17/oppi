@@ -51,7 +51,6 @@ function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
   return new Promise((resolvePromise) => {
     execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
       if (err) {
-
         resolvePromise(null);
         return;
       }

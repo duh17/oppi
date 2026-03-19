@@ -1,3 +1,4 @@
+/* eslint-disable local/structured-log-format -- bench script uses console for human-readable output */
 /**
  * Comprehensive server hot-path benchmark.
  *
@@ -70,7 +71,8 @@ const THINKING_DELTA_EVENT: AgentSessionEvent = {
   type: "message_update",
   assistantMessageEvent: {
     type: "thinking_delta",
-    delta: "The user wants to optimize the event pipeline. Let me analyze the critical path from translatePiEvent through to broadcast...",
+    delta:
+      "The user wants to optimize the event pipeline. Let me analyze the critical path from translatePiEvent through to broadcast...",
   },
 } as AgentSessionEvent;
 
@@ -373,8 +375,14 @@ function benchMobileRenderer(): BenchResult[] {
   const toolArgs: [string, Record<string, unknown>][] = [
     ["bash", { command: 'grep -rn "foo" server/src --include="*.ts"' }],
     ["read", { path: "/Users/alice/workspace/project/src/main.ts", offset: 10, limit: 50 }],
-    ["edit", { path: "/Users/alice/workspace/project/src/main.ts", oldText: "old", newText: "new" }],
-    ["write", { path: "/Users/alice/workspace/project/src/new.ts", content: "export const x = 1;" }],
+    [
+      "edit",
+      { path: "/Users/alice/workspace/project/src/main.ts", oldText: "old", newText: "new" },
+    ],
+    [
+      "write",
+      { path: "/Users/alice/workspace/project/src/new.ts", content: "export const x = 1;" },
+    ],
     ["grep", { pattern: "TODO", path: ".", glob: "*.ts" }],
     ["find", { pattern: "*.swift", path: "/Users/alice/workspace/ios" }],
     ["ls", { path: "/Users/alice/workspace/project/src" }],
@@ -565,7 +573,10 @@ function benchBroadcaster(): BenchResult[] {
   // Ephemeral broadcast (text_delta — highest frequency)
   results.push(
     runBench("broadcast:ephemeral", BENCH_ITERATIONS, () => {
-      ephBroadcaster.broadcast(ephSession.id, { type: "text_delta", delta: "hello " } as ServerMessage);
+      ephBroadcaster.broadcast(ephSession.id, {
+        type: "text_delta",
+        delta: "hello ",
+      } as ServerMessage);
     }),
   );
 
@@ -635,6 +646,7 @@ function benchAnsiStrip(): BenchResult[] {
 
 // ─── Main ───
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- top-level entry point
 function main() {
   const renderers = new MobileRendererRegistry();
 
@@ -695,9 +707,7 @@ function main() {
     );
   }
   console.error("─".repeat(85));
-  console.error(
-    `${"TOTAL (sum of averages)".padEnd(40)} ${totalUs.toFixed(2).padStart(9)}μs`,
-  );
+  console.error(`${"TOTAL (sum of averages)".padEnd(40)} ${totalUs.toFixed(2).padStart(9)}μs`);
 
   // Category breakdown
   console.error("\n─── Category Breakdown ───");

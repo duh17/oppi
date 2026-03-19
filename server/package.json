@@ -54,7 +54,7 @@
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.59.0",
+    "@mariozechner/pi-coding-agent": "^0.60.0",
     "diff-match-patch": "^1.0.5",
     "ws": "^8.18.0"
   },

@@ -479,8 +479,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
       const recentN = cur.slice(-6);
       const recentDiscards = recentN.filter((r) => r.status === "discard").length;
       if (recentN.length >= 5 && recentDiscards >= 5) {
-        resumeMsg +=
-          ` Note: the last ${recentDiscards} experiments were all discards. The optimization space may be exhausted — check autoresearch.md before trying more experiments.`;
+        resumeMsg += ` Note: the last ${recentDiscards} experiments were all discards. The optimization space may be exhausted — check autoresearch.md before trying more experiments.`;
       }
 
       if (hasIdeas) {
@@ -589,9 +588,7 @@ export function createAutoresearchFactory(workspaceCwd: string): ExtensionFactor
         const cdMatch = params.command.match(/^cd\s+("([^"]+)"|'([^']+)'|(\S+))\s*&&/);
         if (cdMatch) {
           const rawPath = cdMatch[2] ?? cdMatch[3] ?? cdMatch[4];
-          const resolved = rawPath.startsWith("/")
-            ? rawPath
-            : path.resolve(workspaceCwd, rawPath);
+          const resolved = rawPath.startsWith("/") ? rawPath : path.resolve(workspaceCwd, rawPath);
           // Expand ~ and $HOME
           const expanded = resolved
             .replace(/^~/, process.env.HOME ?? "~")
