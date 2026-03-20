@@ -371,6 +371,26 @@ struct ChatView: View {
             )
         } else {
             VStack(spacing: 8) {
+                // Floating Game of Life indicator — pinned above input bar.
+                // Visible while agent is working, hidden when scrolled up.
+                Group {
+                    if isBusy, !scrollController.isJumpToBottomHintVisible {
+                        HStack {
+                            GameOfLifeRepresentable(gridSize: 6, color: UIColor(.themePurple))
+                                .frame(width: 20, height: 20)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 2)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.6, anchor: .bottomLeading)),
+                            removal: .opacity
+                        ))
+                    }
+                }
+                .animation(.easeOut(duration: 0.25), value: isBusy)
+                .animation(.easeOut(duration: 0.2), value: scrollController.isJumpToBottomHintVisible)
+
                 if showsMessageQueue {
                     MessageQueueContainer(
                         queue: messageQueueState,
