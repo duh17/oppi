@@ -1,3 +1,7 @@
+## Status: CONVERGED
+
+Final lifecycle_score: 22,172 (−9.2% from baseline 24,412)
+
 # Autoresearch: Timeline Lifecycle Smoothness
 
 ## Objective
@@ -69,3 +73,15 @@ Outputs `METRIC name=number` and `INVARIANT name=pass|FAIL` lines.
 - **end_settle_us ~31ms**. Dominated by markdown finalization (streaming→finalized mode transition triggers full CommonMark parse).
 - The incremental markdown parser already caches prefix segments during streaming — only tail is re-parsed. The cost is in UITextView's full NSTextStorage layout on attributedText replacement.
 - Compositional layout doesn't support per-item estimated sizes. To fix drift, need to subclass the layout or switch to UICollectionViewFlowLayout with delegated sizing.
+- **60pt drift was a measurement artifact**: The bench's programmatic `contentOffset.y -= 60` triggered AnchoredCollectionView's detached anchor contentOffset.didSet correction, which undid the scroll. In production, user drag scrolling sets `isTracking=true`, bypassing the didSet. Fix: disable detached anchor for programmatic scroll measurement → drift dropped to 0pt.
+
+### Convergence Analysis
+After 13 experiments, the remaining score components are dominated by UIKit overhead:
+- **streaming_max_us (~55ms, 75% of score)**: UIKit's `dataSource.apply()` + `layoutIfNeeded()` + cell self-sizing (NSTextStorage full layout). The incremental markdown parser is already efficient (tail-only re-parse). The text VIEW layout is O(total) on `attributedText` replacement.
+- **end_settle_us (~32ms, 15%)**: Markdown finalization (streaming→finalized mode) triggers full CommonMark parse. Pre-warming the cache during processBatch moves the cost but doesn't reduce it.
+- **insert_total_us (~12ms, 10%)**: Single structural snapshot apply with animation + layout. Already optimized to one apply (batched tool events).
+
+Further optimization requires architectural changes beyond the scope of autoresearch:
+1. Incremental NSTextStorage updates (O(delta) text layout) — needs correctness guarantees for inline markdown transitions
+2. Custom UICollectionViewLayout with per-item height estimates — replaces compositional layout
+3. Async markdown finalization — needs deferred cell rendering pipeline
