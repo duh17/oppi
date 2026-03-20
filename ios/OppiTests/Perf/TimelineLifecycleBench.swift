@@ -175,6 +175,8 @@ struct TimelineLifecycleBench {
         let streamingMaxUs = Double(streamingTimings.last ?? 0) / 1000.0
 
         // === Phase 3: Structural Insert (new tool row mid-stream) ===
+        // Simulate a fast tool that completes within a single 33ms coalescer
+        // window: tool_start + output + tool_end in one batch → one apply.
         let toolId = "bench-tool-insert"
         let insertStart = DispatchTime.now().uptimeNanoseconds
         reducer.processBatch([
@@ -184,16 +186,6 @@ struct TimelineLifecycleBench {
                 tool: "bash",
                 args: ["command": .string("echo benchmark")]
             ),
-        ])
-        harness.items = reducer.items
-        harness.applyItems(
-            streamingID: reducer.streamingAssistantID,
-            isBusy: true
-        )
-        cv.layoutIfNeeded()
-
-        // Add tool output + end
-        reducer.processBatch([
             .toolOutput(
                 sessionId: "bench",
                 toolEventId: toolId,
