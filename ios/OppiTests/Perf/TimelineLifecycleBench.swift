@@ -292,14 +292,13 @@ struct TimelineLifecycleBench {
         let endStart = DispatchTime.now().uptimeNanoseconds
         reducer.processBatch([.agentEnd(sessionId: "bench")])
         harness.items = reducer.items
+        // coordinator.apply forces layoutIfNeeded when !isBusy — no extra
+        // layout pass needed. This matches production behavior (1 layout
+        // pass per apply cycle, not 3).
         harness.applyItems(
             streamingID: nil,
             isBusy: false
         )
-        cv.layoutIfNeeded()
-        // Settle: scroll to final bottom after layout
-        scrollToBottom(cv)
-        cv.layoutIfNeeded()
         let endEnd = DispatchTime.now().uptimeNanoseconds
         let endSettleUs = Double(endEnd &- endStart) / 1000.0
 
