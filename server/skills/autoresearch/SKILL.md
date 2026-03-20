@@ -22,8 +22,15 @@ Autonomous experiment loop: try ideas, keep what works, discard what doesn't, ne
    WORKTREE="../$(basename $(pwd))-autoresearch/$BRANCH"
    git worktree add -b "$BRANCH" "$WORKTREE"
    cd "$WORKTREE"
+   # Symlink gitignored dirs (scripts, node_modules, config) from main tree
+   bash ios/scripts/prepare-worktree.sh "$WORKTREE"
    ```
    All subsequent work happens inside the worktree directory.
+   **Important:** Many build scripts (`sim-pool.sh`, architecture checks, etc.)
+   are gitignored and won't exist in a fresh worktree. Always run
+   `prepare-worktree.sh` after creating the worktree to symlink them from
+   the main tree. If the script doesn't exist yet, symlink `ios/scripts/`
+   and `server/scripts/` manually.
 3. Read the source files. Understand the workload deeply before writing anything.
 4. Write `autoresearch.md` and `autoresearch.sh` (see below). Commit both.
 5. `init_experiment` -> run baseline -> `log_experiment` -> start looping immediately.
