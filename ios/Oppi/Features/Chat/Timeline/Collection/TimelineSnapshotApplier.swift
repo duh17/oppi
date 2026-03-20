@@ -120,7 +120,18 @@ enum TimelineSnapshotApplier {
         // When transitioning to idle (working indicator removed, session ended),
         // skip animation to avoid layout settlement issues that leave content
         // behind the input bar overlay.
-        let shouldAnimate = isBusy && nextIDs.count >= previousIDs.count
+        // Animate structural inserts during busy sessions, but NOT when the
+        // only change is the working indicator appearing/disappearing — it's a
+        // tiny row that should appear instantly. Animated inserts defer layout
+        // and cause the indicator to render below the input bar.
+        let isOnlyWorkingIndicatorChange: Bool = {
+            let added = Set(nextIDs).subtracting(previousIDs)
+            let removed = Set(previousIDs).subtracting(nextIDs)
+            let workingID = ChatTimelineCollectionHost.workingIndicatorID
+            return (added == [workingID] && removed.isEmpty)
+                || (removed == [workingID] && added.isEmpty)
+        }()
+        let shouldAnimate = isBusy && nextIDs.count >= previousIDs.count && !isOnlyWorkingIndicatorChange
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
