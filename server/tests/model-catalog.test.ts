@@ -268,6 +268,146 @@ describe("ModelCatalog", () => {
     });
   });
 
+  describe("allowlist filtering", () => {
+    it("only includes models whose canonical ID is in the allowlist", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "anthropic/claude-sonnet-4-20250514",
+        "google/gemini-3.0-pro",
+      ]);
+
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models).toHaveLength(2);
+      expect(models.map((m) => m.id)).toEqual([
+        "anthropic/claude-sonnet-4-20250514",
+        "google/gemini-3.0-pro",
+      ]);
+    });
+
+    it("excludes models not in the allowlist", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "openai/gpt-5.3-codex",
+      ]);
+
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("openai/gpt-5.3-codex");
+    });
+
+    it("does not filter when allowlist is undefined", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), undefined);
+
+      catalog.refresh();
+
+      expect(catalog.getAll()).toHaveLength(3);
+    });
+
+    it("does not filter when allowlist is empty array", () => {
+      const registry = makeRegistry([SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), []);
+
+      catalog.refresh();
+
+      expect(catalog.getAll()).toHaveLength(3);
+    });
+
+    it("applies allowlist to the fallback-to-all path", () => {
+      const registry = makeRegistry([], [SONNET, GPT, GEMINI]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "openai/gpt-5.3-codex",
+      ]);
+
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("openai/gpt-5.3-codex");
+    });
+
+    it("returns empty catalog when no models match the allowlist", () => {
+      const registry = makeRegistry([SONNET, GPT]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "google/gemini-3.0-pro",
+      ]);
+
+      catalog.refresh();
+
+      expect(catalog.getAll()).toEqual([]);
+    });
+
+    it("getContextWindow falls back to 200k for model excluded by allowlist", () => {
+      const registry = makeRegistry([SONNET, GPT]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "anthropic/claude-sonnet-4-20250514",
+      ]);
+      catalog.refresh();
+
+      // GPT is excluded from catalog — can't resolve its context window
+      expect(catalog.getContextWindow("gpt-5.3-codex")).toBe(200000);
+      // SONNET is in the catalog — resolves normally
+      expect(catalog.getContextWindow("claude-sonnet-4-20250514")).toBe(200000);
+    });
+
+    it("getContextWindow still uses NNNk fallback for excluded models", () => {
+      const registry = makeRegistry([GPT]);
+      const catalog = new ModelCatalog(registry, makeStorage(), [
+        "anthropic/claude-sonnet-4-20250514",
+      ]);
+      catalog.refresh();
+
+      // GPT excluded, but "gpt-5.3-codex" has no NNNk suffix → 200k
+      expect(catalog.getContextWindow("gpt-5.3-codex")).toBe(200000);
+      // An unknown model with NNNk suffix still parses
+      expect(catalog.getContextWindow("some-model-128k")).toBe(128000);
+    });
+
+    it("ensureSessionContextWindow uses 200k default for model excluded by allowlist", () => {
+      const storage = makeStorage();
+      const registry = makeRegistry([GPT]);
+      const catalog = new ModelCatalog(registry, storage, [
+        "anthropic/claude-sonnet-4-20250514",
+      ]);
+      catalog.refresh();
+
+      const session = makeSession({ model: "gpt-5.3-codex", contextWindow: undefined });
+      catalog.ensureSessionContextWindow(session);
+
+      // GPT excluded from catalog → getContextWindow returns 200k fallback
+      expect(session.contextWindow).toBe(200000);
+      expect(storage.saveSession).toHaveBeenCalledWith(session);
+    });
+
+    it("healPersistedSessionContextWindows with allowlisted vs excluded models", () => {
+      const s1 = makeSession({ id: "s1", model: "gpt-5.3-codex", contextWindow: undefined });
+      const s2 = makeSession({
+        id: "s2",
+        model: "claude-sonnet-4-20250514",
+        contextWindow: undefined,
+      });
+
+      const storage = makeStorage([s1, s2]);
+      const registry = makeRegistry([SONNET, GPT]);
+      const catalog = new ModelCatalog(registry, storage, [
+        "anthropic/claude-sonnet-4-20250514",
+      ]);
+      catalog.refresh();
+
+      catalog.healPersistedSessionContextWindows();
+
+      // SONNET is allowlisted → resolves to 200k (its actual value)
+      expect(s2.contextWindow).toBe(200000);
+      // GPT is excluded → falls back to 200k default (not 272k)
+      expect(s1.contextWindow).toBe(200000);
+      expect(storage.saveSession).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("healPersistedSessionContextWindows", () => {
     it("heals sessions with stale fallback context windows", () => {
       const s1 = makeSession({ id: "s1", model: "gpt-5.3-codex", contextWindow: 200000 });
