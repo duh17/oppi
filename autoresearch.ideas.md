@@ -1,19 +1,23 @@
 # Optimization Ideas
 
-## High Impact (algorithmic)
-- Pre-calculated heights for finalized assistant messages: cache on `isDone` transition, skip self-sizing for history items
-- Height cache warmed during `loadSession()` trace replay — eliminates cascade for cold start
-- Skip layoutIfNeeded() for off-screen cells during attached streaming (only visible cells matter)
-- Batch multiple structural changes into one animated apply (tool start+output+end in single snapshot)
+## Tried / Exhausted
+- ~~Pre-calculated heights for finalized assistant messages~~ — tried via CellHeightCache, issue is layout ESTIMATE not measurement speed
+- ~~Batch multiple structural changes into one animated apply~~ — done (tool start+output+end batched)
+- ~~Reduce reconfigureItems candidates during streaming~~ — done (isStreamingMutableItem narrowing)
+- ~~Skip layoutIfNeeded() for off-screen cells~~ — coordinator already skips during attached streaming
+- ~~Height cache warmed during loadSession()~~ — CellHeightCache doesn't help with compositional layout's global estimate
+- ~~Use `reloadItems` vs `reconfigureItems` selectively~~ — reconfigure is already the right path
+- ~~Incremental NSTextStorage append~~ — correctness risk with inline markdown transitions
 
-## Medium Impact (framework avoidance)
-- Adaptive coalescer interval: faster for simple timelines (< 30 items), slower for heavy
-- Structural insert animation tuning: shorter duration, lighter easing
-- Reduce reconfigureItems candidates during streaming (most items are immutable)
-- Use `reloadItems` vs `reconfigureItems` selectively based on change type
+## Architectural (beyond autoresearch scope)
+These require major refactoring, not micro-optimization loops:
+- Custom UICollectionViewLayout with per-item height estimates (replaces compositional layout)
+- Incremental NSTextStorage updates with formatting-aware diff (needs CommonMark AST diffing)
+- Async markdown finalization (deferred cell rendering pipeline)
+- Adaptive coalescer interval — needs bench to use real DeltaCoalescer, not direct processBatch
 
-## Lower Impact (allocation/micro)
+## Untried (micro, likely < 1% each)
+- Disable animation for structural insert during streaming — saves UIKit animation transaction overhead
+- ChatItem Equatable: short-circuit on id hash before comparing payloads
+- ContiguousArray for items/IDs in hot paths
 - ProcessBatch: avoid intermediate array allocations in event grouping
-- ItemIndex: inline hash function for String IDs
-- ChatItem Equatable: short-circuit on id before comparing payloads
-- Use ContiguousArray for items/IDs in hot paths
