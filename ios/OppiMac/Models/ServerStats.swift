@@ -1,31 +1,17 @@
 import Foundation
 
-// MARK: - Top-level response
-
-/// Full response from `GET /server/stats?range=N`.
-struct ServerStats: Codable, Sendable {
-    let memory: StatsMemory
-    let activeSessions: [StatsActiveSession]
-    let daily: [StatsDailyEntry]
-    let modelBreakdown: [StatsModelBreakdown]
-    let workspaceBreakdown: [StatsWorkspaceBreakdown]
-    let totals: StatsTotals
-}
-
 // MARK: - Memory
 
-/// Process memory snapshot from `process.memoryUsage()`, values in MB.
-struct StatsMemory: Codable, Sendable {
+struct StatsMemory: Codable {
     let heapUsed: Double
     let heapTotal: Double
     let rss: Double
     let external: Double
 }
 
-// MARK: - Active sessions
+// MARK: - Active session
 
-/// A session that is not stopped or in error state.
-struct StatsActiveSession: Codable, Identifiable, Sendable {
+struct StatsActiveSession: Codable, Sendable {
     let id: String
     let status: String
     let model: String?
@@ -35,27 +21,13 @@ struct StatsActiveSession: Codable, Identifiable, Sendable {
     let parentSessionId: String?
     let contextTokens: Int?
     let contextWindow: Int?
-    let createdAt: Double
-
-    /// True when the session is actively processing (status == "busy").
-    var isBusy: Bool { status == "busy" }
-    /// True when the session has a parent (child agent).
-    var isChild: Bool { parentSessionId != nil }
+    let createdAt: String?
 }
 
-// MARK: - Daily breakdown
+// MARK: - Daily entry
 
-/// Aggregated stats for a single calendar day (UTC).
-struct StatsDailyEntry: Codable, Sendable {
-    let date: String                              // "YYYY-MM-DD"
-    let sessions: Int
-    let cost: Double
-    let tokens: Int
-    let byModel: [String: StatsDailyModelEntry]
-}
-
-/// Per-model stats within a daily entry.
-struct StatsDailyModelEntry: Codable, Sendable {
+struct StatsDailyEntry: Codable {
+    let date: String
     let sessions: Int
     let cost: Double
     let tokens: Int
@@ -63,32 +35,52 @@ struct StatsDailyModelEntry: Codable, Sendable {
 
 // MARK: - Model breakdown
 
-/// Aggregated stats across the range period for a single model.
-struct StatsModelBreakdown: Codable, Identifiable, Sendable {
-    var id: String { model }
+struct StatsModelBreakdown: Codable {
     let model: String
     let sessions: Int
     let cost: Double
     let tokens: Int
-    /// Fraction of total cost (0–1).
     let share: Double
 }
 
 // MARK: - Workspace breakdown
 
-/// Aggregated stats across the range period for a single workspace.
-struct StatsWorkspaceBreakdown: Codable, Identifiable, Sendable {
+struct StatsWorkspaceBreakdown: Codable {
     let id: String
-    let name: String
+    let name: String?
     let sessions: Int
     let cost: Double
 }
 
 // MARK: - Totals
 
-/// Overall totals across all sessions in the range.
-struct StatsTotals: Codable, Sendable {
+struct StatsTotals: Codable {
     let sessions: Int
     let cost: Double
     let tokens: Int
 }
+
+// MARK: - Top-level response
+
+struct ServerStats: Codable, Sendable {
+    let memory: StatsMemory
+    let activeSessions: [StatsActiveSession]
+    let daily: [StatsDailyEntry]
+    let modelBreakdown: [StatsModelBreakdown]
+    let workspaceBreakdown: [StatsWorkspaceBreakdown]
+    let totals: StatsTotals
+}
+
+// MARK: - Helpers
+
+extension StatsActiveSession {
+    var isBusy: Bool { status == "busy" || status == "starting" }
+}
+
+// MARK: - Sendable conformances
+
+extension StatsMemory: Sendable {}
+extension StatsDailyEntry: Sendable {}
+extension StatsModelBreakdown: Sendable {}
+extension StatsWorkspaceBreakdown: Sendable {}
+extension StatsTotals: Sendable {}
