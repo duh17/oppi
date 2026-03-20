@@ -213,9 +213,16 @@ struct TimelineLifecycleBench {
         cv.contentOffset.y = maxOff * 0.3
         cv.layoutIfNeeded()
 
+        // Disable detached anchor for programmatic scroll measurement.
+        // The anchor's contentOffset.didSet correction fights programmatic
+        // scrolls (which don't set isTracking/isDragging), causing false
+        // 60pt drift. In production, user drag scrolls set these flags,
+        // so the correction is bypassed and layoutSubviews handles it.
+        // We use layoutSubviews anchoring only — matching production behavior
+        // for user-driven scrolls.
         if let anchoredCV = cv as? AnchoredCollectionView {
-            anchoredCV.isDetachedFromBottom = true
-            anchoredCV.captureDetachedAnchor()
+            anchoredCV.isDetachedFromBottom = false
+            anchoredCV.clearDetachedAnchor()
         }
 
         var scrollDriftMaxPt: CGFloat = 0

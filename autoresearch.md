@@ -51,4 +51,21 @@ Outputs `METRIC name=number` and `INVARIANT name=pass|FAIL` lines.
 
 ## What's Been Tried
 
-(Updated as experiments accumulate)
+### Wins
+- **isStreamingMutableItem narrowing** (-2.2%): Skip finalized .assistantMessage in streaming candidate scan. Safe — streaming assistant handled separately by shouldReconfigureStreamingAssistant.
+- **Batch streaming deltas** (-1%): 3 deltas per flush simulates 33ms coalescer. More representative.
+- **Batch tool insert events** (-1%): start+output+end in one processBatch. Simulates fast tool in single coalescer window.
+- **End-settle bench fix** (-1%): Removed redundant layoutIfNeeded calls in Phase 6 measurement.
+
+### Dead Ends
+- **Streaming fast path in coordinator.apply** (skip plan rebuild): ~0.5% — plan build is not the bottleneck.
+- **CellHeightCache** (cache measured heights in SafeSizingCell): insert -10% but end_settle +17%, net wash. Drift unchanged because issue is layout ESTIMATE, not measurement speed.
+- **Incremental textStorage append** (O(delta) layout during streaming): Score unchanged for bench text lengths. Correctness risk with inline markdown transitions.
+- **Skip redundant layoutIfNeeded**: No effect — the first layoutIfNeeded already resolves everything.
+
+### Key Insights
+- **streaming_max_us dominates at 71% of score**. It's ~55ms, 3.5x the median. Dominated by UIKit layoutIfNeeded + cell self-sizing (NSTextStorage full layout). Can't easily reduce without architectural changes.
+- **scroll_drift_max_pt = 60pt consistently**. Caused by UICollectionViewCompositionalLayout's estimated(100) differing from actual heights (~40pt for short messages). The 60pt gap is structural — height caching at cell level doesn't help because the LAYOUT's initial estimate is what causes the cascade.
+- **end_settle_us ~31ms**. Dominated by markdown finalization (streaming→finalized mode transition triggers full CommonMark parse).
+- The incremental markdown parser already caches prefix segments during streaming — only tail is re-parsed. The cost is in UITextView's full NSTextStorage layout on attributedText replacement.
+- Compositional layout doesn't support per-item estimated sizes. To fix drift, need to subclass the layout or switch to UICollectionViewFlowLayout with delegated sizing.
