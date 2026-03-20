@@ -22,9 +22,8 @@ struct ChatTimelineApplyPlan {
         let dedupedItems = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
         nextIDs.append(contentsOf: dedupedItems.orderedIDs)
 
-        if isBusy, streamingAssistantID == nil {
-            nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
-        }
+        // Working indicator is now a floating overlay above the input bar
+        // (see ChatView.footerArea), not a timeline row.
 
         return Self(
             nextIDs: nextIDs,
