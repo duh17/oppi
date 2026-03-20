@@ -67,6 +67,9 @@ docs/**/*.md
 server/extensions/
 docs/design/mocks/
 
+# Internal tooling (private skills, build scripts)
+server/skills/
+
 # Autoresearch session artifacts (regenerated each run)
 autoresearch.md
 autoresearch.jsonl
