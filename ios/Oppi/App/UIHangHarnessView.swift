@@ -614,7 +614,8 @@ struct UIHangHarnessView: View {
         switch themeID {
         case .dark: return 0
         case .light: return 1
-        case .custom: return 2
+        case .night: return 2
+        case .custom: return 3
         }
     }
 
@@ -1393,7 +1394,9 @@ struct UIHangHarnessView: View {
         switch themeID {
         case .dark:
             themeID = .light
-        case .light, .custom:
+        case .light:
+            themeID = .night
+        case .night, .custom:
             themeID = .dark
         }
     }

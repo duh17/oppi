@@ -141,10 +141,11 @@ extension ThemePalette {
 enum ThemeID: Hashable, Codable, Sendable {
     case dark
     case light
+    case night
     case custom(String)
 
     /// Built-in themes (shipped in the app). Custom/imported themes added separately.
-    static let builtins: [Self] = [.dark, .light]
+    static let builtins: [Self] = [.dark, .light, .night]
 
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
@@ -153,6 +154,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch self {
         case .dark: return "dark"
         case .light: return "light"
+        case .night: return "night"
         case .custom(let name): return "custom:\(name)"
         }
     }
@@ -161,6 +163,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch rawValue {
         case "dark": self = .dark
         case "light": self = .light
+        case "night": self = .night
         default:
             if rawValue.hasPrefix("custom:") {
                 self = .custom(String(rawValue.dropFirst("custom:".count)))
@@ -190,6 +193,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch self {
         case .dark: return "Dark"
         case .light: return "Light"
+        case .night: return "Night"
         case .custom(let name): return name
         }
     }
@@ -200,6 +204,8 @@ enum ThemeID: Hashable, Codable, Sendable {
             return "Native dark with muted, frosted accents."
         case .light:
             return "Native light with clean, understated accents."
+        case .night:
+            return "OLED black with warm accents. Minimizes eye strain in the dark."
         case .custom:
             return "Imported theme from server."
         }
@@ -207,7 +213,7 @@ enum ThemeID: Hashable, Codable, Sendable {
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .dark:
+        case .dark, .night:
             return .dark
         case .light:
             return .light
@@ -226,6 +232,8 @@ enum ThemeID: Hashable, Codable, Sendable {
             return ThemePalettes.dark
         case .light:
             return ThemePalettes.light
+        case .night:
+            return ThemePalettes.night
         case .custom(let name):
             if let remote = CustomThemeStore.load(name: name),
                let palette = remote.toPalette() {
@@ -310,6 +318,73 @@ enum ThemePalettes {
         thinkingMedium: c(0x8296B4),
         thinkingHigh: c(0x9B91B9),
         thinkingXhigh: c(0xAF96CD)
+    )
+
+    /// Night — OLED black with warm, low-saturation accents.
+    ///
+    /// Designed for reading in the dark. Key choices:
+    /// - Near-black background (#0E0D0B) avoids OLED smearing vs pure #000000
+    /// - Warm parchment text (#C8BFB0) reduces blue light and glare
+    /// - ~10:1 contrast ratio (vs 21:1 max) — easier on dark-adapted eyes
+    /// - All accents warm-shifted: amber hero, blues → steel, cyans → sage teal
+    /// - Low saturation across the board — nothing screams at dilated pupils
+    static let night = ThemePalette(
+        // Base 13
+        bg: c(0x0E0D0B),  // warm near-black (OLED friendly, avoids smear)
+        bgDark: c(0x080807),  // deepest shadow (code blocks)
+        bgHighlight: c(0x1C1A18),  // warm dark elevation
+        fg: c(0xC8BFB0),  // warm parchment (~10.5:1 contrast on bg)
+        fgDim: c(0x8A8278),  // warm stone (~5:1)
+        comment: c(0x625C56),  // warm ash (~3:1, intentionally low for de-emphasis)
+        blue: c(0x7E90A4),  // dusty steel (warm blue, desaturated)
+        cyan: c(0x6E9C94),  // sage teal (shifted green, minimal blue)
+        green: c(0x7C9C6E),  // forest moss
+        orange: c(0xC49468),  // warm amber (hero accent)
+        purple: c(0x9684AA),  // dusty plum
+        red: c(0xB86C6E),  // muted rose
+        yellow: c(0xB4A270),  // wheat gold
+        thinkingText: c(0x8A8278),
+        // User message
+        userMessageBg: c(0x1C1A18),
+        userMessageText: c(0xC8BFB0),
+        // Tool state
+        toolPendingBg: c(0xC49468).opacity(0.10),
+        toolSuccessBg: c(0x7C9C6E).opacity(0.08),
+        toolErrorBg: c(0xB86C6E).opacity(0.08),
+        toolTitle: c(0xC8BFB0),
+        toolOutput: c(0x8A8278),
+        // Markdown
+        mdHeading: c(0x7E90A4),  // dusty steel
+        mdLink: c(0x6E9C94),  // sage teal
+        mdLinkUrl: c(0x625C56),
+        mdCode: c(0x6E9C94),  // sage teal
+        mdCodeBlock: c(0x7C9C6E),  // moss
+        mdCodeBlockBorder: c(0x2A2826),
+        mdQuote: c(0x8A8278),
+        mdQuoteBorder: c(0x2A2826),
+        mdHr: c(0x2A2826),
+        mdListBullet: c(0xC49468),  // amber
+        // Diffs
+        toolDiffAdded: c(0x6A9060),  // earthy green
+        toolDiffRemoved: c(0xA85858),  // deep warm red
+        toolDiffContext: c(0x625C56),
+        // Syntax (warm-shifted, muted)
+        syntaxComment: c(0x625C56),
+        syntaxKeyword: c(0x9684AA),  // dusty plum
+        syntaxFunction: c(0x7E90A4),  // dusty steel
+        syntaxVariable: c(0xC8BFB0),
+        syntaxString: c(0xB86C6E),  // muted rose
+        syntaxNumber: c(0xC49468),  // amber
+        syntaxType: c(0x6E9C94),  // sage teal
+        syntaxOperator: c(0xC8BFB0),
+        syntaxPunctuation: c(0x8A8278),
+        // Thinking (warm monochromatic)
+        thinkingOff: c(0x3A3632),
+        thinkingMinimal: c(0x5C5650),
+        thinkingLow: c(0x6E7880),
+        thinkingMedium: c(0x7A8A98),
+        thinkingHigh: c(0x8A80A0),
+        thinkingXhigh: c(0xA87890)
     )
 
     /// Light — native light with clean, understated accents.

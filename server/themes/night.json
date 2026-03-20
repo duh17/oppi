@@ -1,0 +1,61 @@
+{
+  "name": "Night",
+  "colorScheme": "dark",
+  "colors": {
+    "bg": "#0E0D0B",
+    "bgDark": "#080807",
+    "bgHighlight": "#1C1A18",
+    "fg": "#C8BFB0",
+    "fgDim": "#8A8278",
+    "comment": "#625C56",
+    "blue": "#7E90A4",
+    "cyan": "#6E9C94",
+    "green": "#7C9C6E",
+    "orange": "#C49468",
+    "purple": "#9684AA",
+    "red": "#B86C6E",
+    "yellow": "#B4A270",
+    "thinkingText": "#8A8278",
+
+    "userMessageBg": "#1C1A18",
+    "userMessageText": "#C8BFB0",
+
+    "toolPendingBg": "#1E1710",
+    "toolSuccessBg": "#121810",
+    "toolErrorBg": "#181010",
+    "toolTitle": "#C8BFB0",
+    "toolOutput": "#8A8278",
+
+    "mdHeading": "#7E90A4",
+    "mdLink": "#6E9C94",
+    "mdLinkUrl": "#625C56",
+    "mdCode": "#6E9C94",
+    "mdCodeBlock": "#7C9C6E",
+    "mdCodeBlockBorder": "#2A2826",
+    "mdQuote": "#8A8278",
+    "mdQuoteBorder": "#2A2826",
+    "mdHr": "#2A2826",
+    "mdListBullet": "#C49468",
+
+    "toolDiffAdded": "#6A9060",
+    "toolDiffRemoved": "#A85858",
+    "toolDiffContext": "#625C56",
+
+    "syntaxComment": "#625C56",
+    "syntaxKeyword": "#9684AA",
+    "syntaxFunction": "#7E90A4",
+    "syntaxVariable": "#C8BFB0",
+    "syntaxString": "#B86C6E",
+    "syntaxNumber": "#C49468",
+    "syntaxType": "#6E9C94",
+    "syntaxOperator": "#C8BFB0",
+    "syntaxPunctuation": "#8A8278",
+
+    "thinkingOff": "#3A3632",
+    "thinkingMinimal": "#5C5650",
+    "thinkingLow": "#6E7880",
+    "thinkingMedium": "#7A8A98",
+    "thinkingHigh": "#8A80A0",
+    "thinkingXhigh": "#A87890"
+  }
+}

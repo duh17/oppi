@@ -233,6 +233,13 @@ extension AppTheme {
         diffAddedBg: c(0x3A8550).opacity(0.10),
         diffRemovedBg: c(0xC44E54).opacity(0.08)
     )
+
+    /// Night — OLED black with warm accents, minimal eye strain.
+    static let night = AppTheme.from(
+        palette: ThemePalettes.night,
+        diffAddedBg: c(0x6A9060).opacity(0.10),
+        diffRemovedBg: c(0xA85858).opacity(0.08)
+    )
 }
 
 extension ThemeID {
@@ -242,6 +249,8 @@ extension ThemeID {
             return .dark
         case .light:
             return .light
+        case .night:
+            return .night
         case .custom(let name):
             // Build from imported palette if available
             if let remote = CustomThemeStore.load(name: name),
