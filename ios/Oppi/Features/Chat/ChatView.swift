@@ -139,13 +139,10 @@ struct ChatView: View {
         chatTimeline
             .ignoresSafeArea(.container, edges: .top)
             .overlay {
-                // Dismiss scrim: dims the timeline so content doesn't
-                // bleed through the context bar's glass effect, and
-                // collapses the bar on tap. Using a semi-opaque fill
-                // instead of Color.clear prevents the visual overlap
-                // between expanded bar content and the timeline behind.
+                // Dismiss layer: tap anywhere outside the bar to collapse it
                 if contextBarExpanded {
-                    Color.themeBg.opacity(0.5)
+                    Color.clear
+                        .contentShape(Rectangle())
                         .ignoresSafeArea()
                         .onTapGesture { contextBarCollapseToken &+= 1 }
                 }
@@ -629,8 +626,6 @@ struct ChatView: View {
                 inputText = ""
                 pendingImages = []
                 pendingFiles = []
-                // Clear review context pills after first send
-                sessionStore.clearContextSummary(for: sessionId)
                 // Scroll to bottom after sending
                 scrollRef.requestScrollToBottom()
             },
