@@ -3,87 +3,66 @@ import OSLog
 
 private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "MacSessionMonitor")
 
-/// Polls `GET /server/stats` and exposes the latest stats to the UI.
+/// Polls `/server/stats` and publishes the latest ``ServerStats`` to SwiftUI views.
 ///
-/// Uses a Task-based sleep loop (not Timer) so cancellation is clean and
-/// the polling rate can be toggled without timer invalidation ceremony.
-///
-/// Polling rates:
-/// - Fast (popover open): every 3 seconds
-/// - Background: every 30 seconds
-@MainActor @Observable
+/// Call ``startPolling(client:)`` to begin background polling (30 s interval).
+/// Call ``setFastPolling(_:)`` with `true` when the popover is open (3 s interval)
+/// and `false` when it closes to revert to background rate.
+@MainActor
+@Observable
 final class MacSessionMonitor {
 
-    // MARK: - Public state
+    // MARK: - Published state
 
-    /// Latest stats response, nil before first successful fetch.
     var stats: ServerStats?
-    /// True while the polling loop is running.
-    var isPolling: Bool = false
 
     // MARK: - Private
 
+    private var apiClient: MacAPIClient?
     private var pollingTask: Task<Void, Never>?
-    private var client: MacAPIClient?
-    private var fastPolling: Bool = false
+    private var isFastPolling = false
 
-    private let fastInterval: Duration = .seconds(3)
-    private let slowInterval: Duration = .seconds(30)
+    // MARK: - API
 
-    // MARK: - Control
-
-    /// Start polling with `client`. Safe to call multiple times — restarts if already running.
+    /// Configure the client and begin polling at the background (30 s) rate.
     func startPolling(client: MacAPIClient) {
-        self.client = client
-        isPolling = true
-        restartLoop()
-        logger.debug("Session monitor started (interval: \(self.fastPolling ? "3s" : "30s"))")
+        apiClient = client
+        schedulePolling(fast: isFastPolling)
     }
 
-    /// Stop polling and clear cached stats.
+    /// Switch between fast (3 s, popover open) and slow (30 s, background) polling.
+    func setFastPolling(_ fast: Bool) {
+        guard fast != isFastPolling else { return }
+        isFastPolling = fast
+        if apiClient != nil {
+            schedulePolling(fast: fast)
+        }
+    }
+
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
-        isPolling = false
-        stats = nil
-        logger.debug("Session monitor stopped")
-    }
-
-    /// Toggle between fast (3s) and slow (30s) polling.
-    ///
-    /// Call with `true` when the popover opens, `false` when it closes.
-    func setFastPolling(_ fast: Bool) {
-        guard fastPolling != fast else { return }
-        fastPolling = fast
-        if isPolling {
-            restartLoop()
-            logger.debug("Session monitor interval changed to \(fast ? "3s" : "30s")")
-        }
     }
 
     // MARK: - Private
 
-    private func restartLoop() {
+    private func schedulePolling(fast: Bool) {
         pollingTask?.cancel()
-        pollingTask = Task { [weak self] in
-            await self?.runLoop()
+        let interval: TimeInterval = fast ? 3 : 30
+        pollingTask = Task {
+            // Fetch immediately so the popover has fresh data on open.
+            await fetchStats()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { break }
+                await fetchStats()
+            }
         }
     }
 
-    private func runLoop() async {
-        guard let client else { return }
-        while !Task.isCancelled {
-            let fetched = await client.fetchStats(range: 7)
-            if !Task.isCancelled {
-                stats = fetched
-            }
-            let interval = fastPolling ? fastInterval : slowInterval
-            do {
-                try await Task.sleep(for: interval)
-            } catch {
-                // Task cancelled — exit loop cleanly.
-                break
-            }
-        }
+    private func fetchStats() async {
+        guard let client = apiClient else { return }
+        let fetched = await client.fetchStats(range: 7)
+        stats = fetched
     }
 }
