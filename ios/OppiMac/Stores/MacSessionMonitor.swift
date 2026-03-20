@@ -16,6 +16,14 @@ final class MacSessionMonitor {
 
     var stats: ServerStats?
 
+    /// Currently selected time range in days. Changing this re-fetches immediately.
+    var selectedRange: Int = 7 {
+        didSet {
+            guard oldValue != selectedRange, apiClient != nil else { return }
+            schedulePolling(fast: isFastPolling)
+        }
+    }
+
     // MARK: - Private
 
     private var apiClient: MacAPIClient?
@@ -62,7 +70,7 @@ final class MacSessionMonitor {
 
     private func fetchStats() async {
         guard let client = apiClient else { return }
-        let fetched = await client.fetchStats(range: 7)
+        let fetched = await client.fetchStats(range: selectedRange)
         stats = fetched
     }
 }

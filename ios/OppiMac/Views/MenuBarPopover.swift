@@ -46,11 +46,7 @@ struct MenuBarPopover: View {
                 if selectedTab == 0 {
                     SessionsTabView(monitor: sessionMonitor)
                 } else {
-                    Text("Coming soon")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 16)
+                    StatsTabView(monitor: sessionMonitor)
                 }
             }
 

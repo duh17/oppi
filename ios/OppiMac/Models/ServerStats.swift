@@ -26,11 +26,18 @@ struct StatsActiveSession: Codable, Sendable {
 
 // MARK: - Daily entry
 
+struct DailyModelEntry: Codable, Sendable {
+    let sessions: Int
+    let cost: Double
+    let tokens: Int
+}
+
 struct StatsDailyEntry: Codable {
     let date: String
     let sessions: Int
     let cost: Double
     let tokens: Int
+    let byModel: [String: DailyModelEntry]?
 }
 
 // MARK: - Model breakdown
