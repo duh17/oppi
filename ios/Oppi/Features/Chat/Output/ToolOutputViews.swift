@@ -105,6 +105,7 @@ struct AsyncDiffView: View {
     let filePath: String?
     var showHeader: Bool = true
     var precomputedLines: [DiffLine]? = nil
+    var selectedTextSourceContext: SelectedTextSourceContext?
 
     @State private var ready = false
 
@@ -115,7 +116,8 @@ struct AsyncDiffView: View {
                 newText: newText,
                 filePath: filePath,
                 showHeader: showHeader,
-                precomputedLines: precomputedLines
+                precomputedLines: precomputedLines,
+                selectedTextSourceContext: selectedTextSourceContext
             )
         } else {
             HStack(spacing: 8) {

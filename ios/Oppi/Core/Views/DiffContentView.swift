@@ -6,6 +6,7 @@ struct DiffContentView: View {
     let newText: String
     let filePath: String?
     let showHeader: Bool
+    var selectedTextSourceContext: SelectedTextSourceContext?
     private let diffLines: [DiffLine]
 
     @Environment(\.theme) private var theme
@@ -17,13 +18,15 @@ struct DiffContentView: View {
         newText: String,
         filePath: String? = nil,
         showHeader: Bool = true,
-        precomputedLines: [DiffLine]? = nil
+        precomputedLines: [DiffLine]? = nil,
+        selectedTextSourceContext: SelectedTextSourceContext? = nil
     ) {
         self.oldText = oldText
         self.newText = newText
         self.filePath = filePath
         self.showHeader = showHeader
         self.diffLines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
+        self.selectedTextSourceContext = selectedTextSourceContext
     }
 
     private var renderedDiff: WorkspaceReviewDiffResponse {
@@ -44,7 +47,8 @@ struct DiffContentView: View {
             UnifiedDiffView(
                 hunks: renderedDiff.hunks,
                 filePath: filePath ?? "diff.txt",
-                emptyDescription: "This diff has no textual changes to show."
+                emptyDescription: "This diff has no textual changes to show.",
+                selectedTextSourceContext: selectedTextSourceContext
             )
             .frame(maxHeight: 500)
         }
