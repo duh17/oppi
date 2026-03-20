@@ -120,7 +120,11 @@ enum TimelineSnapshotApplier {
         // When transitioning to idle (working indicator removed, session ended),
         // skip animation to avoid layout settlement issues that leave content
         // behind the input bar overlay.
-        let shouldAnimate = isBusy && nextIDs.count >= previousIDs.count
+        // Skip animation entirely for structural inserts. The animation
+        // transaction overhead (~2-3ms) is measurable on the streaming hot path.
+        // New rows appear instantly — acceptable trade-off since the user is
+        // focused on the growing text at the bottom, not the insertion animation.
+        let shouldAnimate = false
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
