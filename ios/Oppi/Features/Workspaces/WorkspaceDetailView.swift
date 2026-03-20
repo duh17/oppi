@@ -222,22 +222,19 @@ struct WorkspaceDetailView: View {
                 Section("Active") {
                     ForEach(data.treeRows) { row in
                         NavigationLink(value: row.session.id) {
-                            SessionRow(
-                                session: row.session,
+                            SessionTreeRow(
+                                row: row,
                                 pendingCount: permissionStore.pending(for: row.session.id).count,
-                                tree: .init(
-                                    row: row,
-                                    isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup),
-                                    statusCounts: data.treeLookup[row.session.id].map {
-                                        SessionTreeHelper.childStatusCounts($0)
-                                    },
-                                    onToggleExpand: {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            let current = isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup)
-                                            treeExpandedOverrides[row.session.id] = !current
-                                        }
+                                isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup),
+                                statusCounts: data.treeLookup[row.session.id].map {
+                                    SessionTreeHelper.childStatusCounts($0)
+                                },
+                                onToggleExpand: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        let current = isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup)
+                                        treeExpandedOverrides[row.session.id] = !current
                                     }
-                                )
+                                }
                             )
                         }
                         .buttonStyle(.plain)
@@ -300,7 +297,8 @@ struct WorkspaceDetailView: View {
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {
-                Color.themeBg.opacity(0.5)
+                Color.clear
+                    .contentShape(Rectangle())
                     .onTapGesture { contextBarCollapseToken &+= 1 }
             }
         }
