@@ -524,7 +524,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
                 themeID: configuration.themeID,
-                previousThemeID: previousThemeID
+                previousThemeID: previousThemeID,
+                isBusy: configuration.isBusy
             )
 
             previousItemByID = applyPlan.nextItemByID

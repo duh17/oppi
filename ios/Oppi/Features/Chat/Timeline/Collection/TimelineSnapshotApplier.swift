@@ -15,7 +15,8 @@ enum TimelineSnapshotApplier {
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?,
         themeID: ThemeID,
-        previousThemeID: ThemeID?
+        previousThemeID: ThemeID?,
+        isBusy: Bool = false
     ) {
         // Fast path: when no previous items exist (cold start), skip change
         // detection entirely — everything is new.
@@ -115,15 +116,22 @@ enum TimelineSnapshotApplier {
         }
 
         // Structural change: IDs changed (new rows inserted or removed).
-        // Use animated apply for smooth insert/remove transitions.
-        // The streaming reconfigure path (idsUnchanged) stays non-animated.
+        // Animate only during busy sessions (new content appearing).
+        // When transitioning to idle (working indicator removed, session ended),
+        // skip animation to avoid layout settlement issues that leave content
+        // behind the input bar overlay.
+        let shouldAnimate = isBusy && nextIDs.count >= previousIDs.count
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
         )
-        FrameBudgetMonitor.shared.beginSection("structural_apply")
-        dataSource?.apply(snapshot, animatingDifferences: true)
-        FrameBudgetMonitor.shared.endSection()
+        if shouldAnimate {
+            FrameBudgetMonitor.shared.beginSection("structural_apply")
+        }
+        dataSource?.apply(snapshot, animatingDifferences: shouldAnimate)
+        if shouldAnimate {
+            FrameBudgetMonitor.shared.endSection()
+        }
         ChatTimelinePerf.endCollectionApply(applyToken)
     }
 
