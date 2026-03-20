@@ -1,0 +1,724 @@
+import Testing
+import Foundation
+@testable import Oppi
+
+@Suite("TimelineReducer — Edge Cases")
+struct TimelineReducerEdgeCaseTests {
+
+    @MainActor
+    @Test func duplicateToolStartDoesNotCreateDuplicateRows() {
+        let reducer = TimelineReducer()
+        let toolId = "call_1|fc_1"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
+
+        let toolItems = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
+        }
+
+        #expect(toolItems.count == 1)
+        guard case .toolCall(let id, _, _, _, _, _, let isDone) = toolItems[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(id == toolId)
+        #expect(!isDone)
+    }
+
+    @MainActor
+    @Test func duplicateLiveToolStartUpdatesHistoryRowInPlace() {
+        let reducer = TimelineReducer()
+        let toolId = "call_2|fc_2"
+
+        reducer.loadSession([
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2025-01-01T00:00:00.000Z",
+                text: nil,
+                tool: "bash",
+                args: ["command": .string("pwd")],
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "pwd"]))
+
+        #expect(reducer.items.count == 1)
+        guard case .toolCall(_, _, _, _, _, _, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(!isDone)
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantAfterReload() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantWithTrailingSystemEvent() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "sys1",
+                type: .system,
+                timestamp: "2025-01-01T00:00:02.000Z",
+                text: "Model changed",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantWithTrailingToolCall() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "tool_1|fc_1",
+                type: .toolCall,
+                timestamp: "2025-01-01T00:00:02.000Z",
+                text: nil,
+                tool: "bash",
+                args: ["command": .string("echo hi")],
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "tool_result_1",
+                type: .toolResult,
+                timestamp: "2025-01-01T00:00:03.000Z",
+                text: nil,
+                tool: nil,
+                args: nil,
+                output: "hi\n",
+                toolCallId: "tool_1|fc_1",
+                toolName: nil,
+                isError: false,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
+    @Test func doubleAgentStartPreservesFirstTurnItems() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "partial "))
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "fresh response"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+        #expect(assistantItems.count == 2)
+        guard case .assistantMessage(_, let first, _) = assistantItems[0],
+              case .assistantMessage(_, let second, _) = assistantItems[1] else {
+            Issue.record("Expected two assistant messages")
+            return
+        }
+        #expect(first == "partial ")
+        #expect(second == "fresh response")
+    }
+
+    @MainActor
+    @Test func resetThenReconnectProducesCleanTimeline() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "stale data"))
+
+        reducer.reset()
+
+        reducer.process(.agentStart(sessionId: "s2"))
+        reducer.process(.textDelta(sessionId: "s2", delta: "fresh"))
+        reducer.process(.agentEnd(sessionId: "s2"))
+
+        #expect(reducer.items.count == 1)
+        guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
+            Issue.record("Expected single assistant message")
+            return
+        }
+        #expect(text == "fresh")
+    }
+
+    @MainActor
+    @Test func resetClearsEverything() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "result", isError: false))
+        reducer.process(.toolEnd(
+            sessionId: "s1",
+            toolEventId: "t1",
+            details: .object(["ui": .array([.object(["kind": .string("chart")])])])
+        ))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        #expect(reducer.toolDetailsStore.details(for: "t1") != nil)
+
+        let preResetVersion = reducer.renderVersion
+        reducer.reset()
+
+        #expect(reducer.items.isEmpty)
+        #expect(reducer.streamingAssistantID == nil)
+        #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.toolDetailsStore.details(for: "t1") == nil)
+        #expect(reducer.renderVersion > preResetVersion)
+    }
+
+    @MainActor
+    @Test func eventsAfterSessionEndedStillAppend() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
+        reducer.process(.sessionEnded(sessionId: "s1", reason: "stopped"))
+
+        #expect(reducer.items.count == 2)
+
+        reducer.process(.error(sessionId: "s1", message: "late error"))
+        #expect(reducer.items.count == 3)
+    }
+
+    @MainActor
+    @Test func memoryWarningClearsTransientStores() {
+        let reducer = TimelineReducer()
+        let toolID = "tool-1"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "bash", args: ["command": "ls"]))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false))
+        reducer.process(.toolEnd(
+            sessionId: "s1",
+            toolEventId: toolID,
+            details: .object(["ui": .array([.object(["kind": .string("chart")])])])
+        ))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        reducer.expandedItemIDs.insert(toolID)
+        let versionBefore = reducer.renderVersion
+
+        let stats = reducer.handleMemoryWarning()
+
+        #expect(stats.toolOutputBytesCleared > 0)
+        #expect(stats.expandedItemsCollapsed == 1)
+        #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.toolDetailsStore.details(for: toolID) == nil)
+        #expect(reducer.expandedItemIDs.isEmpty)
+        #expect(reducer.renderVersion > versionBefore)
+        #expect(!reducer.items.isEmpty)
+    }
+
+    @MainActor
+    @Test func memoryWarningStripsImageAttachments() {
+        let reducer = TimelineReducer()
+
+        let images = [ImageAttachment(data: String(repeating: "A", count: 10_000), mimeType: "image/png")]
+        reducer.appendUserMessage("check this image", images: images)
+        reducer.appendUserMessage("no images here")
+
+        let stats = reducer.handleMemoryWarning()
+
+        #expect(stats.imagesStripped == 1)
+
+        if case .userMessage(_, let text, let imgs, _) = reducer.items.first {
+            #expect(text == "check this image")
+            #expect(imgs.isEmpty)
+        } else {
+            Issue.record("Expected userMessage as first item")
+        }
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheSkipsOversizedEntries() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let oversized = String(repeating: "x", count: 50_000)
+        cache.set(oversized, segments: [.text(AttributedString("oversized"))])
+
+        #expect(cache.get(oversized) == nil)
+        let stats = cache.snapshot()
+        #expect(stats.entries == 0)
+        #expect(stats.totalSourceBytes == 0)
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheEvictsToBudget() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let segment = FlatSegment.text(AttributedString("cached"))
+        for idx in 0..<300 {
+            let text = "entry-\(idx)-" + String(repeating: "y", count: 2_000)
+            cache.set(text, segments: [segment])
+        }
+
+        let stats = cache.snapshot()
+        #expect(stats.entries <= 128)
+        #expect(stats.totalSourceBytes <= 1024 * 1024)
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheSeparatesEntriesByTheme() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let content = "same-content"
+        cache.set(content, themeID: .dark, segments: [.text(AttributedString("dark"))])
+        cache.set(content, themeID: .light, segments: [.text(AttributedString("light"))])
+
+        #expect(cache.get(content, themeID: .dark) != nil)
+        #expect(cache.get(content, themeID: .light) != nil)
+
+        let stats = cache.snapshot()
+        #expect(stats.entries == 2)
+    }
+
+    @MainActor
+    @Test func previewTruncatesLongText() {
+        let long = String(repeating: "x", count: 600)
+        let preview = ChatItem.preview(long)
+        #expect(preview.count == ChatItem.maxPreviewLength)
+        #expect(preview.hasSuffix("…"))
+    }
+
+    @MainActor
+    @Test func previewKeepsShortText() {
+        let short = "hello"
+        #expect(ChatItem.preview(short) == "hello")
+    }
+
+    @MainActor
+    @Test func chatItemTimestamps() {
+        let now = Date()
+        let user = ChatItem.userMessage(id: "1", text: "hi", timestamp: now)
+        #expect(user.timestamp == now)
+
+        let assistant = ChatItem.assistantMessage(id: "2", text: "hi", timestamp: now)
+        #expect(assistant.timestamp == now)
+
+        let tool = ChatItem.toolCall(id: "3", tool: "bash", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true)
+        #expect(tool.timestamp == nil)
+
+        let thinking = ChatItem.thinking(id: "4", preview: "", hasMore: false)
+        #expect(thinking.timestamp == nil)
+
+        let perm = ChatItem.permission(PermissionRequest(
+            id: "5", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "x",
+            reason: "r",
+            timeoutAt: Date()
+        ))
+        #expect(perm.timestamp == nil)
+
+        let resolved = ChatItem.permissionResolved(id: "6", outcome: .allowed, tool: "bash", summary: "test")
+        #expect(resolved.timestamp == nil)
+
+        let system = ChatItem.systemEvent(id: "7", message: "x")
+        #expect(system.timestamp == nil)
+
+        let error = ChatItem.error(id: "8", message: "x")
+        #expect(error.timestamp == nil)
+    }
+
+    // MARK: - Duplicate assistant message during streaming turn
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateStreamedTextBeforeToolCall() {
+        // Reproduces: text deltas stream → toolStart finalizes → messageEnd
+        // arrives with same text → should NOT create a second assistant message.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Let me look at the spans"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash",
+            args: ["command": "cd /sentry && run"]
+        ))
+        // messageEnd for the API message that contained text + tool_use
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Let me look at the spans"
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(
+            assistantItems.count == 1,
+            "messageEnd should not duplicate the already-finalized assistant text"
+        )
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateAcrossMultipleToolRoundtrips() {
+        // Full multi-turn scenario: text → tool → messageEnd → text → tool → messageEnd
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+
+        // First API message: text + tool_use
+        reducer.process(.textDelta(sessionId: "s1", delta: "Let me look at the spans"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash",
+            args: ["command": "cmd1"]
+        ))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Let me look at the spans"))
+
+        // Second API message: text + tool_use
+        reducer.process(.textDelta(sessionId: "s1", delta: "That's fast. Let me find a slow one"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t2", tool: "bash",
+            args: ["command": "cmd2"]
+        ))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t2", output: "ok\n", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t2"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "That's fast. Let me find a slow one"))
+
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(
+            assistantItems.count == 2,
+            "Expected exactly 2 assistant messages, got \(assistantItems.count)"
+        )
+    }
+
+    @MainActor
+    @Test func messageEndReplacesStreamedTextWhenStillStreaming() {
+        // Normal finalization: text deltas build partial text, messageEnd
+        // replaces with the authoritative full text (no duplicate).
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Partial"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Full final text"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(_, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(text == "Full final text")
+    }
+
+    @MainActor
+    @Test func messageEndAfterAgentEndDoesNotDuplicateWithDifferentText() {
+        // Edge case from reconnect: agentEnd finalizes partial text,
+        // then a stale messageEnd arrives with different (longer) text.
+        // Should suppress the duplicate even if texts differ, because
+        // messageEnd after agentEnd should update in place, not append.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "and installed on Duh Ifone."))
+        reducer.process(.agentEnd(sessionId: "s1"))
+        // Stale messageEnd arrives after turn ended
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Committed and installed on Duh Ifone."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        // This currently creates a duplicate because the texts don't match.
+        // With the server-side fix (no synthetic text_delta from message_end),
+        // this scenario won't happen. But if it does, the client should handle
+        // it by updating the latest assistant message rather than duplicating.
+        #expect(
+            assistantItems.count == 1,
+            "messageEnd after agentEnd should not create a duplicate, got \(assistantItems.count)"
+        )
+    }
+
+    // MARK: - Ghost user message on re-entry
+
+    /// Verifies that `preserveOrphans: false` prevents ghost user messages.
+    ///
+    /// Scenario: user has a live session with [u1, a1, u2, a2, u3]. The
+    /// fresh trace from the server is missing u3 (JSONL not flushed yet).
+    /// With orphan preservation, u3 would become a ghost at the bottom.
+    /// With `preserveOrphans: false` (used by loadHistory), the orphan
+    /// is dropped — the fresh trace is authoritative.
+    @MainActor
+    @Test func freshTraceLoadWithoutOrphanPreservationDropsGhostMessage() {
+        let reducer = TimelineReducer()
+
+        // Build "live session" state.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "how are you"),
+            ("a2", .assistant, "doing well"),
+        ]))
+        // Simulate user's last message added locally (not yet in server JSONL).
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 5, "Precondition: 4 trace + 1 local user message")
+
+        // Fresh trace arrives — missing the user's latest message.
+        // With preserveOrphans: false, the orphan is NOT preserved.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "how are you"),
+            ("a2", .assistant, "doing well"),
+        ]), preserveOrphans: false)
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "No ghost — orphan dropped by fresh trace")
+        #expect(reducer.items.count == 4, "Clean rebuild from authoritative trace")
+    }
+
+    /// Orphan preservation still works when enabled (cache load path).
+    @MainActor
+    @Test func cacheLoadWithOrphanPreservationKeepsLocalMessage() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 3)
+
+        // Cache load with preserveOrphans: true (default).
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "Orphan preserved during cache load")
+        #expect(reducer.items.count == 3, "2 from trace + 1 orphan")
+    }
+
+    /// When the fresh trace DOES include the user's latest message, no ghost
+    /// should appear regardless of preserveOrphans setting.
+    @MainActor
+    @Test func freshTraceWithAllMessagesProducesNoGhost() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+        ]))
+        reducer.appendUserMessage("one more thing")
+
+        #expect(reducer.items.count == 3)
+
+        // Fresh trace includes all messages.
+        reducer.loadSession(makeConversation([
+            ("u1", .user, "hello"),
+            ("a1", .assistant, "hi there"),
+            ("u2", .user, "one more thing"),
+            ("a2", .assistant, "sure, what is it"),
+        ]), preserveOrphans: false)
+
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(userItems.count == 2, "No ghost — trace had all user messages")
+        #expect(reducer.items.count == 4, "Clean rebuild from trace")
+    }
+
+    // MARK: - Helpers
+
+    // swiftlint:disable:next large_tuple
+    private func makeConversation(_ entries: [(String, TraceEventType, String)]) -> [TraceEvent] {
+        entries.enumerated().map { idx, entry in
+            TraceEvent(
+                id: entry.0,
+                type: entry.1,
+                timestamp: "2026-03-17T10:0\(idx):00Z",
+                text: entry.2,
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            )
+        }
+    }
+
+    @MainActor
+    @Test func lateTextDeltaAfterPrematureAgentEndResumesLatestAssistantRow() {
+        // Reproduces a state-sync race: a synthetic/early agentEnd finalizes the
+        // streaming row, then one more text_delta + messageEnd arrive for the
+        // same assistant response. We should resume the latest assistant row,
+        // not append a second bubble.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Lane used"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        reducer.process(.textDelta(sessionId: "s1", delta: "\n\nCommands run"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Lane used\n\nCommands run"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1, "Late text delta should resume existing assistant row")
+        guard case .assistantMessage(_, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(text == "Lane used\n\nCommands run")
+    }
+}

@@ -67,13 +67,6 @@ docs/**/*.md
 server/extensions/
 docs/design/mocks/
 
-# Internal tooling (private — ship the product, not the process)
-ios/OppiTests/Perf/
-ios/OppiTests/Timeline/
-ios/OppiTests/Support/
-server/skills/
-ios/scripts/prepare-worktree.sh
-
 # Autoresearch session artifacts (regenerated each run)
 autoresearch.md
 autoresearch.jsonl
