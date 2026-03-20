@@ -4,10 +4,11 @@ import UIKit
 /// Conway's Game of Life simulation + rendering on a bare CALayer.
 ///
 /// Architecture:
-/// - Flat `[Bool]` cell array, row-major, toroidal wrap
-/// - `tick()` advances one generation (zero heap allocations)
-/// - `draw(in:)` renders live cells as solid rects via CGContext
-/// - Auto-reseeds on death (0 alive), stale (same hash 4+ ticks), or sparse (<2 alive)
+/// - UInt64 bit-packed grid (36 bits for 6×6, fits in one register)
+/// - `[UInt8]` age array for color mapping (newborn → elder)
+/// - `tick()` advances one generation via bit manipulation
+/// - `draw(in:)` renders live cells as age-colored rects via CGContext
+/// - Auto-reseeds on death (0 alive), stale (same bits 4+ ticks), or sparse (<2 alive)
 ///
 /// This layer does NOT own timing — the parent `GameOfLifeUIView` drives
 /// ticks via CADisplayLink and calls `setNeedsDisplay()`.
@@ -15,33 +16,64 @@ final class GameOfLifeLayer: CALayer {
 
     // MARK: - Configuration
 
-    /// Grid dimension (gridSize x gridSize).
+    /// Grid dimension (gridSize x gridSize). Must be <= 8 (64 bits max).
     var gridSize: Int {
         didSet { resetGrid() }
     }
 
-    /// Fill color for live cells.
-    var tintCGColor: CGColor = UIColor.label.cgColor
+    /// Base color for live cells. Individual cell colors shift hue based on age.
+    var tintCGColor: CGColor = UIColor.label.cgColor {
+        didSet { rebuildColorPalette() }
+    }
 
     /// Initial density of live cells (0.0–1.0).
     var initialDensity: Double = 0.33
 
+    // MARK: - Color Palette
+
+    /// Max age tiers for color mapping.
+    private static let maxAgeTiers = 8
+
+    /// Precomputed CGColors for each age tier. Rebuilt when tintCGColor changes.
+    private var colorPalette: [CGColor] = []
+
     // MARK: - State
 
-    /// Current cells, row-major. Internal for testing via @testable import.
-    var cells: [Bool]
+    /// Bit-packed cell grid. Bit i = cell i (row-major). Internal for testing.
+    private var bits: UInt64 = 0
 
-    /// Scratch buffer for next generation (avoids allocation per tick).
-    private var nextCells: [Bool]
+    /// Compatibility: cells as [Bool] array, derived from bits. Internal for testing.
+    var cells: [Bool] {
+        get {
+            let count = gridSize * gridSize
+            var result = [Bool](repeating: false, count: count)
+            for i in 0..<count {
+                result[i] = (bits >> i) & 1 == 1
+            }
+            return result
+        }
+        set {
+            bits = 0
+            for i in 0..<min(newValue.count, 64) {
+                if newValue[i] { bits |= 1 << i }
+            }
+        }
+    }
 
-    /// Hash of previous generation for stale detection.
-    private var previousHash: Int = 0
+    /// Age of each cell in ticks (0 = just born this tick). Internal for testing.
+    var ages: [UInt8]
 
-    /// Consecutive ticks with unchanged hash.
-    private var staleCount: Int = 0
+    /// Scratch buffer for next generation ages.
+    private var nextAges: [UInt8]
 
-    /// Threshold for stale detection.
-    private static let staleThreshold = 4
+    /// History ring for stale/oscillator detection (catches period 1-4).
+    /// Using ContiguousArray avoids SwiftLint large_tuple violation.
+    private var historyRing: ContiguousArray<UInt64> = [0, 0, 0, 0]
+    private var historyIndex: Int = 0
+    private var ticksSinceReseed: Int = 0
+
+    /// Minimum ticks before checking for oscillation.
+    private static let staleCheckDelay = 8
 
     /// Minimum alive cells before reseed.
     private static let sparseThreshold = 2
@@ -51,27 +83,31 @@ final class GameOfLifeLayer: CALayer {
     init(gridSize: Int) {
         self.gridSize = gridSize
         let count = gridSize * gridSize
-        self.cells = [Bool](repeating: false, count: count)
-        self.nextCells = [Bool](repeating: false, count: count)
+        self.ages = [UInt8](repeating: 0, count: count)
+        self.nextAges = [UInt8](repeating: 0, count: count)
         super.init()
         self.contentsScale = UIScreen.main.scale
         self.isOpaque = false
         self.needsDisplayOnBoundsChange = true
+        rebuildColorPalette()
         seed()
     }
 
     override init(layer: Any) {
         if let other = layer as? GameOfLifeLayer {
             self.gridSize = other.gridSize
-            self.cells = other.cells
-            self.nextCells = other.nextCells
-            self.previousHash = other.previousHash
-            self.staleCount = other.staleCount
+            self.bits = other.bits
+            self.ages = other.ages
+            self.nextAges = other.nextAges
+            self.historyRing = ContiguousArray(other.historyRing)
+            self.historyIndex = other.historyIndex
+            self.ticksSinceReseed = other.ticksSinceReseed
+            self.colorPalette = other.colorPalette
         } else {
             self.gridSize = 6
             let count = 6 * 6
-            self.cells = [Bool](repeating: false, count: count)
-            self.nextCells = [Bool](repeating: false, count: count)
+            self.ages = [UInt8](repeating: 0, count: count)
+            self.nextAges = [UInt8](repeating: 0, count: count)
         }
         super.init(layer: layer)
     }
@@ -83,22 +119,61 @@ final class GameOfLifeLayer: CALayer {
 
     private func resetGrid() {
         let count = gridSize * gridSize
-        cells = [Bool](repeating: false, count: count)
-        nextCells = [Bool](repeating: false, count: count)
-        previousHash = 0
-        staleCount = 0
+        bits = 0
+        ages = [UInt8](repeating: 0, count: count)
+        nextAges = [UInt8](repeating: 0, count: count)
+        historyRing = [0, 0, 0, 0]
+        historyIndex = 0
+        ticksSinceReseed = 0
         seed()
     }
 
     /// Seed grid with random live cells at `initialDensity`.
     func seed() {
         let count = gridSize * gridSize
+        bits = 0
         for i in 0..<count {
-            cells[i] = Double.random(in: 0..<1) < initialDensity
+            let alive = Double.random(in: 0..<1) < initialDensity
+            if alive {
+                bits |= 1 << i
+                ages[i] = UInt8.random(in: 0...3)
+            } else {
+                ages[i] = 0
+            }
         }
-        previousHash = computeHash()
-        staleCount = 0
+        historyRing = [bits, bits, bits, bits]
+        historyIndex = 0
+        ticksSinceReseed = 0
         setNeedsDisplay()
+    }
+
+    // MARK: - Color Palette
+
+    private func rebuildColorPalette() {
+        let uiColor = UIColor(cgColor: tintCGColor)
+        var baseHue: CGFloat = 0
+        var baseSat: CGFloat = 0
+        var baseBri: CGFloat = 0
+        var baseAlpha: CGFloat = 1
+        uiColor.getHue(&baseHue, saturation: &baseSat, brightness: &baseBri, alpha: &baseAlpha)
+
+        let isAchromatic = baseSat < 0.05
+        let startHue: CGFloat = isAchromatic ? 0.75 : baseHue
+        let hueRange: CGFloat = 0.25
+
+        var palette = [CGColor]()
+        palette.reserveCapacity(Self.maxAgeTiers)
+
+        for tier in 0..<Self.maxAgeTiers {
+            let t = CGFloat(tier) / CGFloat(Self.maxAgeTiers - 1)
+            let hue = (startHue + t * hueRange).truncatingRemainder(dividingBy: 1.0)
+            let sat: CGFloat = isAchromatic ? (0.6 + t * 0.3) : max(0.4, baseSat)
+            let bri: CGFloat = isAchromatic ? (0.95 - t * 0.2) : max(0.5, baseBri - t * 0.15)
+            let alpha: CGFloat = 0.7 + t * 0.3
+            palette.append(UIColor(hue: hue, saturation: sat, brightness: bri, alpha: alpha).cgColor)
+        }
+
+        colorPalette = palette
     }
 
     // MARK: - Simulation
@@ -108,93 +183,148 @@ final class GameOfLifeLayer: CALayer {
     func tick() -> Bool {
         let size = gridSize
         let count = size * size
+        var newBits: UInt64 = 0
+        let currentBits = bits
+        let sizeMinus1 = size - 1
 
         // Apply GoL rules with toroidal wrapping.
+        // Track row/col manually and precompute row offsets to avoid
+        // all division, modulo, and multiplication in the hot loop.
+        var row = 0
+        var col = 0
+        var rowOffset = 0             // row * size
+        var rowUpOffset = sizeMinus1 * size  // rUp * size (initially last row)
+        var rowDownOffset = size       // rDown * size (initially row 1)
         for i in 0..<count {
-            let row = i / size
-            let col = i % size
+            let cLeft = col == 0 ? sizeMinus1 : col - 1
+            let cRight = col == sizeMinus1 ? 0 : col + 1
 
-            // Neighbor coordinates with toroidal wrap.
-            let rUp = (row - 1 + size) % size
-            let rDown = (row + 1) % size
-            let cLeft = (col - 1 + size) % size
-            let cRight = (col + 1) % size
-
+            // Count neighbors via bit extraction using precomputed offsets.
             var neighbors = 0
-            if cells[rUp * size + cLeft] { neighbors &+= 1 }
-            if cells[rUp * size + col] { neighbors &+= 1 }
-            if cells[rUp * size + cRight] { neighbors &+= 1 }
-            if cells[row * size + cLeft] { neighbors &+= 1 }
-            if cells[row * size + cRight] { neighbors &+= 1 }
-            if cells[rDown * size + cLeft] { neighbors &+= 1 }
-            if cells[rDown * size + col] { neighbors &+= 1 }
-            if cells[rDown * size + cRight] { neighbors &+= 1 }
+            if (currentBits >> (rowUpOffset + cLeft))    & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowUpOffset + col))      & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowUpOffset + cRight))   & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowOffset + cLeft))      & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowOffset + cRight))     & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowDownOffset + cLeft))  & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowDownOffset + col))    & 1 == 1 { neighbors &+= 1 }
+            if (currentBits >> (rowDownOffset + cRight)) & 1 == 1 { neighbors &+= 1 }
 
-            if cells[i] {
-                nextCells[i] = neighbors == 2 || neighbors == 3
+            let alive = (currentBits >> i) & 1 == 1
+            if alive {
+                let survives = neighbors == 2 || neighbors == 3
+                if survives {
+                    newBits |= 1 << i
+                    nextAges[i] = ages[i] &+ 1
+                } else {
+                    nextAges[i] = 0
+                }
             } else {
-                nextCells[i] = neighbors == 3
+                if neighbors == 3 {
+                    newBits |= 1 << i
+                    nextAges[i] = 0
+                } else {
+                    nextAges[i] = 0
+                }
+            }
+
+            // Advance row/col and precomputed offsets.
+            col &+= 1
+            if col == size {
+                col = 0
+                row &+= 1
+                rowUpOffset = rowOffset
+                rowOffset = rowDownOffset
+                rowDownOffset = row == sizeMinus1 ? 0 : rowDownOffset &+ size
             }
         }
 
-        // Swap buffers (no allocation).
-        swap(&cells, &nextCells)
+        bits = newBits
+        swap(&ages, &nextAges)
 
-        // Check for reseed conditions.
-        let hash = computeHash()
-        var aliveCount = 0
-        for i in 0..<count where cells[i] { aliveCount += 1 }
-
+        // Stale/death/sparse detection — no hash needed, bits ARE the hash.
+        let aliveCount = newBits.nonzeroBitCount
         var didReseed = false
 
-        if aliveCount == 0 || aliveCount < Self.sparseThreshold {
+        if aliveCount < Self.sparseThreshold {
             seed()
             didReseed = true
-        } else if hash == previousHash {
-            staleCount += 1
-            if staleCount >= Self.staleThreshold {
-                seed()
-                didReseed = true
-            }
         } else {
-            staleCount = 0
+            ticksSinceReseed &+= 1
+
+            // Check for oscillation (period 1-4) using history ring.
+            // Only check after enough ticks to avoid false positives from seed.
+            if ticksSinceReseed >= Self.staleCheckDelay {
+                let isStale = newBits == historyRing[0]
+                    || newBits == historyRing[1]
+                    || newBits == historyRing[2]
+                    || newBits == historyRing[3]
+                if isStale {
+                    seed()
+                    didReseed = true
+                }
+            }
+
+            // Rotate history ring.
+            historyRing[historyIndex & 3] = newBits
+            historyIndex &+= 1
         }
 
-        previousHash = hash
         return didReseed
-    }
-
-    private func computeHash() -> Int {
-        var hasher = Hasher()
-        for cell in cells {
-            hasher.combine(cell)
-        }
-        return hasher.finalize()
     }
 
     // MARK: - Rendering
 
-    override func draw(in ctx: CGContext) {
+    /// Precomputed cell rects. Rebuilt on layout change.
+    private var cellRects: [CGRect] = []
+    private var lastLayoutSize: CGSize = .zero
+
+    private func rebuildCellRects() {
         let size = gridSize
-        guard size > 0 else { return }
+        let count = size * size
+        guard size > 0 else { cellRects = []; return }
 
         let cellW = bounds.width / CGFloat(size)
         let cellH = bounds.height / CGFloat(size)
-        let gap: CGFloat = max(0.5, min(cellW, cellH) * 0.15)
+        let gapX = max(0.5, cellW * 0.15) * 0.5
+        let gapY = max(0.5, cellH * 0.15) * 0.5
+        let rectW = cellW - gapX * 2
+        let rectH = cellH - gapY * 2
 
-        ctx.setFillColor(tintCGColor)
-
-        for i in 0..<(size * size) {
-            guard cells[i] else { continue }
+        cellRects = [CGRect](repeating: .zero, count: count)
+        for i in 0..<count {
             let row = i / size
             let col = i % size
-            let rect = CGRect(
-                x: CGFloat(col) * cellW + gap * 0.5,
-                y: CGFloat(row) * cellH + gap * 0.5,
-                width: cellW - gap,
-                height: cellH - gap
+            cellRects[i] = CGRect(
+                x: CGFloat(col) * cellW + gapX,
+                y: CGFloat(row) * cellH + gapY,
+                width: rectW,
+                height: rectH
             )
-            ctx.fill(rect)
+        }
+        lastLayoutSize = bounds.size
+    }
+
+    override func draw(in ctx: CGContext) {
+        let size = gridSize
+        let count = size * size
+        guard size > 0 else { return }
+
+        // Rebuild rects if layout changed.
+        if bounds.size != lastLayoutSize || cellRects.count != count {
+            rebuildCellRects()
+        }
+
+        let maxTier = UInt8(Self.maxAgeTiers - 1)
+        let currentBits = bits
+
+        for i in 0..<count {
+            guard (currentBits >> i) & 1 == 1 else { continue }
+
+            let tier = Int(min(ages[i], maxTier))
+            let color = tier < colorPalette.count ? colorPalette[tier] : tintCGColor
+            ctx.setFillColor(color)
+            ctx.fill(cellRects[i])
         }
     }
 }
