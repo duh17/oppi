@@ -47,10 +47,12 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         golView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(golView)
 
+        // Align with tool row content: status icon (24pt) + spacing (8pt) = 32pt
+        // from the cell leading edge (section already adds 16pt inset).
         NSLayoutConstraint.activate([
-            golView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            golView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            golView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            golView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 32),
+            golView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            golView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             golView.widthAnchor.constraint(equalToConstant: 20),
             golView.heightAnchor.constraint(equalToConstant: 20),
         ])
