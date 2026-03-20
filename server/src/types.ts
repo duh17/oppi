@@ -748,22 +748,6 @@ export const CHAT_METRIC_REGISTRY = {
     description:
       "Internal render strategy time for tool row content. Tags: mode, input_bytes, language.",
   },
-  "plot.axis_visible_tick_count": {
-    unit: "count",
-    description: "Visible axis tick count after plot normalization.",
-  },
-  "plot.legend_item_count": {
-    unit: "count",
-    description: "Legend item count after plot normalization.",
-  },
-  "plot.scroll_enabled": {
-    unit: "ratio",
-    description: "Whether horizontal plot scrolling was enabled (0 or 1).",
-  },
-  "plot.auto_adjustments": {
-    unit: "count",
-    description: "Count of automatic plot adjustments applied by renderer.",
-  },
 } as const satisfies Readonly<Record<string, ChatMetricDefinition>>;
 
 export type ChatMetricName = keyof typeof CHAT_METRIC_REGISTRY;
