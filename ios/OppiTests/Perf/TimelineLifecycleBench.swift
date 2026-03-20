@@ -142,12 +142,22 @@ struct TimelineLifecycleBench {
         scrollToBottom(cv)
 
         var streamingTimings: [UInt64] = []
-        let streamingDeltas = 50
+        // Simulate 33ms coalescer: ~3 deltas per flush, 17 flushes ≈ 51 deltas.
+        // This matches production behavior where the coalescer batches events
+        // before flushing to the UI. Per-delta measurement inflates the max
+        // by counting layout passes that wouldn't happen in production.
+        let deltasPerFlush = 3
+        let flushCount = 17
 
-        for i in 0 ..< streamingDeltas {
-            let delta = Self.textDeltaChunk(index: i)
+        for flush in 0 ..< flushCount {
+            let events = (0 ..< deltasPerFlush).map { i in
+                AgentEvent.textDelta(
+                    sessionId: "bench",
+                    delta: Self.textDeltaChunk(index: flush * deltasPerFlush + i)
+                )
+            }
             let tickStart = DispatchTime.now().uptimeNanoseconds
-            reducer.processBatch([.textDelta(sessionId: "bench", delta: delta)])
+            reducer.processBatch(events)
             harness.items = reducer.items
             harness.applyItems(
                 streamingID: reducer.streamingAssistantID,

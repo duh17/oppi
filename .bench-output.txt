@@ -3,16 +3,16 @@ sim-pool: derived-data=/Users/chenda/workspace/oppi/ios/.build/pool-0
 Command line invocation:
     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Oppi.xcodeproj -scheme Oppi test "-only-testing:OppiTests/TimelineLifecycleBench/lifecycle_score()()" -destination "platform=iOS Simulator,id=4618EBB1-B031-4F50-8AC1-4BA3C68EE70E" -derivedDataPath /Users/chenda/workspace/oppi/ios/.build/pool-0
 
-2026-03-20 09:28:23.960 xcodebuild[92165:39327690]  DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
-2026-03-20 09:28:23.964 xcodebuild[92165:39327658] [MT] DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
+2026-03-20 09:29:48.228 xcodebuild[92394:39331960]  DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
+2026-03-20 09:29:48.232 xcodebuild[92394:39331923] [MT] DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
 Resolve Package Graph
 
 
 Resolved source packages:
-  Sparkle: https://github.com/sparkle-project/Sparkle @ 2.9.0
   cmark-gfm: https://github.com/swiftlang/swift-cmark.git @ 0.7.1
-  swift-markdown: https://github.com/apple/swift-markdown @ 0.7.3
   Sentry: https://github.com/getsentry/sentry-cocoa @ 8.58.0
+  Sparkle: https://github.com/sparkle-project/Sparkle @ 2.9.0
+  swift-markdown: https://github.com/apple/swift-markdown @ 0.7.3
 
 ComputePackagePrebuildTargetDependencyGraph
 
@@ -107,10 +107,10 @@ SwiftCompile normal arm64 Compiling\ TimelineLifecycleBench.swift /Users/chenda/
 SwiftCompile normal arm64 /Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios/OppiTests/Perf/TimelineLifecycleBench.swift (in target 'OppiTests' from project 'Oppi')
     cd /Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios
     
-/Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios/OppiTests/Perf/TimelineLifecycleBench.swift:214:32: warning: conditional cast from 'AnchoredCollectionView' to 'AnchoredCollectionView' always succeeds
+/Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios/OppiTests/Perf/TimelineLifecycleBench.swift:224:32: warning: conditional cast from 'AnchoredCollectionView' to 'AnchoredCollectionView' always succeeds
         if let anchoredCV = cv as? AnchoredCollectionView {
                                ^
-/Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios/OppiTests/Perf/TimelineLifecycleBench.swift:247:32: warning: conditional cast from 'AnchoredCollectionView' to 'AnchoredCollectionView' always succeeds
+/Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios/OppiTests/Perf/TimelineLifecycleBench.swift:257:32: warning: conditional cast from 'AnchoredCollectionView' to 'AnchoredCollectionView' always succeeds
         if let anchoredCV = cv as? AnchoredCollectionView {
                                ^
 
@@ -146,8 +146,8 @@ Ignoring --strip-bitcode because --sign was not passed
 ExtractAppIntentsMetadata (in target 'OppiTests' from project 'Oppi')
     cd /Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.3.7003.10.6JKA3V/Metal.xctoolchain --module-name OppiTests --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk --xcode-version 17C529 --platform-family iOS --deployment-target 26.0 --bundle-identifier dev.chenda.OppiTests --output /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Products/Debug-iphonesimulator/Oppi.app/PlugIns/OppiTests.xctest --target-triple arm64-apple-ios26.0-simulator --binary-file /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Products/Debug-iphonesimulator/Oppi.app/PlugIns/OppiTests.xctest/OppiTests --dependency-file /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/Objects-normal/arm64/OppiTests_dependency_info.dat --stringsdata-file /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/Objects-normal/arm64/OppiTests.SwiftFileList --metadata-file-list /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/OppiTests.DependencyMetadataFileList --static-metadata-file-list /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/OppiTests.DependencyStaticMetadataFileList --swift-const-vals-list /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Intermediates.noindex/Oppi.build/Debug-iphonesimulator/OppiTests.build/Objects-normal/arm64/OppiTests.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
-2026-03-20 09:28:34.514 appintentsmetadataprocessor[92202:39328305] Starting appintentsmetadataprocessor export
-2026-03-20 09:28:34.589 appintentsmetadataprocessor[92202:39328305] Extracted no relevant App Intents symbols, skipping writing output
+2026-03-20 09:29:58.685 appintentsmetadataprocessor[92428:39332590] Starting appintentsmetadataprocessor export
+2026-03-20 09:29:58.761 appintentsmetadataprocessor[92428:39332590] Extracted no relevant App Intents symbols, skipping writing output
 
 CodeSign /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Products/Debug-iphonesimulator/Oppi.app/Oppi.debug.dylib (in target 'Oppi' from project 'Oppi')
     cd /Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios
@@ -177,57 +177,57 @@ Validate /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Products/Debug-iph
     cd /Users/chenda/workspace/oppi-autoresearch/autoresearch/timeline-lifecycle-20260320/ios
     builtin-validationUtility /Users/chenda/workspace/oppi/ios/.build/pool-0/Build/Products/Debug-iphonesimulator/Oppi.app -shallow-bundle -infoplist-subpath Info.plist
 
-2026-03-20 09:28:36.755841-0700 Oppi[92206:39328892] [Sentry] Sentry disabled (no DSN)
-2026-03-20 09:28:37.199643-0700 Oppi[92206:39328711] [MetricKit] MetricKit upload disabled (mode=internal)
-2026-03-20 09:28:37.199761-0700 Oppi[92206:39328711] [LANDiscovery] Starting NetServiceBrowser for _oppi._tcp
-2026-03-20 09:28:37.321612-0700 Oppi[92206:39328889] [Cache] Cache root initialized at /Users/chenda/Library/Developer/CoreSimulator/Devices/4618EBB1-B031-4F50-8AC1-4BA3C68EE70E/data/Containers/Data/Application/C92F89BF-0425-4919-ACD3-EA6099127C49/Library/Application Support/dev.chenda.Oppi/cache
-2026-03-20 09:28:37.321937-0700 Oppi[92206:39328889] [App] CACHE launch outcome=no_credentials durMs=0 usedCached=false
-2026-03-20 09:28:37.331206-0700 Oppi[92206:39328711] [LANDiscovery] Service found: oppi-SBh2JHQVY12Ysxv_
-2026-03-20 09:28:37.486000-0700 Oppi[92206:39328711] [LANDiscovery] Service found: oppi-rHLwUOOWstvDHskx
-2026-03-20 09:28:37.667183-0700 Oppi[92206:39328711] [LANDiscovery] TXT record updated: oppi-SBh2JHQVY12Ysxv_
-2026-03-20 09:28:37.667631-0700 Oppi[92206:39328711] [LANDiscovery] LAN endpoints changed: count=1
-2026-03-20 09:28:37.746648-0700 Oppi[92206:39328711] [LANDiscovery] TXT record updated: oppi-rHLwUOOWstvDHskx
-2026-03-20 09:28:37.746837-0700 Oppi[92206:39328711] [LANDiscovery] LAN endpoints changed: count=2
-2026-03-20 09:28:37.776005-0700 Oppi[92206:39328711] [LANDiscovery] Service resolved: oppi-SBh2JHQVY12Ysxv_ host=Das-Mac-mini.local.
-2026-03-20 09:28:37.776162-0700 Oppi[92206:39328711] [LANDiscovery] Service resolved: oppi-rHLwUOOWstvDHskx host=Mac-Studio.local.
-Test Suite 'Selected tests' started at 2026-03-20 09:28:38.618.
-Test Suite 'OppiTests.xctest' started at 2026-03-20 09:28:38.619.
-Test Suite 'OppiTests.xctest' passed at 2026-03-20 09:28:38.619.
+2026-03-20 09:30:00.931962-0700 Oppi[92432:39333148] [Sentry] Sentry disabled (no DSN)
+2026-03-20 09:30:01.378231-0700 Oppi[92432:39332971] [MetricKit] MetricKit upload disabled (mode=internal)
+2026-03-20 09:30:01.378360-0700 Oppi[92432:39332971] [LANDiscovery] Starting NetServiceBrowser for _oppi._tcp
+2026-03-20 09:30:01.501316-0700 Oppi[92432:39333142] [Cache] Cache root initialized at /Users/chenda/Library/Developer/CoreSimulator/Devices/4618EBB1-B031-4F50-8AC1-4BA3C68EE70E/data/Containers/Data/Application/8C2CCB9B-6A66-457A-9842-A5155A6CE804/Library/Application Support/dev.chenda.Oppi/cache
+2026-03-20 09:30:01.501642-0700 Oppi[92432:39333142] [App] CACHE launch outcome=no_credentials durMs=0 usedCached=false
+2026-03-20 09:30:01.511607-0700 Oppi[92432:39332971] [LANDiscovery] Service found: oppi-SBh2JHQVY12Ysxv_
+2026-03-20 09:30:01.670408-0700 Oppi[92432:39332971] [LANDiscovery] Service found: oppi-rHLwUOOWstvDHskx
+2026-03-20 09:30:01.855573-0700 Oppi[92432:39332971] [LANDiscovery] TXT record updated: oppi-SBh2JHQVY12Ysxv_
+2026-03-20 09:30:01.856085-0700 Oppi[92432:39332971] [LANDiscovery] LAN endpoints changed: count=1
+2026-03-20 09:30:01.938674-0700 Oppi[92432:39332971] [LANDiscovery] TXT record updated: oppi-rHLwUOOWstvDHskx
+2026-03-20 09:30:01.938846-0700 Oppi[92432:39332971] [LANDiscovery] LAN endpoints changed: count=2
+2026-03-20 09:30:01.966031-0700 Oppi[92432:39332971] [LANDiscovery] Service resolved: oppi-SBh2JHQVY12Ysxv_ host=Das-Mac-mini.local.
+2026-03-20 09:30:01.966191-0700 Oppi[92432:39332971] [LANDiscovery] Service resolved: oppi-rHLwUOOWstvDHskx host=Mac-Studio.local.
+Test Suite 'Selected tests' started at 2026-03-20 09:30:02.817.
+Test Suite 'OppiTests.xctest' started at 2026-03-20 09:30:02.817.
+Test Suite 'OppiTests.xctest' passed at 2026-03-20 09:30:02.817.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-Test Suite 'Selected tests' passed at 2026-03-20 09:28:38.619.
+Test Suite 'Selected tests' passed at 2026-03-20 09:30:02.817.
 	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1501
 ↳ Target Platform: arm64-apple-ios13.0-simulator
 ◇ Suite "TimelineLifecycleBench" started.
 ◇ Test lifecycle_score() started.
-2026-03-20 09:28:38.708943-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:40.792840-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:42.557270-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:44.324623-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:46.090810-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:47.891856-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-2026-03-20 09:28:49.692976-0700 Oppi[92206:39328711] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
-METRIC lifecycle_score=23886.1
-METRIC load_ms=60.6
-METRIC streaming_median_us=15667.2
-METRIC streaming_max_us=55814.5
-METRIC insert_total_us=13779.4
+2026-03-20 09:30:02.905324-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:04.398465-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:05.762710-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:07.022682-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:08.290785-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:09.558194-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+2026-03-20 09:30:10.837025-0700 Oppi[92432:39332971] [LoadSession] [loadSession] full rebuild: 140 events → 100 items
+METRIC lifecycle_score=23620.5
+METRIC load_ms=61.2
+METRIC streaming_median_us=20600.1
+METRIC streaming_max_us=55239.2
+METRIC insert_total_us=13591.4
 METRIC scroll_drift_max_pt=60.0
 METRIC expand_shift_max_pt=0.0
-METRIC end_settle_us=31797.8
+METRIC end_settle_us=31243.0
 INVARIANT drift_under_threshold=pass
 INVARIANT expand_under_threshold=pass
 INVARIANT all_finite=pass
-✔ Test lifecycle_score() passed after 12.790 seconds.
-✔ Suite "TimelineLifecycleBench" passed after 12.791 seconds.
-✔ Test run with 1 test in 1 suite passed after 12.791 seconds.
-2026-03-20 09:28:52.483 xcodebuild[92165:39327658] [MT] IDETestOperationsObserverDebug: 17.745 elapsed -- Testing started completed.
-2026-03-20 09:28:52.483 xcodebuild[92165:39327658] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
-2026-03-20 09:28:52.483 xcodebuild[92165:39327658] [MT] IDETestOperationsObserverDebug: 17.745 sec, +17.745 sec -- end
+✔ Test lifecycle_score() passed after 9.251 seconds.
+✔ Suite "TimelineLifecycleBench" passed after 9.253 seconds.
+✔ Test run with 1 test in 1 suite passed after 9.253 seconds.
+2026-03-20 09:30:12.847 xcodebuild[92394:39331923] [MT] IDETestOperationsObserverDebug: 13.930 elapsed -- Testing started completed.
+2026-03-20 09:30:12.847 xcodebuild[92394:39331923] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-03-20 09:30:12.847 xcodebuild[92394:39331923] [MT] IDETestOperationsObserverDebug: 13.930 sec, +13.930 sec -- end
 
 Test session results, code coverage, and logs:
-	/Users/chenda/workspace/oppi/ios/.build/pool-0/Logs/Test/Test-Oppi-2026.03.20_09-28-24--0700.xcresult
+	/Users/chenda/workspace/oppi/ios/.build/pool-0/Logs/Test/Test-Oppi-2026.03.20_09-29-48--0700.xcresult
 
 ** TEST SUCCEEDED **
 
