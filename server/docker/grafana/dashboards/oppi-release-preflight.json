@@ -965,65 +965,6 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "ms",
-          "custom": {
-            "drawStyle": "points",
-            "lineWidth": 0,
-            "pointSize": 4,
-            "showPoints": "always"
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 52
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "oppi-telemetry-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.stream_open_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.stream_open_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
-          "refId": "A"
-        }
-      ],
-      "title": "Stream open (chat.stream_open_ms)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "oppi-telemetry-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "mode": "thresholds"
           },
           "custom": {
