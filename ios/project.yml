@@ -242,7 +242,7 @@ targets:
   OppiMac:
     type: application
     platform: macOS
-    deploymentTarget: "15.0"
+    deploymentTarget: "26.0"
     sources:
       - path: OppiMac
         type: group

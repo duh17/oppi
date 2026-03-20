@@ -3,16 +3,28 @@ import SwiftUI
 
 // MARK: - Shared model-color helpers (used by DailyCostChart + ModelBreakdownView)
 
+/// Brand-aligned model colors.
+///
+/// Anthropic (Claude): warm orange/sienna family — opus is deep amber,
+/// sonnet is warm orange, haiku is light apricot.
+/// OpenAI: ChatGPT teal green.
+/// Google: Gemini blue.
+/// Local/MLX: neutral gray.
 func modelColor(_ model: String) -> Color {
     let lower = model.lowercased()
-    if lower.contains("sonnet") { return .green }
-    if lower.contains("opus")   { return .blue }
-    if lower.contains("haiku")  { return .teal }
-    if lower.contains("gpt")    { return .orange }
-    if lower.contains("gemini") { return Color(red: 0.2, green: 0.6, blue: 1.0) }
-    // Deterministic color for unknown models
+    // Anthropic — orange variants
+    if lower.contains("opus")   { return Color(red: 0.80, green: 0.42, blue: 0.17) } // #CC6B2C deep amber
+    if lower.contains("sonnet") { return Color(red: 0.91, green: 0.57, blue: 0.31) } // #E8924E warm orange
+    if lower.contains("haiku")  { return Color(red: 0.94, green: 0.72, blue: 0.48) } // #F0B87A apricot
+    // OpenAI — teal green
+    if lower.contains("gpt") || lower.contains("codex") { return Color(red: 0.06, green: 0.64, blue: 0.50) } // #10A37F
+    // Google — Gemini blue
+    if lower.contains("gemini") { return Color(red: 0.26, green: 0.52, blue: 0.96) } // #4285F4
+    // Local/MLX — neutral
+    if lower.contains("mlx")    { return Color(red: 0.55, green: 0.55, blue: 0.60) } // #8C8C99
+    // Deterministic fallback
     let hue = Double(abs(model.hashValue % 300) + 30) / 360.0
-    return Color(hue: hue, saturation: 0.55, brightness: 0.70)
+    return Color(hue: hue, saturation: 0.5, brightness: 0.65)
 }
 
 /// Shorten model names for display.
@@ -32,10 +44,11 @@ func displayModelName(_ model: String) -> String {
 // MARK: - Chart data model
 
 private struct ModelDayCost: Identifiable {
-    let id = UUID()
     let date: Date
     let model: String
     let cost: Double
+
+    var id: String { "\(Int(date.timeIntervalSince1970))-\(model)" }
 }
 
 // MARK: - DailyCostChart
@@ -117,7 +130,7 @@ struct DailyCostChart: View {
     private var emptyPlaceholder: some View {
         RoundedRectangle(cornerRadius: 4)
             .fill(Color.secondary.opacity(0.08))
-            .frame(height: 120)
+            .frame(height: 180)
             .overlay {
                 Text("No data for this range")
                     .font(.caption2)
@@ -135,6 +148,7 @@ struct DailyCostChart: View {
             .foregroundStyle(modelColor(entry.model))
         }
         .chartXSelection(value: $selectedDate)
+        .animation(.none, value: chartData.map(\.id))
         .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .stride(by: .day, count: axisStride)) { value in
@@ -161,7 +175,7 @@ struct DailyCostChart: View {
                 }
             }
         }
-        .frame(height: 120)
+        .frame(height: 180)
     }
 
     private var tooltipView: some View {

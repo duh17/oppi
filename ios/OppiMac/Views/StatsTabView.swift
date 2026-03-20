@@ -17,18 +17,15 @@ struct StatsTabView: View {
             .labelsHidden()
 
             if let stats = monitor.stats {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        heroStats(stats)
-                        DailyCostChart(daily: stats.daily)
-                        modelSection(stats)
-                        if monitor.selectedRange != 7 {
-                            activitySection(stats)
-                        }
-                        workspaceSection(stats)
+                VStack(alignment: .leading, spacing: 8) {
+                    heroStats(stats)
+                    DailyCostChart(daily: stats.daily)
+                    modelSection(stats)
+                    if monitor.selectedRange != 7 {
+                        activitySection(stats)
                     }
+                    workspaceSection(stats)
                 }
-                .frame(maxHeight: 400)
             } else {
                 HStack {
                     Spacer()
@@ -107,7 +104,7 @@ struct StatsTabView: View {
             )
         }
         .frame(maxWidth: .infinity)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func heroBox(title: String, value: String, trend: TrendInfo?) -> some View {
