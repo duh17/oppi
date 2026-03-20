@@ -43,6 +43,9 @@ final class DeltaCoalescer {
     /// Immediate events (tool start, permissions, etc.) still flush + deliver.
     private var isPaused = false
 
+    /// Active session ID for metric attribution. Set by SessionStreamCoordinator.
+    var sessionId: String?
+
     /// Called when coalesced events should be delivered.
     var onFlush: (([AgentEvent]) -> Void)?
 
@@ -123,6 +126,7 @@ final class DeltaCoalescer {
         let windowEvents = telemetryWindowEvents
         let windowBytes = telemetryWindowBytes
         let windowFlushes = telemetryWindowFlushes
+        let sid = sessionId
         telemetryWindowEvents = 0
         telemetryWindowBytes = 0
         telemetryWindowFlushes = 0
@@ -132,12 +136,14 @@ final class DeltaCoalescer {
                 metric: .coalescerFlushEvents,
                 value: Double(windowEvents),
                 unit: .count,
+                sessionId: sid,
                 tags: ["flushes": String(windowFlushes)]
             )
             await ChatMetricsService.shared.record(
                 metric: .coalescerFlushBytes,
                 value: Double(windowBytes),
                 unit: .count,
+                sessionId: sid,
                 tags: ["flushes": String(windowFlushes)]
             )
         }
@@ -173,6 +179,7 @@ final class DeltaCoalescer {
             let windowEvents = telemetryWindowEvents
             let windowBytes = telemetryWindowBytes
             let windowFlushes = telemetryWindowFlushes
+            let sid = sessionId
             telemetryWindowEvents = 0
             telemetryWindowBytes = 0
             telemetryWindowFlushes = 0
@@ -182,12 +189,14 @@ final class DeltaCoalescer {
                     metric: .coalescerFlushEvents,
                     value: Double(windowEvents),
                     unit: .count,
+                    sessionId: sid,
                     tags: ["flushes": String(windowFlushes)]
                 )
                 await ChatMetricsService.shared.record(
                     metric: .coalescerFlushBytes,
                     value: Double(windowBytes),
                     unit: .count,
+                    sessionId: sid,
                     tags: ["flushes": String(windowFlushes)]
                 )
             }

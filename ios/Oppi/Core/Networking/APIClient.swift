@@ -785,9 +785,25 @@ actor APIClient {
     }
 
     /// Upload chat performance metric samples for baseline tracking.
+    /// Sorted-keys encoder for chat metric uploads.
+    /// Produces deterministic tag JSON (e.g. `{"expanded":"0","tool":"edit"}`)
+    /// regardless of dictionary insertion order, eliminating phantom cardinality.
+    private static let chatMetricsEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }()
+
     func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await post("/telemetry/chat-metrics", body: body)
+        var req = URLRequest(url: try makeURL(path: "/telemetry/chat-metrics"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try Self.chatMetricsEncoder.encode(body)
+        logger.debug("POST /telemetry/chat-metrics")
+        let (data, response) = try await session.data(for: req)
+        try checkStatus(response, data: data)
     }
 
     // MARK: - Private

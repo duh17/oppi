@@ -106,6 +106,23 @@ enum ChatSessionTelemetry {
         emit(.catchupRingMiss, missed ? 1 : 0, .count, sessionId: sessionId)
     }
 
+    // MARK: - Session load (vital)
+
+    static func recordSessionLoad(
+        durationMs: Int64,
+        sessionId: String,
+        workspaceId: String?,
+        path: String,
+        itemCount: Int
+    ) {
+        emit(
+            .sessionLoadMs, Double(durationMs), .ms,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            tags: ["path": path, "items": String(itemCount)]
+        )
+    }
+
     // MARK: - History reload
 
     static func recordFullReload(
@@ -118,7 +135,7 @@ enum ChatSessionTelemetry {
             .fullReloadMs, Double(durationMs), .ms,
             sessionId: sessionId,
             workspaceId: workspaceId,
-            tags: ["traceEvents": String(traceEventCount)]
+            tags: ["trace_events": String(traceEventCount)]
         )
     }
 
