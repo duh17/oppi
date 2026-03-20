@@ -59,6 +59,7 @@ struct OppiMacApp: App {
                 processManager: processManager,
                 healthMonitor: healthMonitor,
                 permissionState: permissionState,
+                sessionMonitor: sessionMonitor,
                 checkForUpdates: { [updaterController] in
                     updaterController.checkForUpdates(nil)
                 }
