@@ -68,10 +68,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private static let fadeStartFraction: Float = 0.7
     private static let fullScreenOverflowThreshold: CGFloat = 2
 
-    // Header (streaming state)
-    private let headerStack = UIStackView()
-    private let statusIndicator = GameOfLifeUIView(gridSize: 6)
-    private let titleLabel = UILabel()
+    // Header removed — the unified WorkingIndicator in the timeline
+    // already shows the Game of Life while the agent is working.
+    // Thinking rows now only show the bubble (streaming or done).
 
     // Bubble
     private let bubbleView = UIView()
@@ -170,26 +169,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private func setupViews() {
         backgroundColor = .clear
 
-        // --- Header (streaming) ---
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-        headerStack.axis = .horizontal
-        headerStack.alignment = .center
-        headerStack.spacing = 6
-
-        statusIndicator.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            statusIndicator.widthAnchor.constraint(equalToConstant: 20),
-            statusIndicator.heightAnchor.constraint(equalToConstant: 20),
-        ])
-
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .preferredFont(forTextStyle: .subheadline)
-        titleLabel.numberOfLines = 1
-        titleLabel.text = "Thinking…"
-
-        headerStack.addArrangedSubview(statusIndicator)
-        headerStack.addArrangedSubview(titleLabel)
-
         // --- Bubble ---
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         bubbleView.layer.cornerRadius = 10
@@ -235,13 +214,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         scrollView.addSubview(textLabel)
         bubbleView.addSubview(brainIcon)
 
-        // --- Container ---
-        let stack = UIStackView(arrangedSubviews: [headerStack, bubbleView])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 4
-        addSubview(stack)
+        // --- Container (bubble is the only child now) ---
+        addSubview(bubbleView)
 
         let bubbleHeight = bubbleView.heightAnchor.constraint(equalToConstant: 0)
         bubbleHeightConstraint = bubbleHeight
@@ -254,10 +228,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         textLeadingConstraint = textLeading
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bubbleView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bubbleView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bubbleView.topAnchor.constraint(equalTo: topAnchor),
+            bubbleView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             brainIcon.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: Self.bubblePadding),
             brainIcon.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: Self.bubblePadding),
@@ -307,9 +281,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
-        statusIndicator.tintUIColor = UIColor(palette.purple)
-        titleLabel.textColor = UIColor(palette.comment)
-
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
 
@@ -317,11 +288,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let needsTextUpdate = signature != renderSignature
 
         if configuration.isDone {
-            // Done: hide header, show bubble with brain icon + text.
-            headerStack.isHidden = true
-            // GameOfLifeUIView auto-pauses when not in window
-
-            // Offset text after brain icon.
+            // Done: show bubble with brain icon + text.
             textLeadingConstraint?.constant = Self.bubblePadding + Self.brainIndent
 
             if text.isEmpty {
@@ -349,9 +316,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             scrollView.contentOffset = .zero
             updateBubbleHeight(forWidth: bounds.width)
         } else {
-            // Streaming: header spinner + preview bubble (non-interactive vertically).
-            headerStack.isHidden = false
-            // GameOfLifeUIView auto-starts when in window
+            // Streaming: just the preview bubble (no header — the unified
+            // WorkingIndicator in the timeline already shows the GoL).
             brainIcon.isHidden = true
 
             // Full-width text (no brain icon indent).
