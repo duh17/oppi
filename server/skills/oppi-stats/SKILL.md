@@ -1,19 +1,33 @@
 ---
 name: oppi-stats
-description: Workspace session stats — session counts, message counts, cost breakdown per workspace. Use when asked about session usage, costs, or workspace activity.
+description: Oppi server stats — session counts, cost breakdown by model and workspace, active sessions, memory usage. Use when asked about session usage, costs, workspace activity, or model spending.
 ---
 
 # Oppi Stats
 
-Quick workspace session stats from the Oppi server.
+Quick session stats from the Oppi server's `/server/stats` endpoint.
 
 ```bash
 node {baseDir}/scripts/oppi-stats.mjs
+node {baseDir}/scripts/oppi-stats.mjs --range 30
+node {baseDir}/scripts/oppi-stats.mjs --range 90
+node {baseDir}/scripts/oppi-stats.mjs --json
 ```
 
-Output: per-workspace breakdown of session count, active sessions, messages, cost, and last activity.
+## Flags
 
-Add `--json` for machine-readable output.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--range N` | `7` | Time window in days. Accepts `7`, `30`, or `90`. |
+| `--json` | off | Output the raw `/server/stats` response as JSON. |
+
+## Human output
+
+- Header: session count, range, total cost, total tokens
+- Memory: heap used/total, RSS
+- Model breakdown table: model name, sessions, cost, cost share %
+- Workspace breakdown table: workspace name, sessions, cost
+- Active sessions list (if any): id, status, model, name (child sessions indented with ↳)
 
 ## Requirements
 
