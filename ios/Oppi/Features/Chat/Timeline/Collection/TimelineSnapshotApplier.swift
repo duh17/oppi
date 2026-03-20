@@ -120,18 +120,14 @@ enum TimelineSnapshotApplier {
         // When transitioning to idle (working indicator removed, session ended),
         // skip animation to avoid layout settlement issues that leave content
         // behind the input bar overlay.
-        // Animate structural inserts during busy sessions, but NOT when the
-        // only change is the working indicator appearing/disappearing — it's a
-        // tiny row that should appear instantly. Animated inserts defer layout
-        // and cause the indicator to render below the input bar.
-        let isOnlyWorkingIndicatorChange: Bool = {
-            let added = Set(nextIDs).subtracting(previousIDs)
-            let removed = Set(previousIDs).subtracting(nextIDs)
-            let workingID = ChatTimelineCollectionHost.workingIndicatorID
-            return (added == [workingID] && removed.isEmpty)
-                || (removed == [workingID] && added.isEmpty)
-        }()
-        let shouldAnimate = isBusy && nextIDs.count >= previousIDs.count && !isOnlyWorkingIndicatorChange
+        // Never animate structural snapshot applies. UIKit's animation
+        // transaction state persists across layout passes, adding ~25ms
+        // settlement overhead to subsequent layoutIfNeeded calls. The visual
+        // trade-off (rows appear instantly vs slide in) is minimal since
+        // users focus on the growing text, not insertion animation.
+        // (Supersedes the selective working-indicator-only skip from 3d683f5
+        // — the autoresearch session proved ALL animation is harmful here.)
+        let shouldAnimate = false
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
@@ -333,11 +329,14 @@ enum TimelineSnapshotApplier {
             return !isDone
         case .thinking(_, _, _, let isDone):
             return !isDone
-        case .assistantMessage, .permission, .permissionResolved, .systemEvent:
+        case .permission, .permissionResolved, .systemEvent:
             return true
         case .userMessage(_, _, let images, _):
             return !images.isEmpty
-        case .audioClip, .error:
+        // Assistant messages are handled separately via
+        // shouldReconfigureStreamingAssistant — only the actively streaming
+        // one needs reconfiguration. Past assistants never change in-flight.
+        case .assistantMessage, .audioClip, .error:
             return false
         }
     }
