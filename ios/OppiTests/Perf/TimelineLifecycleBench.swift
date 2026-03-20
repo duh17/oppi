@@ -29,6 +29,7 @@ struct TimelineLifecycleBench {
         var allScrollDriftMaxPt: [Double] = []
         var allExpandShiftMaxPt: [Double] = []
         var allEndSettleUs: [Double] = []
+        var allJankPct: [Double] = []
 
         // Invariant tracking (across all runs)
         var inv_driftUnder2pt = true
@@ -47,6 +48,7 @@ struct TimelineLifecycleBench {
             allScrollDriftMaxPt.append(r.scrollDriftMaxPt)
             allExpandShiftMaxPt.append(r.expandShiftMaxPt)
             allEndSettleUs.append(r.endSettleUs)
+            allJankPct.append(r.streamingJankPct)
 
             if !r.inv_driftUnder2pt { inv_driftUnder2pt = false }
             if !r.inv_expandUnder2pt { inv_expandUnder2pt = false }
@@ -60,6 +62,7 @@ struct TimelineLifecycleBench {
         let scrollDriftMaxPt = median(allScrollDriftMaxPt)
         let expandShiftMaxPt = median(allExpandShiftMaxPt)
         let endSettleUs = median(allEndSettleUs)
+        let jankPct = median(allJankPct)
 
         // Weighted score (lower = better)
         let score = loadMs * 0.1
@@ -81,6 +84,10 @@ struct TimelineLifecycleBench {
         print("METRIC expand_shift_max_pt=\(fmt(expandShiftMaxPt))")
         print("METRIC end_settle_us=\(fmt(endSettleUs))")
 
+        // Unified vital metrics (same names as production telemetry)
+        print("METRIC chat.session_load_ms=\(fmt(loadMs))")
+        print("METRIC chat.jank_pct=\(fmt(jankPct))")
+
         // Invariants (hard checks — failure blocks keep)
         print("INVARIANT drift_under_threshold=\(inv_driftUnder2pt ? "pass" : "FAIL")")
         print("INVARIANT expand_under_threshold=\(inv_expandUnder2pt ? "pass" : "FAIL")")
@@ -101,6 +108,7 @@ struct TimelineLifecycleBench {
         let scrollDriftMaxPt: Double
         let expandShiftMaxPt: Double
         let endSettleUs: Double
+        let streamingJankPct: Double
 
         let inv_driftUnder2pt: Bool
         let inv_expandUnder2pt: Bool
@@ -173,6 +181,12 @@ struct TimelineLifecycleBench {
         streamingTimings.sort()
         let streamingMedianUs = Double(streamingTimings[streamingTimings.count / 2]) / 1000.0
         let streamingMaxUs = Double(streamingTimings.last ?? 0) / 1000.0
+
+        // Jank: % of streaming ticks that exceeded the 16ms frame budget
+        let jankCount = streamingTimings.filter { $0 > 16_000_000 }.count
+        let streamingJankPct = streamingTimings.count > 0
+            ? Double(jankCount) / Double(streamingTimings.count) * 100.0
+            : 0.0
 
         // === Phase 3: Structural Insert (new tool row mid-stream) ===
         // Simulate a fast tool that completes within a single 33ms coalescer
@@ -314,7 +328,8 @@ struct TimelineLifecycleBench {
         // Check all metrics finite
         let allMetrics = [loadMs, streamingMedianUs, streamingMaxUs,
                           insertTotalUs, Double(scrollDriftMaxPt),
-                          Double(expandShiftMaxPt), endSettleUs]
+                          Double(expandShiftMaxPt), endSettleUs,
+                          streamingJankPct]
         let allFinite = allMetrics.allSatisfy { $0.isFinite && $0 >= 0 }
 
         // Cleanup
@@ -328,6 +343,7 @@ struct TimelineLifecycleBench {
             scrollDriftMaxPt: Double(scrollDriftMaxPt),
             expandShiftMaxPt: Double(expandShiftMaxPt),
             endSettleUs: endSettleUs,
+            streamingJankPct: streamingJankPct,
             inv_driftUnder2pt: scrollDriftMaxPt < 80.0,  // relaxed: cascade drift is the optimization target
             inv_expandUnder2pt: expandShiftMaxPt < 8.0,  // relaxed: expand/collapse settlement
             inv_allFinite: allFinite

@@ -606,5 +606,8 @@ struct BusyReentryMetricsBenchTests {
           scrollDetach:   \(metrics.scrollDetachDuringMerge)
           composite:      \(String(format: "%.1f", metrics.compositeScore))
         """)
+
+        // Unified vital metrics (same names as production telemetry)
+        print("METRIC chat.catchup_ms=\(String(format: "%.1f", Double(metrics.timeToCorrectMs)))")
     }
 }
