@@ -73,6 +73,10 @@ final class ChatSessionManager {
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
 
+    /// Session load timing: measures tap-to-first-content-visible.
+    private var sessionLoadStartMs: Int64?
+    private var sessionLoadRecorded = false
+
     /// Freshness metadata for chat timeline sync.
     private(set) var lastSuccessfulSyncAt: Date?
     private(set) var isSyncing = false
@@ -221,6 +225,19 @@ final class ChatSessionManager {
         lastSyncFailed = true
     }
 
+    private func recordSessionLoadIfNeeded(path: String, itemCount: Int, workspaceId: String? = nil) {
+        guard !sessionLoadRecorded, let startMs = sessionLoadStartMs else { return }
+        sessionLoadRecorded = true
+        let durationMs = max(0, ChatSessionTelemetry.nowMs() - startMs)
+        ChatSessionTelemetry.recordSessionLoad(
+            durationMs: durationMs,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            path: path,
+            itemCount: itemCount
+        )
+    }
+
     private func beginFreshContentLagMeasurement(hadCache: Bool) {
         freshContentLagStartMs = ChatSessionTelemetry.nowMs()
         freshContentLagRecorded = false
@@ -289,6 +306,8 @@ final class ChatSessionManager {
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId
         pendingTTFTContext = nil
+        sessionLoadStartMs = ChatSessionTelemetry.nowMs()
+        sessionLoadRecorded = false
         markSyncStarted()
 
         let persistedLastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
@@ -365,6 +384,11 @@ final class ChatSessionManager {
                 }
 
                 needsInitialScroll = true
+                recordSessionLoadIfNeeded(
+                    path: "cache_hit",
+                    itemCount: reducer.items.count,
+                    workspaceId: resolveWorkspaceId(from: sessionStore)
+                )
             }
         } else {
             latestTraceSignature = nil
@@ -633,6 +657,9 @@ final class ChatSessionManager {
             unexpectedStreamExitCount = 0
             cancelAutoReconnect()
         }
+
+        // Emit jank rate for this session before cleanup.
+        ChatTimelinePerf.emitJankRate(sessionId: sessionId, phase: "session_end")
 
         connection.silenceWatchdog.onReconnect = nil
         cancelStateSync()
@@ -947,6 +974,11 @@ final class ChatSessionManager {
                     )
 
                     needsInitialScroll = true
+                    recordSessionLoadIfNeeded(
+                        path: usedReplay ? "full_reload" : "cache_miss",
+                        itemCount: reducer.items.count,
+                        workspaceId: workspaceId
+                    )
                     let footprint = SentryService.currentFootprintMB()
                     log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count), replay=\(usedReplay)]")
                     ClientLog.info("Memory", "Session loaded", metadata: [

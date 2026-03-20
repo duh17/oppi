@@ -248,7 +248,6 @@ extension ServerConnection {
             (.sessionMessageCount, Double(snapshot.messageCount)),
             (.sessionInputTokens, Double(snapshot.inputTokens)),
             (.sessionOutputTokens, Double(snapshot.outputTokens)),
-            (.sessionTotalTokens, Double(snapshot.totalTokens)),
             (.sessionMutatingToolCalls, Double(snapshot.mutatingToolCalls)),
             (.sessionFilesChanged, Double(snapshot.filesChanged)),
             (.sessionAddedLines, Double(snapshot.addedLines)),
