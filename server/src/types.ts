@@ -595,7 +595,19 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Timeline layout latency (threshold-gated, only emitted when >= 2ms).",
   },
-  // Removed: chat.ws_decode_ms — high-volume noise (32% of samples, almost always 0ms)
+  // Removed: chat.ws_decode_ms (high-volume noise, build 21)
+  "chat.session_load_ms": {
+    unit: "ms",
+    description: "End-to-end session load latency from tap to content visible.",
+  },
+  "chat.jank_pct": {
+    unit: "ratio",
+    description: "Percentage of render cycles exceeding 16ms frame budget during streaming.",
+  },
+  "chat.timeline_hitch": {
+    unit: "count",
+    description: "Frame budget hitch detected during collection view apply cycle.",
+  },
   "chat.coalescer_flush_events": {
     unit: "count",
     description: "Event count flushed per coalescer batch.",
@@ -628,10 +640,7 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Legacy WebSocket connect latency bucket (mixed phases).",
   },
-  "chat.stream_open_ms": {
-    unit: "ms",
-    description: "Time from streamSession start to WebSocket connected state.",
-  },
+  // Removed: chat.stream_open_ms — p50=0ms, never measures real latency
   "chat.subscribe_ack_ms": {
     unit: "ms",
     description: "Latency from subscribe send to subscribe command acknowledgement.",
@@ -668,10 +677,7 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Per-session cumulative output token count snapshot.",
   },
-  "chat.session_total_tokens": {
-    unit: "count",
-    description: "Per-session cumulative total token count snapshot.",
-  },
+  // Removed: chat.session_total_tokens — 100% redundant (input + output)
   "chat.session_mutating_tool_calls": {
     unit: "count",
     description: "Per-session cumulative mutating tool call count snapshot.",
