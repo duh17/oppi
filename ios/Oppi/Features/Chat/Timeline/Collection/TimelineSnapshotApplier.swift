@@ -322,11 +322,14 @@ enum TimelineSnapshotApplier {
             return !isDone
         case .thinking(_, _, _, let isDone):
             return !isDone
-        case .assistantMessage, .permission, .permissionResolved, .systemEvent:
+        case .permission, .permissionResolved, .systemEvent:
             return true
         case .userMessage(_, _, let images, _):
             return !images.isEmpty
-        case .audioClip, .error:
+        // Assistant messages are handled separately via
+        // shouldReconfigureStreamingAssistant — only the actively streaming
+        // one needs reconfiguration. Past assistants never change in-flight.
+        case .assistantMessage, .audioClip, .error:
             return false
         }
     }
