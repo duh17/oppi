@@ -731,7 +731,7 @@ struct WorkspaceContextBar: View {
 
     private var agentsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("AGENTS")
+            Text("SUB-AGENTS")
                 .font(.caption2.monospaced().weight(.semibold))
                 .foregroundStyle(.themeComment)
                 .tracking(0.8)
@@ -739,10 +739,8 @@ struct WorkspaceContextBar: View {
                 .padding(.top, 6)
                 .padding(.bottom, 2)
 
-            TimelineView(.periodic(from: .now, by: 5)) { _ in
-                ForEach(childSessions) { child in
-                    agentRow(child)
-                }
+            ForEach(childSessions) { child in
+                agentRow(child)
             }
         }
         .padding(.bottom, 4)
@@ -780,7 +778,9 @@ struct WorkspaceContextBar: View {
                         Text(SessionFormatting.costString(child.cost))
                     }
                     if child.status == .busy || child.status == .starting || child.status == .stopping {
-                        Text(SessionFormatting.durationString(since: child.createdAt))
+                        TimelineView(.periodic(from: .now, by: 5)) { _ in
+                            Text(SessionFormatting.durationString(since: child.createdAt))
+                        }
                     }
                 }
                 .font(.caption2.monospaced())
