@@ -97,6 +97,33 @@ final class MacAPIClient: Sendable {
         }
     }
 
+    // MARK: - Stats
+
+    /// Fetch `GET /server/stats?range=N`. Returns parsed stats or nil on error.
+    nonisolated func fetchStats(range: Int = 7) async -> ServerStats? {
+        var components = URLComponents(url: baseURL.appendingPathComponent("server/stats"),
+                                       resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "range", value: "\(range)")]
+
+        guard let url = components?.url else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return nil
+            }
+            let decoder = JSONDecoder()
+            return try decoder.decode(ServerStats.self, from: data)
+        } catch {
+            logger.debug("Stats fetch failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - Private
 
     private nonisolated func addAuth(_ request: inout URLRequest) {
