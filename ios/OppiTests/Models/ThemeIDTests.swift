@@ -16,6 +16,10 @@ struct ThemeIDTests {
         #expect(ThemeID.light.rawValue == "light")
     }
 
+    @Test func nightRawValue() {
+        #expect(ThemeID.night.rawValue == "night")
+    }
+
     @Test func customRawValueIncludesPrefix() {
         let id = ThemeID.custom("Dracula")
         #expect(id.rawValue == "custom:Dracula")
@@ -29,6 +33,11 @@ struct ThemeIDTests {
     @Test func roundTripLight() {
         let id = ThemeID(rawValue: "light")
         #expect(id == .light)
+    }
+
+    @Test func roundTripNight() {
+        let id = ThemeID(rawValue: "night")
+        #expect(id == .night)
     }
 
     @Test func roundTripCustom() {
@@ -67,6 +76,12 @@ struct ThemeIDTests {
         #expect(str == "\"light\"")
     }
 
+    @Test func encodeNight() throws {
+        let data = try JSONEncoder().encode(ThemeID.night)
+        let str = String(data: data, encoding: .utf8)
+        #expect(str == "\"night\"")
+    }
+
     @Test func encodeCustom() throws {
         let data = try JSONEncoder().encode(ThemeID.custom("Nord"))
         let str = String(data: data, encoding: .utf8)
@@ -90,6 +105,7 @@ struct ThemeIDTests {
     @Test func displayNames() {
         #expect(ThemeID.dark.displayName == "Dark")
         #expect(ThemeID.light.displayName == "Light")
+        #expect(ThemeID.night.displayName == "Night")
         #expect(ThemeID.custom("Nord").displayName == "Nord")
     }
 
@@ -98,6 +114,7 @@ struct ThemeIDTests {
     @Test func detailStrings() {
         #expect(!ThemeID.dark.detail.isEmpty)
         #expect(!ThemeID.light.detail.isEmpty)
+        #expect(!ThemeID.night.detail.isEmpty)
         #expect(!ThemeID.custom("X").detail.isEmpty)
     }
 
@@ -109,6 +126,10 @@ struct ThemeIDTests {
 
     @Test func lightPrefersLightScheme() {
         #expect(ThemeID.light.preferredColorScheme == .light)
+    }
+
+    @Test func nightPrefersDarkScheme() {
+        #expect(ThemeID.night.preferredColorScheme == .dark)
     }
 
     @Test func customWithNoSavedDataDefaultsToDark() {
@@ -135,6 +156,14 @@ struct ThemeIDTests {
         _ = palette.blue
     }
 
+    @Test func nightPaletteIsNotNil() {
+        let palette = ThemeID.night.palette
+        _ = palette.bg
+        _ = palette.fg
+        _ = palette.blue
+        _ = palette.orange  // hero accent
+    }
+
     @Test func customPaletteWithoutSavedDataFallsToDark() {
         let palette = ThemeID.custom("nonexistent-\(UUID().uuidString)").palette
         // Should fall back to dark palette
@@ -143,10 +172,11 @@ struct ThemeIDTests {
 
     // MARK: - builtins
 
-    @Test func builtinsContainsDarkAndLight() {
+    @Test func builtinsContainsDarkLightAndNight() {
         #expect(ThemeID.builtins.contains(.dark))
         #expect(ThemeID.builtins.contains(.light))
-        #expect(ThemeID.builtins.count == 2)
+        #expect(ThemeID.builtins.contains(.night))
+        #expect(ThemeID.builtins.count == 3)
     }
 
     // MARK: - Hashable
@@ -154,6 +184,8 @@ struct ThemeIDTests {
     @Test func hashableEquality() {
         #expect(ThemeID.dark == ThemeID.dark)
         #expect(ThemeID.dark != ThemeID.light)
+        #expect(ThemeID.dark != ThemeID.night)
+        #expect(ThemeID.night == ThemeID.night)
         #expect(ThemeID.custom("A") == ThemeID.custom("A"))
         #expect(ThemeID.custom("A") != ThemeID.custom("B"))
     }
