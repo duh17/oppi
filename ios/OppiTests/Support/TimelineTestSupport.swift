@@ -438,7 +438,9 @@ func makeTimelineConfiguration(
     toolSegmentStore: ToolSegmentStore = ToolSegmentStore(),
     connection: ServerConnection,
     scrollController: ChatScrollController,
-    audioPlayer: AudioPlayerService
+    audioPlayer: AudioPlayerService,
+    topOverlap: CGFloat = 0,
+    bottomOverlap: CGFloat = 0
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -458,7 +460,9 @@ func makeTimelineConfiguration(
         toolSegmentStore: toolSegmentStore,
         connection: connection,
         audioPlayer: audioPlayer,
-        themeID: .dark
+        themeID: .dark,
+        topOverlap: topOverlap,
+        bottomOverlap: bottomOverlap
     )
 }
 
