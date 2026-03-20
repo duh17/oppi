@@ -23,6 +23,19 @@ private final class SafeSizingCell: UICollectionViewCell {
     private static let maxValidHeight: CGFloat = 10_000
     private static let fallbackHeight: CGFloat = 44
 
+    /// UIKit resets contentView.clipsToBounds when applying content
+    /// configurations. Override layoutSubviews — which fires after every
+    /// configuration change — to enforce clipping. Without this, cell
+    /// content overflows into adjacent cells when the compositional
+    /// layout hasn't resolved estimated heights to actual heights yet
+    /// (e.g., during streaming when layoutIfNeeded is skipped).
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if !contentView.clipsToBounds {
+            contentView.clipsToBounds = true
+        }
+    }
+
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
