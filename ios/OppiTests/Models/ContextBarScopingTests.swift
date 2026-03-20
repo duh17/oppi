@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -16,7 +17,8 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeDirtyGitStatus(),
             sessionId: nil,
-            sessionScope: nil
+            sessionScope: nil,
+            childSessions: [],
         )
         #expect(hasContent == true)
     }
@@ -25,7 +27,8 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeCleanGitStatus(),
             sessionId: nil,
-            sessionScope: nil
+            sessionScope: nil,
+            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -34,7 +37,8 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeDirtyGitStatus(),
             sessionId: "session-1",
-            sessionScope: nil
+            sessionScope: nil,
+            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -44,7 +48,8 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeDirtyGitStatus(),
             sessionId: "session-1",
-            sessionScope: scope
+            sessionScope: scope,
+            childSessions: [],
         )
         #expect(hasContent == true)
     }
@@ -53,7 +58,8 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: nil,
             sessionId: "session-1",
-            sessionScope: nil
+            sessionScope: nil,
+            childSessions: [],
         )
         #expect(hasContent == false)
     }
@@ -62,9 +68,23 @@ struct ContextBarScopingTests {
         let hasContent = ContextBarScoping.hasContent(
             gitStatus: makeNonGitStatus(),
             sessionId: "session-1",
-            sessionScope: nil
+            sessionScope: nil,
+            childSessions: [],
         )
         #expect(hasContent == false)
+    }
+
+    // MARK: - Agent/parent visibility
+
+    @Test func barVisibleWhenChildSessionsExistEvenWithoutGit() {
+        let child = makeSession(id: "child-1", status: .busy)
+        let hasContent = ContextBarScoping.hasContent(
+            gitStatus: nil,
+            sessionId: "parent-1",
+            sessionScope: nil,
+            childSessions: [child],
+        )
+        #expect(hasContent == true)
     }
 
     // MARK: - displayFileCount
@@ -192,7 +212,8 @@ struct ContextBarScopingTests {
 
         // Session exists but hasn't touched any files
         let hasContent = ContextBarScoping.hasContent(
-            gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil
+            gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil,
+            childSessions: []
         )
         let fileCount = ContextBarScoping.displayFileCount(
             gitStatus: gitStatus, sessionId: "session-1", sessionScope: nil
@@ -255,6 +276,18 @@ struct ContextBarScopingTests {
             files: [], totalFiles: 0,
             addedLines: 0, removedLines: 0,
             stashCount: 0, lastCommitMessage: nil, lastCommitDate: nil, recentCommits: []
+        )
+    }
+
+    private func makeSession(id: String, status: SessionStatus) -> Session {
+        Session(
+            id: id,
+            status: status,
+            createdAt: Date(),
+            lastActivity: Date(),
+            messageCount: 0,
+            tokens: TokenUsage(input: 0, output: 0),
+            cost: 0
         )
     }
 

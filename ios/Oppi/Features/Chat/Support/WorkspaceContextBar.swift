@@ -10,8 +10,11 @@ enum ContextBarScoping {
     static func hasContent(
         gitStatus: GitStatus?,
         sessionId: String?,
-        sessionScope: SessionScopedGitStatus?
+        sessionScope: SessionScopedGitStatus?,
+        childSessions: [Session]
     ) -> Bool {
+        // Show bar if there are child agents, even without git
+        if !childSessions.isEmpty { return true }
         guard let gitStatus, gitStatus.isGitRepo else { return false }
         if sessionId != nil { return sessionScope != nil }
         return !gitStatus.isClean
@@ -68,6 +71,8 @@ struct WorkspaceContextBar: View {
     let appliesOuterHorizontalPadding: Bool
     let workspaceId: String?
     let sessionId: String?
+    let childSessions: [Session]
+    var onSelectChild: ((String) -> Void)?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
     var collapseToken: Int = 0
     /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
@@ -94,6 +99,8 @@ struct WorkspaceContextBar: View {
         appliesOuterHorizontalPadding: Bool = true,
         workspaceId: String? = nil,
         sessionId: String? = nil,
+        childSessions: [Session] = [],
+        onSelectChild: ((String) -> Void)? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
     ) {
@@ -102,6 +109,8 @@ struct WorkspaceContextBar: View {
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
         self.workspaceId = workspaceId
         self.sessionId = sessionId
+        self.childSessions = childSessions
+        self.onSelectChild = onSelectChild
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
     }
@@ -123,7 +132,12 @@ struct WorkspaceContextBar: View {
     // MARK: - Computed (scoped)
 
     private var hasContent: Bool {
-        ContextBarScoping.hasContent(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
+        ContextBarScoping.hasContent(
+            gitStatus: gitStatus,
+            sessionId: sessionId,
+            sessionScope: sessionScope,
+            childSessions: childSessions
+        )
     }
 
     private var displayFileCount: Int {
@@ -158,14 +172,29 @@ struct WorkspaceContextBar: View {
         !selectedPaths.isEmpty && launchActionInFlight == nil
     }
 
+    // MARK: - Agent counts
+
+    private var agentWorkingCount: Int {
+        childSessions.count { $0.status == .starting || $0.status == .busy || $0.status == .stopping }
+    }
+
+    private var agentDoneCount: Int {
+        childSessions.count { $0.status == .ready || $0.status == .stopped }
+    }
+
+    private var agentErrorCount: Int {
+        childSessions.count { $0.status == .error }
+    }
+
     /// Dynamic max height: grows with content, caps at 480.
     private var expandedMaxHeight: CGFloat {
-        guard gitStatus != nil else { return 300 }
+        let agentRows = CGFloat(childSessions.count) * 48
         let fileRows = CGFloat(displayFiles.count) * 32
         let commitRows = CGFloat(gitStatus?.recentCommits.count ?? 0) * 24
         let selectionBar: CGFloat = isSelecting ? 52 : 0
+        let sectionHeaders: CGFloat = (!childSessions.isEmpty && !displayFiles.isEmpty) ? 48 : 24
         let chrome: CGFloat = 60
-        return min(fileRows + commitRows + selectionBar + chrome, 480)
+        return min(agentRows + fileRows + commitRows + selectionBar + sectionHeaders + chrome, 480)
     }
 
     // MARK: - Body
@@ -278,6 +307,11 @@ struct WorkspaceContextBar: View {
                         }
                     }
 
+                    // Agent status pills (right-aligned)
+                    if !childSessions.isEmpty {
+                        agentStatusPills
+                    }
+
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.themeComment)
@@ -361,6 +395,14 @@ struct WorkspaceContextBar: View {
                 .padding(.vertical, 6)
 
                 Divider().overlay(Color.themeComment.opacity(0.15))
+            }
+
+            // Agents section
+            if !childSessions.isEmpty {
+                agentsSection
+                if !displayFiles.isEmpty {
+                    Divider().overlay(Color.themeComment.opacity(0.15))
+                }
             }
 
             // File list
@@ -652,6 +694,124 @@ struct WorkspaceContextBar: View {
         guard isSelecting,
               let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
         dragSelect.handleRow(path, selectedPaths: &selectedPaths)
+    }
+
+    // MARK: - Agent Status Pills (collapsed header)
+
+    private var agentStatusPills: some View {
+        HStack(spacing: 4) {
+            if agentWorkingCount > 0 {
+                Text("\(agentWorkingCount) working")
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(.themeOrange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            }
+            if agentDoneCount > 0 {
+                Text("\(agentDoneCount) done")
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(.themeGreen)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.themeGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            }
+            if agentErrorCount > 0 {
+                Text("\(agentErrorCount) error")
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(.themeRed)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.themeRed.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            }
+        }
+    }
+
+    // MARK: - Agents Section (expanded)
+
+    private var agentsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("AGENTS")
+                .font(.caption2.monospaced().weight(.semibold))
+                .foregroundStyle(.themeComment)
+                .tracking(0.8)
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
+
+            TimelineView(.periodic(from: .now, by: 5)) { _ in
+                ForEach(childSessions) { child in
+                    agentRow(child)
+                }
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    private func agentRow(_ child: Session) -> some View {
+        Button {
+            onSelectChild?(child.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                // Top line: status pill + name + chevron
+                HStack(spacing: 8) {
+                    agentStatusLabel(for: child.status)
+                        .fixedSize()
+
+                    Text(child.displayTitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(child.status == .error ? .themeRed : .themeFg)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 4)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.themeComment.opacity(0.5))
+                }
+
+                // Bottom line: model, cost, duration (right-aligned under the name)
+                HStack(spacing: 6) {
+                    if let model = SessionFormatting.shortModelName(child.model) {
+                        Text(model)
+                    }
+                    if child.cost > 0 {
+                        Text(SessionFormatting.costString(child.cost))
+                    }
+                    if child.status == .busy || child.status == .starting || child.status == .stopping {
+                        Text(SessionFormatting.durationString(since: child.createdAt))
+                    }
+                }
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeComment)
+                .padding(.leading, 2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func agentStatusLabel(for status: SessionStatus) -> some View {
+        let (text, fg, bg): (String, Color, Color) = switch status {
+        case .starting, .busy, .stopping:
+            ("working", .themeOrange, Color.themeOrange.opacity(0.12))
+        case .ready:
+            ("ready", .themeGreen, Color.themeGreen.opacity(0.12))
+        case .stopped:
+            ("stopped", .themeComment, Color.themeComment.opacity(0.1))
+        case .error:
+            ("error", .themeRed, Color.themeRed.opacity(0.12))
+        }
+
+        return Text(text)
+            .font(.caption2.monospaced().weight(.semibold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(bg, in: RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Helpers
