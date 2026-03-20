@@ -226,6 +226,7 @@ targets:
   OppiMacTests:
     type: bundle.unit-test
     platform: macOS
+    deploymentTarget: "26.0"
     sources:
       - path: OppiMacTests
         type: group
