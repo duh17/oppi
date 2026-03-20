@@ -114,11 +114,16 @@ enum TimelineSnapshotApplier {
             snapshot.reconfigureItems(dedupedChangedIDs)
         }
 
+        // Structural change: IDs changed (new rows inserted or removed).
+        // Use animated apply for smooth insert/remove transitions.
+        // The streaming reconfigure path (idsUnchanged) stays non-animated.
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
         )
-        dataSource?.apply(snapshot, animatingDifferences: false)
+        FrameBudgetMonitor.shared.beginSection("structural_apply")
+        dataSource?.apply(snapshot, animatingDifferences: true)
+        FrameBudgetMonitor.shared.endSection()
         ChatTimelinePerf.endCollectionApply(applyToken)
     }
 
