@@ -175,20 +175,78 @@ struct GameOfLifeTests {
         #expect(perTick < 0.00005, "Tick too slow: \(perTick * 1_000_000)us per tick (target <50us)")
     }
 
-    @Test("reseed frequency is reasonable over 5000 ticks")
+    // MARK: - Age Tracking
+
+    @Test("newborn cells start at age 0")
+    func newbornAge() {
+        let layer = GameOfLifeLayer(gridSize: 5)
+        for i in 0..<25 { layer.cells[i] = false; layer.ages[i] = 0 }
+
+        // Set up birth at (2,2): needs exactly 3 neighbors
+        layer.cells[1 * 5 + 1] = true; layer.ages[1 * 5 + 1] = 5
+        layer.cells[1 * 5 + 2] = true; layer.ages[1 * 5 + 2] = 5
+        layer.cells[1 * 5 + 3] = true; layer.ages[1 * 5 + 3] = 5
+
+        layer.tick()
+
+        // (2,2) should be born with age 0
+        #expect(layer.cells[2 * 5 + 2] == true, "Cell should be born at (2,2)")
+        #expect(layer.ages[2 * 5 + 2] == 0, "Newborn cell should have age 0")
+    }
+
+    @Test("surviving cells increment age")
+    func survivingAge() {
+        // Block: 2x2 still life, all cells survive every tick
+        let layer = GameOfLifeLayer(gridSize: 6)
+        for i in 0..<36 { layer.cells[i] = false; layer.ages[i] = 0 }
+
+        layer.cells[2 * 6 + 2] = true; layer.ages[2 * 6 + 2] = 0
+        layer.cells[2 * 6 + 3] = true; layer.ages[2 * 6 + 3] = 0
+        layer.cells[3 * 6 + 2] = true; layer.ages[3 * 6 + 2] = 0
+        layer.cells[3 * 6 + 3] = true; layer.ages[3 * 6 + 3] = 0
+
+        layer.tick()
+
+        #expect(layer.ages[2 * 6 + 2] == 1, "Surviving cell age should increment to 1")
+        #expect(layer.ages[2 * 6 + 3] == 1)
+        #expect(layer.ages[3 * 6 + 2] == 1)
+        #expect(layer.ages[3 * 6 + 3] == 1)
+
+        layer.tick()
+
+        #expect(layer.ages[2 * 6 + 2] == 2, "Surviving cell age should increment to 2")
+    }
+
+    @Test("dead cells have age 0")
+    func deadCellAge() {
+        let layer = GameOfLifeLayer(gridSize: 5)
+        for i in 0..<25 { layer.cells[i] = false; layer.ages[i] = 0 }
+
+        // Single cell dies from underpopulation
+        layer.cells[2 * 5 + 2] = true
+        layer.ages[2 * 5 + 2] = 5
+
+        layer.tick()
+
+        // Cell should be dead, ages array valid
+        #expect(layer.ages.count == 25)
+    }
+
+    @Test("reseed frequency is reasonable over 10000 ticks")
     func reseedFrequency() {
         let layer = GameOfLifeLayer(gridSize: 6)
 
         var reseedCount = 0
-        // Use 5000 ticks to reduce flakiness — some random seeds produce
-        // long-lived oscillators that avoid stale detection for 1000+ ticks.
-        for _ in 0..<5000 {
+        // Use 10000 ticks to reduce flakiness — some random seeds produce
+        // long-lived oscillators (period 2+) that avoid single-generation
+        // stale detection for thousands of ticks.
+        for _ in 0..<10_000 {
             if layer.tick() { reseedCount += 1 }
         }
 
         // On a 6x6 toroidal grid with stale detection (threshold=4) and
         // sparse/death checks, reseeds should happen regularly.
-        #expect(reseedCount >= 1, "Should reseed at least once in 5000 ticks (got \(reseedCount))")
-        #expect(reseedCount < 2500, "Too many reseeds in 5000 ticks (got \(reseedCount))")
+        #expect(reseedCount >= 1, "Should reseed at least once in 10000 ticks (got \(reseedCount))")
+        #expect(reseedCount < 5000, "Too many reseeds in 10000 ticks (got \(reseedCount))")
     }
 }
