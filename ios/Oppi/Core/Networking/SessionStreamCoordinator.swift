@@ -65,6 +65,12 @@ actor SessionStreamCoordinator {
     private static let eagerResolveCommands: Set<String> = ["subscribe", "unsubscribe", "get_queue"]
     private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
 
+    /// Maximum notification-level sessions to subscribe after reconnect.
+    /// Prevents subscribe floods when many sessions are non-stopped.
+    /// The server processes subscribes sequentially — too many cause ping
+    /// timeouts → reconnect → more subscribes → death spiral.
+    private static let maxNotificationSubscriptions = 20
+
     private(set) var state: StreamState = .idle
     private var lastSeenSeqBySession: [String: Int] = [:]
     private var recoveryReservationSessionId: String?
@@ -589,7 +595,22 @@ actor SessionStreamCoordinator {
 
         let notificationSessionIds = await MainActor.run(body: { connection.notificationSessionIds })
         let activeSessionId = await MainActor.run(body: { connection.activeSessionId })
-        for sessionId in notificationSessionIds where sessionId != activeSessionId {
+
+        // Only resubscribe a bounded number of notification sessions on reconnect.
+        // The full set will be reconciled by the debounced syncNotificationSubscriptions().
+        // This prevents the death spiral: reconnect → flood subscribes → server overwhelmed
+        // → ping timeout → reconnect → bigger flood.
+        let notificationResubscribeLimit = Self.maxNotificationSubscriptions
+        let sortedNotifications = Array(notificationSessionIds.filter { $0 != activeSessionId })
+        let batch = sortedNotifications.prefix(notificationResubscribeLimit)
+
+        if sortedNotifications.count > notificationResubscribeLimit {
+            streamCoordinatorLogger.info(
+                "Reconnect: resubscribing \(batch.count)/\(sortedNotifications.count) notification sessions (capped)"
+            )
+        }
+
+        for sessionId in batch {
             _ = await resubscribeWithRetry(
                 connection: connection,
                 sessionId: sessionId,
@@ -650,12 +671,12 @@ actor SessionStreamCoordinator {
     private func desiredNotificationSessionIds(connection: ServerConnection) async -> Set<String> {
         await MainActor.run {
             let active = connection.activeSessionId
-            return Set(
-                connection.sessionStore.sessions
-                    .filter { $0.status != .stopped }
-                    .map(\.id)
-                    .filter { $0 != active }
-            )
+            let candidates = connection.sessionStore.sessions
+                .filter { $0.status != .stopped && $0.id != active }
+                .sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
+                .prefix(Self.maxNotificationSubscriptions)
+                .map(\.id)
+            return Set(candidates)
         }
     }
 
