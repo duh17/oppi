@@ -70,7 +70,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
     // Header (streaming state)
     private let headerStack = UIStackView()
-    private let statusSpinner = UIActivityIndicatorView(style: .medium)
+    private let statusIndicator = GameOfLifeUIView(gridSize: 6)
     private let titleLabel = UILabel()
 
     // Bubble
@@ -176,16 +176,18 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         headerStack.alignment = .center
         headerStack.spacing = 6
 
-        statusSpinner.translatesAutoresizingMaskIntoConstraints = false
-        statusSpinner.hidesWhenStopped = false
-        statusSpinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
+        statusIndicator.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            statusIndicator.widthAnchor.constraint(equalToConstant: 20),
+            statusIndicator.heightAnchor.constraint(equalToConstant: 20),
+        ])
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .preferredFont(forTextStyle: .subheadline)
         titleLabel.numberOfLines = 1
         titleLabel.text = "Thinking…"
 
-        headerStack.addArrangedSubview(statusSpinner)
+        headerStack.addArrangedSubview(statusIndicator)
         headerStack.addArrangedSubview(titleLabel)
 
         // --- Bubble ---
@@ -305,7 +307,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
-        statusSpinner.color = UIColor(palette.purple)
+        statusIndicator.tintUIColor = UIColor(palette.purple)
         titleLabel.textColor = UIColor(palette.comment)
 
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -317,7 +319,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         if configuration.isDone {
             // Done: hide header, show bubble with brain icon + text.
             headerStack.isHidden = true
-            statusSpinner.stopAnimating()
+            // GameOfLifeUIView auto-pauses when not in window
 
             // Offset text after brain icon.
             textLeadingConstraint?.constant = Self.bubblePadding + Self.brainIndent
@@ -349,7 +351,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         } else {
             // Streaming: header spinner + preview bubble (non-interactive vertically).
             headerStack.isHidden = false
-            statusSpinner.startAnimating()
+            // GameOfLifeUIView auto-starts when in window
             brainIcon.isHidden = true
 
             // Full-width text (no brain icon indent).
