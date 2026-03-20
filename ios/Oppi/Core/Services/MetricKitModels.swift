@@ -65,6 +65,7 @@ enum ChatMetricName: String, Codable, Sendable {
     case voiceRemoteChunkError = "chat.voice_remote_chunk_error"
     case cellConfigureMs = "chat.cell_configure_ms"
     case renderStrategyMs = "chat.render_strategy_ms"
+    case timelineHitch = "chat.timeline_hitch"
     case plotAxisVisibleTickCount = "plot.axis_visible_tick_count"
     case plotLegendItemCount = "plot.legend_item_count"
     case plotScrollEnabled = "plot.scroll_enabled"
