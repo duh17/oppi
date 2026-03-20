@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { aggregateStats, getActiveSessions, getMemoryStats, parseRange } from "./server-stats.js";
 
 const PAIRING_MAX_FAILURES = 5;
 const PAIRING_WINDOW_MS = 60_000;
@@ -182,7 +183,30 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
-  return async ({ method, path, req, res }) => {
+  function handleGetServerStats(url: URL, res: ServerResponse): void {
+    const rangeDays = parseRange(url.searchParams.get("range"));
+    const sessions = ctx.storage.listSessions();
+    const workspaces = ctx.storage.listWorkspaces();
+
+    const memory = getMemoryStats();
+    const activeSessions = getActiveSessions(sessions);
+    const { daily, modelBreakdown, workspaceBreakdown, totals } = aggregateStats({
+      sessions,
+      workspaces,
+      rangeDays,
+    });
+
+    helpers.json(res, {
+      memory,
+      activeSessions,
+      daily,
+      modelBreakdown,
+      workspaceBreakdown,
+      totals,
+    });
+  }
+
+  return async ({ method, path, url, req, res }) => {
     if (path === "/pair" && method === "POST") {
       await handlePair(req, res);
       return true;
@@ -193,6 +217,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/server/info" && method === "GET") {
       await handleGetServerInfo(res);
+      return true;
+    }
+    if (path === "/server/stats" && method === "GET") {
+      handleGetServerStats(url, res);
       return true;
     }
     if (path === "/server/runtime/update" && method === "POST") {
