@@ -45,6 +45,14 @@ struct WorkspaceReviewFileDetailView: View {
         }
     }
 
+    private func diffSourceContext(filePath: String) -> SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: selectedSessionId ?? "",
+            surface: .fullScreenDiff,
+            filePath: filePath
+        )
+    }
+
     private enum DetailTab: String, CaseIterable, Identifiable {
         case diff = "Diff"
         case current = "Current"
@@ -154,8 +162,13 @@ struct WorkspaceReviewFileDetailView: View {
                 // Deleted file: skip tabs, show diff (the only useful view)
                 Divider().overlay(Color.themeComment.opacity(0.2))
 
-                WorkspaceReviewDiffView(diff: diff, filePath: file.path)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WorkspaceReviewDiffView(
+                    diff: diff,
+                    filePath: file.path,
+                    selectedTextSourceContext: diffSourceContext(filePath: file.path)
+                )
+                .environment(\.selectedTextPiActionRouter, piRouter)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Picker("View", selection: $selectedTab) {
                     ForEach(DetailTab.allCases) { tab in
@@ -171,7 +184,12 @@ struct WorkspaceReviewFileDetailView: View {
                 Group {
                     switch selectedTab {
                     case .diff:
-                        WorkspaceReviewDiffView(diff: diff, filePath: file.path)
+                        WorkspaceReviewDiffView(
+                            diff: diff,
+                            filePath: file.path,
+                            selectedTextSourceContext: diffSourceContext(filePath: file.path)
+                        )
+                        .environment(\.selectedTextPiActionRouter, piRouter)
                     case .current:
                         currentContent(diff: diff)
                     }
@@ -316,12 +334,14 @@ struct WorkspaceReviewFileDetailView: View {
 struct WorkspaceReviewDiffView: View {
     let diff: WorkspaceReviewDiffResponse
     let filePath: String
+    var selectedTextSourceContext: SelectedTextSourceContext?
 
     var body: some View {
         UnifiedDiffView(
             hunks: diff.hunks,
             filePath: filePath,
-            emptyDescription: "This file has no textual diff to show."
+            emptyDescription: "This file has no textual diff to show.",
+            selectedTextSourceContext: selectedTextSourceContext
         )
     }
 }

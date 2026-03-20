@@ -14,6 +14,10 @@ struct UnifiedDiffView: View {
     var emptyTitle = "No Textual Changes"
     var emptySystemImage = "checkmark.circle"
     var emptyDescription = "This diff has no textual changes to show."
+    var selectedTextSourceContext: SelectedTextSourceContext?
+
+    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.piQuickActionStore) private var piQuickActionStore
 
     /// Pre-built attributed string + measured width, computed off main thread.
     @State private var built: BuiltDiff?
@@ -29,8 +33,13 @@ struct UnifiedDiffView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.themeBgDark)
             } else if let built {
-                UnifiedDiffTextView(built: built)
-                    .ignoresSafeArea(.keyboard)
+                UnifiedDiffTextView(
+                    built: built,
+                    piRouter: piRouter,
+                    piQuickActionStore: piQuickActionStore,
+                    sourceContext: selectedTextSourceContext
+                )
+                .ignoresSafeArea(.keyboard)
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,6 +129,13 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
 /// attributed string. The build happens off the main thread in the parent view.
 private struct UnifiedDiffTextView: UIViewRepresentable {
     let built: UnifiedDiffView.BuiltDiff
+    let piRouter: SelectedTextPiActionRouter?
+    let piQuickActionStore: PiQuickActionStore?
+    let sourceContext: SelectedTextSourceContext?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(piRouter: piRouter, piQuickActionStore: piQuickActionStore, sourceContext: sourceContext)
+    }
 
     func makeUIView(context: Context) -> UIView {
         let textStorage = NSTextStorage()
@@ -142,6 +158,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 20, right: 0)
+        textView.delegate = context.coordinator
 
         let scrollView = UIScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -177,5 +194,40 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
         return wrapper
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {}
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.piRouter = piRouter
+        context.coordinator.piQuickActionStore = piQuickActionStore
+        context.coordinator.sourceContext = sourceContext
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var piRouter: SelectedTextPiActionRouter?
+        var piQuickActionStore: PiQuickActionStore?
+        var sourceContext: SelectedTextSourceContext?
+
+        init(
+            piRouter: SelectedTextPiActionRouter?,
+            piQuickActionStore: PiQuickActionStore?,
+            sourceContext: SelectedTextSourceContext?
+        ) {
+            self.piRouter = piRouter
+            self.piQuickActionStore = piQuickActionStore
+            self.sourceContext = sourceContext
+        }
+
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextIn range: NSRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            SelectedTextPiEditMenuSupport.buildMenu(
+                textView: textView,
+                range: range,
+                suggestedActions: suggestedActions,
+                router: piRouter,
+                sourceContext: sourceContext,
+                actionStore: piQuickActionStore
+            )
+        }
+    }
 }
