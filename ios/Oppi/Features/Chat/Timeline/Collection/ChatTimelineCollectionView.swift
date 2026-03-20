@@ -483,7 +483,27 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 collectionView.contentInset.top = configuration.topOverlap
             }
             if collectionView.contentInset.bottom != configuration.bottomOverlap {
+                let oldBottom = collectionView.contentInset.bottom
                 collectionView.contentInset.bottom = configuration.bottomOverlap
+
+                // When the bottom inset grows (e.g. footer measured from 0 →
+                // real height, or message queue appearing) while the user is
+                // attached to the bottom, compensate the content offset so
+                // the last item stays right above the footer. Without this,
+                // the inset increase expands the scrollable range downward
+                // but the offset stays put, leaving a visible gap between
+                // the last message and the input bar.
+                let delta = configuration.bottomOverlap - oldBottom
+                if delta > 0, scrollController?.isCurrentlyNearBottom ?? true {
+                    let maxOffsetY = max(
+                        -collectionView.adjustedContentInset.top,
+                        collectionView.contentSize.height
+                            - collectionView.bounds.height
+                            + collectionView.adjustedContentInset.bottom
+                    )
+                    let target = min(collectionView.contentOffset.y + delta, maxOffsetY)
+                    collectionView.contentOffset.y = target
+                }
             }
 
             let applyPlan = ChatTimelineApplyPlan.build(
