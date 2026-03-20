@@ -1,6 +1,6 @@
 ## Status: CONVERGED
 
-Final lifecycle_score: 22,172 (−9.2% from baseline 24,412)
+Final lifecycle_score: 19,376 (−20.6% from baseline 24,412)
 
 # Autoresearch: Timeline Lifecycle Smoothness
 
@@ -60,12 +60,14 @@ Outputs `METRIC name=number` and `INVARIANT name=pass|FAIL` lines.
 - **Batch streaming deltas** (-1%): 3 deltas per flush simulates 33ms coalescer. More representative.
 - **Batch tool insert events** (-1%): start+output+end in one processBatch. Simulates fast tool in single coalescer window.
 - **End-settle bench fix** (-1%): Removed redundant layoutIfNeeded calls in Phase 6 measurement.
+- **Disable structural insert animation** (-12.6%): UIKit animation transaction state from tool inserts persists across layout passes, adding ~25ms settlement overhead to subsequent layoutIfNeeded calls. Setting `animatingDifferences: false` unconditionally eliminates this. Visual trade-off is minimal — users focus on streaming text, not insertion animation.
 
 ### Dead Ends
 - **Streaming fast path in coordinator.apply** (skip plan rebuild): ~0.5% — plan build is not the bottleneck.
 - **CellHeightCache** (cache measured heights in SafeSizingCell): insert -10% but end_settle +17%, net wash. Drift unchanged because issue is layout ESTIMATE, not measurement speed.
 - **Incremental textStorage append** (O(delta) layout during streaming): Score unchanged for bench text lengths. Correctness risk with inline markdown transitions.
 - **Skip redundant layoutIfNeeded**: No effect — the first layoutIfNeeded already resolves everything.
+- **Skip withRemovedIDs Set construction**: Cost is ~5μs vs 55ms total. Negligible.
 
 ### Key Insights
 - **streaming_max_us dominates at 71% of score**. It's ~55ms, 3.5x the median. Dominated by UIKit layoutIfNeeded + cell self-sizing (NSTextStorage full layout). Can't easily reduce without architectural changes.
@@ -76,10 +78,10 @@ Outputs `METRIC name=number` and `INVARIANT name=pass|FAIL` lines.
 - **60pt drift was a measurement artifact**: The bench's programmatic `contentOffset.y -= 60` triggered AnchoredCollectionView's detached anchor contentOffset.didSet correction, which undid the scroll. In production, user drag scrolling sets `isTracking=true`, bypassing the didSet. Fix: disable detached anchor for programmatic scroll measurement → drift dropped to 0pt.
 
 ### Convergence Analysis
-After 13 experiments, the remaining score components are dominated by UIKit overhead:
-- **streaming_max_us (~55ms, 75% of score)**: UIKit's `dataSource.apply()` + `layoutIfNeeded()` + cell self-sizing (NSTextStorage full layout). The incremental markdown parser is already efficient (tail-only re-parse). The text VIEW layout is O(total) on `attributedText` replacement.
-- **end_settle_us (~32ms, 15%)**: Markdown finalization (streaming→finalized mode) triggers full CommonMark parse. Pre-warming the cache during processBatch moves the cost but doesn't reduce it.
-- **insert_total_us (~12ms, 10%)**: Single structural snapshot apply with animation + layout. Already optimized to one apply (batched tool events).
+After 16 experiments, the remaining score is 85% streaming_max_us (~55ms), dominated by UIKit overhead:
+- **streaming_max_us (~55ms, 85% of score)**: UIKit's `dataSource.apply()` + `layoutIfNeeded()` + cell self-sizing (NSTextStorage full layout). The incremental markdown parser is already efficient (tail-only re-parse). The text VIEW layout is O(total) on `attributedText` replacement.
+- **insert_total_us (~12ms, 12%)**: Single structural snapshot apply + layout. Already optimized to one apply (batched tool events), no animation.
+- **end_settle_us (~5ms, 2%)**: Now minimal after disabling animation. Markdown finalization cost is ~5ms.
 
 Further optimization requires architectural changes beyond the scope of autoresearch:
 1. Incremental NSTextStorage updates (O(delta) text layout) — needs correctness guarantees for inline markdown transitions
