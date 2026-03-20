@@ -111,6 +111,7 @@ actor SessionStreamCoordinator {
         await MainActor.run {
             connection.activeSessionId = sessionId
             connection.sender.activeSessionId = sessionId
+            connection.coalescer.sessionId = sessionId
             connection.toolCallCorrelator.reset()
             connection.chatState.thinkingLevel = .medium
             Task {
@@ -125,30 +126,16 @@ actor SessionStreamCoordinator {
             connection.connectStream()
         }
 
+        // Wait for transport to be connected before opening the per-session stream.
         let streamOpenStart = ContinuousClock.now
-        let streamOpenStatus: String
         if await MainActor.run(body: { connection.wsClient?.status == .connected }) {
-            streamOpenStatus = "already_connected"
+            // already connected
         } else if await connection.waitForConnectedStream(timeout: .seconds(10)) {
-            streamOpenStatus = "connected"
+            // connected after wait
         } else {
-            streamOpenStatus = "timeout"
+            // timeout — proceed anyway, subscribe will fail and be handled
         }
         let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .streamOpenMs,
-                value: Double(streamOpenMs),
-                unit: .ms,
-                sessionId: sessionId,
-                tags: [
-                    "transport": transport,
-                    "status": streamOpenStatus,
-                ]
-            )
-        }
-
         let perSessionStream = await MainActor.run {
             AsyncStream<ServerMessage> { continuation in
                 connection.sessionContinuations[sessionId] = continuation

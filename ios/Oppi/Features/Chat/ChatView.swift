@@ -212,6 +212,7 @@ struct ChatView: View {
                 Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
             }
             .task(id: sessionManager.connectionGeneration) {
+                voiceInputManager.activeSessionId = sessionId
                 await sessionManager.connect(
                     connection: connection,
                     reducer: reducer,

@@ -68,6 +68,13 @@ enum ChatTimelinePerf {
     private static var hardGuardrailBreachCount = 0
     private static var failsafeConfigureCount = 0
 
+    // MARK: - Jank tracking (chat.jank_pct)
+
+    /// Number of collection apply cycles where elapsed > 16ms (frame budget).
+    private static var hitchCount = 0
+    /// Total collection apply cycles counted since last jank rate emission.
+    private static var totalApplyCycles = 0
+
     /// Active session ID for metric attribution. Set by ChatSessionManager on connect.
     static var activeSessionId: String?
 
@@ -97,6 +104,8 @@ enum ChatTimelinePerf {
         cellConfigureMaxMs = 0
         hardGuardrailBreachCount = 0
         failsafeConfigureCount = 0
+        hitchCount = 0
+        totalApplyCycles = 0
 
         lastSlowMetricLogNs = 0
 
@@ -248,6 +257,12 @@ enum ChatTimelinePerf {
         // are background artifacts, not real rendering cost.
         guard durationMs < suspensionCeilingMs else { return }
 
+        // Jank tracking: count every valid apply cycle and flag hitches (> 16ms).
+        totalApplyCycles += 1
+        if durationMs > 16 {
+            hitchCount += 1
+        }
+
         // Emit to telemetry only when above noise floor (skip the 99% that are 0-1ms).
         if durationMs >= 4 {
             let applySid = activeSessionId
@@ -370,6 +385,9 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
+        // Discard suspension-inflated samples (same rationale as apply/layout).
+        guard durationMs < suspensionCeilingMs else { return }
+
         // Only emit to telemetry for non-trivial configures (≥1ms).
         // Sub-millisecond configures are the common case and the Task.detached
         // allocation adds overhead that exceeds the measurement itself.
@@ -442,6 +460,9 @@ enum ChatTimelinePerf {
         language: String? = nil
     ) {
         signposter.emitEvent("render.strategy")
+
+        // Discard suspension-inflated samples.
+        guard durationMs < suspensionCeilingMs else { return }
 
         let sid = activeSessionId
         Task.detached(priority: .utility) {
@@ -562,6 +583,36 @@ enum ChatTimelinePerf {
         }
 
         scrollWindowCount &+= 1
+    }
+
+    // MARK: - Jank Rate Emission
+
+    /// Compute and emit `chat.jank_pct` — percentage of collection-apply cycles
+    /// that exceeded the 16ms frame budget. Resets counters after emission.
+    ///
+    /// Call periodically during streaming (e.g. every 30s) and on session end.
+    /// The `phase` tag distinguishes streaming vs idle vs session-end context.
+    static func emitJankRate(sessionId: String?, phase: String) {
+        guard totalApplyCycles > 0 else { return }
+        let pct = Double(hitchCount) / Double(totalApplyCycles) * 100.0
+        let cycles = totalApplyCycles
+        let hitches = hitchCount
+        hitchCount = 0
+        totalApplyCycles = 0
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .jankPct,
+                value: pct,
+                unit: .ratio,
+                sessionId: sessionId,
+                tags: [
+                    "phase": phase,
+                    "cycles": String(cycles),
+                    "hitches": String(hitches),
+                ]
+            )
+        }
     }
 
     private static func shouldEmitSlowLog(nowNs: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {

@@ -610,6 +610,7 @@ final class ServerConnection {
 
         activeSessionId = nil
         sender.activeSessionId = nil
+        coalescer.sessionId = nil
         Task {
             await sessionStreamCoordinator.noteStreamDisconnected()
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
@@ -716,6 +717,7 @@ final class ServerConnection {
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
         activeSessionId = sessionId
         sender.activeSessionId = sessionId
+        coalescer.sessionId = sessionId
     }
 
     func telemetryErrorKind(from error: Error) -> String {

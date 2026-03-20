@@ -151,6 +151,11 @@ final class VoiceInputManager {
     private var nextStartRequestID = 0
     private var activeStartRequestID: Int?
 
+    // MARK: - Session Attribution
+
+    /// Active session ID for metric attribution. Set by ChatView on session connect.
+    var activeSessionId: String?
+
     // MARK: - Remote ASR Configuration
 
     /// Base URL for the remote ASR server (e.g. `http://mac-studio.local:8321`).
@@ -747,7 +752,8 @@ final class VoiceInputManager {
     ) {
         VoiceInputTelemetry.recordRemoteChunkTelemetry(
             chunk,
-            annotation: annotation
+            annotation: annotation,
+            sessionId: activeSessionId
         )
     }
 
@@ -763,6 +769,7 @@ final class VoiceInputManager {
             metric,
             valueMs: valueMs,
             annotation: annotation,
+            sessionId: activeSessionId,
             phase: phase,
             status: status,
             extraTags: extraTags

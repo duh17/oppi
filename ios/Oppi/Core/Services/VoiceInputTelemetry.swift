@@ -90,7 +90,8 @@ enum VoiceInputTelemetry {
 
     static func recordRemoteChunkTelemetry(
         _ chunk: VoiceRemoteChunkTelemetry,
-        annotation: VoiceMetricAnnotation
+        annotation: VoiceMetricAnnotation,
+        sessionId: String? = nil
     ) {
         var tags = chunk.tags
         tags["chunk_status"] = chunk.status.rawValue
@@ -103,6 +104,7 @@ enum VoiceInputTelemetry {
             .voiceRemoteChunkAudioMs,
             valueMs: chunk.audioDurationMs,
             annotation: annotation,
+            sessionId: sessionId,
             status: chunk.status.rawValue,
             extraTags: tags
         )
@@ -112,6 +114,7 @@ enum VoiceInputTelemetry {
                 .voiceRemoteChunkBytes,
                 value: chunk.wavBytes,
                 annotation: annotation,
+                sessionId: sessionId,
                 status: chunk.status.rawValue,
                 extraTags: tags
             )
@@ -122,6 +125,7 @@ enum VoiceInputTelemetry {
                 .voiceRemoteChunkUploadMs,
                 valueMs: uploadDurationMs,
                 annotation: annotation,
+                sessionId: sessionId,
                 status: chunk.status.rawValue,
                 extraTags: tags
             )
@@ -132,6 +136,7 @@ enum VoiceInputTelemetry {
                 .voiceRemoteChunkChars,
                 value: textLength,
                 annotation: annotation,
+                sessionId: sessionId,
                 status: chunk.status.rawValue,
                 extraTags: tags
             )
@@ -142,6 +147,7 @@ enum VoiceInputTelemetry {
                 .voiceRemoteChunkError,
                 value: 1,
                 annotation: annotation,
+                sessionId: sessionId,
                 status: chunk.status.rawValue,
                 extraTags: tags
             )
@@ -152,6 +158,7 @@ enum VoiceInputTelemetry {
         _ metric: ChatMetricName,
         valueMs: Int,
         annotation: VoiceMetricAnnotation,
+        sessionId: String? = nil,
         phase: VoiceMetricPhase? = nil,
         status: String? = nil,
         extraTags: [String: String] = [:]
@@ -168,6 +175,7 @@ enum VoiceInputTelemetry {
                 metric: metric,
                 value: Double(clampedValue),
                 unit: .ms,
+                sessionId: sessionId,
                 tags: tags
             )
         }
@@ -177,6 +185,7 @@ enum VoiceInputTelemetry {
         _ metric: ChatMetricName,
         value: Int,
         annotation: VoiceMetricAnnotation,
+        sessionId: String? = nil,
         status: String? = nil,
         extraTags: [String: String] = [:]
     ) {
@@ -192,6 +201,7 @@ enum VoiceInputTelemetry {
                 metric: metric,
                 value: Double(clampedValue),
                 unit: .count,
+                sessionId: sessionId,
                 tags: tags
             )
         }
