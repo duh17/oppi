@@ -190,7 +190,7 @@ describe("/stream websocket behavior", () => {
     }
   });
 
-  it("handles duplicate subscribe and idempotent unsubscribe", async () => {
+  it("deduplicates same-level subscribe without re-subscribing", async () => {
     const harness = makeHarness();
     const ws = new FakeWebSocket();
 
@@ -204,6 +204,7 @@ describe("/stream websocket behavior", () => {
     });
     await flushQueue();
 
+    // Second subscribe at same level should be deduplicated — no unsubscribe/resubscribe.
     ws.emitClientMessage({
       type: "subscribe",
       sessionId: "s1",
@@ -212,8 +213,18 @@ describe("/stream websocket behavior", () => {
     });
     await flushQueue();
 
-    expect(harness.unsubscribeCalls).toEqual(["s1"]);
+    // Dedup: no clearSubscription called for the second subscribe.
+    expect(harness.unsubscribeCalls).toEqual([]);
 
+    const subscribeResults = messagesOfType(ws.sent, "command_result").filter(
+      (msg) => msg.command === "subscribe",
+    );
+    expect(subscribeResults).toHaveLength(2);
+    expect(subscribeResults.every((msg) => msg.success)).toBe(true);
+    // Second result should be marked as deduplicated.
+    expect(subscribeResults[1].data?.deduplicated).toBe(true);
+
+    // Unsubscribe still works normally after dedup.
     ws.emitClientMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-1" });
     await flushQueue();
     ws.emitClientMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-2" });

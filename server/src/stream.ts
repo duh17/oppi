@@ -352,6 +352,29 @@ export class UserStreamMux {
         return;
       }
 
+      // ── Dedup: already subscribed at same level → short-circuit ──
+      // Prevents the reconnect death spiral where rapid WS reconnects
+      // each re-subscribe hundreds of notification sessions, overwhelming
+      // the event loop and causing ping timeouts → more reconnects.
+      const existing = subscriptions.get(sessionId);
+      if (existing && existing.level === level && sinceSeq === undefined) {
+        send({
+          type: "command_result",
+          command: "subscribe",
+          requestId,
+          success: true,
+          data: {
+            sessionId,
+            level,
+            currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
+            catchUpComplete: true,
+            deduplicated: true,
+          },
+          sessionId,
+        });
+        return;
+      }
+
       if (level === "full" && fullSessionId && fullSessionId !== sessionId) {
         const prior = subscriptions.get(fullSessionId);
         if (prior) {
@@ -460,6 +483,24 @@ export class UserStreamMux {
       }
     };
 
+    // ── Subscribe rate limit ──
+    // Prevents a misbehaving client from flooding subscribes and wedging the
+    // event loop. Allows short bursts (reconnect re-subscribes tracked sessions)
+    // but caps sustained throughput.
+    const SUBSCRIBE_RATE_WINDOW_MS = 5_000;
+    const SUBSCRIBE_RATE_MAX = 30;
+    let subscribeTimestamps: number[] = [];
+
+    const isSubscribeRateLimited = (): boolean => {
+      const now = Date.now();
+      subscribeTimestamps = subscribeTimestamps.filter((t) => now - t < SUBSCRIBE_RATE_WINDOW_MS);
+      if (subscribeTimestamps.length >= SUBSCRIBE_RATE_MAX) {
+        return true;
+      }
+      subscribeTimestamps.push(now);
+      return false;
+    };
+
     send({ type: "stream_connected", userName: this.ctx.storage.getOwnerName() });
 
     ws.on("message", (data) => {
@@ -494,6 +535,21 @@ export class UserStreamMux {
 
           switch (msg.type) {
             case "subscribe": {
+              if (isSubscribeRateLimited()) {
+                console.warn("[ws] Subscribe rate limited", {
+                  sessionId: msg.sessionId,
+                  owner: this.ctx.storage.getOwnerName(),
+                });
+                send({
+                  type: "command_result",
+                  command: "subscribe",
+                  requestId: msg.requestId,
+                  success: false,
+                  error: "Subscribe rate limit exceeded — try again later",
+                  sessionId: msg.sessionId,
+                });
+                break;
+              }
               const level = msg.level === "notifications" ? "notifications" : "full";
               await subscribeSession(msg.sessionId, level, msg.requestId, msg.sinceSeq);
               break;
