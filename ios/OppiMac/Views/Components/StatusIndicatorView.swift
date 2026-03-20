@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Animated status indicator for a session.
 ///
-/// - busy / starting: cycles through symbols every 150 ms (orange)
+/// - busy / starting: Game of Life animation (orange)
 /// - ready: pulsing green circle
 /// - error: static red dot
 /// - default (stopped / idle): static gray dot
@@ -10,25 +10,14 @@ struct StatusIndicatorView: View {
 
     let status: String
 
-    @State private var symbolIndex = 0
     @State private var isPulsing = false
-
-    private let busySymbols = ["·", "✦", "✳", "∗", "✻", "✽"]
 
     var body: some View {
         Group {
             switch status {
             case "busy", "starting":
-                Text(busySymbols[symbolIndex])
-                    .foregroundStyle(.orange)
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 12, height: 12)
-                    .task {
-                        while !Task.isCancelled {
-                            try? await Task.sleep(for: .milliseconds(150))
-                            symbolIndex = (symbolIndex + 1) % busySymbols.count
-                        }
-                    }
+                GameOfLifeRepresentable(gridSize: 5, color: .orange)
+                    .frame(width: 14, height: 14)
 
             case "ready":
                 Circle()
