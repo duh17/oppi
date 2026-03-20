@@ -204,8 +204,8 @@ extension ServerConnection {
 
         // Shared store mutations (upsert + metrics + live activity sync).
         // This also handles child session state messages broadcast to the parent's
-        // key by spawn_agent — they get upserted into sessionStore so SubagentStatusBar
-        // discovers them immediately.
+        // key by spawn_agent — they get upserted into sessionStore so the unified
+        // session bar discovers them immediately.
         applySharedStoreUpdate(for: .state(session: session), sessionId: session.id)
 
         // Active-session-only: thinking level, slash commands, recovery hardening.

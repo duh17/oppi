@@ -1,7 +1,7 @@
 import Foundation
 
 /// Shared formatting helpers for session display (model names, costs, durations).
-/// Used by SessionTreeRow, SubagentStatusBar, SessionRow, and other session views.
+/// Used by SessionTreeRow, WorkspaceContextBar, SessionRow, and other session views.
 enum SessionFormatting {
 
     /// Extract the short model name from a "provider/model-id" string.
