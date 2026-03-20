@@ -70,7 +70,15 @@ final class MacSessionMonitor {
 
     private func fetchStats() async {
         guard let client = apiClient else { return }
-        let fetched = await client.fetchStats(range: selectedRange)
+        guard let fetched = await client.fetchStats(range: selectedRange) else { return }
+        // Skip update if totals haven't changed — prevents chart flicker on re-render
+        if let existing = stats,
+           existing.totals.sessions == fetched.totals.sessions,
+           existing.totals.cost == fetched.totals.cost,
+           existing.totals.tokens == fetched.totals.tokens,
+           existing.activeSessions.count == fetched.activeSessions.count {
+            return
+        }
         stats = fetched
     }
 }

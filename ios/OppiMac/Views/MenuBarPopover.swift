@@ -12,67 +12,69 @@ struct MenuBarPopover: View {
     @State private var selectedTab = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
 
-            // Status header
-            HStack {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                Text(statusLabel)
-                    .font(.headline)
-            }
+                // Status header
+                HStack {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                    Text(statusLabel)
+                        .font(.headline)
+                }
 
-            if let info = healthMonitor.serverInfo {
-                Text(info.serverURL)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+                if let info = healthMonitor.serverInfo {
+                    Text(info.serverURL)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            permissionsRow
+                permissionsRow
 
-            Divider()
+                Divider()
 
-            // Tab switcher
-            Picker("", selection: $selectedTab) {
-                Text("Sessions").tag(0)
-                Text("Stats").tag(1)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+                // Tab switcher
+                Picker("", selection: $selectedTab) {
+                    Text("Sessions").tag(0)
+                    Text("Stats").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            // Tab content
-            Group {
-                if selectedTab == 0 {
-                    SessionsTabView(monitor: sessionMonitor)
-                } else {
-                    StatsTabView(monitor: sessionMonitor)
+                // Tab content
+                Group {
+                    if selectedTab == 0 {
+                        SessionsTabView(monitor: sessionMonitor)
+                    } else {
+                        StatsTabView(monitor: sessionMonitor)
+                    }
+                }
+
+                Divider()
+
+                serverControls
+
+                Divider()
+
+                Button("Check for Updates...") {
+                    checkForUpdates()
+                }
+
+                Button("Show Oppi") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "main")
+                }
+
+                Divider()
+
+                Button("Quit Oppi") {
+                    NSApplication.shared.terminate(nil)
                 }
             }
-
-            Divider()
-
-            serverControls
-
-            Divider()
-
-            Button("Check for Updates...") {
-                checkForUpdates()
-            }
-
-            Button("Show Oppi") {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "main")
-            }
-
-            Divider()
-
-            Button("Quit Oppi") {
-                NSApplication.shared.terminate(nil)
-            }
+            .padding(12)
         }
-        .padding(12)
-        .frame(width: 280)
+        .frame(width: 380, height: 800)
     }
 
     // MARK: - Subviews

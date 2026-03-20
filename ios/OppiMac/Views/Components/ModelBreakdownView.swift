@@ -31,7 +31,7 @@ struct ModelBreakdownView: View {
             Text(displayModelName(item.model))
                 .font(.caption2)
                 .lineLimit(1)
-                .frame(width: 72, alignment: .leading)
+                .frame(width: 90, alignment: .leading)
 
             // Proportional bar
             GeometryReader { geo in
@@ -50,7 +50,7 @@ struct ModelBreakdownView: View {
             Text(String(format: "$%.2f", item.cost))
                 .font(.caption2)
                 .monospacedDigit()
-                .frame(width: 36, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
 
             // Share %
             Text("\(Int((item.share * 100).rounded()))%")

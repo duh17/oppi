@@ -17,7 +17,7 @@ struct ModelDonutChart: View {
         if modelBreakdown.isEmpty || totalCost == 0 {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color.secondary.opacity(0.06))
-                .frame(width: 80, height: 80)
+                .frame(width: 100, height: 100)
         } else {
             ZStack {
                 Chart(modelBreakdown, id: \.model) { item in
@@ -29,22 +29,22 @@ struct ModelDonutChart: View {
                     .foregroundStyle(modelColor(item.model))
                 }
                 .chartLegend(.hidden)
-                .frame(width: 80, height: 80)
+                .frame(width: 100, height: 100)
 
                 // Center overlay
                 VStack(spacing: 1) {
                     Text(String(format: "$%.2f", totalCost))
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Text("total")
-                        .font(.system(size: 7))
+                        .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                 }
-                .frame(width: 44)
+                .frame(width: 56)
             }
-            .frame(width: 80, height: 80)
+            .frame(width: 100, height: 100)
         }
     }
 }

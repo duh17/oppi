@@ -73,18 +73,15 @@ struct SessionsTabView: View {
         if sessions.isEmpty {
             emptyState
         } else {
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                        SessionRowView(session: session)
-                        if index < sessions.count - 1 {
-                            Divider()
-                                .padding(.leading, 20)
-                        }
+            VStack(spacing: 0) {
+                ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                    SessionRowView(session: session)
+                    if index < sessions.count - 1 {
+                        Divider()
+                            .padding(.leading, 20)
                     }
                 }
             }
-            .frame(maxHeight: 220)
         }
     }
 

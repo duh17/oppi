@@ -90,7 +90,7 @@ struct ActivityHeatmap: View {
         if allCells.isEmpty {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color.secondary.opacity(0.06))
-                .frame(height: 80)
+                .frame(height: 100)
                 .overlay {
                     Text("No data")
                         .font(.caption2)
@@ -121,7 +121,7 @@ struct ActivityHeatmap: View {
             }
             .chartXScale(domain: 0...(maxWeek + 1))
             .chartYScale(domain: 0...7)
-            .frame(height: 80)
+            .frame(height: 100)
         }
     }
 
