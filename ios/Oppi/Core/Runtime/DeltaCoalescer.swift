@@ -32,6 +32,13 @@ final class DeltaCoalescer {
     private let maxBufferedBytes = 256 * 1024
     private var bufferedBytes = 0
 
+    // Telemetry accumulator — aggregate over ~1s window instead of emitting
+    // per-flush (~30/sec). Cuts telemetry volume from ~60 samples/sec to ~2.
+    private var telemetryWindowEvents = 0
+    private var telemetryWindowBytes = 0
+    private var telemetryWindowFlushes = 0
+    private static let telemetryFlushesPerWindow = 30
+
     /// When true, high-frequency events accumulate but don't flush on timer.
     /// Immediate events (tool start, permissions, etc.) still flush + deliver.
     private var isPaused = false
@@ -107,6 +114,33 @@ final class DeltaCoalescer {
         flushTask?.cancel()
         flushTask = nil
         deliverBuffer()
+        drainTelemetryWindow()
+    }
+
+    /// Emit any accumulated telemetry that hasn't hit the window threshold yet.
+    private func drainTelemetryWindow() {
+        guard telemetryWindowFlushes > 0 else { return }
+        let windowEvents = telemetryWindowEvents
+        let windowBytes = telemetryWindowBytes
+        let windowFlushes = telemetryWindowFlushes
+        telemetryWindowEvents = 0
+        telemetryWindowBytes = 0
+        telemetryWindowFlushes = 0
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .coalescerFlushEvents,
+                value: Double(windowEvents),
+                unit: .count,
+                tags: ["flushes": String(windowFlushes)]
+            )
+            await ChatMetricsService.shared.record(
+                metric: .coalescerFlushBytes,
+                value: Double(windowBytes),
+                unit: .count,
+                tags: ["flushes": String(windowFlushes)]
+            )
+        }
     }
 
     // MARK: - Private
@@ -129,17 +163,34 @@ final class DeltaCoalescer {
         bufferedBytes = 0
         onFlush?(events)
 
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .coalescerFlushEvents,
-                value: Double(events.count),
-                unit: .count
-            )
-            await ChatMetricsService.shared.record(
-                metric: .coalescerFlushBytes,
-                value: Double(flushedBytes),
-                unit: .count
-            )
+        // Accumulate telemetry over ~1s window (~30 flushes at 33ms)
+        // instead of emitting 2 samples per flush.
+        telemetryWindowEvents += events.count
+        telemetryWindowBytes += flushedBytes
+        telemetryWindowFlushes += 1
+
+        if telemetryWindowFlushes >= Self.telemetryFlushesPerWindow {
+            let windowEvents = telemetryWindowEvents
+            let windowBytes = telemetryWindowBytes
+            let windowFlushes = telemetryWindowFlushes
+            telemetryWindowEvents = 0
+            telemetryWindowBytes = 0
+            telemetryWindowFlushes = 0
+
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .coalescerFlushEvents,
+                    value: Double(windowEvents),
+                    unit: .count,
+                    tags: ["flushes": String(windowFlushes)]
+                )
+                await ChatMetricsService.shared.record(
+                    metric: .coalescerFlushBytes,
+                    value: Double(windowBytes),
+                    unit: .count,
+                    tags: ["flushes": String(windowFlushes)]
+                )
+            }
         }
     }
 
