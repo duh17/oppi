@@ -255,7 +255,7 @@ private struct PlotChartContainerView: View {
 
     @State private var selectedX: Double?
     @State private var selectedXRange: ClosedRange<Double>?
-    @State private var lastTelemetrySignature: Int?
+
 
     private var chartHeight: CGFloat {
         let preferred = CGFloat(spec.preferredHeight ?? 220)
@@ -352,23 +352,9 @@ private struct PlotChartContainerView: View {
         GeometryReader { proxy in
             let viewportWidth = max(proxy.size.width, 1)
             let renderPolicy = PlotRenderPolicy(spec: spec, viewportWidth: viewportWidth)
-            let telemetrySnapshot = PlotTelemetrySnapshot(
-                xVisibleTickCount: renderPolicy.xVisibleTickCount,
-                legendItemCount: renderPolicy.legendItemCount,
-                scrollEnabled: effectiveInteraction.scrollableX,
-                autoAdjustmentCount: renderPolicy.autoAdjustmentCount
-            )
 
-            if isFullScreen {
-                chartView(renderPolicy: renderPolicy)
-                    .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
-            } else {
-                chartView(renderPolicy: renderPolicy)
-                    .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
-                    .task(id: telemetrySnapshot) {
-                        await emitPlotTelemetryIfNeeded(snapshot: telemetrySnapshot)
-                    }
-            }
+            chartView(renderPolicy: renderPolicy)
+                .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
         }
         .frame(height: chartHeight)
     }
@@ -478,44 +464,6 @@ private struct PlotChartContainerView: View {
         } else {
             view
         }
-    }
-
-    @MainActor
-    private func emitPlotTelemetryIfNeeded(snapshot: PlotTelemetrySnapshot) async {
-        var hasher = Hasher()
-        hasher.combine(snapshot)
-        hasher.combine(spec.marks.count)
-        hasher.combine(spec.rows.count)
-        let signature = hasher.finalize()
-
-        guard signature != lastTelemetrySignature else {
-            return
-        }
-        lastTelemetrySignature = signature
-
-        await ChatMetricsService.shared.record(
-            metric: .plotAxisVisibleTickCount,
-            value: Double(snapshot.xVisibleTickCount),
-            unit: .count
-        )
-
-        await ChatMetricsService.shared.record(
-            metric: .plotLegendItemCount,
-            value: Double(snapshot.legendItemCount),
-            unit: .count
-        )
-
-        await ChatMetricsService.shared.record(
-            metric: .plotScrollEnabled,
-            value: snapshot.scrollEnabled ? 1 : 0,
-            unit: .ratio
-        )
-
-        await ChatMetricsService.shared.record(
-            metric: .plotAutoAdjustments,
-            value: Double(snapshot.autoAdjustmentCount),
-            unit: .count
-        )
     }
 
     // MARK: - Mark rendering
@@ -819,13 +767,6 @@ final class FullScreenPlotViewController: UIHostingController<PlotFullScreenView
 
     @available(*, unavailable)
     @MainActor dynamic required init?(coder aDecoder: NSCoder) { nil }
-}
-
-struct PlotTelemetrySnapshot: Sendable, Equatable, Hashable {
-    let xVisibleTickCount: Int
-    let legendItemCount: Int
-    let scrollEnabled: Bool
-    let autoAdjustmentCount: Int
 }
 
 struct PlotRenderPolicy: Sendable, Equatable {

@@ -1049,31 +1049,7 @@ describe("routes modules", () => {
                 sessionId: "session-1",
                 tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
               },
-              {
-                ts: generatedAt + 34,
-                metric: "plot.axis_visible_tick_count",
-                value: 5,
-                unit: "count",
-                tags: { tool: "plot" },
-              },
-              {
-                ts: generatedAt + 31,
-                metric: "plot.legend_item_count",
-                value: 3,
-                unit: "count",
-              },
-              {
-                ts: generatedAt + 32,
-                metric: "plot.scroll_enabled",
-                value: 1,
-                unit: "ratio",
-              },
-              {
-                ts: generatedAt + 33,
-                metric: "plot.auto_adjustments",
-                value: 2,
-                unit: "count",
-              },
+
             ],
           }) as never,
           res: res as never,
@@ -1097,7 +1073,7 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(19);
+        expect(record.sampleCount).toBe(15);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
         expect(record.samples[3]?.metric).toBe("chat.subscribe_ack_ms");
@@ -1112,10 +1088,6 @@ describe("routes modules", () => {
         expect(record.samples[12]?.metric).toBe("chat.session_removed_lines");
         expect(record.samples[13]?.metric).toBe("chat.session_context_tokens");
         expect(record.samples[14]?.metric).toBe("chat.session_context_window");
-        expect(record.samples[15]?.metric).toBe("plot.axis_visible_tick_count");
-        expect(record.samples[16]?.metric).toBe("plot.legend_item_count");
-        expect(record.samples[17]?.metric).toBe("plot.scroll_enabled");
-        expect(record.samples[18]?.metric).toBe("plot.auto_adjustments");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }
@@ -1284,7 +1256,7 @@ describe("routes modules", () => {
       }
     });
 
-    it("drops invalid chat metric samples while persisting valid plot metrics", async () => {
+    it("drops invalid chat metric samples while persisting valid ones", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-mixed-"));
       try {
         const ctx = {
@@ -1306,20 +1278,20 @@ describe("routes modules", () => {
             samples: [
               {
                 ts: generatedAt,
-                metric: "plot.scroll_enabled",
-                value: 1,
-                unit: "ratio",
+                metric: "chat.ttft_ms",
+                value: 120,
+                unit: "ms",
               },
               {
                 ts: generatedAt + 1,
-                metric: "plot.unknown",
+                metric: "chat.unknown_metric",
                 value: 3,
                 unit: "count",
               },
               {
                 ts: generatedAt + 2,
-                metric: "plot.legend_item_count",
-                value: 3,
+                metric: "chat.catchup_ms",
+                value: 50,
                 unit: "banana",
               },
             ],
@@ -1344,9 +1316,9 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; unit: string; value: number }>;
         };
         expect(record.sampleCount).toBe(1);
-        expect(record.samples[0]?.metric).toBe("plot.scroll_enabled");
-        expect(record.samples[0]?.unit).toBe("ratio");
-        expect(record.samples[0]?.value).toBe(1);
+        expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
+        expect(record.samples[0]?.unit).toBe("ms");
+        expect(record.samples[0]?.value).toBe(120);
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }
