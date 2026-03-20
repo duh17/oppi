@@ -247,6 +247,13 @@ targets:
     sources:
       - path: OppiMac
         type: group
+      - path: Shared
+        type: group
+        excludes:
+          - "PiSessionAttributes.swift"
+          - "LiveActivityPresentation.swift"
+          - "PermissionLiveActivityIntents.swift"
+          - "SharedConstants.swift"
     dependencies:
       - package: Sparkle
     settings:
