@@ -11,7 +11,8 @@ ios/.env.testflight.local
 
 # Scripts (private build/ops tooling)
 ios/scripts/
-scripts/
+scripts/*
+!scripts/autoresearch-dashboard.py
 !server/scripts/
 server/scripts/*
 !server/scripts/telemetry-review.mjs
