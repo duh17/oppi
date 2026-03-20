@@ -21,7 +21,7 @@ struct StatsActiveSession: Codable, Sendable {
     let parentSessionId: String?
     let contextTokens: Int?
     let contextWindow: Int?
-    let createdAt: String?
+    let createdAt: Double?  // epoch ms from server
 }
 
 // MARK: - Daily entry
