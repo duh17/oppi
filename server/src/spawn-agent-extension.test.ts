@@ -84,10 +84,7 @@ interface MockCtx extends SpawnAgentContext {
   spawnChildError?: Error;
 }
 
-function createMockCtx(
-  sessionId: string,
-  workspaceId = "ws-1",
-): MockCtx {
+function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
   const ctx: MockCtx = {
     workspaceId,
     sessionId,
@@ -112,9 +109,7 @@ function createMockCtx(
     },
 
     listChildren() {
-      return [...ctx.sessions.values()].filter(
-        (s) => s.parentSessionId === sessionId,
-      );
+      return [...ctx.sessions.values()].filter((s) => s.parentSessionId === sessionId);
     },
 
     getSession(id) {
@@ -151,9 +146,7 @@ function emitMessage(ctx: MockCtx, sessionId: string, msg: ServerMessage): void 
 // Factory helper — registers tools and returns lookup
 // ---------------------------------------------------------------------------
 
-function setup(
-  sessionId = "parent-1",
-): {
+function setup(sessionId = "parent-1"): {
   ctx: MockCtx;
   api: MockExtensionAPI;
   tool: (name: string) => RegisteredTool;
@@ -211,11 +204,7 @@ function assistantMsg(
   };
 }
 
-function toolResult(
-  callId: string,
-  text: string,
-  isError = false,
-): object {
+function toolResult(callId: string, text: string, isError = false): object {
   return {
     type: "message",
     message: {
@@ -320,10 +309,7 @@ describe("spawn-agent-extension", () => {
       // Build a chain: root -> parent -> current (depth=2)
       const { ctx, tool } = setup("grandchild-1");
       ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
-      ctx.sessions.set(
-        "child-1",
-        makeSession({ id: "child-1", parentSessionId: "root-1" }),
-      );
+      ctx.sessions.set("child-1", makeSession({ id: "child-1", parentSessionId: "root-1" }));
       ctx.sessions.set(
         "grandchild-1",
         makeSession({ id: "grandchild-1", parentSessionId: "child-1" }),
@@ -344,10 +330,7 @@ describe("spawn-agent-extension", () => {
       // root -> current (depth=1)
       const { ctx, tool } = setup("child-1");
       ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
-      ctx.sessions.set(
-        "child-1",
-        makeSession({ id: "child-1", parentSessionId: "root-1" }),
-      );
+      ctx.sessions.set("child-1", makeSession({ id: "child-1", parentSessionId: "root-1" }));
 
       const result = await tool("spawn_agent").execute("tc1", {
         message: "should succeed",
@@ -360,14 +343,8 @@ describe("spawn-agent-extension", () => {
     it("handles circular parentSessionId references without infinite loop", async () => {
       // A -> B -> A (circular)
       const { ctx, tool } = setup("sess-a");
-      ctx.sessions.set(
-        "sess-a",
-        makeSession({ id: "sess-a", parentSessionId: "sess-b" }),
-      );
-      ctx.sessions.set(
-        "sess-b",
-        makeSession({ id: "sess-b", parentSessionId: "sess-a" }),
-      );
+      ctx.sessions.set("sess-a", makeSession({ id: "sess-a", parentSessionId: "sess-b" }));
+      ctx.sessions.set("sess-b", makeSession({ id: "sess-b", parentSessionId: "sess-a" }));
 
       // Should not hang — depth is finite due to visited guard
       const result = await tool("spawn_agent").execute("tc1", {
@@ -625,14 +602,8 @@ describe("spawn-agent-extension", () => {
           name: "Delegator",
         }),
       );
-      ctx.sessions.set(
-        "gc1",
-        makeSession({ id: "gc1", parentSessionId: "c1", status: "stopped" }),
-      );
-      ctx.sessions.set(
-        "gc2",
-        makeSession({ id: "gc2", parentSessionId: "c1", status: "busy" }),
-      );
+      ctx.sessions.set("gc1", makeSession({ id: "gc1", parentSessionId: "c1", status: "stopped" }));
+      ctx.sessions.set("gc2", makeSession({ id: "gc2", parentSessionId: "c1", status: "busy" }));
 
       const result = await tool("check_agents").execute("tc1", {});
       expect(result.content[0].text).toContain("+2 children");
@@ -646,7 +617,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c1",
           parentSessionId: "parent-1",
-          cost: 0.10,
+          cost: 0.1,
           messageCount: 5,
         }),
       );
@@ -655,7 +626,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c2",
           parentSessionId: "parent-1",
-          cost: 0.20,
+          cost: 0.2,
           messageCount: 10,
         }),
       );
@@ -724,7 +695,7 @@ describe("spawn-agent-extension", () => {
       // Add a session that isn't related to the parent at all
       ctx.sessions.set(
         "orphan-1",
-        makeSession({ id: "orphan-1" }),  // no parentSessionId
+        makeSession({ id: "orphan-1" }), // no parentSessionId
       );
 
       const result = await tool("inspect_agent").execute("tc1", {
@@ -759,10 +730,7 @@ describe("spawn-agent-extension", () => {
         userMsg("deep task"),
         assistantMsg("done"),
       ]);
-      ctx.sessions.set(
-        "c1",
-        makeSession({ id: "c1", parentSessionId: "parent-1" }),
-      );
+      ctx.sessions.set("c1", makeSession({ id: "c1", parentSessionId: "parent-1" }));
       ctx.sessions.set(
         "gc1",
         makeSession({
@@ -959,9 +927,7 @@ describe("spawn-agent-extension", () => {
       const { ctx, tool } = setup();
       const tracePath = writeTrace(tmpDir, "trace.jsonl", [
         userMsg("run tests"),
-        assistantMsg("running", [
-          { id: "tc1", name: "bash", arguments: { command: "npm test" } },
-        ]),
+        assistantMsg("running", [{ id: "tc1", name: "bash", arguments: { command: "npm test" } }]),
         toolResult("tc1", "FAIL: assertion error\nExpected 3 but got 5\nline3", true),
       ]);
       ctx.sessions.set(
@@ -984,10 +950,7 @@ describe("spawn-agent-extension", () => {
 
     it("turn detail: turn not found returns error", async () => {
       const { ctx, tool } = setup();
-      const tracePath = writeTrace(tmpDir, "trace.jsonl", [
-        userMsg("hello"),
-        assistantMsg("hi"),
-      ]);
+      const tracePath = writeTrace(tmpDir, "trace.jsonl", [userMsg("hello"), assistantMsg("hi")]);
       ctx.sessions.set(
         "c1",
         makeSession({
@@ -1081,9 +1044,7 @@ describe("spawn-agent-extension", () => {
       const { ctx, tool } = setup();
       const tracePath = writeTrace(tmpDir, "trace.jsonl", [
         userMsg("run it"),
-        assistantMsg("running", [
-          { id: "tc1", name: "bash", arguments: { command: "exit 1" } },
-        ]),
+        assistantMsg("running", [{ id: "tc1", name: "bash", arguments: { command: "exit 1" } }]),
         toolResult("tc1", "command failed", true),
       ]);
       ctx.sessions.set(
@@ -1446,7 +1407,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c1",
           parentSessionId: "parent-1",
-          cost: 0.10,
+          cost: 0.1,
           messageCount: 5,
         }),
       );
@@ -1455,7 +1416,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c2",
           parentSessionId: "parent-1",
-          cost: 0.20,
+          cost: 0.2,
           messageCount: 10,
         }),
       );
@@ -1498,7 +1459,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c1",
           parentSessionId: "parent-1",
-          cost: 0.10,
+          cost: 0.1,
           messageCount: 8,
         }),
       );
@@ -1523,7 +1484,7 @@ describe("spawn-agent-extension", () => {
         makeSession({
           id: "c1",
           parentSessionId: "parent-1",
-          cost: 0.10,
+          cost: 0.1,
         }),
       );
 
@@ -1537,10 +1498,10 @@ describe("spawn-agent-extension", () => {
       // root -> parent -> current
       const { ctx, tool } = setup("mid-1");
 
-      ctx.sessions.set("root-1", makeSession({ id: "root-1", cost: 0.50, messageCount: 20 }));
+      ctx.sessions.set("root-1", makeSession({ id: "root-1", cost: 0.5, messageCount: 20 }));
       ctx.sessions.set(
         "mid-1",
-        makeSession({ id: "mid-1", parentSessionId: "root-1", cost: 0.10, messageCount: 5 }),
+        makeSession({ id: "mid-1", parentSessionId: "root-1", cost: 0.1, messageCount: 5 }),
       );
       ctx.sessions.set(
         "c1",
