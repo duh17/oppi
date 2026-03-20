@@ -12,6 +12,7 @@ struct OppiMacApp: App {
     @State private var healthMonitor = ServerHealthMonitor()
     @State private var permissionState = TCCPermissionState()
     @State private var onboardingState = OnboardingState()
+    @State private var sessionMonitor = MacSessionMonitor()
     @State private var showOnboarding = false
 
     init() {
@@ -26,6 +27,7 @@ struct OppiMacApp: App {
         // so we cannot depend on it for launch-time startup.
         let pm = processManager
         let hm = healthMonitor
+        let sm = sessionMonitor
         let obs = onboardingState
         Task { @MainActor in
             obs.checkFirstRun()
@@ -47,11 +49,12 @@ struct OppiMacApp: App {
             pm.startWithDefaults()
             hm.startMonitoring(baseURL: baseURL, token: token, processManager: pm)
             hm.checkPiCLIVersion()
+            sm.startPolling(client: client)
         }
     }
 
     var body: some Scene {
-        MenuBarExtra("Oppi", systemImage: menuBarIcon) {
+        MenuBarExtra {
             MenuBarPopover(
                 processManager: processManager,
                 healthMonitor: healthMonitor,
@@ -66,6 +69,17 @@ struct OppiMacApp: App {
                 // (.menuBarExtraStyle(.window) lazily instantiates content).
                 await permissionState.refresh()
             }
+            .onAppear {
+                sessionMonitor.setFastPolling(true)
+            }
+            .onDisappear {
+                sessionMonitor.setFastPolling(false)
+            }
+        } label: {
+            MenuBarIconView(
+                processManager: processManager,
+                sessionMonitor: sessionMonitor
+            )
         }
         .menuBarExtraStyle(.window)
 
@@ -113,6 +127,7 @@ struct OppiMacApp: App {
         guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
 
         let baseURL = URL(string: "https://localhost:7749")!
+        let client = MacAPIClient(baseURL: baseURL, token: token)
 
         Task {
             if !Self.isRunningTests {
@@ -125,6 +140,7 @@ struct OppiMacApp: App {
                 processManager: processManager
             )
             healthMonitor.checkPiCLIVersion()
+            sessionMonitor.startPolling(client: client)
         }
     }
 
@@ -133,17 +149,55 @@ struct OppiMacApp: App {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
+}
 
-    private var menuBarIcon: String {
+// MARK: - Menu bar icon
+
+/// Renders the menu bar icon with an optional pulse animation when sessions are busy.
+///
+/// Icon state machine:
+/// - Server stopped/stopping   → "circle" (outline)
+/// - Server starting           → "circle.dotted"
+/// - Server failed             → "exclamationmark.circle.fill"
+/// - Server running, no active sessions → "circle" (outline)
+/// - Server running, sessions active    → "circle.fill"
+/// - Server running, any session busy   → "circle.fill" + pulse animation
+private struct MenuBarIconView: View {
+
+    let processManager: ServerProcessManager
+    let sessionMonitor: MacSessionMonitor
+
+    private var activeSessions: [StatsActiveSession] {
+        sessionMonitor.stats?.activeSessions ?? []
+    }
+
+    private var hasActiveSessions: Bool {
+        !activeSessions.isEmpty
+    }
+
+    private var hasBusySessions: Bool {
+        activeSessions.contains { $0.isBusy }
+    }
+
+    private var iconName: String {
         switch processManager.state {
-        case .running:
-            "circle.fill"
         case .starting:
-            "circle.dotted"
+            return "circle.dotted"
         case .failed:
-            "exclamationmark.circle.fill"
+            return "exclamationmark.circle.fill"
         case .stopped, .stopping:
-            "circle"
+            return "circle"
+        case .running:
+            return hasActiveSessions ? "circle.fill" : "circle"
+        }
+    }
+
+    var body: some View {
+        if hasBusySessions {
+            Image(systemName: iconName)
+                .symbolEffect(.pulse)
+        } else {
+            Image(systemName: iconName)
         }
     }
 }
