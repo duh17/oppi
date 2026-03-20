@@ -17,11 +17,18 @@ struct StatsTabView: View {
             .labelsHidden()
 
             if let stats = monitor.stats {
-                heroStats(stats)
-                DailyCostChart(daily: stats.daily)
-                if !stats.modelBreakdown.isEmpty {
-                    ModelBreakdownView(breakdown: stats.modelBreakdown)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        heroStats(stats)
+                        DailyCostChart(daily: stats.daily)
+                        modelSection(stats)
+                        if monitor.selectedRange != 7 {
+                            activitySection(stats)
+                        }
+                        workspaceSection(stats)
+                    }
                 }
+                .frame(maxHeight: 400)
             } else {
                 HStack {
                     Spacer()
@@ -30,6 +37,48 @@ struct StatsTabView: View {
                     Spacer()
                 }
                 .padding(.vertical, 20)
+            }
+        }
+    }
+
+    // MARK: - Model section (breakdown list + donut side-by-side)
+
+    @ViewBuilder
+    private func modelSection(_ stats: ServerStats) -> some View {
+        if !stats.modelBreakdown.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                ModelBreakdownView(breakdown: stats.modelBreakdown)
+                ModelDonutChart(modelBreakdown: stats.modelBreakdown)
+            }
+        }
+    }
+
+    // MARK: - Activity heatmap (30d / 90d only)
+
+    @ViewBuilder
+    private func activitySection(_ stats: ServerStats) -> some View {
+        if !stats.daily.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("Activity")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ActivityHeatmap(daily: stats.daily)
+            }
+        }
+    }
+
+    // MARK: - Workspace breakdown
+
+    @ViewBuilder
+    private func workspaceSection(_ stats: ServerStats) -> some View {
+        if !stats.workspaceBreakdown.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                Text("Workspaces")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                WorkspaceBreakdownView(workspaces: stats.workspaceBreakdown)
             }
         }
     }
