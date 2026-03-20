@@ -2,15 +2,28 @@ import SwiftUI
 
 // MARK: - Session Row
 
+/// Unified session row used in both active (tree) and stopped (flat) sections.
+///
+/// Tree features (indentation, disclosure, child badge) are opt-in via the `tree`
+/// parameter. When nil, the row renders as a simple flat row.
 struct SessionRow: View {
     let session: Session
     let pendingCount: Int
     let lineageHint: String?
+    let tree: TreeConfig?
 
-    init(session: Session, pendingCount: Int, lineageHint: String? = nil) {
+    struct TreeConfig {
+        let row: SessionTreeHelper.FlatRow
+        let isExpanded: Bool
+        let statusCounts: SessionTreeHelper.StatusCounts?
+        let onToggleExpand: () -> Void
+    }
+
+    init(session: Session, pendingCount: Int, lineageHint: String? = nil, tree: TreeConfig? = nil) {
         self.session = session
         self.pendingCount = pendingCount
         self.lineageHint = lineageHint
+        self.tree = tree
     }
 
     private var title: String {
@@ -18,8 +31,7 @@ struct SessionRow: View {
     }
 
     private var modelShort: String? {
-        guard let model = session.model, !model.isEmpty else { return nil }
-        return model.split(separator: "/").last.map(String.init) ?? model
+        SessionFormatting.shortModelName(session.model)
     }
 
     private var contextPercent: Double? {
@@ -29,8 +41,18 @@ struct SessionRow: View {
         return min(max(Double(used) / Double(window), 0), 1)
     }
 
+    // Tree geometry constants
+    private static let indentPerLevel: CGFloat = 24
+    private static let treeLineX: CGFloat = 12
+    private static let treeBranchWidth: CGFloat = 10
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
+            // Tree indentation + lines (only for child/grandchild rows)
+            if let tree, tree.row.depth > 0 {
+                treeIndentation(row: tree.row)
+            }
+
             // Status dot
             Circle()
                 .fill(session.status.color)
@@ -52,7 +74,7 @@ struct SessionRow: View {
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
 
-                // Row 2: lineage hint
+                // Row 2: lineage hint (stopped sessions only)
                 if let lineageHint, !lineageHint.isEmpty {
                     Text(lineageHint)
                         .font(.caption)
@@ -60,19 +82,26 @@ struct SessionRow: View {
                         .lineLimit(1)
                 }
 
-                // Row 3: change status
-                if let stats = session.changeStats {
+                // Row 3: change stats + child badge
+                if session.changeStats != nil || (tree?.row.hasChildren == true) {
                     HStack(spacing: 8) {
-                        Text(filesTouchedSummary(stats.filesChanged))
-                            .foregroundStyle(changeSummaryColor(stats))
+                        if let stats = session.changeStats {
+                            Text(filesTouchedSummary(stats.filesChanged))
+                                .foregroundStyle(changeSummaryColor(stats))
 
-                        Text("+\(stats.addedLines)")
-                            .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.themeDiffAdded)
+                            Text("+\(stats.addedLines)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.themeDiffAdded)
 
-                        Text("-\(stats.removedLines)")
-                            .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.themeDiffRemoved)
+                            Text("-\(stats.removedLines)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.themeDiffRemoved)
+                        }
+
+                        // Child badge (tree mode only)
+                        if let tree, tree.row.hasChildren {
+                            childBadge(tree: tree)
+                        }
                     }
                     .font(.caption2)
                     .lineLimit(1)
@@ -100,6 +129,7 @@ struct SessionRow: View {
                 .foregroundStyle(.themeFgDim)
                 .lineLimit(1)
             }
+            .padding(.leading, 8)
 
             Spacer(minLength: 4)
 
@@ -121,6 +151,75 @@ struct SessionRow: View {
         }
         .padding(.vertical, 2)
     }
+
+    // MARK: - Tree Lines
+
+    @ViewBuilder
+    private func treeIndentation(row: SessionTreeHelper.FlatRow) -> some View {
+        ZStack(alignment: .leading) {
+            ForEach(row.parentLinesContinue, id: \.self) { depth in
+                let xOffset = CGFloat(depth) * Self.indentPerLevel + Self.treeLineX
+                Rectangle()
+                    .fill(Color.themeBgHighlight)
+                    .frame(width: 2)
+                    .offset(x: xOffset)
+            }
+
+            let myX = CGFloat(row.depth - 1) * Self.indentPerLevel + Self.treeLineX
+            Rectangle()
+                .fill(Color.themeBgHighlight)
+                .frame(width: 2)
+                .frame(maxHeight: .infinity, alignment: row.isLastChild ? .top : .center)
+                .clipped()
+                .offset(x: myX)
+
+            Rectangle()
+                .fill(Color.themeBgHighlight)
+                .frame(width: Self.treeBranchWidth, height: 2)
+                .offset(x: myX + 2, y: 0)
+        }
+        .frame(width: CGFloat(row.depth) * Self.indentPerLevel)
+    }
+
+    // MARK: - Child Badge
+
+    @ViewBuilder
+    private func childBadge(tree: TreeConfig) -> some View {
+        Button {
+            tree.onToggleExpand()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: tree.isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.themeCyan)
+
+                if let counts = tree.statusCounts, !tree.isExpanded {
+                    if counts.working > 0 {
+                        Text("\u{23F3}\(counts.working)")
+                            .foregroundStyle(.themeOrange)
+                    }
+                    if counts.done > 0 {
+                        Text("\u{2713}\(counts.done)")
+                            .foregroundStyle(.themeGreen)
+                    }
+                    if counts.error > 0 {
+                        Text("\u{2717}\(counts.error)")
+                            .foregroundStyle(.themeRed)
+                    }
+                } else {
+                    Text("\(tree.row.childCount)")
+                        .foregroundStyle(.themeCyan)
+                }
+            }
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Color.themeCyan.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Helpers
 
     private func costString(_ cost: Double) -> String {
         SessionFormatting.costString(cost)
@@ -144,7 +243,7 @@ struct SessionRow: View {
 // MARK: - Context Gauge
 
 /// Compact context usage indicator using app theme colors.
-private struct NativeContextGauge: View {
+struct NativeContextGauge: View {
     let percent: Double
 
     private var clamped: Double { min(max(percent, 0), 1) }
