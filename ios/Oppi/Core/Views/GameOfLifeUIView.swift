@@ -5,13 +5,13 @@ import UIKit
 /// Lifecycle:
 /// - Animation starts when the view moves to a window.
 /// - Animation pauses when the view leaves its window (battery-safe).
-/// - Timer fires every 80ms (matching pi TUI cadence).
+/// - Timer fires every 160ms.
 final class GameOfLifeUIView: UIView {
 
     // MARK: - Configuration
 
-    /// Tick interval in seconds. Matches pi TUI Loader cadence (80ms).
-    static let tickInterval: TimeInterval = 0.08
+    /// Tick interval in seconds.
+    static let tickInterval: TimeInterval = 0.16
 
     /// Grid dimension.
     let gridSize: Int
