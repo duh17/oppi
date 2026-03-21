@@ -47,9 +47,9 @@ final class PiWKWebView: WKWebView {
 
         let piMenu = UIMenu(title: "π", children: menuActions)
 
-        // Insert π as a sibling after the standard edit menu (Copy, etc.)
-        // so it appears prominently without burying system actions.
-        builder.insertSibling(piMenu, afterMenu: .standardEdit)
+        // Insert π before the standard edit menu (Copy, etc.) so it
+        // appears first — matching the UITextView π menu ordering.
+        builder.insertSibling(piMenu, beforeMenu: .standardEdit)
     }
 
     private func handlePiAction(_ quickAction: PiQuickAction) {
