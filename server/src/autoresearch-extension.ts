@@ -2,15 +2,15 @@
  * Autoresearch — autonomous experiment loop extension.
  *
  * Provides tools for iterative optimization: the agent edits code, benchmarks,
- * keeps or reverts, and repeats. Results render natively in the iOS timeline
- * via details.ui[] chart payloads and StyledSegment collapsed rows.
+ * keeps or reverts, and repeats. Results are logged to autoresearch.jsonl
+ * and rendered as StyledSegment collapsed rows in the iOS timeline.
  *
  * Inspired by davebcn87/pi-autoresearch, rebuilt as a first-class Oppi feature.
  *
  * Tools:
  *   init_experiment  — one-time session config (name, metric, unit, direction)
  *   run_experiment   — runs a command, times wall-clock, captures output, runs checks
- *   log_experiment   — records result, auto-commits on keep, updates state + chart
+ *   log_experiment   — records result, auto-commits on keep, updates state
  *
  * Isolation:
  *   init_experiment creates a git worktree so all autoresearch state lives
@@ -267,81 +267,6 @@ export function computeWorktreePaths(
   );
   const worktreePath = path.join(worktreeBase, branch);
   return { branch, worktreePath };
-}
-
-/** Build a details.ui[] chart payload from experiment state. */
-function buildChartPayload(state: ExperimentState): Record<string, unknown> | undefined {
-  const cur = currentResults(state.results, state.currentSegment);
-  if (cur.length === 0) return undefined;
-
-  // Build chart rows from current segment results
-  const rows: Record<string, unknown>[] = [];
-  const globalOffset = state.results.indexOf(cur[0]);
-  for (let i = 0; i < cur.length; i++) {
-    const r = cur[i];
-    const row: Record<string, unknown> = {
-      run: globalOffset + i + 1,
-      [state.metricName]: r.metric,
-      status: r.status,
-    };
-    // Add secondary metrics
-    for (const sm of state.secondaryMetrics) {
-      const val = (r.metrics ?? {})[sm.name];
-      if (val !== undefined) {
-        row[sm.name] = val;
-      }
-    }
-    rows.push(row);
-  }
-
-  const baseline = state.bestMetric;
-
-  // Build marks: line + points for primary metric, rule for baseline
-  const marks: Record<string, unknown>[] = [
-    {
-      type: "line",
-      x: "run",
-      y: state.metricName,
-      series: "status",
-      label: state.metricName,
-      interpolation: "linear",
-    },
-    {
-      type: "point",
-      x: "run",
-      y: state.metricName,
-      series: "status",
-    },
-  ];
-
-  if (baseline !== null) {
-    marks.push({
-      type: "rule",
-      yValue: baseline,
-      label: "baseline",
-    });
-  }
-
-  return {
-    kind: "chart",
-    version: 1,
-    title: state.name ? `${state.name}` : `Experiment: ${state.metricName}`,
-    spec: {
-      title: state.name ? `${state.name}` : `Experiment: ${state.metricName}`,
-      dataset: { rows },
-      marks,
-      axes: {
-        x: { label: "Run" },
-        y: { label: `${state.metricName}${state.metricUnit ? ` (${state.metricUnit})` : ""}` },
-      },
-      renderHints: {
-        xAxis: { type: "numeric" },
-        yAxis: { zeroBaseline: "never" },
-        legend: { mode: "hide" },
-      },
-    },
-    fallbackText: buildFallbackText(state),
-  };
 }
 
 /** Build a markdown summary for expandedText. */
@@ -1076,15 +1001,11 @@ export function createAutoresearchFactory(
         // Clear checks state
         lastRunChecks = null;
 
-        // Build details with chart payload
-        const chartPayload = buildChartPayload(state);
-
         return {
           content: [{ type: "text" as const, text }],
           details: {
             experiment,
             state: { ...state },
-            ...(chartPayload ? { ui: [chartPayload] } : {}),
             expandedText: buildFallbackText(state),
             presentationFormat: "markdown",
           } as unknown as LogDetails,

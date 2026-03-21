@@ -32,11 +32,13 @@ enum StreamingRenderPolicy {
     /// Discriminated content type for policy decisions.
     enum ContentKind: Sendable, Equatable {
         case code(language: CodeLanguageCategory)
+        // periphery:ignore - exhaustive switch coverage; tested in StreamingRenderPolicyTests
         case markdown
         case diff
         case plainText
         case bash
         /// Read-media, plot, and other embedded views — always full.
+        // periphery:ignore - exhaustive switch coverage; tested in StreamingRenderPolicyTests
         case media
 
         /// Whether this content kind has a deferred path in the current
@@ -216,6 +218,7 @@ enum StreamingRenderPolicy {
     // MARK: - Scroll Reset Behavior
 
     /// Describes when a strategy resets scroll position on re-render.
+    // periphery:ignore - used by StreamingRenderPolicyTests via @testable import
     enum ScrollResetBehavior: String, Sendable, Equatable {
         /// Resets only when `!isStreaming` (code, diff).
         case onlyWhenNotStreaming

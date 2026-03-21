@@ -22,19 +22,6 @@ struct ToolExpandedSurfaceHostTests {
         _ = fittedTimelineSize(for: diffView, width: 360)
         #expect(diffView.activeExpandedSurfaceKindForTesting == .label)
 
-        let plotSpec = PlotChartSpec(
-            rows: [.init(id: 0, values: ["x": .number(1), "y": .number(2)])],
-            marks: [.init(id: "m1", type: .line, x: "x", y: "y")],
-            xAxis: .init(),
-            yAxis: .init(),
-            interaction: .init()
-        )
-        let plotView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .plot(spec: plotSpec, fallbackText: "plot fallback"),
-            isExpanded: true
-        ))
-        _ = fittedTimelineSize(for: plotView, width: 360)
-        #expect(plotView.activeExpandedSurfaceKindForTesting == .hosted)
     }
 
     @Test func expandedSurfaceHostSwitchesActiveSurfaceOnReuse() {

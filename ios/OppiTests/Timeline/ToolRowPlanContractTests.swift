@@ -76,22 +76,5 @@ struct ToolRowPlanContractTests {
         #expect(!readMediaPlan.interactionSpec.enablesTapCopyGesture)
         #expect(!readMediaPlan.interactionSpec.enablesPinchGesture)
 
-        let plotSpec = PlotChartSpec(
-            rows: [.init(id: 0, values: ["x": .number(1), "y": .number(2)])],
-            marks: [.init(id: "m1", type: .line, x: "x", y: "y")],
-            xAxis: .init(),
-            yAxis: .init(),
-            interaction: .init()
-        )
-        let plotPlan = ToolRowPlanBuilder.build(configuration: makeTimelineToolConfiguration(
-            expandedContent: .plot(spec: plotSpec, fallbackText: "x=1 y=2"),
-            toolNamePrefix: "plot",
-            isExpanded: true
-        ))
-        let plotPolicy = try #require(plotPlan.interactionPolicy)
-        #expect(plotPolicy.mode == .plot)
-        #expect(!plotPolicy.supportsFullScreenPreview)
-        #expect(!plotPlan.interactionSpec.enablesTapCopyGesture)
-        #expect(!plotPlan.interactionSpec.enablesPinchGesture)
     }
 }

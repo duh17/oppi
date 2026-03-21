@@ -387,7 +387,6 @@ function benchMobileRenderer(): BenchResult[] {
     ["find", { pattern: "*.swift", path: "/Users/alice/workspace/ios" }],
     ["ls", { path: "/Users/alice/workspace/project/src" }],
     ["todo", { action: "list", title: "Fix the benchmark" }],
-    ["plot", { spec: { marks: [{ type: "line" }], dataset: { rows: [{ x: 1, y: 2 }] } } }],
   ];
 
   for (const [tool, args] of toolArgs) {

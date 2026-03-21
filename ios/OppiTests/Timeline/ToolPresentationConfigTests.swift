@@ -93,7 +93,7 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func inlineMediaWarningHeuristicFlagsUnknownExtensionToolsButNotPlot() {
+    @Test func inlineMediaWarningHeuristicFlagsUnknownExtensionToolsButNotBuiltins() {
         let sample = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
 
         #expect(
@@ -112,7 +112,7 @@ struct ToolPresentationConfigTests {
         )
         #expect(
             !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "plot",
+                normalizedTool: "edit",
                 outputPreview: sample,
                 fullOutput: ""
             )

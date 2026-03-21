@@ -30,7 +30,7 @@ enum ToolRowPlanBuilder {
         let expandedLabelSelectionEligible = switch expandedContent {
         case .code, .diff, .text:
             true
-        case .bash, .markdown, .plot, .readMedia, .status:
+        case .bash, .markdown, .readMedia, .status:
             false
         }
         let markdownSelectionEligible = if case .markdown = expandedContent { true } else { false }
@@ -80,8 +80,6 @@ enum ToolRowPlanBuilder {
             return !lines.isEmpty
         case .code(let text, _, _, _), .markdown(let text), .text(let text, _), .readMedia(let text, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .plot(_, let fallbackText):
-            return !(fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         case .status:
             return false
         }
@@ -112,7 +110,7 @@ enum ToolRowPlanBuilder {
             let terminalOutput = configuration.copyOutputText ?? output ?? ""
             return !terminalOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        case .plot, .readMedia, .status:
+        case .readMedia, .status:
             return false
         }
     }

@@ -151,6 +151,7 @@ enum VoiceInputPreferences {
         return normalizedEndpointURL(from: raw)
     }
 
+    // periphery:ignore - used by RemoteASRTranscriberTests via @testable import
     @discardableResult
     static func setRemoteEndpoint(from raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)

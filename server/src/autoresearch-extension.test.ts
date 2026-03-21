@@ -436,7 +436,7 @@ describe("autoresearch-extension", () => {
       expect(fs.existsSync(path.join(tmpDir, "autoresearch.jsonl"))).toBe(false);
     });
 
-    it("emits chart payload in details.ui", async () => {
+    it("emits expandedText in details", async () => {
       const { api, tool } = await loadFactory(tmpDir);
       mockGitWorktree(api);
       api.execResults.set("git add", { stdout: "committed", stderr: "", code: 0 });
@@ -464,16 +464,10 @@ describe("autoresearch-extension", () => {
       });
 
       const details = result.details as Record<string, unknown>;
-      const ui = details.ui as Record<string, unknown>[];
-      expect(ui).toBeDefined();
-      expect(ui.length).toBe(1);
-      expect(ui[0].kind).toBe("chart");
-
-      const spec = (ui[0] as Record<string, unknown>).spec as Record<string, unknown>;
-      const dataset = spec.dataset as { rows: Record<string, unknown>[] };
-      expect(dataset.rows.length).toBe(2);
-      expect(dataset.rows[0].build_s).toBe(60);
-      expect(dataset.rows[1].build_s).toBe(45);
+      expect(details.ui).toBeUndefined();
+      expect(details.expandedText).toBeDefined();
+      expect(typeof details.expandedText).toBe("string");
+      expect((details.expandedText as string).length).toBeGreaterThan(0);
     });
 
     it("rejects keep when checks failed", async () => {
@@ -623,10 +617,9 @@ describe("autoresearch-extension", () => {
       expect(result.content[0].text).toContain("3 experiments total");
 
       const details = result.details as Record<string, unknown>;
-      const ui = details.ui as Record<string, unknown>[];
-      const spec = (ui[0] as Record<string, unknown>).spec as Record<string, unknown>;
-      const dataset = spec.dataset as { rows: Record<string, unknown>[] };
-      expect(dataset.rows.length).toBe(3);
+      expect(details.ui).toBeUndefined();
+      expect(details.expandedText).toBeDefined();
+      expect(details.expandedText as string).toContain("3");
     });
   });
 

@@ -162,15 +162,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     // These lazy stored properties alias BashToolRowView's internal surfaces.
     // Stored (not computed) so Mirror(reflecting: self).children finds them by name.
 
-    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
     private lazy var commandContainer: UIView = bashToolRowView.commandContainer
-    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
     private lazy var outputContainer: UIView = bashToolRowView.outputContainer
-    // periphery:ignore - Mirror reflection in ToolTimelineRowModeDispatchTests
     private lazy var outputScrollView: HorizontalPanPassthroughScrollView = bashToolRowView.outputScrollView
-    // periphery:ignore - selected-text delegate + ToolRowContentViewTests
     private lazy var commandLabel: UITextView = bashToolRowView.commandLabel
-    // periphery:ignore - selected-text delegate
     private lazy var outputLabel: UITextView = bashToolRowView.outputLabel
 
     private var currentConfiguration: ToolTimelineRowConfiguration
@@ -471,7 +466,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if expandedUsesMarkdownLayout {
             kind = .markdown
         } else if expandedUsesReadMediaLayout {
-            kind = expandedReadMediaContentView is NativeExpandedPlotView ? .plot : .readMedia
+            kind = .readMedia
         } else {
             kind = switch expandedViewportMode {
             case .diff: .diff
@@ -599,23 +594,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isError: isError,
             filePath: filePath,
             startLine: startLine,
-            themeID: ThemeRuntimeState.currentThemeID()
-        )
-    }
-
-    private func installExpandedPlotView(spec: PlotChartSpec, fallbackText: String?) {
-        let native: NativeExpandedPlotView
-        if let existing = expandedReadMediaContentView as? NativeExpandedPlotView {
-            native = existing
-        } else {
-            clearExpandedReadMediaView()
-            native = NativeExpandedPlotView()
-            installExpandedEmbeddedView(native)
-        }
-
-        native.apply(
-            spec: spec,
-            fallbackText: fallbackText,
             themeID: ThemeRuntimeState.currentThemeID()
         )
     }
@@ -1180,15 +1158,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 textSelectionEnabled: markdownSelectionEnabled
             )
 
-        case .plot(let spec, let fallbackText):
-            return ToolRowPlotRenderStrategy.render(
-                spec: spec,
-                fallbackText: fallbackText,
-                previousSignature: expandedRenderSignature,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-                hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView
-            )
-
         case .readMedia(let output, let filePath, let startLine):
             return ToolRowReadMediaRenderStrategy.render(
                 output: output,
@@ -1244,8 +1213,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch output.installAction {
         case .none:
             break
-        case .plot(let spec, let fallbackText):
-            installExpandedPlotView(spec: spec, fallbackText: fallbackText)
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
         }
