@@ -517,7 +517,7 @@ enum FlatSegment: Sendable {
                 text += code
                 let end = text.utf8.count
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.font = Self.monospacedFont(forTextStyle: .callout)
+                    sub.uiKit.font = Self.monospacedFont(forTextStyle: .subheadline)
                     sub.uiKit.foregroundColor = UIColor(palette.cyan)
                 })
             case .link(let children, let destination):
@@ -579,7 +579,7 @@ enum FlatSegment: Sendable {
             return result
         case .code(let code):
             var result = AttributedString(code)
-            result.uiKit.font = monospacedFont(forTextStyle: .callout)
+            result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
             result.uiKit.foregroundColor = UIColor(palette.cyan)
             return result
         case .link(let children, let destination):
