@@ -22,12 +22,10 @@ final class ErrorTimelineRowContentView: UIView, UIContentView {
 
     private var currentConfiguration: ErrorTimelineRowConfiguration
 
-    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleContainerDoubleTapCopy))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = false
-        return recognizer
-    }()
+    private lazy var copyDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleContainerDoubleTapCopy)
+    )
 
     init(configuration: ErrorTimelineRowConfiguration) {
         self.currentConfiguration = configuration

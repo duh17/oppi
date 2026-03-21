@@ -28,7 +28,7 @@ enum ToolTimelineRowViewStyler {
         toolImageView.isHidden = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        titleLabel.font = ToolFont.title
         titleLabel.textColor = UIColor(Color.themeFg)
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -50,17 +50,17 @@ enum ToolTimelineRowViewStyler {
         languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
         // Size constraints are set by ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints()
 
-        addedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        addedLabel.font = ToolFont.regularBold
         addedLabel.textColor = UIColor(Color.themeDiffAdded)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         addedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        removedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        removedLabel.font = ToolFont.regularBold
         removedLabel.textColor = UIColor(Color.themeDiffRemoved)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        trailingLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        trailingLabel.font = ToolFont.regular
         trailingLabel.textColor = UIColor(Color.themeComment)
         trailingLabel.numberOfLines = 1
         trailingLabel.lineBreakMode = .byTruncatingTail
@@ -69,7 +69,7 @@ enum ToolTimelineRowViewStyler {
     }
 
     static func stylePreviewLabel(_ previewLabel: UILabel) {
-        previewLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        previewLabel.font = ToolFont.regular
         previewLabel.textColor = UIColor(Color.themeFgDim)
         previewLabel.numberOfLines = 3
     }
@@ -97,7 +97,7 @@ enum ToolTimelineRowViewStyler {
         expandedScrollView.delegate = delegate
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
-        expandedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        expandedLabel.font = ToolFont.regular
         expandedLabel.isEditable = false
         expandedLabel.isScrollEnabled = false
         expandedLabel.isSelectable = false

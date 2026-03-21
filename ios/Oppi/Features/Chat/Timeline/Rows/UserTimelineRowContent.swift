@@ -40,12 +40,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var thumbnailViews: [UIView] = []
     private var hasAppliedConfiguration = false
 
-    private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = false
-        return recognizer
-    }()
+    private lazy var bubbleDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleBubbleDoubleTapCopy)
+    )
 
     private var isSelectedTextPiEnabled: Bool {
         currentConfiguration.selectedTextPiRouter != nil

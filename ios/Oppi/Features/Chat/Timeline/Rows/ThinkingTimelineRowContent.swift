@@ -92,12 +92,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private var currentConfiguration: ThinkingTimelineRowConfiguration
     private let fullScreenThinkingStream: ThinkingTraceStream
 
-    private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTap))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = true
-        return recognizer
-    }()
+    private lazy var bubbleDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleBubbleDoubleTap),
+        cancelsTouchesInView: true
+    )
 
     private lazy var bubblePinchGesture: UIPinchGestureRecognizer = {
         let recognizer = UIPinchGestureRecognizer(target: self, action: #selector(handleBubblePinch(_:)))
@@ -397,15 +396,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
         rendered.addAttribute(.foregroundColor, value: color, range: fullRange)
 
-        rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            if value == nil {
-                rendered.addAttribute(
-                    .font,
-                    value: UIFont.preferredFont(forTextStyle: .callout),
-                    range: range
-                )
-            }
-        }
+        AttributedStringNormalizer.ensureFont(
+            in: rendered,
+            fallback: .preferredFont(forTextStyle: .callout)
+        )
 
         return rendered
     }
