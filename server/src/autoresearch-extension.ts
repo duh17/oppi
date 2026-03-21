@@ -425,7 +425,10 @@ export function createAutoresearchFactory(
         // Fall through
       }
 
-      autoresearchMode = fs.existsSync(jsonlPath);
+      // Don't auto-activate from file existence. The agent enters autoresearch
+      // mode only when init_experiment or run_experiment is explicitly called
+      // (triggered on demand via the autoresearch skill). This prevents every
+      // session from auto-looping just because old autoresearch files exist.
     };
 
     // ─── Lifecycle hooks ───
@@ -664,6 +667,10 @@ export function createAutoresearchFactory(
       ],
       parameters: RunParams,
       async execute(_toolCallId, params, signal, onUpdate) {
+        // Activate autoresearch mode on first tool use (supports resume
+        // without init_experiment when the agent reads existing state).
+        autoresearchMode = true;
+
         const timeout = (params.timeout_seconds ?? 600) * 1000;
 
         // Detect effective cwd from commands like `cd /path/to/worktree && ./autoresearch.sh`
