@@ -139,6 +139,8 @@ Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-o
 - `src/types.ts` — client/server protocol contract
 - `src/server.ts` — app wiring and runtime startup
 - `src/policy.ts` + `config/policy-modes/` — policy engine + presets
+- `src/spawn-agent-extension.ts` — spawn_agent, check_agents, inspect_agent tools
+- `src/session-protocol.ts` — pi session lifecycle, message handling, counters
 
 ## Style
 
