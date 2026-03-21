@@ -44,29 +44,10 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     }
 
     func withSelectedTextPi(router: SelectedTextPiActionRouter?, sessionId: String?) -> Self {
-        Self(
-            title: title,
-            preview: preview,
-            expandedContent: expandedContent,
-            copyCommandText: copyCommandText,
-            copyOutputText: copyOutputText,
-            languageBadge: languageBadge,
-            trailing: trailing,
-            titleLineBreakMode: titleLineBreakMode,
-            toolNamePrefix: toolNamePrefix,
-            toolNameColor: toolNameColor,
-            editAdded: editAdded,
-            editRemoved: editRemoved,
-            collapsedImageBase64: collapsedImageBase64,
-            collapsedImageMimeType: collapsedImageMimeType,
-            isExpanded: isExpanded,
-            isDone: isDone,
-            isError: isError,
-            segmentAttributedTitle: segmentAttributedTitle,
-            segmentAttributedTrailing: segmentAttributedTrailing,
-            selectedTextPiRouter: router,
-            selectedTextSessionId: sessionId
-        )
+        var copy = self
+        copy.selectedTextPiRouter = router
+        copy.selectedTextSessionId = sessionId
+        return copy
     }
 }
 
