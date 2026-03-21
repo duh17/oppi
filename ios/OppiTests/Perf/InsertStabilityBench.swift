@@ -113,7 +113,7 @@ struct InsertStabilityBench {
         var totalInsertNs: UInt64 = 0
 
         // --- Test 1: Single tool call insertion ---
-        let toolDrift = measureInsertDrift(harness: harness, cv: cv) {
+        let toolDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             let toolId = "bench-tool-1"
             reducer.processBatch([
                 .toolStart(
@@ -135,7 +135,7 @@ struct InsertStabilityBench {
                 streamingID: reducer.streamingAssistantID,
                 isBusy: true
             )
-        } totalNs: &totalInsertNs
+        }
 
         // Continue streaming after tool
         reducer.processBatch([
@@ -151,7 +151,7 @@ struct InsertStabilityBench {
         cv.layoutIfNeeded()
 
         // --- Test 2: System event (compaction) insertion ---
-        let sysDrift = measureInsertDrift(harness: harness, cv: cv) {
+        let sysDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             reducer.processBatch([
                 .compactionStart(sessionId: "bench", reason: "overflow"),
             ])
@@ -160,7 +160,7 @@ struct InsertStabilityBench {
                 streamingID: reducer.streamingAssistantID,
                 isBusy: true
             )
-        } totalNs: &totalInsertNs
+        }
 
         // Complete compaction and continue
         reducer.processBatch([
@@ -182,7 +182,7 @@ struct InsertStabilityBench {
         cv.layoutIfNeeded()
 
         // --- Test 3: Permission resolved insertion ---
-        let permDrift = measureInsertDrift(harness: harness, cv: cv) {
+        let permDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             reducer.resolvePermission(
                 id: "bench-perm-1",
                 outcome: .allowed,
@@ -194,7 +194,7 @@ struct InsertStabilityBench {
                 streamingID: reducer.streamingAssistantID,
                 isBusy: true
             )
-        } totalNs: &totalInsertNs
+        }
 
         // Continue streaming
         reducer.processBatch([
@@ -210,7 +210,7 @@ struct InsertStabilityBench {
         cv.layoutIfNeeded()
 
         // --- Test 4: Multiple items inserted at once ---
-        let multiDrift = measureInsertDrift(harness: harness, cv: cv) {
+        let multiDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             let toolId2 = "bench-tool-multi"
             reducer.processBatch([
                 .toolStart(
@@ -236,7 +236,7 @@ struct InsertStabilityBench {
                 streamingID: reducer.streamingAssistantID,
                 isBusy: true
             )
-        } totalNs: &totalInsertNs
+        }
 
         let totalMs = Double(totalInsertNs) / 1_000_000.0
 
@@ -271,8 +271,8 @@ struct InsertStabilityBench {
     private func measureInsertDrift(
         harness: BenchHarness,
         cv: AnchoredCollectionView,
-        insert: () -> Void,
-        totalNs: inout UInt64
+        totalNs: inout UInt64,
+        insert: () -> Void
     ) -> Double {
         // Settle at bottom
         scrollToBottom(cv)
