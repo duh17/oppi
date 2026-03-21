@@ -16,7 +16,7 @@ enum TimelineTurnAssembler {
 
     static func shouldSuppressDuplicateMessageEnd(
         content: String,
-        turnInProgress: Bool,
+        turnInProgress _: Bool,
         currentAssistantID: String?,
         latestAssistantItem: ChatItem?
     ) -> Bool {

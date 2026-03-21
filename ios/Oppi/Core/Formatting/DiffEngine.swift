@@ -11,6 +11,7 @@ struct DiffLine: Sendable {
         case added
         case removed
 
+        // periphery:ignore
         var prefix: String {
             switch self {
             case .context: return " "

@@ -96,6 +96,7 @@ enum ComposerAutocomplete {
         return updated
     }
 
+    // periphery:ignore - used by FileSuggestionInsertionTests via @testable import
     static func insertFileSuggestion(_ suggestion: FileSuggestion, into text: String) -> String {
         guard let tokenRange = activeTokenRange(in: text) else {
             return text

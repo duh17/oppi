@@ -47,23 +47,6 @@ final class FileIndexStore {
         dirty = true
     }
 
-    /// Force an immediate refresh (e.g., entering file browser after edits).
-    func refresh(apiClient: APIClient) {
-        guard let workspaceId else { return }
-        dirty = false
-        load(workspaceId: workspaceId, apiClient: apiClient)
-    }
-
-    /// Cancel in-flight load and reset state.
-    func reset() {
-        loadTask?.cancel()
-        loadTask = nil
-        paths = nil
-        workspaceId = nil
-        dirty = false
-        isLoading = false
-    }
-
     // MARK: - Testing
 
     // periphery:ignore - used by tests via @testable import

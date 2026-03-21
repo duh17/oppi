@@ -39,7 +39,6 @@ final class ThinkingTraceStream {
         return id
     }
 
-    // periphery:ignore - paired with addObserver; lifecycle management API
     func removeObserver(_ id: UUID) {
         observers.removeValue(forKey: id)
     }
@@ -110,6 +109,7 @@ final class SourceTraceStream {
         )
     }
 
+    // periphery:ignore
     var snapshot: Snapshot {
         snapshotStorage
     }

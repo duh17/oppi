@@ -1,6 +1,7 @@
 import SwiftUI
 import OSLog
 
+// periphery:ignore
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
 
 /// Fetches and displays a file from the session's working directory.
@@ -8,6 +9,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Remo
 /// Triggered when the user taps a file path in a tool call header.
 /// Reuses `FileContentView` for rendering — same syntax highlighting,
 /// markdown, JSON, images as inline tool output.
+// periphery:ignore
 struct RemoteFileView: View {
     static let contentPresentation: FileContentPresentation = .document
     static let allowsNestedFullScreenExpansion = false

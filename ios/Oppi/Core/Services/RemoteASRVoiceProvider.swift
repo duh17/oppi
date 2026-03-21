@@ -9,6 +9,7 @@ private let remoteVoiceProviderLogger = Logger(
 
 @MainActor
 final class RemoteASRVoiceProvider: VoiceTranscriptionProvider {
+    // periphery:ignore - protocol conformance; used by VoiceProviderRegistryTests via @testable import
     nonisolated let id: VoiceProviderID = .remoteASR
     nonisolated let engine: VoiceInputManager.TranscriptionEngine = .remoteASR
 

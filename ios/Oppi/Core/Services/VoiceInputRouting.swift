@@ -22,10 +22,6 @@ final class VoiceInputRouteResolver {
         self.remoteProbeCacheTTL = remoteProbeCacheTTL
     }
 
-    func invalidate() {
-        remoteProbeCache = nil
-    }
-
     func updateRemoteEndpoint(_ url: URL?) {
         _ = url
         remoteProbeCache = nil

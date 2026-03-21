@@ -7,7 +7,7 @@ struct ToolRowDiffRenderStrategy {
         path: String?,
         isStreaming: Bool,
         expandedLabel: UITextView,
-        expandedScrollView: UIScrollView,
+        expandedScrollView _: UIScrollView,
         previousSignature: Int?,
         previousRenderedText: String?,
         previousAutoFollow: Bool,

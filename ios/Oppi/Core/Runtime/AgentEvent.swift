@@ -43,6 +43,7 @@ enum AgentEvent: Sendable {
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
 
+    // periphery:ignore - convenience factory used by timeline tests via @testable import
     static func toolOutput(
         sessionId: String,
         toolEventId: String,

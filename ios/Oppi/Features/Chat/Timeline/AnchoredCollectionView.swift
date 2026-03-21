@@ -98,6 +98,7 @@ final class AnchoredCollectionView: UICollectionView {
         detachedSavedOffsetY = contentOffset.y
     }
 
+    // periphery:ignore - used by TimelineLifecycleBench via @testable import
     /// Clear the detached anchor after layout has settled.
     func clearDetachedAnchor() {
         detachedAnchorIP = nil

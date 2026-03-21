@@ -27,10 +27,12 @@ struct FileSuggestion: Sendable, Equatable, Identifiable {
     }
 }
 
+// periphery:ignore
 struct FileSuggestionResult: Sendable, Equatable {
     let items: [FileSuggestion]
     let truncated: Bool
 
+    // periphery:ignore
     static func from(_ data: JSONValue?) -> Self? {
         guard case .object(let object) = data else {
             return nil

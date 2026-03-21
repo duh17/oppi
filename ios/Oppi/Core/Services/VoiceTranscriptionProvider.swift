@@ -67,6 +67,7 @@ protocol VoiceTranscriptionSession: AnyObject {
 
 @MainActor
 protocol VoiceTranscriptionProvider: AnyObject {
+    // periphery:ignore - protocol requirement; used by VoiceProviderRegistryTests via @testable import
     var id: VoiceProviderID { get }
     var engine: VoiceInputManager.TranscriptionEngine { get }
 

@@ -182,15 +182,6 @@ struct WorkspaceStoppedSessionsSection: View {
         }
     }
 
-    private func stoppedGroupSortDate(_ bucket: StoppedSessionGroup.Bucket) -> Date {
-        switch bucket {
-        case .day(let day):
-            return day
-        case .month(let month):
-            return month
-        }
-    }
-
     private func stoppedGroupTitle(_ bucket: StoppedSessionGroup.Bucket) -> String {
         let cal = Calendar.current
         switch bucket {
