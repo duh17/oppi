@@ -1,17 +1,18 @@
 import UIKit
 import WebKit
 
-/// WKWebView subclass that adds a π edit menu item for text selection.
+/// WKWebView subclass that adds π quick actions to the text selection edit menu.
 ///
-/// When the user selects text, "π" appears in the callout bar. Tapping it presents
-/// an action sheet with pi actions (Explain, Do it, Fix, Refactor, Add to Prompt)
-/// and calls the configured handler.
+/// When the user selects text, a "π" submenu appears in the edit menu callout
+/// with actions like Explain, Do it, Fix, Refactor, Add to Prompt.
 ///
-/// Uses `UIMenuController.shared.menuItems` to register the custom selector —
-/// still the only mechanism for WKWebView edit menu customization. WKUIDelegate
-/// only exposes `willPresent/willDismissEditMenu` animation hooks, not menu content.
-/// UITextView delegates that implement `editMenuForTextIn:suggestedActions:` override
-/// UIMenuController items entirely, so chat-timeline π menus are unaffected.
+/// Uses `buildMenu(with:)` — the stable `UIResponder` API (iOS 13+) — to inject
+/// menu items into WKWebView's edit menu. The system walks the responder chain
+/// when building the edit menu, so overriding here on the WKWebView subclass
+/// inserts our items alongside the standard Copy/Look Up/Translate actions.
+///
+/// When an action is triggered, the selected text is retrieved via JavaScript
+/// (`window.getSelection()`) and dispatched through the configured handler.
 final class PiWKWebView: WKWebView {
     /// Called when the user picks a pi action on selected text.
     var piActionHandler: ((String, PiQuickAction) -> Void)?
@@ -19,81 +20,46 @@ final class PiWKWebView: WKWebView {
     /// Store for user-configured actions. Set externally before the menu is shown.
     var piActionStore: PiQuickActionStore?
 
-    // Register the π selector once per process. UIEditMenuInteraction discovers
-    // custom actions from UIMenuController.shared.menuItems via the responder chain.
-    private static let registerMenuItem: Void = {
-        let item = UIMenuItem(title: "π", action: #selector(piMenuAction(_:)))
-        var existing = UIMenuController.shared.menuItems ?? []
-        existing.removeAll { $0.action == #selector(piMenuAction(_:)) }
-        existing.append(item)
-        UIMenuController.shared.menuItems = existing
-    }()
-
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
-        _ = Self.registerMenuItem
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    // MARK: - Responder chain
+    // MARK: - Edit menu via buildMenu(with:)
 
-    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-        if action == #selector(piMenuAction(_:)) {
-            return piActionHandler != nil
+    override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+
+        guard piActionHandler != nil else { return }
+
+        let quickActions = piActionStore?.actions ?? PiQuickAction.builtInDefaults
+
+        let menuActions = quickActions.map { quickAction in
+            UIAction(
+                title: quickAction.title,
+                image: UIImage(systemName: quickAction.systemImage)
+            ) { [weak self] _ in
+                self?.handlePiAction(quickAction)
+            }
         }
-        return super.canPerformAction(action, withSender: sender)
+
+        let piMenu = UIMenu(title: "π", children: menuActions)
+
+        // Insert π as a sibling after the standard edit menu (Copy, etc.)
+        // so it appears prominently without burying system actions.
+        builder.insertSibling(piMenu, afterMenu: .standardEdit)
     }
 
-    @objc private func piMenuAction(_: Any?) {
+    private func handlePiAction(_ quickAction: PiQuickAction) {
         evaluateJavaScript("window.getSelection()?.toString() || ''") { [weak self] result, _ in
             guard let self,
                   let raw = result as? String else { return }
             let text = SelectedTextPiPromptFormatter.normalizedSelectedText(raw)
             guard !text.isEmpty else { return }
-            self.presentPiActionSheet(selectedText: text)
+            self.piActionHandler?(text, quickAction)
         }
-    }
-
-    // MARK: - Action sheet
-
-    private func presentPiActionSheet(selectedText: String) {
-        guard let viewController = findViewController() else { return }
-
-        let quickActions = piActionStore?.actions ?? PiQuickAction.builtInDefaults
-
-        let sheet = UIAlertController(title: "π", message: nil, preferredStyle: .actionSheet)
-        for action in quickActions {
-            sheet.addAction(UIAlertAction(title: action.title, style: .default) { [weak self] _ in
-                self?.piActionHandler?(selectedText, action)
-            })
-        }
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-
-        // iPad popover anchor
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = self
-            popover.sourceRect = CGRect(x: bounds.midX, y: bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = [.up, .down]
-        }
-
-        viewController.present(sheet, animated: true)
-    }
-
-    private func findViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let next = responder?.next {
-            if let vc = next as? UIViewController {
-                var top = vc
-                while let presented = top.presentedViewController {
-                    top = presented
-                }
-                return top
-            }
-            responder = next
-        }
-        return nil
     }
 }
 
