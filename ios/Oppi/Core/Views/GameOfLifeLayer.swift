@@ -158,8 +158,8 @@ final class GameOfLifeLayer: CALayer {
         uiColor.getHue(&baseHue, saturation: &baseSat, brightness: &baseBri, alpha: &baseAlpha)
 
         let isAchromatic = baseSat < 0.05
-        let startHue: CGFloat = isAchromatic ? 0.75 : baseHue
-        let hueRange: CGFloat = 0.25
+        let startHue: CGFloat = isAchromatic ? 0.0 : baseHue
+        let hueRange: CGFloat = 0.75
 
         var palette = [CGColor]()
         palette.reserveCapacity(Self.maxAgeTiers)
