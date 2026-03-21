@@ -1,15 +1,19 @@
 import UIKit
 
-/// UIView that cycles through braille spinner frames via CADisplayLink.
+/// UIView that cycles through braille spinner frames via a repeating Timer.
 ///
 /// Lifecycle mirrors `GameOfLifeUIView`:
 /// - Animation starts when the view moves to a window.
 /// - Animation stops when the view leaves its window or on deinit.
+/// - Timer fires every 80ms (matching pi TUI Loader cadence).
 final class BrailleSpinnerUIView: UIView {
 
     // MARK: - Configuration
 
     private static let brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    /// Tick interval in seconds. Matches pi TUI Loader cadence (80ms).
+    static let tickInterval: TimeInterval = 0.08
 
     /// Text color for the braille character.
     var tintUIColor: UIColor = .label {
@@ -19,7 +23,7 @@ final class BrailleSpinnerUIView: UIView {
     // MARK: - State
 
     private let label = UILabel()
-    nonisolated(unsafe) private var displayLink: CADisplayLink?
+    nonisolated(unsafe) private var timer: Timer?
     private var frameIndex = 0
 
     // MARK: - Init
@@ -46,8 +50,8 @@ final class BrailleSpinnerUIView: UIView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        displayLink?.invalidate()
-        displayLink = nil
+        timer?.invalidate()
+        timer = nil
     }
 
     // MARK: - Layout
@@ -70,21 +74,16 @@ final class BrailleSpinnerUIView: UIView {
     // MARK: - Animation
 
     private func startAnimation() {
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(displayLinkFired))
-        // ~12 FPS → ~83ms per frame, close to the 80ms braille interval
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 14, preferred: 12)
-        link.add(to: .main, forMode: .common)
-        displayLink = link
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.frameIndex = (self.frameIndex + 1) % Self.brailleFrames.count
+            self.label.text = Self.brailleFrames[self.frameIndex]
+        }
     }
 
     private func stopAnimation() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-
-    @objc private func displayLinkFired(_ link: CADisplayLink) {
-        frameIndex = (frameIndex + 1) % Self.brailleFrames.count
-        label.text = Self.brailleFrames[frameIndex]
+        timer?.invalidate()
+        timer = nil
     }
 }

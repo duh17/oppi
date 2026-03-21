@@ -1,14 +1,17 @@
 import UIKit
 
-/// UIView wrapper that drives a `GameOfLifeLayer` with a `CADisplayLink`.
+/// UIView wrapper that drives a `GameOfLifeLayer` with a repeating Timer.
 ///
 /// Lifecycle:
 /// - Animation starts when the view moves to a window.
 /// - Animation pauses when the view leaves its window (battery-safe).
-/// - CADisplayLink targets ~8 FPS via `preferredFrameRateRange`.
+/// - Timer fires every 80ms (matching pi TUI cadence).
 final class GameOfLifeUIView: UIView {
 
     // MARK: - Configuration
+
+    /// Tick interval in seconds. Matches pi TUI Loader cadence (80ms).
+    static let tickInterval: TimeInterval = 0.08
 
     /// Grid dimension.
     let gridSize: Int
@@ -21,7 +24,7 @@ final class GameOfLifeUIView: UIView {
     // MARK: - State
 
     private let golLayer: GameOfLifeLayer
-    private var displayLink: CADisplayLink?
+    nonisolated(unsafe) private var timer: Timer?
 
     // MARK: - Init
 
@@ -70,19 +73,18 @@ final class GameOfLifeUIView: UIView {
     // MARK: - Animation
 
     private func startAnimation() {
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(displayLinkFired))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 6, maximum: 10, preferred: 8)
-        link.add(to: .main, forMode: .common)
-        displayLink = link
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
+            self?.timerFired()
+        }
     }
 
     private func stopAnimation() {
-        displayLink?.invalidate()
-        displayLink = nil
+        timer?.invalidate()
+        timer = nil
     }
 
-    @objc private func displayLinkFired(_ link: CADisplayLink) {
+    private func timerFired() {
         golLayer.tick()
         golLayer.setNeedsDisplay()
     }
