@@ -117,7 +117,16 @@ extension ChatTimelineCollectionHost.Controller {
                 // Forward-only: never snap the user upward (away from new
                 // content). Content shrinking during estimate resolution is
                 // transient and handled by UIKit's natural layout.
-                let desiredBottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
+                //
+                // Formula: contentSize - bounds + adjustedContentInset.bottom.
+                // NOT contentSize - visibleHeight, which expands to
+                // contentSize - bounds + insets.top + insets.bottom and
+                // overshoots by insets.top (header + safe area), pushing the
+                // last item above the footer.
+                let desiredBottomOffsetY = max(
+                    -insets.top,
+                    scrollView.contentSize.height - scrollView.bounds.height + insets.bottom
+                )
                 if desiredBottomOffsetY - scrollView.contentOffset.y > 0.5 {
                     scrollView.contentOffset.y = desiredBottomOffsetY
                     lastDistanceFromBottom = 0
