@@ -6,19 +6,24 @@ import SwiftUI
 /// into the parent's `HStack` for even distribution with the attach button.
 struct SessionToolbar: View {
     let session: Session?
+    var modelOverride: String? = nil
     let thinkingLevel: ThinkingLevel
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
 
     @Environment(\.theme) private var theme
 
+    private var effectiveModel: String? {
+        modelOverride ?? session?.model
+    }
+
     private var modelDisplay: String {
-        guard let model = session?.model else { return "no model" }
+        guard let model = effectiveModel else { return "no model" }
         return shortModelName(model)
     }
 
     private var modelProvider: String {
-        guard let model = session?.model else { return "" }
+        guard let model = effectiveModel else { return "" }
         return providerFromModel(model) ?? ""
     }
 
