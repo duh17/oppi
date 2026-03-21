@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 
 @MainActor
 final class AssistantMarkdownSegmentSource {
@@ -31,7 +31,7 @@ final class AssistantMarkdownSegmentSource {
         if let plainTextFallbackThreshold = config.plainTextFallbackThreshold,
            content.count > plainTextFallbackThreshold {
             var plain = AttributedString(content)
-            plain.foregroundColor = config.themeID.palette.fg
+            plain.uiKit.foregroundColor = UIColor(config.themeID.palette.fg)
             return [.text(plain)]
         }
 
