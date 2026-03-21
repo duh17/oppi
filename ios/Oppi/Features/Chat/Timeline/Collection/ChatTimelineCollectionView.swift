@@ -117,7 +117,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
-        context.coordinator.apply(configuration: configuration, to: collectionView)
+        // SwiftUI's .animation() modifiers on ancestor/sibling views
+        // (e.g. PermissionOverlay, jump-to-bottom pulse) can set a
+        // non-nil animation on the transaction, causing UIKit layout
+        // changes to inherit spring/bounce timing. Block this so
+        // structural inserts and cell resizes never animate.
+        if context.transaction.animation != nil {
+            UIView.performWithoutAnimation {
+                context.coordinator.apply(configuration: configuration, to: collectionView)
+            }
+        } else {
+            context.coordinator.apply(configuration: configuration, to: collectionView)
+        }
     }
 
     func makeCoordinator() -> Controller {
@@ -564,15 +575,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // invalidation — the anchor could be cleared BEFORE the
             // invalidation's layoutIfNeeded fired, causing 480pt drift.
 
-            // Force layout when not streaming, or when the user is scrolled
-            // away from the bottom. Forced layout resolves all pending cell
-            // self-sizing in one pass, preventing the post-layout self-sizing
-            // cascade that causes contentOffset drift and potential hangs.
+            // Force layout when not streaming (idle), when the user is
+            // detached from bottom, or when a structural change occurred
+            // (new rows inserted or removed). Structural changes with
+            // deferred layout cause new rows to appear at estimated height
+            // then jump to actual height — visible as bounce.
             //
-            // When attached and streaming, skip forced layout — the collection
-            // view layouts naturally and auto-scroll keeps the viewport pinned.
+            // Skip forced layout only for the streaming-text fast path:
+            // busy + attached + IDs unchanged (reconfigures only). Text
+            // reconfigures change cell content but the height delta is
+            // usually small enough that the next-frame natural layout
+            // is imperceptible.
             let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
-            if !configuration.isBusy || detached {
+            let structuralChange = previousIDs.count != applyPlan.nextIDs.count
+            if !configuration.isBusy || detached || structuralChange {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
