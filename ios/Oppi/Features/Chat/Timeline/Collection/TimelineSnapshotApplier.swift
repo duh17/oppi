@@ -106,20 +106,24 @@ enum TimelineSnapshotApplier {
             changedCount: dedupedChangedIDs.count
         )
 
-        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
-        snapshot.appendSections([0])
-        snapshot.appendItems(nextIDs)
-
-        if !dedupedChangedIDs.isEmpty {
-            snapshot.reconfigureItems(dedupedChangedIDs)
-        }
-
         // Structural change: IDs changed (new rows inserted or removed).
         // Animate during busy sessions so new tool/system rows slide in
         // smoothly instead of popping. Skip animation on idle transitions
         // (working indicator removed, session ended) to avoid layout
         // settlement issues that leave content behind the input bar.
         let shouldAnimate = isBusy
+
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(nextIDs)
+
+        let reconfigureIDs = reconfigureIDsForAnimatedApply(
+            dedupedChangedIDs,
+            shouldAnimate: shouldAnimate
+        )
+        if !reconfigureIDs.isEmpty {
+            snapshot.reconfigureItems(reconfigureIDs)
+        }
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
@@ -132,6 +136,18 @@ enum TimelineSnapshotApplier {
             FrameBudgetMonitor.shared.endSection()
         }
         ChatTimelinePerf.endCollectionApply(applyToken)
+    }
+
+    /// Filter out the load-more row from reconfigure during animated applies.
+    /// Animated reconfigure causes a crossfade that flickers the "Show N
+    /// earlier messages" button at the top of the timeline. The hidden-count
+    /// text is cosmetic and updates on the next non-animated tick.
+    static func reconfigureIDsForAnimatedApply(
+        _ changedIDs: [String],
+        shouldAnimate: Bool
+    ) -> [String] {
+        guard shouldAnimate else { return changedIDs }
+        return changedIDs.filter { $0 != ChatTimelineCollectionHost.loadMoreID }
     }
 
     static func reconfigureItems(

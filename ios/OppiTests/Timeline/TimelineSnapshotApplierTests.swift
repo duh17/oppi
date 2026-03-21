@@ -219,4 +219,30 @@ struct TimelineSnapshotApplierTests {
 
         #expect(result == ["permission-1"])
     }
+
+    // MARK: - Animated reconfigure filtering
+
+    @MainActor
+    @Test func loadMoreFilteredFromReconfigureWhenAnimating() {
+        let changedIDs = ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"]
+
+        let filtered = TimelineSnapshotApplier.reconfigureIDsForAnimatedApply(
+            changedIDs,
+            shouldAnimate: true
+        )
+
+        #expect(filtered == ["item-1", "item-2"])
+    }
+
+    @MainActor
+    @Test func loadMoreKeptInReconfigureWhenNotAnimating() {
+        let changedIDs = ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"]
+
+        let filtered = TimelineSnapshotApplier.reconfigureIDsForAnimatedApply(
+            changedIDs,
+            shouldAnimate: false
+        )
+
+        #expect(filtered == ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"])
+    }
 }
