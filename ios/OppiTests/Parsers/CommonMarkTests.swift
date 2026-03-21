@@ -254,6 +254,56 @@ struct CommonMarkTests {
         #expect(code == "print('hi')")
     }
 
+    // MARK: - Four-backtick fence cleanup
+
+    @Test func fourBacktickFenceStripsTrailingInnerFence() {
+        let md = "````swift\nlet x = 1\n```\n````\n"
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .codeBlock(let lang, let code) = blocks[0] else {
+            Issue.record("Expected codeBlock"); return
+        }
+        #expect(lang == "swift")
+        #expect(code == "let x = 1")
+    }
+
+    @Test func fourBacktickFenceWithClosingBraceAndInnerFence() {
+        let md = "````swift\nfunc foo() {\n    let x = 1\n}\n```\n````\n"
+        let blocks = parseCommonMark(md)
+        guard case .codeBlock(let lang, let code) = blocks[0] else {
+            Issue.record("Expected codeBlock"); return
+        }
+        #expect(lang == "swift")
+        #expect(code == "func foo() {\n    let x = 1\n}")
+    }
+
+    @Test func fourBacktickFencePreservesInternalFences() {
+        let md = "````markdown\nHere is code:\n```python\nprint('hi')\n```\n````\n"
+        let blocks = parseCommonMark(md)
+        guard case .codeBlock(_, let code) = blocks[0] else {
+            Issue.record("Expected codeBlock"); return
+        }
+        #expect(code == "Here is code:\n```python\nprint('hi')\n```")
+    }
+
+    @Test func fourBacktickFenceWithTildeInnerFence() {
+        let md = "````swift\nlet x = 1\n~~~\n````\n"
+        let blocks = parseCommonMark(md)
+        guard case .codeBlock(_, let code) = blocks[0] else {
+            Issue.record("Expected codeBlock"); return
+        }
+        #expect(code == "let x = 1")
+    }
+
+    @Test func standardThreeBacktickFenceUnchanged() {
+        let md = "```swift\nlet x = 1\n```\n"
+        let blocks = parseCommonMark(md)
+        guard case .codeBlock(_, let code) = blocks[0] else {
+            Issue.record("Expected codeBlock"); return
+        }
+        #expect(code == "let x = 1")
+    }
+
     // MARK: - Block Quotes
 
     @Test func simpleBlockQuote() {
@@ -808,6 +858,18 @@ struct FlatSegmentTextTests {
         #expect(language == "swift")
         #expect(code.contains("let value = 1"))
         #expect(String(after.characters).contains("After paragraph."))
+    }
+
+    @Test func fourBacktickFenceCodeBlockCleanInFlatSegments() {
+        let markdown = "Before.\n\n````swift\nfunc foo() {\n    return 1\n}\n```\n````\n\nAfter.\n"
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks)
+        #expect(segments.count == 3)
+        guard case .codeBlock(let language, let code) = segments[1] else {
+            Issue.record("Expected second segment to be code block"); return
+        }
+        #expect(language == "swift")
+        #expect(code == "func foo() {\n    return 1\n}")
     }
 }
 
