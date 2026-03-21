@@ -144,26 +144,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return true
     }
 
-    /// Detached markdown cache prewarm task for history loads.
-    /// Cancelled on reset/new load to avoid piling up background parse jobs
-    /// during rapid session switching.
-    private var markdownPrewarmTask: Task<Void, Never>?
-
-    /// Prewarm limits — sized for 128+ item sessions to avoid layout cascades.
-    private static let markdownPrewarmMaxMessages = 48
-    private static let markdownPrewarmMaxCharsPerMessage = 12_000
-    private static let markdownPrewarmMaxTotalChars = 192_000
-    /// Purge global markdown cache when resetting after a very large timeline.
-    private static let markdownCachePurgeItemThreshold = 250
+    /// Asynchronous markdown cache prewarmer for history loads.
+    private let markdownPrewarmer = MarkdownPrewarmer()
 
     // MARK: - Reset
 
     /// Clear all state — call when switching sessions.
     func reset() {
-        cancelMarkdownPrewarm()
+        markdownPrewarmer.cancel()
 
         let previousItemCount = items.count
-        if previousItemCount >= Self.markdownCachePurgeItemThreshold {
+        if previousItemCount >= MarkdownPrewarmer.cachePurgeItemThreshold {
             MarkdownSegmentCache.shared.clearAll()
         }
 
@@ -188,7 +179,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // and strips heavy data (base64 images) from retained items.
     // swiftlint:disable:next large_tuple
     func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int, imagesStripped: Int) {
-        cancelMarkdownPrewarm()
+        markdownPrewarmer.cancel()
 
         let clearedBytes = toolOutputStore.totalBytes
         toolOutputStore.clearAll()
@@ -239,7 +230,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///   false when loading an authoritative fresh trace (e.g., from
     ///   `loadHistory`) to avoid "ghost" user messages at the bottom.
     func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true) {
-        cancelMarkdownPrewarm()
+        markdownPrewarmer.cancel()
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
@@ -268,7 +259,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             loadSessionLog.info("[loadSession] incremental: +\(events.count - appendStart) events → \(self.items.count) items")
 
-            prewarmMarkdownCache(for: assistantTextsToCache)
+            markdownPrewarmer.prewarm(assistantTexts: assistantTextsToCache)
             return
 
         case .fullRebuild:
@@ -354,7 +345,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let orphanInfo = orphanedUserMessages.isEmpty ? "" : " (preserved \(orphanedUserMessages.count) local user msgs)"
         loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
 
-        prewarmMarkdownCache(for: assistantTextsToCache)
+        markdownPrewarmer.prewarm(assistantTexts: assistantTextsToCache)
     }
 
     @discardableResult
@@ -492,64 +483,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             items.append(item)
             indexAppend(item)
         }
-    }
-
-    private func prewarmMarkdownCache(for assistantTexts: [String]) {
-        cancelMarkdownPrewarm()
-        guard !assistantTexts.isEmpty else { return }
-
-        var seenLengths: Set<Int> = []
-        var totalBytes = 0
-        var textsToCache: [String] = []
-        textsToCache.reserveCapacity(min(Self.markdownPrewarmMaxMessages, assistantTexts.count))
-
-        let themeID = ThemeRuntimeState.currentThemeID()
-
-        // Prefer newest assistant messages first, with conservative size limits.
-        // Use utf8.count (O(1)) instead of String.count (O(n)) for size checks.
-        // Note: shouldCache is redundant when we already check textBytes ≤ maxCharsPerMessage
-        // (maxCharsPerMessage=12_000 < shouldCache's 16KB limit).
-        for text in assistantTexts.reversed() {
-            let textBytes = text.utf8.count
-            guard textBytes <= Self.markdownPrewarmMaxCharsPerMessage else { continue }
-            // Lightweight dedup by byte length — avoids hashing full string content.
-            // Collision-safe enough for prewarm (worst case: skip a duplicate-length text).
-            guard seenLengths.insert(textBytes).inserted else { continue }
-
-            if totalBytes + textBytes > Self.markdownPrewarmMaxTotalChars {
-                continue
-            }
-
-            // Skip cache.get() check during fresh loads — the cache is typically
-            // cold or stale. The detached prewarm task will recheck anyway.
-            textsToCache.append(text)
-            totalBytes += textBytes
-
-            if textsToCache.count >= Self.markdownPrewarmMaxMessages {
-                break
-            }
-        }
-
-        guard !textsToCache.isEmpty else { return }
-        textsToCache.reverse()
-
-        markdownPrewarmTask = Task.detached(priority: .utility) {
-            for text in textsToCache {
-                if Task.isCancelled { return }
-                if MarkdownSegmentCache.shared.get(text, themeID: themeID) != nil { continue }
-
-                let blocks = parseCommonMark(text)
-                if Task.isCancelled { return }
-
-                let segments = FlatSegment.build(from: blocks, themeID: themeID)
-                MarkdownSegmentCache.shared.set(text, themeID: themeID, segments: segments)
-            }
-        }
-    }
-
-    private func cancelMarkdownPrewarm() {
-        markdownPrewarmTask?.cancel()
-        markdownPrewarmTask = nil
     }
 
     /// Cached fallback formatter — lazily initialized, reused across loadSession calls.
