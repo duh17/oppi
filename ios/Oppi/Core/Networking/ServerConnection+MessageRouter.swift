@@ -584,12 +584,7 @@ extension ServerConnection {
     /// Force refresh the model cache (e.g. pull-to-refresh in picker).
     func refreshModelCache() async {
         guard let api = apiClient else { return }
-        do {
-            chatState.cachedModels = try await api.listModels()
-            chatState.modelsCacheReady = true
-        } catch {
-            logger.warning("Model cache refresh failed: \(error.localizedDescription)")
-        }
+        await chatState.refreshModelCache(api: api)
     }
 
     // periphery:ignore - API surface for model cache management

@@ -10,7 +10,7 @@ struct WorkspaceCreateView: View {
     let server: PairedServer
 
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerConnection.self) private var connection
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var step: CreateStep = .pickProject
@@ -36,7 +36,7 @@ struct WorkspaceCreateView: View {
 
     /// Skills from the target server.
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skillsByServer[server.id] ?? []
+        workspaceStore.skillsByServer[server.id] ?? []
     }
 
     var body: some View {
@@ -293,11 +293,11 @@ struct WorkspaceCreateView: View {
     }
 
     private func loadSkills() async {
-        if (connection.workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
+        if (workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
             guard let api = coordinator.apiClient(for: server.id) else { return }
             do {
                 let skills = try await api.listSkills()
-                connection.workspaceStore.skillsByServer[server.id] = skills
+                workspaceStore.skillsByServer[server.id] = skills
             } catch {
                 // Keep empty state; refresh will retry.
             }
@@ -309,7 +309,7 @@ struct WorkspaceCreateView: View {
     private func create() async {
         coordinator.switchToServer(server)
 
-        guard let api = coordinator.apiClient(for: server.id) ?? connection.apiClient else {
+        guard let api = coordinator.apiClient(for: server.id) else {
             error = "Cannot connect to \(server.name)"
             return
         }
@@ -328,7 +328,7 @@ struct WorkspaceCreateView: View {
 
         do {
             let workspace = try await api.createWorkspace(request)
-            connection.workspaceStore.upsert(workspace, serverId: server.id)
+            workspaceStore.upsert(workspace, serverId: server.id)
             dismiss()
         } catch {
             self.error = error.localizedDescription

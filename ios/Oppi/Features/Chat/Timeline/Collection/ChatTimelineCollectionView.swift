@@ -36,6 +36,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let toolSegmentStore: ToolSegmentStore
         let toolDetailsStore: ToolDetailsStore
         let connection: ServerConnection
+        let currentModel: String?
         let audioPlayer: AudioPlayerService
         let themeID: ThemeID
         let selectedTextPiRouter: SelectedTextPiActionRouter?
@@ -61,6 +62,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolSegmentStore: ToolSegmentStore,
             toolDetailsStore: ToolDetailsStore? = nil,
             connection: ServerConnection,
+            currentModel: String? = nil,
             audioPlayer: AudioPlayerService,
             themeID: ThemeID,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
@@ -85,6 +87,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.toolSegmentStore = toolSegmentStore
             self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
             self.connection = connection
+            self.currentModel = currentModel
             self.audioPlayer = audioPlayer
             self.themeID = themeID
             self.selectedTextPiRouter = selectedTextPiRouter
@@ -208,6 +211,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var connection: ServerConnection? {
             get { context.connection }
             set { context.connection = newValue }
+        }
+
+        var currentModel: String? {
+            get { context.currentModel }
+            set { context.currentModel = newValue }
         }
 
         var currentThemeID: ThemeID {

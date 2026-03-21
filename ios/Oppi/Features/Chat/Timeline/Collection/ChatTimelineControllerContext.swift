@@ -13,6 +13,7 @@ final class ChatTimelineControllerContext {
     var toolSegmentStore: ToolSegmentStore?
     var toolDetailsStore: ToolDetailsStore?
     var connection: ServerConnection?
+    var currentModel: String?
     var currentThemeID: ThemeID = .dark
     var selectedTextPiRouter: SelectedTextPiActionRouter?
     var piQuickActionStore: PiQuickActionStore?
@@ -33,6 +34,7 @@ final class ChatTimelineControllerContext {
         toolSegmentStore = configuration.toolSegmentStore
         toolDetailsStore = configuration.toolDetailsStore
         connection = configuration.connection
+        currentModel = configuration.currentModel
         currentThemeID = configuration.themeID
         selectedTextPiRouter = configuration.selectedTextPiRouter
         piQuickActionStore = configuration.piQuickActionStore

@@ -13,7 +13,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 /// **Flow**: Pick workspace → compose message → send → session created →
 /// navigate to ChatView.
 struct QuickSessionSheet: View {
-    @Environment(ServerConnection.self) private var connection
+    @Environment(ChatSessionState.self) private var chatState
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
@@ -147,10 +147,10 @@ struct QuickSessionSheet: View {
             HStack(spacing: 3) {
                 if let icon = selectedWorkspace?.icon {
                     Text(icon)
-                        .font(.system(size: 11))
+                        .font(.appCaptionLight)
                 } else {
                     Image(systemName: "folder")
-                        .font(.system(size: 10))
+                        .font(.appChipLight)
                         .foregroundStyle(.themeBlue)
                 }
                 Text(selectedWorkspace?.name ?? "Workspace")
@@ -158,7 +158,7 @@ struct QuickSessionSheet: View {
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.appBadgeCount)
                     .foregroundStyle(.themeComment)
             }
             .frame(minHeight: 17)
@@ -264,7 +264,7 @@ struct QuickSessionSheet: View {
                             .font(.caption2.monospacedDigit().weight(.medium))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.appBadgeCount)
                     }
                     .frame(minHeight: 17)
                     .foregroundStyle(.themeFg)
@@ -290,13 +290,13 @@ struct QuickSessionSheet: View {
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "sparkle")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.appCaption)
                             .symbolRenderingMode(.hierarchical)
                         Text(thinkingLabel)
                             .font(.caption2.monospacedDigit().weight(.medium))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.appBadgeCount)
                     }
                     .frame(minHeight: 17)
                     .foregroundStyle(thinkingTint)
@@ -357,7 +357,7 @@ struct QuickSessionSheet: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.appButton)
                         .foregroundStyle(canSend ? .white : .themeComment)
                 }
             }
@@ -480,7 +480,9 @@ struct QuickSessionSheet: View {
         focusRequestID += 1
 
         // Ensure model cache is fresh
-        await connection.refreshModelCache()
+        if let api = coordinator.activeConnection.apiClient {
+            await chatState.refreshModelCache(api: api)
+        }
     }
 
     private func handleSend() {
@@ -508,12 +510,12 @@ struct QuickSessionSheet: View {
 
         // Capture references before dismiss invalidates environment
         let nav = navigation
-        let serverId = selectedServerId ?? connection.currentServerId ?? "default"
+        let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
 
         Task { @MainActor in
             do {
                 // Use the correct server's API client
-                let targetConnection = coordinator.connection(for: serverId) ?? connection
+                let targetConnection = coordinator.connection(for: serverId) ?? coordinator.activeConnection
                 guard let api = targetConnection.apiClient else {
                     throw QuickSessionError.noConnection
                 }

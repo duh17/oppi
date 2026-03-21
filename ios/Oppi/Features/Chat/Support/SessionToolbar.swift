@@ -80,7 +80,7 @@ struct SessionToolbar: View {
         } label: {
             PillLabel(text: thinkingLabel, tint: thinkingTint, showChevron: true) {
                 Image(systemName: "sparkle")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.appCaption)
                     .symbolRenderingMode(.hierarchical)
             }
         }
@@ -130,7 +130,7 @@ private struct PillLabel<LeadingIcon: View>: View {
 
             if showChevron {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.appBadgeCount)
                     .frame(
                         width: chevronSlotWidth,
                         height: iconSlotSize,

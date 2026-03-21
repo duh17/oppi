@@ -43,7 +43,7 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
 
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        button.titleLabel?.font = AppFont.monoMedium
         button.contentHorizontalAlignment = .center
         button.contentVerticalAlignment = .center
         button.addTarget(self, action: #selector(handleTap), for: .touchUpInside)

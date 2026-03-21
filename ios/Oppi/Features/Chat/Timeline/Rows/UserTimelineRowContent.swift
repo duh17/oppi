@@ -111,7 +111,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.text = "❯"
-        iconLabel.font = .monospacedSystemFont(ofSize: 15, weight: .semibold)
+        iconLabel.font = AppFont.monoLargeSemibold
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconLabel.setContentHuggingPriority(.required, for: .horizontal)
 

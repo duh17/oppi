@@ -31,7 +31,7 @@ enum ANSIParser {
         let result = NSMutableAttributedString()
         var state = SGRState()
         let baseFg = UIColor(baseForeground)
-        let baseFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let baseFont = AppFont.mono
 
         let scanner = Scanner(input)
         for segment in scanner {

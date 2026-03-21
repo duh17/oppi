@@ -179,7 +179,7 @@ final class FullScreenImageViewController: UIViewController {
 
         let label = UILabel()
         label.text = "Saved"
-        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.font = AppFont.systemFeedbackMedium
         label.textColor = UIColor(palette.fg)
         label.textAlignment = .center
         label.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.9)

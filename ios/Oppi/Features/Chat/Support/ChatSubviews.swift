@@ -5,7 +5,7 @@ import SwiftUI
 struct ChatEmptyState: View {
     var body: some View {
         Text("π")
-            .font(.system(size: 48, design: .monospaced).weight(.bold))
+            .font(.appHeroMono)
             .foregroundStyle(.themePurple.opacity(0.5))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

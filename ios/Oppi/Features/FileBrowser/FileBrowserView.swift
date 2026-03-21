@@ -12,7 +12,7 @@ struct FileBrowserView: View {
     let initialPath: String
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(ServerConnection.self) private var connection
+    @Environment(FileIndexStore.self) private var fileIndexStore
     @State private var listing: DirectoryListingResponse?
     @State private var error: String?
     @State private var searchText = ""
@@ -23,7 +23,7 @@ struct FileBrowserView: View {
     }
 
     private var fileIndex: [String]? {
-        connection.fileIndexStore.paths
+        fileIndexStore.paths
     }
 
     var body: some View {
@@ -93,7 +93,7 @@ struct FileBrowserView: View {
 
     @ViewBuilder
     private var searchResultsView: some View {
-        if connection.fileIndexStore.isLoading, fileIndex == nil {
+        if fileIndexStore.isLoading, fileIndex == nil {
             ProgressView("Loading file index...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if fuzzyResults.isEmpty {
@@ -201,7 +201,7 @@ struct FileBrowserView: View {
 
     private func ensureFileIndex() {
         guard let api = apiClient else { return }
-        connection.fileIndexStore.ensureLoaded(workspaceId: workspaceId, apiClient: api)
+        fileIndexStore.ensureLoaded(workspaceId: workspaceId, apiClient: api)
     }
 
     private func performLocalSearch(query: String) {

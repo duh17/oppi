@@ -205,7 +205,7 @@ final class FullScreenCodeViewController: UIViewController {
         if let path {
             let pathLabel = UILabel()
             pathLabel.text = path.shortenedPath
-            pathLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            pathLabel.font = AppFont.monoMedium
             pathLabel.textColor = UIColor(palette.fg)
             pathLabel.lineBreakMode = .byTruncatingMiddle
             stack.addArrangedSubview(pathLabel)
@@ -213,7 +213,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         let subtitleLabel = UILabel()
         subtitleLabel.text = subtitle
-        subtitleLabel.font = .systemFont(ofSize: 11)
+        subtitleLabel.font = AppFont.systemSmall
         subtitleLabel.textColor = UIColor(palette.comment)
         stack.addArrangedSubview(subtitleLabel)
 

@@ -119,7 +119,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         bubbleContainer.clipsToBounds = true
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
-        iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
+        iconLabel.font = AppFont.monoXL
         iconLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().purple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)

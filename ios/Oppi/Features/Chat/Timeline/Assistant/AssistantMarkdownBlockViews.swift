@@ -20,7 +20,7 @@ final class NativeCodeBlockView: UIView {
 
     private let languageLabel: UILabel = {
         let l = UILabel()
-        l.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        l.font = AppFont.mono
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
@@ -152,7 +152,7 @@ final class NativeCodeBlockView: UIView {
         languageLabel.textColor = UIColor(palette.comment)
         copyButton.tintColor = UIColor(palette.fgDim)
 
-        let font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let font = AppFont.monoMedium
 
         if code == currentCode, let highlighted = highlightedText {
             codeLabel.attributedText = highlighted
@@ -175,7 +175,7 @@ final class NativeCodeBlockView: UIView {
 
     func applyHighlightedCode(_ highlighted: NSAttributedString) {
         let mutable = NSMutableAttributedString(attributedString: highlighted)
-        let font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let font = AppFont.monoMedium
         let fullRange = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.font, value: font, range: fullRange)
         codeLabel.attributedText = mutable
@@ -481,8 +481,8 @@ final class NativeTableBlockView: UIView {
         paragraph.lineBreakMode = .byClipping
         paragraph.lineSpacing = 5
 
-        let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
-        let cellFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let headerFont = AppFont.monoBold
+        let cellFont = AppFont.mono
         let headerColor = UIColor(palette.cyan)
         let cellColor = UIColor(palette.fg)
         let linkColor = UIColor(palette.blue)
@@ -794,7 +794,7 @@ private final class CopiedPillView: UIView {
 
         let label = UILabel()
         label.text = "Copied"
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = AppFont.systemFeedback
         label.textColor = UIColor(palette.fg)
         label.translatesAutoresizingMaskIntoConstraints = false
 

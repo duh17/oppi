@@ -313,7 +313,7 @@ struct WorkspaceContextBar: View {
                     }
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.appTagBold)
                         .foregroundStyle(.themeComment)
                 }
                 .padding(.horizontal, 12)
@@ -517,13 +517,13 @@ struct WorkspaceContextBar: View {
             HStack(spacing: 6) {
                 if isSelecting {
                     Image(systemName: selectedPaths.contains(file.path) ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 12))
+                        .font(.appLabel)
                         .foregroundStyle(selectedPaths.contains(file.path) ? .themePurple : .themeComment)
                         .frame(width: 16)
                 }
 
                 Image(systemName: icon.symbolName)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appChip)
                     .foregroundStyle(icon.color)
                     .frame(width: 16, height: 16)
 
@@ -548,7 +548,7 @@ struct WorkspaceContextBar: View {
 
                 if !isSelecting, canTap {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.appBadgeLight)
                         .foregroundStyle(.themeComment.opacity(0.5))
                 }
             }
@@ -765,7 +765,7 @@ struct WorkspaceContextBar: View {
                     Spacer(minLength: 4)
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.appBadgeLight)
                         .foregroundStyle(.themeComment.opacity(0.5))
                 }
 

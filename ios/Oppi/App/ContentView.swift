@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(SessionStore.self) private var sessionStore
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var showCrossSessionPermissionSheet = false
@@ -10,7 +11,7 @@ struct ContentView: View {
     /// Pending permissions from ALL servers, excluding the active session's
     /// (those are shown inline in the chat view's PermissionOverlay).
     private var crossSessionPending: [PermissionRequest] {
-        let activeSessionId = connection.sessionStore.activeSessionId
+        let activeSessionId = sessionStore.activeSessionId
         return coordinator.allPendingPermissions
             .filter { request in
                 guard let activeSessionId else {

@@ -103,11 +103,11 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         iconImageView.contentMode = .scaleAspectFit
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        titleLabel.font = AppFont.monoMediumSemibold
         titleLabel.numberOfLines = 1
 
         tokensLabel.translatesAutoresizingMaskIntoConstraints = false
-        tokensLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        tokensLabel.font = AppFont.mono
         tokensLabel.numberOfLines = 1
         tokensLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -123,7 +123,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         detailContainerView.translatesAutoresizingMaskIntoConstraints = false
 
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        detailLabel.font = AppFont.monoMedium
         detailLabel.numberOfLines = 0
         detailLabel.lineBreakMode = .byTruncatingTail
 

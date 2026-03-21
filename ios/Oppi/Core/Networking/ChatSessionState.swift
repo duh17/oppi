@@ -43,6 +43,19 @@ final class ChatSessionState {
     var fileSuggestions: [FileSuggestion] = []
     var fileSuggestionTask: Task<Void, Never>?
 
+    // MARK: - Model Cache
+
+    /// Refresh the model cache from the server.
+    /// Called by views that need fresh model data (ModelPickerSheet, QuickSessionSheet).
+    func refreshModelCache(api: APIClient) async {
+        do {
+            cachedModels = try await api.listModels()
+            modelsCacheReady = true
+        } catch {
+            // Non-fatal — keep stale cached data
+        }
+    }
+
     // MARK: - Lifecycle
 
     /// Cancel all in-flight background tasks.

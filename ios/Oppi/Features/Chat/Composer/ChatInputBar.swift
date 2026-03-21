@@ -434,7 +434,7 @@ struct ChatInputBar<ActionRow: View>: View {
         let icon = FileIcon.forPath(pill.path)
         let label = HStack(spacing: 4) {
             Image(systemName: icon.symbolName)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.appTag)
                 .foregroundStyle(icon.color)
 
             Text(pill.displayTitle)
@@ -510,7 +510,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
         return HStack(spacing: 4) {
             Image(systemName: icon.symbolName)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.appTag)
                 .foregroundStyle(icon.color)
 
             Text(file.displayName)
@@ -523,7 +523,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 removeFile(file.id)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.appBadge)
                     .foregroundStyle(.themeComment)
             }
             .buttonStyle(.plain)
@@ -537,7 +537,7 @@ struct ChatInputBar<ActionRow: View>: View {
     private var expandButton: some View {
         Button(action: onExpand) {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.appCaption)
                 .foregroundStyle(.themeComment)
                 .frame(width: expandVisualDiameter, height: expandVisualDiameter)
         }
@@ -569,7 +569,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.appButton)
                         .foregroundStyle(sendActionForegroundColor)
                 }
             }
@@ -655,7 +655,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.appActionBold)
                         .foregroundStyle(.white)
                 }
             }
