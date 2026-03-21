@@ -44,7 +44,7 @@ struct ToolRowDiffRenderStrategy {
                 expandedLabel.attributedText = nil
                 expandedLabel.text = plainDiff
                 expandedLabel.textColor = UIColor(.themeFg)
-                expandedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                expandedLabel.font = ToolFont.regular
                 renderedText = plainDiff
             } else if let cached = ToolRowRenderCache.get(signature: signature) {
                 expandedLabel.text = nil
@@ -58,7 +58,7 @@ struct ToolRowDiffRenderStrategy {
                     diffText = NSAttributedString(
                         string: "No textual changes",
                         attributes: [
-                            .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                            .font: ToolFont.regular,
                             .foregroundColor: UIColor(.themeComment),
                         ]
                     )

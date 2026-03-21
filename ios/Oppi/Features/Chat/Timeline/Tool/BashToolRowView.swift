@@ -281,7 +281,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 let deltaRange = NSRange(location: streamAppendOffset, length: newLen - streamAppendOffset)
                 let delta = strippedNS.substring(with: deltaRange)
 
-                let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                let font = ToolFont.regular
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: font,
                     .foregroundColor: outputColor,
@@ -416,7 +416,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     private func configureTerminalTextView(_ tv: UITextView) {
         tv.translatesAutoresizingMaskIntoConstraints = false
-        tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        tv.font = ToolFont.regular
         tv.isEditable = false
         tv.isScrollEnabled = false
         tv.isSelectable = false
