@@ -824,12 +824,14 @@ private struct FileHeader: View {
 private struct CopyButton: View {
     let content: String
     @State private var isCopied = false
+    @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
         Button {
+            resetTask?.cancel()
             UIPasteboard.general.string = content
             isCopied = true
-            Task {
+            resetTask = Task {
                 try? await Task.sleep(for: .seconds(2))
                 isCopied = false
             }
