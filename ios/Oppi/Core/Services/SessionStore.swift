@@ -196,6 +196,16 @@ final class SessionStore {
         return true
     }
 
+    /// Clear persisted review context summary for a session.
+    /// Called after the first message is sent so context pills disappear.
+    func clearContextSummary(for sessionId: String) {
+        var list = sessions
+        guard let idx = list.firstIndex(where: { $0.id == sessionId }),
+              list[idx].contextSummary != nil else { return }
+        list[idx].contextSummary = nil
+        sessions = list
+    }
+
     /// Remove a session.
     func remove(id: String) {
         var list = sessions
