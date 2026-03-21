@@ -271,7 +271,7 @@ describe("autoresearch-extension", () => {
       expect(result).toBeUndefined();
     });
 
-    it("same session ID resumes correctly", async () => {
+    it("same session ID reconstructs state but does not auto-activate", async () => {
       const { worktreePath } = computeWorktreePaths(tmpDir, "My Task");
       fs.mkdirSync(worktreePath, { recursive: true });
 
@@ -292,7 +292,8 @@ describe("autoresearch-extension", () => {
         }) + "\n",
       );
 
-      // Same session ID should resume
+      // Same session ID should reconstruct state but NOT auto-activate mode
+      // (autoresearch is now on-demand only — activated by tool calls)
       const { api } = await loadFactory(tmpDir, "session-A");
       await fireEvent(api, "session_start");
 
@@ -301,9 +302,8 @@ describe("autoresearch-extension", () => {
         systemPrompt: "You are an assistant.",
       })) as { systemPrompt?: string } | undefined;
 
-      expect(result).toBeDefined();
-      expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
-      expect(result!.systemPrompt).toContain("Worktree:");
+      // No system prompt injection without explicit tool usage
+      expect(result).toBeUndefined();
     });
 
     it("multiple sessions coexist in marker file", async () => {
@@ -624,7 +624,7 @@ describe("autoresearch-extension", () => {
   });
 
   describe("before_agent_start", () => {
-    it("injects autoresearch context when mode is active", async () => {
+    it("does not inject from file presence alone — requires tool activation", async () => {
       const { worktreePath } = computeWorktreePaths(tmpDir, "Active");
       fs.mkdirSync(worktreePath, { recursive: true });
       fs.writeFileSync(
@@ -644,15 +644,13 @@ describe("autoresearch-extension", () => {
       const { api } = await loadFactory(tmpDir, "active-sess");
       await fireEvent(api, "session_start");
 
+      // Files exist but mode should NOT auto-activate — on-demand only
       const result = (await fireEvent(api, "before_agent_start", {
         prompt: "hello",
         systemPrompt: "You are an assistant.",
       })) as { systemPrompt?: string } | undefined;
 
-      expect(result).toBeDefined();
-      expect(result!.systemPrompt).toContain("Autoresearch Mode (ACTIVE)");
-      expect(result!.systemPrompt).toContain("NEVER STOP until interrupted");
-      expect(result!.systemPrompt).toContain("Worktree:");
+      expect(result).toBeUndefined();
     });
 
     it("does not inject when autoresearch mode is inactive", async () => {
