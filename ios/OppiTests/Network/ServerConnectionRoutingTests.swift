@@ -226,6 +226,52 @@ struct ServerConnectionRoutingTests {
     }
 
     @MainActor
+    @Test func routeSubscribeFailureDoesNotProduceTimelineError() {
+        let conn = makeTestConnection()
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "subscribe",
+                requestId: "req-sub",
+                success: false,
+                data: nil,
+                error: "Subscribe rate limit exceeded — try again later"
+            ),
+            sessionId: "s1"
+        )
+
+        conn.flushAndSuspend()
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.isEmpty, "Failed subscribe command_result should not leak to timeline")
+    }
+
+    @MainActor
+    @Test func routeUnsubscribeFailureDoesNotProduceTimelineError() {
+        let conn = makeTestConnection()
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "unsubscribe",
+                requestId: "req-unsub",
+                success: false,
+                data: nil,
+                error: "Session not found"
+            ),
+            sessionId: "s1"
+        )
+
+        conn.flushAndSuspend()
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.isEmpty, "Failed unsubscribe command_result should not leak to timeline")
+    }
+
+    @MainActor
     @Test func routeStopRequestedMarksStopping() {
         let scenario = EventFlowServerConnectionScenario()
 
