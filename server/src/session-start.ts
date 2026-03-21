@@ -54,6 +54,10 @@ export interface SessionStartCoordinatorDeps {
     parentSessionId: string,
     params: { name?: string; model?: string; thinking?: string; prompt: string },
   ) => Promise<Session>;
+  spawnDetachedSession: (
+    originSessionId: string,
+    params: { name?: string; model?: string; thinking?: string; prompt: string },
+  ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
 }
@@ -89,21 +93,25 @@ export class SessionStartCoordinator {
           }),
         );
 
-        // Inject spawn_agent extension for all workspace sessions
-        extraExtensionFactories.push(
-          createSpawnAgentFactory({
-            workspaceId: identity.workspaceId,
-            sessionId: session.id,
-            spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
-            listChildren: () => this.deps.listChildSessions(session.id),
-            getSession: (id) => this.deps.storage.getSession(id),
-            listWorkspaceSessions: () =>
-              this.deps.storage
-                .listSessions()
-                .filter((s) => s.workspaceId === identity.workspaceId),
-            subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
-          }),
-        );
+        // Inject spawn_agent extension only for root/detached sessions (not children).
+        // Child sessions focus on their assigned task without spawning further agents.
+        if (!session.parentSessionId) {
+          extraExtensionFactories.push(
+            createSpawnAgentFactory({
+              workspaceId: identity.workspaceId,
+              sessionId: session.id,
+              spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
+              spawnDetached: (params) => this.deps.spawnDetachedSession(session.id, params),
+              listChildren: () => this.deps.listChildSessions(session.id),
+              getSession: (id) => this.deps.storage.getSession(id),
+              listWorkspaceSessions: () =>
+                this.deps.storage
+                  .listSessions()
+                  .filter((s) => s.workspaceId === identity.workspaceId),
+              subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
+            }),
+          );
+        }
 
         const sdkBackend = await SdkBackend.create({
           session,

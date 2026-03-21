@@ -80,6 +80,12 @@ interface MockCtx extends SpawnAgentContext {
     thinking?: string;
     prompt: string;
   }>;
+  spawnDetachedCalls: Array<{
+    name?: string;
+    model?: string;
+    thinking?: string;
+    prompt: string;
+  }>;
   /** Set to throw on next spawnChild call */
   spawnChildError?: Error;
 }
@@ -91,6 +97,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
     sessions: new Map(),
     subscribers: new Map(),
     spawnChildCalls: [],
+    spawnDetachedCalls: [],
     spawnChildError: undefined,
 
     async spawnChild(params) {
@@ -106,6 +113,21 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
       });
       ctx.sessions.set(child.id, child);
       return child;
+    },
+
+    async spawnDetached(params) {
+      ctx.spawnDetachedCalls.push(params);
+      if (ctx.spawnChildError) throw ctx.spawnChildError;
+      const detached = makeSession({
+        id: `detached-${nextId + 1}`,
+        // No parentSessionId — this is the key difference
+        status: "busy",
+        name: params.name,
+        model: params.model,
+        firstMessage: params.prompt,
+      });
+      ctx.sessions.set(detached.id, detached);
+      return detached;
     },
 
     listChildren() {
@@ -365,6 +387,75 @@ describe("spawn-agent-extension", () => {
 
       expect(result.content[0].text).toContain("Failed to spawn agent");
       expect(result.content[0].text).toContain("workspace is locked");
+    });
+
+    // --- Detached mode ---
+
+    it("detached: calls spawnDetached instead of spawnChild", async () => {
+      const { ctx, tool } = setup();
+
+      const result = await tool("spawn_agent").execute("tc1", {
+        message: "independent task",
+        name: "detached-worker",
+        detached: true,
+      });
+
+      expect(ctx.spawnDetachedCalls.length).toBe(1);
+      expect(ctx.spawnChildCalls.length).toBe(0);
+      expect(ctx.spawnDetachedCalls[0].prompt).toBe("independent task");
+
+      const text = result.content[0].text;
+      expect(text).toContain("detached");
+      expect(text).toContain("independent session");
+      expect(text).not.toContain("check_agents");
+    });
+
+    it("detached: details include detached=true", async () => {
+      const { tool } = setup();
+
+      const result = await tool("spawn_agent").execute("tc1", {
+        message: "detached work",
+        detached: true,
+      });
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.detached).toBe(true);
+    });
+
+    it("detached: non-detached details include detached=false", async () => {
+      const { tool } = setup();
+
+      const result = await tool("spawn_agent").execute("tc1", {
+        message: "child work",
+      });
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.detached).toBe(false);
+    });
+
+    it("detached: wait mode works with detached sessions", async () => {
+      const { ctx, tool } = setup();
+
+      const promise = tool("spawn_agent").execute("tc1", {
+        message: "detached wait task",
+        detached: true,
+        wait: true,
+      });
+
+      await vi.waitFor(() => expect(ctx.spawnDetachedCalls.length).toBe(1));
+
+      const detachedId = [...ctx.sessions.keys()].find(
+        (k) => k !== "parent-1" && k.startsWith("detached"),
+      )!;
+      const detached = ctx.sessions.get(detachedId)!;
+      detached.status = "stopped";
+      detached.lastMessage = "Detached done";
+
+      emitMessage(ctx, detachedId, { type: "session_ended", reason: "done" });
+
+      const result = await promise;
+      expect(result.content[0].text).toContain("STOPPED");
+      expect(ctx.spawnChildCalls.length).toBe(0);
     });
 
     // --- Wait mode ---

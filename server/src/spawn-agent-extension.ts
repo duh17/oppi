@@ -31,6 +31,13 @@ export interface SpawnAgentContext {
     thinking?: string;
     prompt: string;
   }): Promise<Session>;
+  /** Create an independent session in the same workspace — no parent-child relationship. */
+  spawnDetached(params: {
+    name?: string;
+    model?: string;
+    thinking?: string;
+    prompt: string;
+  }): Promise<Session>;
   /** List direct child sessions of the current session. */
   listChildren(): Session[];
   /** Get a session by ID (for inspect_agent trace access and tree walks). */
@@ -150,6 +157,15 @@ const spawnAgentParams = Type.Object({
         "Thinking level override: off, minimal, low, medium, high, xhigh. Inherits from parent if omitted.",
     }),
   ),
+  detached: Type.Optional(
+    Type.Boolean({
+      description:
+        "If true, create an independent session (no parent-child link). " +
+        "The session won't appear in check_agents, gets full capabilities " +
+        "including its own spawn_agent, and is monitored via the app. " +
+        "Default: false (child session in the spawn tree).",
+    }),
+  ),
   wait: Type.Optional(
     Type.Boolean({
       description:
@@ -201,6 +217,7 @@ interface SpawnAgentDetails {
   name: string;
   status: string;
   model?: string;
+  detached?: boolean;
   waited?: boolean;
   cost?: number;
   durationMs?: number;
@@ -745,7 +762,7 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "that benefits from a fresh context. Set wait=true to block until the child " +
         "finishes and get its result inline.",
       promptSnippet:
-        "spawn_agent(message, name?, model?, thinking?, wait?, timeout_seconds?) — spawn a child agent session",
+        "spawn_agent(message, name?, model?, thinking?, detached?, wait?, timeout_seconds?) — spawn a child agent session",
       promptGuidelines: [
         "Use spawn_agent for tasks that can run independently without blocking the current conversation.",
         "Give each spawned agent a clear, self-contained task description with all needed context.",
@@ -754,7 +771,7 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "Set wait=true when you need the child's result before continuing (sequential dependency). Default is fire-and-forget.",
         "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
         "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
-        `Max spawn depth is ${MAX_SPAWN_DEPTH}. Avoid spawning agents from within spawned agents unless the task genuinely requires hierarchical decomposition.`,
+        "Child sessions cannot spawn their own agents. Use detached=true to create a fully independent session with its own spawn capability.",
         "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
         "Thinking selection: omit to inherit from parent (usually best). Only override when the user explicitly requests a specific thinking level.",
       ],
@@ -796,27 +813,42 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         });
 
         try {
-          const session = await ctx.spawnChild({
+          const spawnParams = {
             name,
             model: params.model,
             thinking: params.thinking,
             prompt: params.message,
-          });
+          };
+          const session = params.detached
+            ? await ctx.spawnDetached(spawnParams)
+            : await ctx.spawnChild(spawnParams);
+          const isDetached = params.detached ?? false;
 
           // ─── Fire-and-forget (default) ───
           if (!params.wait) {
-            const text =
-              `Spawned agent "${session.name ?? name}" (${session.id}).\n` +
-              `Status: ${session.status}, Model: ${session.model ?? "inherited"}\n` +
-              `The session is now running independently. Use check_agents to monitor progress.`;
+            const lines = [
+              `Spawned ${isDetached ? "detached " : ""}agent "${session.name ?? name}" (${session.id}).`,
+              `Status: ${session.status}, Model: ${session.model ?? "inherited"}`,
+            ];
+            if (isDetached) {
+              lines.push(
+                "This is an independent session — not in the spawn tree. " +
+                  "It has full capabilities and is monitored via the app.",
+              );
+            } else {
+              lines.push(
+                "The session is now running independently. Use check_agents to monitor progress.",
+              );
+            }
 
             return {
-              content: [{ type: "text", text }],
+              content: [{ type: "text", text: lines.join("\n") }],
               details: {
                 agentId: session.id,
                 name: session.name ?? name,
                 status: session.status,
                 model: session.model,
+                detached: isDetached,
               },
             };
           }

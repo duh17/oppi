@@ -85,6 +85,10 @@ export interface SessionCoordinatorBundleDeps {
     parentSessionId: string,
     params: { name?: string; model?: string; thinking?: string; prompt: string },
   ) => Promise<Session>;
+  spawnDetachedSession: (
+    originSessionId: string,
+    params: { name?: string; model?: string; thinking?: string; prompt: string },
+  ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
 }
@@ -154,6 +158,8 @@ export function createSessionCoordinatorBundle(
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
     spawnChildSession: (parentSessionId, params) => deps.spawnChildSession(parentSessionId, params),
+    spawnDetachedSession: (originSessionId, params) =>
+      deps.spawnDetachedSession(originSessionId, params),
     listChildSessions: (parentSessionId) => deps.listChildSessions(parentSessionId),
     subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
   });
