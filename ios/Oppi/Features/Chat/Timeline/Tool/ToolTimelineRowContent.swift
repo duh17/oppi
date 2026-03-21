@@ -95,40 +95,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case text
     }
 
-    @MainActor
-    enum ViewportMode {
-        case output
-        case expandedDiff
-        case expandedCode
-        case expandedText
-
-        var minHeight: CGFloat {
-            switch self {
-            case .output, .expandedText:
-                return ToolTimelineRowContentView.minOutputViewportHeight
-            case .expandedDiff, .expandedCode:
-                return ToolTimelineRowContentView.minDiffViewportHeight
-            }
-        }
-
-        var maxHeight: CGFloat {
-            switch self {
-            case .output, .expandedText:
-                return ToolTimelineRowContentView.maxOutputViewportHeight
-            case .expandedDiff, .expandedCode:
-                return ToolTimelineRowContentView.maxDiffViewportHeight
-            }
-        }
-
-        var closeSafeAreaReserve: CGFloat {
-            switch self {
-            case .output, .expandedText:
-                return ToolTimelineRowContentView.outputViewportCloseSafeAreaReserve
-            case .expandedDiff, .expandedCode:
-                return ToolTimelineRowContentView.diffViewportCloseSafeAreaReserve
-            }
-        }
-    }
+    typealias ViewportMode = ToolRowViewportCalculator.ViewportMode
 
     enum ContextMenuTarget {
         case command
@@ -316,12 +283,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func updateViewportHeightsIfNeeded() {
         let isStreaming = !currentConfiguration.isDone
+        let geometry = currentGeometryContext
 
         if bashToolRowView.outputUsesViewport,
            let outputViewportHeightConstraint = bashToolRowView.outputViewportHeightConstraint {
             let mode: ViewportMode = .output
             if isStreaming {
-                outputViewportHeightConstraint.constant = streamingConstrainedHeight(for: mode)
+                outputViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                    for: mode, geometry: geometry
+                )
             } else {
                 outputViewportHeightConstraint.constant = ToolTimelineRowLayoutPerformance.resolveViewportHeight(
                     cache: &bashToolRowView.outputViewportHeightCache,
@@ -330,12 +300,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     mode: mode,
                     inputBytes: bashToolRowView.outputRenderedText?.utf8.count ?? 0,
                     profile: currentOutputViewportProfile,
-                    availableHeight: availableViewportHeight(for: mode)
+                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry)
                 ) {
-                    self.preferredViewportHeight(
+                    ToolRowViewportCalculator.preferredViewportHeight(
                         for: self.bashToolRowView.outputLabel,
                         in: self.bashToolRowView.outputContainer,
-                        mode: mode
+                        mode: mode,
+                        expandedScrollView: self.expandedScrollView,
+                        expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
+                        outputScrollView: self.outputScrollView,
+                        outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
+                        outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
+                        geometry: geometry
                     )
                 }
             }
@@ -343,20 +319,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
+            let mode: ViewportMode = switch expandedViewportMode {
+            case .diff: .expandedDiff
+            case .code: .expandedCode
+            case .text, .none: .expandedText
+            }
             if isStreaming {
-                let mode: ViewportMode = switch expandedViewportMode {
-                case .diff: .expandedDiff
-                case .code: .expandedCode
-                case .text, .none: .expandedText
-                }
-                // Fixed viewport during streaming — only contentOffset moves inside.
-                expandedViewportHeightConstraint.constant = streamingConstrainedHeight(for: mode)
+                expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
+                    for: mode, geometry: geometry
+                )
             } else {
-                let mode: ViewportMode = switch expandedViewportMode {
-                case .diff: .expandedDiff
-                case .code: .expandedCode
-                case .text, .none: .expandedText
-                }
                 let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
                     : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
                 let widthBucket = Int(expandedContainer.bounds.width.rounded())
@@ -369,20 +341,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     mode: mode,
                     inputBytes: expandedRenderedText?.utf8.count ?? 0,
                     profile: currentExpandedViewportProfile,
-                    availableHeight: availableViewportHeight(for: mode)
+                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry)
                 ) {
-                    preferredViewportHeight(for: expandedContentView, in: expandedContainer, mode: mode)
+                    ToolRowViewportCalculator.preferredViewportHeight(
+                        for: expandedContentView,
+                        in: self.expandedContainer,
+                        mode: mode,
+                        expandedScrollView: self.expandedScrollView,
+                        expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
+                        outputScrollView: self.outputScrollView,
+                        outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
+                        outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
+                        geometry: geometry
+                    )
                 }
 
                 expandedViewportHeightConstraint.constant = preferredHeight
             }
         }
-    }
-
-    /// Fixed streaming viewport height, clamped to the available screen space.
-    private func streamingConstrainedHeight(for mode: ViewportMode) -> CGFloat {
-        let available = availableViewportHeight(for: mode)
-        return max(mode.minHeight, min(Self.streamingViewportHeight, available))
     }
 
     func updateExpandedLabelWidthIfNeeded() {
@@ -455,86 +431,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return ToolTimelineRowViewportProfile(kind: kind, text: expandedRenderedText)
     }
 
-    private func availableViewportHeight(for mode: ViewportMode) -> CGFloat {
+    /// Build the geometry context from the current view hierarchy for viewport calculations.
+    private var currentGeometryContext: ToolRowViewportCalculator.GeometryContext {
         let windowHeight = window?.bounds.height
             ?? superview?.bounds.height
             ?? max(bounds.height, 600)
         let safeInsets = window?.safeAreaInsets ?? .zero
-        return max(
-            mode.minHeight,
-            windowHeight - safeInsets.top - safeInsets.bottom - mode.closeSafeAreaReserve
-        )
-    }
-
-    private func preferredViewportHeight(
-        for contentView: UIView,
-        in container: UIView,
-        mode: ViewportMode
-    ) -> CGFloat {
-        // Use the best width available: container > cell > window > 375.
-        // Before the first layout pass bounds can be zero, which causes
-        // text measurement at width 1px and wildly inflated heights.
         let cellWidth = bounds.width > 10
             ? bounds.width
             : (window?.bounds.width ?? 375)
-        let fallbackContainerWidth = max(100, cellWidth - 16)
-        let measuredContainerWidth = max(container.bounds.width, fallbackContainerWidth)
-
-        // For diff/horizontal-scroll modes, measure at the label's actual
-        // width (lines don't wrap). Using the container width would cause
-        // text wrapping in the measurement, producing a height much taller
-        // than the real rendered content.
-        let width: CGFloat
-        if mode == .expandedDiff || mode == .expandedCode,
-           let widthConstraint = expandedLabelWidthConstraint,
-           widthConstraint.constant > 1 {
-            let frameWidth = expandedScrollView.bounds.width > 10
-                ? expandedScrollView.bounds.width
-                : measuredContainerWidth
-            // Width constraint is relative to frameLayoutGuide width.
-            width = max(1, frameWidth + widthConstraint.constant)
-        } else if mode == .output,
-                  bashToolRowView.outputUsesUnwrappedLayout,
-                  let widthConstraint = bashToolRowView.outputLabelWidthConstraint,
-                  widthConstraint.constant > 1 {
-            let frameWidth = outputScrollView.bounds.width > 10
-                ? outputScrollView.bounds.width
-                : measuredContainerWidth
-            width = max(1, frameWidth + widthConstraint.constant)
-        } else {
-            width = max(1, measuredContainerWidth - 12)
-        }
-        let contentHeight = measuredExpandedContentHeight(
-            for: contentView,
-            width: width
+        return ToolRowViewportCalculator.GeometryContext(
+            windowHeight: windowHeight,
+            safeAreaInsets: safeInsets,
+            cellWidth: cellWidth
         )
-        let windowHeight = window?.bounds.height
-            ?? superview?.bounds.height
-            ?? max(bounds.height, 600)
-        let safeInsets = window?.safeAreaInsets ?? .zero
-        let availableHeight = max(
-            mode.minHeight,
-            windowHeight - safeInsets.top - safeInsets.bottom - mode.closeSafeAreaReserve
-        )
-        let maxAllowed = min(mode.maxHeight, availableHeight)
-
-        return min(maxAllowed, max(mode.minHeight, contentHeight))
-    }
-
-    private func measuredExpandedContentHeight(for contentView: UIView, width: CGFloat) -> CGFloat {
-        if let label = contentView as? UILabel {
-            let labelSize = label.sizeThatFits(
-                CGSize(width: width, height: .greatestFiniteMagnitude)
-            )
-            return ceil(max(1, labelSize.height) + 10)
-        }
-
-        let contentSize = contentView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingExpandedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
-        return ceil(max(1, contentSize.height) + 10)
     }
 
     private static func sanitizedFittingSize(_ size: CGSize, fallbackWidth: CGFloat) -> CGSize {
