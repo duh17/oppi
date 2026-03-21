@@ -155,20 +155,31 @@ final class AssistantMarkdownSegmentApplier {
             case .text(let attributed):
                 if let textView = textViews[index] {
                     textView.isSelectable = config.textSelectionEnabled
-                    let normalized = Self.normalizedAttributedText(
-                        from: attributed,
-                        palette: palette
-                    )
-                    textView.attributedText = normalized
+
+                    // During streaming, skip the expensive normalizedAttributedText
+                    // call (which enumerates ALL attributes in the full range to fix
+                    // fonts/colors). FlatSegment.build already applies correct theme
+                    // attributes, so the normalization is redundant. Direct conversion
+                    // avoids the NSMutableAttributedString copy + attribute enumeration.
+                    let attrText: NSAttributedString
+                    if config.isStreaming {
+                        attrText = NSAttributedString(attributed)
+                    } else {
+                        attrText = Self.normalizedAttributedText(
+                            from: attributed,
+                            palette: palette
+                        )
+                    }
+                    textView.attributedText = attrText
 
                     // Smooth reveal for the last (actively growing) text segment during streaming.
                     if config.isStreaming, index == lastTextIndex {
                         let previousCount = lastStreamingTextCharCount
-                        let currentCount = normalized.length
+                        let currentCount = attrText.length
                         if currentCount > previousCount {
                             textRevealer.reveal(
                                 in: textView,
-                                normalizedText: normalized,
+                                normalizedText: attrText,
                                 previousVisibleCount: previousCount
                             )
                         }
