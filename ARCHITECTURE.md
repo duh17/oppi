@@ -110,6 +110,10 @@ These are the observed directions in imports/calls today:
 - `pi-events.ts` — typed SDK event/state parsing utilities.
 - `event-ring.ts` — bounded sequenced event ring for catch-up.
 
+#### Extensions
+- `autoresearch-extension.ts` — autonomous experiment loop extension (init/run/log experiments).
+- `spawn-agent-extension.ts` — first-party child session spawning with parent-child tree tracking.
+
 #### Policy and permission system
 - `policy.ts` — policy engine evaluation pipeline.
 - `policy-presets.ts` — declarative policy compilation + default preset config.
@@ -151,6 +155,11 @@ These are the observed directions in imports/calls today:
 - `local-sessions.ts` — local pi session discovery + path/cwd validation.
 - `model-catalog.ts` — model list/context-window catalog from SDK registry.
 
+#### Workspace review
+- `workspace-review.ts` — workspace review orchestration (create, summarize).
+- `workspace-review-session.ts` — review session lifecycle management.
+- `workspace-review-diff.ts` — diff computation for review entries.
+
 #### Observability, security, and support utilities
 - `tls.ts` — TLS mode resolution + self-signed/tailscale cert preparation.
 - `security.ts` — server identity key material + fingerprint derivation.
@@ -158,10 +167,16 @@ These are the observed directions in imports/calls today:
 - `live-activity.ts` — debounced Live Activity update bridge.
 - `trace.ts` — JSONL trace parsing and context reconstruction.
 - `graph.ts` — workspace session/entry graph assembly from trace/session files.
-- `overall-diff.ts` — derive file baseline + line diff from trace mutations.
+- `diff-core.ts` — shared diff algorithm primitives (line diff, hunk construction).
 - `visual-schema.ts` — sanitize dynamic visual payloads (`details.ui`, charts).
 - `git-status.ts` — git status extraction for workspace roots.
+- `git-utils.ts` — git operation helpers (branch, commit, diff).
 - `mobile-renderer.ts` — server-side styled tool segment rendering for mobile UI.
+- `file-suggestions.ts` — workspace file path suggestions for composer autocomplete.
+- `runtime-update.ts` — runtime config hot-reload without restart.
+- `invite.ts` — invite code generation and validation.
+- `bonjour-advertiser.ts` — mDNS/Bonjour service advertisement for local discovery.
+- `bonjour-dns-sd.ts` — DNS-SD record helpers for Bonjour.
 - `qr.ts` — terminal QR code encoding/rendering.
 - `log-utils.ts` — compact timestamp helper.
 - `ansi.ts` — ANSI text helpers.
@@ -212,15 +227,23 @@ Core/Services
   ├─ ConnectionCoordinator (multi-server pool)
   └─ TimelineCache, GitStatusStore, etc.
 
+Core/Views
+  ├─ MarkdownText.swift (FlatSegment.build — UIKit-scoped AttributedString construction)
+  ├─ AttributedStringNormalizer.swift (shared font fallback for NSAttributedString)
+  ├─ GameOfLifeLayer.swift + GameOfLifeUIView.swift (CA-based thinking indicator)
+  ├─ BrailleSpinnerUIView.swift (braille spinner animation)
+  ├─ FullScreenCode*.swift (full-screen code viewer)
+  └─ [file browser, image, diff, browser, camera views]
+
 Features/Chat
   ├─ ChatSessionManager (UI/session lifecycle + history orchestration)
   ├─ ChatActionHandler (send/stop/model/thinking/session actions)
   ├─ ChatTimelineView (SwiftUI render window + overlay/scroll wiring)
-  └─ Timeline/
+  └─ Timeline/ (all pure UIKit — zero SwiftUI views)
       ├─ Collection/ (UICollectionView host, apply plan, snapshot diffing, scroll/perf/tool-output loading)
-      ├─ Rows/ (assistant/user/thinking/system/error/audio/permission content configurations)
-      ├─ Tool/ (tool row content, plan builder, interaction policy, expanded surface host, full-screen support, render strategies)
-      ├─ Assistant/ (markdown segment source/applier/block views)
+      ├─ Rows/ (10 row types: assistant/user/thinking/system/error/compaction/permission/audio/load-more/working-indicator)
+      ├─ Tool/ (28 files: tool row content, plan builder, render strategies, font constants, layout, interaction)
+      ├─ Assistant/ (markdown segment source/applier/block views/image/streaming revealer)
       └─ Interaction/ (shared full-screen vs inline-selection specs)
 ```
 
@@ -276,12 +299,54 @@ Mechanically enforced boundaries:
 
 ### Timeline rendering package map
 
-- `ChatTimelineView.swift` is the SwiftUI entry point for the timeline render window, jump/initial scroll commands, empty state, and permission overlay.
-- `Timeline/Collection/ChatTimelineCollectionView.swift` owns the UIKit host/controller. `ChatTimelineApplyPlan.swift`, `ChatTimelineControllerContext.swift`, `TimelineSnapshotApplier.swift`, `ChatTimelineToolOutputLoader.swift`, and `ChatTimelinePerf.swift` are collection-local support modules.
-- `Timeline/Rows/` contains non-tool row configurations/content views (assistant, user, thinking, permission, system, error, audio, load-more, working-indicator).
-- `Timeline/Assistant/` contains the markdown pipeline split: `AssistantMarkdownSegmentSource`, `AssistantMarkdownSegmentApplier`, and block renderers.
-- `Timeline/Tool/` owns tool-row rendering. The main flow is `ToolPresentationBuilder.ToolExpandedContent` -> `ToolRowPlanBuilder` -> `ToolTimelineRowContentView` -> per-mode `ToolRow*RenderStrategy` or `ToolExpandedSurfaceHostView`.
-- `Timeline/Interaction/` holds the shared explicit interaction contracts: `TimelineExpandableTextInteractionSpec` and `TimelineInteractionSpec`.
+The entire timeline is pure UIKit — zero SwiftUI views, no UIHostingConfiguration.
+
+- `ChatTimelineView.swift` is the SwiftUI entry point (thin wrapper) for the timeline render window, jump/initial scroll commands, empty state, and permission overlay.
+- `Timeline/Collection/` owns the UIKit host/controller:
+  - `ChatTimelineCollectionView.swift` — main UICollectionView + coordinator (960 lines)
+  - `ChatTimelineCollectionView+DataSource.swift` — cell registration + data source
+  - `ChatTimelineCollectionView+RowBuilders.swift` — UIContentConfiguration builders per row type
+  - `ChatTimelineCollectionView+ScrollDelegate.swift` — scroll position management
+  - `ChatTimelineApplyPlan.swift` — diff plan construction
+  - `TimelineSnapshotApplier.swift` — NSDiffableDataSource snapshot application
+  - `ChatTimelineControllerContext.swift` — shared mutable state for controller
+  - `ChatTimelineToolOutputLoader.swift` — lazy tool output loading
+  - `ChatTimelinePerf.swift` — performance instrumentation
+  - `FrameBudgetMonitor.swift` — 16ms frame budget tracking for jank detection
+- `Timeline/Rows/` — non-tool row UIContentConfigurations (all pure UIKit):
+  - `AssistantTimelineRowContent`, `UserTimelineRowContent`, `ThinkingTimelineRowContent`, `SystemTimelineRowContent`, `ErrorTimelineRowContent`, `CompactionTimelineRowContent`, `PermissionTimelineRowContent`, `AudioClipTimelineRowContent`, `LoadMoreTimelineRowContent`, `WorkingIndicatorTimelineRowContent`.
+- `Timeline/Assistant/` — markdown rendering pipeline:
+  - `AssistantMarkdownSegmentSource` — parses markdown, produces `FlatSegment` arrays
+  - `AssistantMarkdownSegmentApplier` — applies segments to UITextView stack
+  - `AssistantMarkdownBlockViews` — native UIKit code block / table / thematic break views
+  - `AssistantMarkdownContentView` — container managing segment source + applier lifecycle
+  - `NativeMarkdownImageView` — inline markdown image loading + display
+  - `StreamingTextRevealer` — smooth character-by-character reveal during streaming
+- `Timeline/Tool/` — tool row rendering (largest subsystem, 28 files):
+  - `ToolTimelineRowContent.swift` — main tool row view (1686 lines, largest single file)
+  - `ToolRowPlanBuilder` — decides layout/presentation per tool type
+  - `ToolRow*RenderStrategy` — per-format renderers (code, diff, text, markdown, read-media)
+  - `ToolRowTextRenderer` — attributed string construction for tool output
+  - `ToolFontConstants` — shared 3-tier monospaced font system (10/11/12pt)
+  - `ToolTimelineRowViewStyler` — label/color/layout styling
+  - `ToolTimelineRowRenderMetrics` — line count estimation, character width
+  - `ToolTimelineRowInteractionPolicy` — selection/expansion interaction rules
+  - `ToolTimelineRowLayoutBuilder` — Auto Layout constraint setup
+  - `ToolTimelineRowDisplayState` — collapsed/expanded state management
+  - `ToolExpandedSurfaceHostView` — full-surface expanded content host
+  - `BashToolRowView` — specialized bash tool output rendering
+  - `NativeExpandedToolViews` — expanded read/write/edit detail views
+  - `StreamingRenderPolicy`, `ExpandedRenderOutput`, `ToolRowRenderCache` — streaming + caching
+- `Timeline/Interaction/` — shared interaction contracts: `TimelineExpandableTextInteractionSpec`, `TimelineInteractionSpec`.
+- `Timeline/` (root) — shared timeline utilities:
+  - `DoubleTapCopyGesture` — factory for double-tap copy gesture (used by all row types)
+  - `TimelineCopyFeedback` — copy-to-clipboard visual feedback
+  - `TimelineScrollCoordinator` — scroll position management across updates
+  - `SegmentRenderer` — tool segment attributed string rendering
+  - `HorizontalPanPassthroughScrollView` — horizontal scroll that passes vertical to parent
+  - `AnchoredCollectionView` — anchored scroll position UICollectionView subclass
+  - `MarkdownStreamingPerf` — markdown streaming performance measurement
+  - `TimelineCellFactory`, `ChatItemRow` — cell type mapping
 
 ### Event pipeline (runtime)
 
