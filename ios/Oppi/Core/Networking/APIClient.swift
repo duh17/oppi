@@ -79,6 +79,12 @@ actor APIClient {
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
+    /// Fetch server stats for the given number of days.
+    func fetchStats(range: Int = 7) async throws -> ServerStats {
+        let data = try await get("/server/stats?range=\(range)")
+        return try JSONDecoder().decode(ServerStats.self, from: data)
+    }
+
     struct RuntimeUpdateResult: Decodable, Sendable, Equatable {
         let ok: Bool
         let message: String
