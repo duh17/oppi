@@ -301,7 +301,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             } else {
                 let traceUserTexts: Set<String> = Set(events.compactMap { event in
                     guard event.type == .user else { return nil }
-                    return Self.extractImagesFromText(event.text ?? "").0
+                    return UserMessageImageExtractor.extractImagesFromText(event.text ?? "").0
                 })
                 orphanedUserMessages = existingUserMessages.filter { item in
                     guard case .userMessage(_, let text, _, _) = item else { return false }
@@ -361,12 +361,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private func applyTraceEvent(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter, appendOnly: Bool = false) -> String? {
         // Lazy date — only .user and .assistant actually need a parsed timestamp.
         // Avoids ~0.5μs of date parsing for thinking, toolCall, toolResult, system events.
-        lazy var date = Self.fastParseISO8601(event.timestamp, fallback: dateFormatter)
+        lazy var date = FastISO8601Parser.parse(event.timestamp, fallback: dateFormatter)
 
         switch event.type {
         case .user:
             let rawText = event.text ?? ""
-            let (cleanText, images) = Self.extractImagesFromText(rawText)
+            let (cleanText, images) = UserMessageImageExtractor.extractImagesFromText(rawText)
             insertItem(.userMessage(
                 id: event.id,
                 text: cleanText,
@@ -380,7 +380,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             // Skip whitespace-only assistant messages. The API often emits
             // a leading "\n\n" text block before thinking/tool content blocks
             // in the same response. These create empty bubbles in the UI.
-            guard !Self.isEffectivelyEmpty(text) else {
+            guard !StringFastChecks.isEffectivelyEmpty(text) else {
                 return nil
             }
             insertItem(.assistantMessage(
@@ -563,179 +563,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private static func makeTraceDateFormatter() -> ISO8601DateFormatter {
         sharedTraceDateFormatter
-    }
-
-    /// Fast ISO 8601 date parser for trace timestamps.
-    ///
-    /// Parses the fixed format `YYYY-MM-DDTHH:MM:SS.mmmZ` using ASCII
-    /// arithmetic instead of ISO8601DateFormatter (~27μs → <1μs per call).
-    /// Falls back to the slow formatter for non-standard formats.
-    private static func fastParseISO8601(_ s: String, fallback: ISO8601DateFormatter) -> Date {
-        let utf8 = s.utf8
-        // Minimum: "2006-01-02T15:04:05Z" = 20 chars
-        // With fractional: "2006-01-02T15:04:05.000Z" = 24 chars
-        guard utf8.count >= 20 else {
-            return fallback.date(from: s) ?? Date()
-        }
-
-        var it = utf8.makeIterator()
-
-        @inline(__always)
-        func nextDigit() -> Int? {
-            guard let byte = it.next() else { return nil }
-            let d = Int(byte) - 48 // ASCII '0'
-            guard d >= 0, d <= 9 else { return nil }
-            return d
-        }
-
-        @inline(__always)
-        func expect(_ expected: UInt8) -> Bool {
-            guard let byte = it.next() else { return false }
-            return byte == expected
-        }
-
-        // YYYY
-        guard let y1 = nextDigit(), let y2 = nextDigit(),
-              let y3 = nextDigit(), let y4 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let year = y1 * 1000 + y2 * 100 + y3 * 10 + y4
-
-        guard expect(0x2D) else { return fallback.date(from: s) ?? Date() } // '-'
-
-        // MM
-        guard let m1 = nextDigit(), let m2 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let month = m1 * 10 + m2
-
-        guard expect(0x2D) else { return fallback.date(from: s) ?? Date() } // '-'
-
-        // DD
-        guard let d1 = nextDigit(), let d2 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let day = d1 * 10 + d2
-
-        guard expect(0x54) else { return fallback.date(from: s) ?? Date() } // 'T'
-
-        // HH
-        guard let h1 = nextDigit(), let h2 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let hour = h1 * 10 + h2
-
-        guard expect(0x3A) else { return fallback.date(from: s) ?? Date() } // ':'
-
-        // MM
-        guard let mi1 = nextDigit(), let mi2 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let minute = mi1 * 10 + mi2
-
-        guard expect(0x3A) else { return fallback.date(from: s) ?? Date() } // ':'
-
-        // SS
-        guard let s1 = nextDigit(), let s2 = nextDigit() else {
-            return fallback.date(from: s) ?? Date()
-        }
-        let second = s1 * 10 + s2
-
-        // Optional fractional seconds (.mmm or .mmmmmm)
-        var fractionalSeconds: Double = 0
-        if let next = it.next() {
-            if next == 0x2E { // '.'
-                var frac = 0
-                var divisor = 1
-                while let d = it.next() {
-                    let digit = Int(d) - 48
-                    if digit >= 0, digit <= 9 {
-                        frac = frac * 10 + digit
-                        divisor *= 10
-                    } else {
-                        // Should be 'Z' or '+'/'-' for timezone
-                        break
-                    }
-                }
-                if divisor > 1 {
-                    fractionalSeconds = Double(frac) / Double(divisor)
-                }
-            }
-            // else: next should be 'Z' — we accept it
-        }
-
-        // Direct epoch computation — avoids Calendar.date(from:) overhead.
-        // Uses the civil date → days algorithm from Howard Hinnant.
-        let days = fastDaysFromCivil(year: year, month: month, day: day)
-        let secs = Double(days) * 86400.0
-            + Double(hour) * 3600.0
-            + Double(minute) * 60.0
-            + Double(second)
-            + fractionalSeconds
-        return Date(timeIntervalSince1970: secs)
-    }
-
-    /// Fast byte-level check for "data:image/" substring.
-    /// Avoids String.contains which does Unicode normalization (slow).
-    @inline(__always)
-    private static func textContainsDataImagePrefix(_ text: String) -> Bool {
-        // "data:image/" as UTF-8 bytes
-        let needle: [UInt8] = [0x64, 0x61, 0x74, 0x61, 0x3A, 0x69, 0x6D, 0x61, 0x67, 0x65, 0x2F]
-        let utf8 = text.utf8
-        let needleCount = needle.count
-        guard utf8.count >= needleCount else { return false }
-
-        var idx = utf8.startIndex
-        let end = utf8.endIndex
-        while idx < end {
-            if utf8[idx] == 0x64 { // 'd'
-                // Check remaining bytes
-                var ni = 1
-                var si = utf8.index(after: idx)
-                var match = true
-                while ni < needleCount {
-                    guard si < end else { match = false; break }
-                    if utf8[si] != needle[ni] { match = false; break }
-                    ni += 1
-                    si = utf8.index(after: si)
-                }
-                if match { return true }
-            }
-            idx = utf8.index(after: idx)
-        }
-        return false
-    }
-
-    /// Fast whitespace-only check. Avoids `trimmingCharacters` allocation
-    /// by scanning UTF-8 bytes directly.
-    @inline(__always)
-    private static func isEffectivelyEmpty(_ text: String) -> Bool {
-        if text.isEmpty { return true }
-        for byte in text.utf8 {
-            switch byte {
-            case 0x20, 0x09, 0x0A, 0x0D: continue // space, tab, newline, CR
-            default: return false
-            }
-        }
-        return true
-    }
-
-    /// Convert a civil date to days since Unix epoch (1970-01-01).
-    /// Algorithm: Howard Hinnant's `days_from_civil` (public domain).
-    @inline(__always)
-    private static func fastDaysFromCivil(year: Int, month: Int, day: Int) -> Int {
-        var y = year
-        var m = month
-        if m <= 2 { y -= 1; m += 9 } else { m -= 3 }
-        let era = (y >= 0 ? y : y - 399) / 400
-        let yoe = y - era * 400
-        let doy = (153 * m + 2) / 5 + day - 1
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-        return era * 146097 + doe - 719468
-    }
-
-    private static func formatTokenCount(_ value: Int) -> String {
-        NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
     }
 
     private enum HistoryLoadMode: Equatable {
@@ -1123,7 +950,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             } else if willRetry {
                 message = String(localized: "Context compacted — retrying...")
             } else {
-                let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(Self.formatTokenCount(tokensBefore ?? 0)) tokens)" : ""
+                let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(formatTokenCount(tokensBefore ?? 0)) tokens)" : ""
                 let cleanedSummary = summary?.trimmingCharacters(in: .whitespacesAndNewlines)
                 message = if let cleanedSummary, !cleanedSummary.isEmpty {
                     "Context compacted\(tokenBadge): \(cleanedSummary)"
@@ -1580,36 +1407,4 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return items.endIndex
     }
 
-    // MARK: - Image Extraction
-
-    /// Extract data URI images from user message text.
-    ///
-    /// Trace events store images as `data:image/...;base64,...` inline in the
-    /// text field. Rendering 1MB+ of base64 as `SwiftUI.Text` freezes the
-    /// main thread. This splits the text into clean display text + image
-    /// attachments for proper thumbnail rendering.
-    private static func extractImagesFromText(_ text: String) -> (String, [ImageAttachment]) {
-        // Fast path: skip regex when text cannot contain data URIs.
-        // Use UTF-8 byte scan for 'd','a','t','a',':' prefix instead of
-        // String.contains which is O(n) with Unicode normalization.
-        guard text.utf8.count >= 22, // "data:image/x;base64,AA" minimum
-              textContainsDataImagePrefix(text) else {
-            return (text, [])
-        }
-        let extracted = ImageExtractor.extract(from: text)
-        guard !extracted.isEmpty else { return (text, []) }
-
-        var cleanText = text
-        // Remove data URIs from text in reverse order to preserve ranges
-        for image in extracted.reversed() {
-            cleanText.removeSubrange(image.range)
-        }
-        cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let attachments = extracted.map { img in
-            ImageAttachment(data: img.base64, mimeType: img.mimeType ?? "image/jpeg")
-        }
-
-        return (cleanText, attachments)
-    }
 }
