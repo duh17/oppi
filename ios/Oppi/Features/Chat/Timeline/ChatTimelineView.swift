@@ -50,7 +50,7 @@ struct ChatTimelineView: View {
     }
 
     private var showsWorkingIndicator: Bool {
-        isBusy && reducer.streamingAssistantID == nil
+        isBusy
     }
 
     private var bottomItemID: String? {

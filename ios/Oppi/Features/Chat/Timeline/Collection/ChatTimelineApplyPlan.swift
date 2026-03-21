@@ -22,7 +22,7 @@ struct ChatTimelineApplyPlan {
         let dedupedItems = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
         nextIDs.append(contentsOf: dedupedItems.orderedIDs)
 
-        if isBusy, streamingAssistantID == nil {
+        if isBusy {
             nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
         }
 
