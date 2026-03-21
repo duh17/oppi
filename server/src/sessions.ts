@@ -119,6 +119,8 @@ export class SessionManager extends EventEmitter {
       stopSession: (sessionId) => this.stopSession(sessionId),
       spawnChildSession: (parentSessionId, params) =>
         this.spawnChildSession(parentSessionId, params),
+      spawnDetachedSession: (originSessionId, params) =>
+        this.spawnDetachedSession(originSessionId, params),
       listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
       subscribeToSession: (sessionId, callback) => this.subscribe(sessionId, callback),
     });
@@ -563,6 +565,67 @@ export class SessionManager extends EventEmitter {
       session.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
       session.warnings = [...(session.warnings ?? []), `Spawn failed: ${msg}`];
+      this.storage.saveSession(session);
+      throw err;
+    }
+
+    return session;
+  }
+
+  /**
+   * Spawn a detached session in the same workspace as the origin session.
+   * Unlike spawnChildSession, does NOT set parentSessionId — the new session
+   * is fully independent and gets full capabilities (including spawn_agent).
+   */
+  async spawnDetachedSession(
+    originSessionId: string,
+    params: {
+      name?: string;
+      model?: string;
+      thinking?: string;
+      prompt: string;
+    },
+  ): Promise<Session> {
+    const originSession = this.storage.getSession(originSessionId);
+    if (!originSession?.workspaceId) {
+      throw new Error(`Origin session not found or has no workspace: ${originSessionId}`);
+    }
+
+    const workspace = this.storage.getWorkspace(originSession.workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${originSession.workspaceId}`);
+    }
+
+    const model = params.model || originSession.model || workspace.defaultModel;
+    const session = this.storage.createSession(params.name, model);
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    // No parentSessionId — this session is independent
+    this.storage.saveSession(session);
+
+    try {
+      await this.startSession(session.id, workspace);
+
+      if (params.thinking) {
+        await this.forwardClientCommand(session.id, {
+          type: "set_thinking_level",
+          level: params.thinking,
+        });
+        session.thinkingLevel = params.thinking;
+      }
+
+      await this.sendPrompt(session.id, params.prompt);
+      session.firstMessage = params.prompt.slice(0, 200);
+      this.storage.saveSession(session);
+    } catch (err: unknown) {
+      try {
+        await this.stopSession(session.id);
+      } catch {
+        // Best-effort cleanup
+      }
+      session.status = "error";
+      const msg = err instanceof Error ? err.message : String(err);
+      session.warnings = [...(session.warnings ?? []), `Detached spawn failed: ${msg}`];
       this.storage.saveSession(session);
       throw err;
     }
