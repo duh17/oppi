@@ -6,7 +6,7 @@ struct ToolRowMarkdownRenderStrategy {
         text: String,
         isStreaming: Bool,
         expandedMarkdownView: AssistantMarkdownContentView,
-        expandedScrollView: UIScrollView,
+        expandedScrollView _: UIScrollView,
         previousSignature: Int?,
         previousRenderedText: String?,
         previousAutoFollow: Bool,

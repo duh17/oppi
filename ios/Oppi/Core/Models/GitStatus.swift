@@ -133,7 +133,6 @@ struct GitFileStatus: Codable, Sendable, Equatable, Identifiable {
         )
     }
 
-    // periphery:ignore - API surface for git status display UI
     /// Human-readable status label.
     var label: String {
         switch status.trimmingCharacters(in: .whitespaces) {

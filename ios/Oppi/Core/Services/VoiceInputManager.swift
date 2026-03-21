@@ -72,14 +72,6 @@ final class VoiceInputManager {
         case onDevice
         case remote
 
-        var iconName: String {
-            switch self {
-            case .auto: return "arrow.triangle.branch"
-            case .onDevice: return "iphone"
-            case .remote: return "cloud.fill"
-            }
-        }
-
         var accessibilityLabel: String {
             switch self {
             case .auto: return "Automatic routing"
@@ -215,6 +207,7 @@ final class VoiceInputManager {
         logger.info("Engine mode: \(mode.logName)")
     }
 
+    // periphery:ignore - used by RemoteASRTranscriberTests via @testable import
     /// Backward-compatible preference API. Prefer `setEngineMode(_:)`.
     func setEnginePreference(_ engine: TranscriptionEngine?) {
         switch engine {
@@ -360,11 +353,6 @@ final class VoiceInputManager {
     }
 
     // MARK: - Permissions
-
-    /// Check current permission status without prompting.
-    static var hasPermissions: Bool {
-        VoiceInputSystemAccess.live.hasPermissions
-    }
 
     /// Request mic + speech permissions. Returns true if both granted.
     func requestPermissions() async -> Bool {

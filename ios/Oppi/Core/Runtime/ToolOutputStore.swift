@@ -157,6 +157,7 @@ final class ToolOutputStore {
         return !entry.previewOnly
     }
 
+    // periphery:ignore - used by ToolOutputStoreTests + TimelineReducerToolTests via @testable import
     func hasPreviewOnlyOutput(for itemID: String) -> Bool {
         entries[itemID]?.previewOnly ?? false
     }

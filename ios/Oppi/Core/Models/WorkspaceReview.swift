@@ -30,6 +30,7 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     /// Cache key for client-side caching (session overall-diff only).
     let cacheKey: String?
 
+    // periphery:ignore
     static func local(
         path: String,
         baselineText: String,
@@ -70,6 +71,7 @@ enum WorkspaceReviewSessionAction: String, Codable, Sendable, Equatable, CaseIte
         }
     }
 
+    // periphery:ignore
     var primaryButtonTitle: String {
         switch self {
         case .review:
@@ -191,6 +193,7 @@ struct WorkspaceReviewDiffLine: Codable, Sendable, Equatable, Identifiable {
         case added
         case removed
 
+        // periphery:ignore
         var prefix: String {
             switch self {
             case .context: return " "
@@ -224,10 +227,6 @@ struct WorkspaceReviewDiffSpan: Codable, Sendable, Equatable {
 enum WorkspaceReviewDiffHunkBuilder {
     private static let contextLines = 3
     private static let maxTokenDiffCells = 40_000
-
-    static func buildHunks(oldText: String, newText: String) -> [WorkspaceReviewDiffHunk] {
-        buildHunks(from: DiffEngine.compute(old: oldText, new: newText))
-    }
 
     /// Build hunks from diff lines, optionally computing word-level change spans.
     ///

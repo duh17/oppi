@@ -10,7 +10,7 @@ struct ChatTimelineApplyPlan {
         items: [ChatItem],
         hiddenCount: Int,
         isBusy: Bool,
-        streamingAssistantID: String?
+        streamingAssistantID _: String?
     ) -> Self {
         var nextIDs: [String] = []
         nextIDs.reserveCapacity(items.count + 2)

@@ -9,7 +9,7 @@ struct ToolRowTextRenderStrategy {
         isStreaming: Bool,
         outputColor: UIColor,
         expandedLabel: UITextView,
-        expandedScrollView: UIScrollView,
+        expandedScrollView _: UIScrollView,
         previousSignature: Int?,
         previousRenderedText: String?,
         previousAutoFollow: Bool,

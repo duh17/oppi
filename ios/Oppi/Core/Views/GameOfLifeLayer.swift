@@ -42,6 +42,7 @@ final class GameOfLifeLayer: CALayer {
     /// Bit-packed cell grid. Bit i = cell i (row-major). Internal for testing.
     private var bits: UInt64 = 0
 
+    // periphery:ignore
     /// Compatibility: cells as [Bool] array, derived from bits. Internal for testing.
     var cells: [Bool] {
         get {

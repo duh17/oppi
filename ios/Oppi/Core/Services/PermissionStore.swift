@@ -53,6 +53,7 @@ final class PermissionStore {
         return request
     }
 
+    // periphery:ignore - used by StoreTests via @testable import
     /// Remove without returning (fire-and-forget cleanup).
     func remove(id: String) {
         var list = pending

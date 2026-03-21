@@ -1,4 +1,6 @@
+import SwiftUI
 import UIKit
+import SwiftUI
 
 /// Attribute key for tagging diff line kind (added/removed/header) for full-width background rendering.
 let diffLineKindAttributeKey = NSAttributedString.Key("unifiedDiffLineKind")
@@ -95,12 +97,6 @@ enum DiffAttributedStringBuilder {
             return attrs
         }
 
-        static func resetCache() { cached = nil }
-    }
-
-    /// Invalidate cached style colors. Call when the theme changes.
-    static func resetCachedAttrs() {
-        StyleAttrs.resetCache()
     }
 
     /// Per-line metadata tracked during assembly.
@@ -326,11 +322,4 @@ enum DiffAttributedStringBuilder {
     }
 }
 
-import SwiftUI
 
-extension String {
-    func leftPadded(toWidth width: Int) -> String {
-        let padding = width - count
-        return padding > 0 ? String(repeating: " ", count: padding) + self : self
-    }
-}

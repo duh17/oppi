@@ -46,7 +46,7 @@ final class PiWKWebView: WKWebView {
         return super.canPerformAction(action, withSender: sender)
     }
 
-    @objc private func piMenuAction(_ sender: Any?) {
+    @objc private func piMenuAction(_: Any?) {
         evaluateJavaScript("window.getSelection()?.toString() || ''") { [weak self] result, _ in
             guard let self,
                   let raw = result as? String else { return }

@@ -118,11 +118,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         liveEventReplayBuffer = []
     }
 
-    /// Cancel replay buffering without applying (e.g., on disconnect).
-    func cancelReplayBuffer() {
-        liveEventReplayBuffer = nil
-    }
-
     /// Apply a trace and replay any buffered live events on top.
     ///
     /// This is the core fix for the busy re-entry gap bug:

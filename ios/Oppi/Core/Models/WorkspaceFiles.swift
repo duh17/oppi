@@ -14,6 +14,7 @@ struct FileEntry: Decodable, Sendable, Equatable, Identifiable, Hashable {
     var id: String { path ?? name }
 
     var isDirectory: Bool { type == .directory }
+    // periphery:ignore
     var isFile: Bool { type == .file }
 
     /// Human-readable file size.
@@ -38,6 +39,7 @@ struct DirectoryListingResponse: Decodable, Sendable, Equatable {
     let truncated: Bool
 }
 
+// periphery:ignore
 struct FileSearchResponse: Decodable, Sendable, Equatable {
     let query: String
     let entries: [FileEntry]

@@ -16,7 +16,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AskO
 /// - Automations
 struct AskOppiIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Oppi"
-    static let description: IntentDescription = "Send a message to start a new agent session without opening the app."
+    // periphery:ignore
+    static let description: IntentDescription = "Send a message to start a new agent session without opening the app." // periphery:ignore
 
     static let openAppWhenRun = false
 

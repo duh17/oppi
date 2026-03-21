@@ -35,15 +35,10 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     // MARK: - Surfaces
 
-    // periphery:ignore - parent uses for gestures, context menus, selected-text
     let commandContainer = UIView()
-    // periphery:ignore
     let outputContainer = UIView()
-    // periphery:ignore
     let commandLabel = UITextView()
-    // periphery:ignore
     let outputScrollView = HorizontalPanPassthroughScrollView()
-    // periphery:ignore
     let outputLabel = UITextView()
 
     // MARK: - State (read by parent for viewport/layout management)

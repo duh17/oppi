@@ -106,14 +106,6 @@ final class StreamingTextRevealer {
         totalCount = 0
     }
 
-    /// Whether a reveal animation is currently in progress.
-    var isRevealing: Bool {
-        displayLink != nil && visibleCount < totalCount
-    }
-
-    /// The current number of visible characters (used to track across flushes).
-    var currentVisibleCount: Int { visibleCount }
-
     // MARK: - Display Link
 
     private func startDisplayLink() {
@@ -130,7 +122,7 @@ final class StreamingTextRevealer {
         displayLink = nil
     }
 
-    @objc private func tick(_ link: CADisplayLink) {
+    @objc private func tick(_: CADisplayLink) {
         guard let textView, let originalText, visibleCount < totalCount else {
             stopDisplayLink()
             return
