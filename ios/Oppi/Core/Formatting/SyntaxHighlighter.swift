@@ -343,53 +343,6 @@ enum SyntaxHighlighter {
 
     // MARK: - Public API
 
-    // periphery:ignore
-    /// Highlight a single line independently (no cross-line block comment state).
-    /// Suitable for short snippets like diff lines where each line is rendered separately.
-    static func highlightLine(_ line: String, language: SyntaxLanguage) -> NSAttributedString {
-        let attrs = TokenAttrs.current()
-        let result = NSMutableAttributedString()
-        var unused = false
-        appendHighlightedLine(Array(line), language: language, inBlockComment: &unused, attrs: attrs, to: result)
-        return result
-    }
-
-    // periphery:ignore
-    /// Highlight source code and return per-line attributed strings.
-    ///
-    /// Shares a single `TokenAttrs` allocation and tracks block-comment state
-    /// across lines, making it much cheaper than N × `highlightLine()` calls.
-    /// Used by `makeCodeAttributedText` to interleave gutter numbers.
-    static func highlightLines(_ code: String, language: SyntaxLanguage) -> [NSAttributedString] {
-        let full = highlight(code, language: language)
-        return splitAttributedStringByNewlines(full)
-    }
-
-    // periphery:ignore
-    /// Split a single `NSAttributedString` by newline characters into per-line strings.
-    private static func splitAttributedStringByNewlines(_ source: NSAttributedString) -> [NSAttributedString] {
-        let string = source.string as NSString
-        var results: [NSAttributedString] = []
-        var searchStart = 0
-
-        while searchStart <= string.length {
-            let remaining = NSRange(location: searchStart, length: string.length - searchStart)
-            let newlineRange = string.range(of: "\n", range: remaining)
-
-            if newlineRange.location == NSNotFound {
-                // Last line (or only line)
-                let lineRange = NSRange(location: searchStart, length: string.length - searchStart)
-                results.append(source.attributedSubstring(from: lineRange))
-                break
-            } else {
-                let lineRange = NSRange(location: searchStart, length: newlineRange.location - searchStart)
-                results.append(source.attributedSubstring(from: lineRange))
-                searchStart = newlineRange.location + newlineRange.length
-            }
-        }
-        return results
-    }
-
     /// Resolve a token kind to its UIColor using the cached TokenAttrs.
     static func color(for kind: TokenKind) -> UIColor? {
         guard kind != .variable else { return nil }
@@ -419,16 +372,6 @@ enum SyntaxHighlighter {
         language: SyntaxLanguage
     ) -> [TokenRange] {
         scanTokenRangesInternal(truncatedCode(code), language: language)
-    }
-
-    // periphery:ignore
-    /// Scan pre-built character array for token ranges.
-    /// Avoids the `Array(text)` conversion cost when the caller already has characters.
-    static func scanTokenRanges(
-        characters: [Character],
-        language: SyntaxLanguage
-    ) -> [TokenRange] {
-        scanTokenRangesFromChars(characters, language: language)
     }
 
     /// ASCII-optimized scanner using raw UTF-8 bytes.
@@ -510,57 +453,6 @@ enum SyntaxHighlighter {
         }
 
         return result
-    }
-
-    // periphery:ignore
-    /// Scanner taking pre-built [Character] array (avoids Array(text) conversion).
-    private static func scanTokenRangesFromChars(
-        _ allChars: [Character],
-        language: SyntaxLanguage
-    ) -> [TokenRange] {
-        var tokenRanges: [TokenRange] = []
-        tokenRanges.reserveCapacity(allChars.count / 4)
-
-        if language == .json {
-            scanJSONRanges(allChars, ranges: &tokenRanges)
-            return tokenRanges
-        }
-
-        // Pre-compute per-language values once (avoids per-line [Character] alloc for commentPrefix)
-        let keywords = language.keywords
-        let commentPrefix = language.lineCommentPrefix
-
-        var inBlockComment = false
-        var pos = 0
-
-        while pos <= allChars.count {
-            var lineEnd = pos
-            while lineEnd < allChars.count, allChars[lineEnd] != "\n" {
-                lineEnd += 1
-            }
-
-            if lineEnd > pos {
-                if language == .shell {
-                    scanShellLineRangesSlice(
-                        allChars, start: pos, end: lineEnd,
-                        ranges: &tokenRanges
-                    )
-                } else {
-                    scanLineRangesSlice(
-                        allChars, start: pos, end: lineEnd,
-                        language: language,
-                        keywords: keywords,
-                        commentPrefix: commentPrefix,
-                        inBlockComment: &inBlockComment,
-                        ranges: &tokenRanges
-                    )
-                }
-            }
-
-            pos = lineEnd + 1
-        }
-
-        return tokenRanges
     }
 
     /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
@@ -990,7 +882,7 @@ enum SyntaxHighlighter {
             }
 
             if ch == "\"" || ch == "'" || ch == "`" {
-                let (_, tokenEnd) = scanString(allChars, from: i, quote: ch)
+                let tokenEnd = scanStringEndPos(allChars, from: i, quote: ch)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
                 i = tokenEnd
                 expectCommand = false
@@ -1046,196 +938,7 @@ enum SyntaxHighlighter {
         }
     }
 
-    // MARK: - Legacy Line Scanner (kept for highlightLine single-line API)
-
-    // periphery:ignore
-    private static func appendHighlightedLine(
-        _ chars: [Character],
-        language: SyntaxLanguage,
-        inBlockComment: inout Bool,
-        attrs: TokenAttrs,
-        to result: NSMutableAttributedString
-    ) {
-        guard !chars.isEmpty else { return }
-        if language == .shell {
-            appendHighlightedShellLine(chars, attrs: attrs, to: result)
-            return
-        }
-
-        var i = 0
-        let keywords = language.keywords
-        let commentPrefix = language.lineCommentPrefix
-
-        while i < chars.count {
-            // Inside block comment — scan for close
-            if inBlockComment {
-                if i + 1 < chars.count, chars[i] == "*", chars[i + 1] == "/" {
-                    result.append(NSAttributedString(string: "*/", attributes: attrs.comment))
-                    i += 2
-                    inBlockComment = false
-                } else {
-                    result.append(NSAttributedString(string: String(chars[i]), attributes: attrs.comment))
-                    i += 1
-                }
-                continue
-            }
-
-            // Block comment open
-            if language.hasBlockComments,
-               i + 1 < chars.count, chars[i] == "/", chars[i + 1] == "*" {
-                inBlockComment = true
-                result.append(NSAttributedString(string: "/*", attributes: attrs.comment))
-                i += 2
-                continue
-            }
-
-            // Line comment
-            if let prefix = commentPrefix, matchesAt(chars, offset: i, pattern: prefix) {
-                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.comment))
-                return
-            }
-
-            // Preprocessor (#include, #define) for C/C++
-            if chars[i] == "#", language == .c || language == .cpp {
-                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.keyword))
-                return
-            }
-
-            // Decorator (@Observable, @property, etc.)
-            if chars[i] == "@" {
-                let start = i
-                i += 1
-                while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
-                    i += 1
-                }
-                result.append(NSAttributedString(string: String(chars[start..<i]), attributes: attrs.type))
-                continue
-            }
-
-            // String literal
-            let ch = chars[i]
-            if ch == "\"" || ch == "'" || ch == "`" {
-                let (text, end) = scanString(chars, from: i, quote: ch)
-                result.append(NSAttributedString(string: text, attributes: attrs.string))
-                i = end
-                continue
-            }
-
-            // Number
-            if ch.isNumber {
-                let (text, end) = scanNumber(chars, from: i)
-                result.append(NSAttributedString(string: text, attributes: attrs.number))
-                i = end
-                continue
-            }
-
-            // Identifier / keyword
-            if ch.isLetter || ch == "_" {
-                let (word, end) = scanWord(chars, from: i)
-                if keywords.contains(word) {
-                    result.append(NSAttributedString(string: word, attributes: attrs.keyword))
-                } else if isTypeLike(word) {
-                    result.append(NSAttributedString(string: word, attributes: attrs.type))
-                } else {
-                    result.append(NSAttributedString(string: word, attributes: attrs.variable))
-                }
-                i = end
-                continue
-            }
-
-            // Punctuation / operators
-            result.append(NSAttributedString(string: String(ch), attributes: attrs.punctuation))
-            i += 1
-        }
-    }
-
     // MARK: - Shell Scanner
-
-    // periphery:ignore
-    private static func appendHighlightedShellLine(
-        _ chars: [Character],
-        attrs: TokenAttrs,
-        to result: NSMutableAttributedString
-    ) {
-        var i = 0
-        var expectCommand = true
-
-        while i < chars.count {
-            let ch = chars[i]
-
-            if ch.isWhitespace {
-                result.append(NSAttributedString(string: String(ch), attributes: attrs.variable))
-                i += 1
-                continue
-            }
-
-            if ch == "#", isShellCommentStart(chars, at: i) {
-                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.comment))
-                return
-            }
-
-            if ch == "\"" || ch == "'" || ch == "`" {
-                let (text, end) = scanString(chars, from: i, quote: ch)
-                result.append(NSAttributedString(string: text, attributes: attrs.string))
-                i = end
-                expectCommand = false
-                continue
-            }
-
-            if ch == "$" {
-                let (variable, end) = scanShellVariable(chars, from: i)
-                result.append(NSAttributedString(string: variable, attributes: attrs.type))
-                i = end
-                expectCommand = false
-                continue
-            }
-
-            if let (op, end, resetsCommand) = scanShellOperator(chars, from: i) {
-                result.append(NSAttributedString(string: op, attributes: attrs.operator))
-                i = end
-                if resetsCommand {
-                    expectCommand = true
-                }
-                continue
-            }
-
-            if ch == "-", isShellOptionStart(chars, at: i) {
-                let (option, end) = scanShellToken(chars, from: i)
-                result.append(NSAttributedString(string: option, attributes: attrs.variable))
-                i = end
-                expectCommand = false
-                continue
-            }
-
-            let (token, end) = scanShellToken(chars, from: i)
-            if token.isEmpty {
-                result.append(NSAttributedString(string: String(ch), attributes: attrs.variable))
-                i += 1
-                continue
-            }
-
-            if expectCommand, isShellAssignment(token) {
-                result.append(NSAttributedString(string: token, attributes: attrs.type))
-                i = end
-                continue
-            }
-
-            if shellKeywords.contains(token) {
-                result.append(NSAttributedString(string: token, attributes: attrs.keyword))
-                expectCommand = shellCommandStarterKeywords.contains(token)
-                i = end
-                continue
-            }
-
-            if expectCommand {
-                result.append(NSAttributedString(string: token, attributes: attrs.function))
-                expectCommand = false
-            } else {
-                result.append(NSAttributedString(string: token, attributes: attrs.variable))
-            }
-            i = end
-        }
-    }
 
     private static func isShellCommentStart(_ chars: [Character], at index: Int) -> Bool {
         guard chars[index] == "#" else { return false }
@@ -1371,8 +1074,7 @@ enum SyntaxHighlighter {
                 } else if c == "}" {
                     depth -= 1
                 } else if c == "\"" || c == "'" || c == "`" {
-                    let (_, end) = scanString(chars, from: i, quote: c)
-                    i = end
+                    i = scanStringEndPos(chars, from: i, quote: c)
                     continue
                 } else if c == "\\" {
                     i = min(i + 2, chars.count)
@@ -1395,8 +1097,7 @@ enum SyntaxHighlighter {
                     i += 1
                     continue
                 } else if c == "\"" || c == "'" || c == "`" {
-                    let (_, end) = scanString(chars, from: i, quote: c)
-                    i = end
+                    i = scanStringEndPos(chars, from: i, quote: c)
                     continue
                 } else if c == "\\" {
                     i = min(i + 2, chars.count)
@@ -1529,71 +1230,6 @@ enum SyntaxHighlighter {
             }
         }
         return i
-    }
-
-    // MARK: - Token Scanners (legacy, returns String for appendHighlightedLine)
-
-    private static func scanString(_ chars: [Character], from start: Int, quote: Character) -> (String, Int) {
-        var i = start + 1
-        var escaped = false
-
-        while i < chars.count {
-            if escaped {
-                escaped = false
-            } else if chars[i] == "\\" {
-                escaped = true
-            } else if chars[i] == quote {
-                return (String(chars[start...i]), i + 1)
-            }
-            i += 1
-        }
-        return (String(chars[start...]), chars.count)
-    }
-
-    // periphery:ignore
-    private static func scanNumber(_ chars: [Character], from start: Int) -> (String, Int) {
-        var i = start
-
-        // Hex prefix
-        if chars[i] == "0", i + 1 < chars.count, chars[i + 1] == "x" || chars[i + 1] == "X" {
-            i += 2
-            while i < chars.count, chars[i].isHexDigit || chars[i] == "_" { i += 1 }
-            return (String(chars[start..<i]), i)
-        }
-
-        // Decimal
-        var hasDot = false
-        while i < chars.count {
-            let c = chars[i]
-            if c.isNumber || c == "_" {
-                i += 1
-            } else if c == ".", !hasDot, i + 1 < chars.count, chars[i + 1].isNumber {
-                hasDot = true
-                i += 1
-            } else if c == "e" || c == "E" {
-                i += 1
-                if i < chars.count, chars[i] == "+" || chars[i] == "-" { i += 1 }
-            } else {
-                break
-            }
-        }
-        return (String(chars[start..<i]), i)
-    }
-
-    // periphery:ignore
-    private static func scanWord(_ chars: [Character], from start: Int) -> (String, Int) {
-        var i = start
-        while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
-            i += 1
-        }
-        return (String(chars[start..<i]), i)
-    }
-
-    // periphery:ignore
-    /// Heuristic: CamelCase starting with uppercase is likely a type.
-    private static func isTypeLike(_ word: String) -> Bool {
-        guard let first = word.first, first.isUppercase else { return false }
-        return word.contains(where: { $0.isLowercase })
     }
 
     private static func matchesAt(_ chars: [Character], offset: Int, pattern: [Character]) -> Bool {
