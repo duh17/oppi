@@ -6,7 +6,7 @@ import UIKit
 ///
 /// Measures wall-clock μs for each stage:
 /// - SyntaxHighlighter.highlight (raw scanner)
-/// - SyntaxHighlighter.highlightLines (batch per-line)
+/// - SyntaxHighlighter.highlight (block)
 /// - ToolRowTextRenderer.makeCodeAttributedText (full pipeline: gutter + highlight + assembly)
 ///
 /// Outputs METRIC lines for autoresearch.sh to parse.
@@ -54,24 +54,6 @@ struct SyntaxHighlightPerfBench {
         }
         print("METRIC highlight_500=\(us)")
         #expect(us < 500_000, "highlight 500 lines: \(us)μs")
-    }
-
-    @Test("Benchmark: highlightLines 100 lines")
-    func highlightLines100() {
-        let us = Self.measureUs {
-            _ = SyntaxHighlighter.highlightLines(Self.source100, language: .swift)
-        }
-        print("METRIC highlightLines_100=\(us)")
-        #expect(us < 500_000, "highlightLines 100 lines: \(us)μs")
-    }
-
-    @Test("Benchmark: highlightLines 500 lines")
-    func highlightLines500() {
-        let us = Self.measureUs {
-            _ = SyntaxHighlighter.highlightLines(Self.source500, language: .swift)
-        }
-        print("METRIC highlightLines_500=\(us)")
-        #expect(us < 500_000, "highlightLines 500 lines: \(us)μs")
     }
 
     @Test("Benchmark: makeCodeAttributedText 100 lines")

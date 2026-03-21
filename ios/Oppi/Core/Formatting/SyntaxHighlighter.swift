@@ -178,9 +178,11 @@ enum SyntaxHighlighter {
 
         // Cache: UIColor(Color) is expensive (~10μs each × 9 = ~90μs per call).
         // Invalidated on theme change via resetCachedAttrs().
-        @MainActor private static var cached: Self?
+        nonisolated(unsafe) private static var cached: Self?
 
-        @MainActor
+        // Called from Task.detached for performance — must remain nonisolated.
+        // Safe: cached is written only from @MainActor contexts; worst-case
+        // race reads nil and rebuilds (idempotent).
         static func current() -> Self {
             if let cached { return cached }
             let attrs = Self(

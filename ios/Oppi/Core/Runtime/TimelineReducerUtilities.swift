@@ -217,7 +217,7 @@ enum UserMessageImageExtractor {
 
 // MARK: - Token Formatting
 
-/// Format a token count with locale-aware number formatting.
-func formatTokenCount(_ value: Int) -> String {
+/// Format a token count with locale-aware decimal formatting (e.g. "200,000").
+func formatTokenCountDecimal(_ value: Int) -> String {
     NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
 }

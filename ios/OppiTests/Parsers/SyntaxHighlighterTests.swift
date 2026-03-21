@@ -117,9 +117,9 @@ struct SyntaxHighlighterTests {
         #expect(result.string == code)
     }
 
-    @Test func highlightLinePreservesText() {
+    @Test func highlightSingleLinePreservesText() {
         let line = "func hello() -> String {"
-        let result = SyntaxHighlighter.highlightLine(line, language: .swift)
+        let result = SyntaxHighlighter.highlight(line, language: .swift)
         #expect(result.string == line)
     }
 
@@ -238,7 +238,7 @@ struct SyntaxHighlighterTests {
 
     @Test func shellHighlightingUsesShellHeuristics() {
         let line = "xcodebuild -scheme OppiUIReliability 2>&1 | grep -E '(passed|skipped)'"
-        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let result = SyntaxHighlighter.highlight(line, language: .shell)
 
         #expect(result.string == line)
         #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
@@ -252,7 +252,7 @@ struct SyntaxHighlighterTests {
 
     @Test func shellCommentDetectionRespectsTokenBoundaries() {
         let line = "echo foo#bar # trailing comment"
-        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let result = SyntaxHighlighter.highlight(line, language: .shell)
 
         #expect(result.string == line)
         #expect(foregroundColor(of: "foo#bar", in: result) == UIColor(Color.themeSyntaxVariable))
@@ -261,7 +261,7 @@ struct SyntaxHighlighterTests {
 
     @Test func shellAssignmentsKeepCommandPosition() {
         let line = "FOO=bar xcodebuild --scheme $SCHEME"
-        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let result = SyntaxHighlighter.highlight(line, language: .shell)
 
         #expect(result.string == line)
         #expect(foregroundColor(of: "FOO=bar", in: result) == UIColor(Color.themeSyntaxType))
@@ -272,7 +272,7 @@ struct SyntaxHighlighterTests {
 
     @Test func shellHighlightingBridgesToUIKitForegroundColors() {
         let line = "xcodebuild -scheme Oppi"
-        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let result = SyntaxHighlighter.highlight(line, language: .shell)
         let text = result.string as NSString
 
         let commandRange = text.range(of: "xcodebuild")
