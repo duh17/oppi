@@ -54,7 +54,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             workspaceId: String?,
             onFork: @escaping (String) -> Void,
             onShowEarlier: @escaping () -> Void,
-            scrollCommand: ChatTimelineScrollCommand?,
+            scrollCommand: ChatTimelineScrollCommand? = nil,
             scrollController: ChatScrollController,
             reducer: TimelineReducer,
             toolOutputStore: ToolOutputStore,
@@ -743,62 +743,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 if let fetchHook = _fetchToolOutputForTesting {
                     fetchToolOutput = fetchHook
                 } else {
-                    guard let apiClient = connection?.apiClient,
-                          let workspaceId,
-                          !workspaceId.isEmpty else {
-                        return
-                    }
-
-                    fetchToolOutput = { sessionId, toolCallId in
-                        let isShellTool = ToolCallFormatting.isBashTool(tool)
-                            || ToolCallFormatting.isGrepTool(tool)
-                            || ToolCallFormatting.isFindTool(tool)
-                            || ToolCallFormatting.isLsTool(tool)
-
-                        if isShellTool,
-                           let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
-                               workspaceId: workspaceId,
-                               sessionId: sessionId,
-                               toolCallId: toolCallId
-                           ) {
-                            return fullOutput
-                        }
-
-                        return try await apiClient.getNonEmptyToolOutput(
-                            workspaceId: workspaceId,
-                            sessionId: sessionId,
-                            toolCallId: toolCallId
-                        ) ?? ""
-                    }
+                    guard let defaultFetch = makeDefaultFetchToolOutput(tool: tool) else { return }
+                    fetchToolOutput = defaultFetch
                 }
             #else
-                guard let apiClient = connection?.apiClient,
-                      let workspaceId,
-                      !workspaceId.isEmpty else {
-                    return
-                }
-
-                fetchToolOutput = { sessionId, toolCallId in
-                    let isShellTool = ToolCallFormatting.isBashTool(tool)
-                        || ToolCallFormatting.isGrepTool(tool)
-                        || ToolCallFormatting.isFindTool(tool)
-                        || ToolCallFormatting.isLsTool(tool)
-
-                    if isShellTool,
-                       let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
-                           workspaceId: workspaceId,
-                           sessionId: sessionId,
-                           toolCallId: toolCallId
-                       ) {
-                        return fullOutput
-                    }
-
-                    return try await apiClient.getNonEmptyToolOutput(
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        toolCallId: toolCallId
-                    ) ?? ""
-                }
+                guard let defaultFetch = makeDefaultFetchToolOutput(tool: tool) else { return }
+                fetchToolOutput = defaultFetch
             #endif
 
             let request = ExpandedToolOutputLoader.LoadRequest(
@@ -830,6 +780,36 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
 
             toolOutputLoader.loadIfNeeded(request)
+        }
+
+        private func makeDefaultFetchToolOutput(tool: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
+            guard let apiClient = connection?.apiClient,
+                  let workspaceId,
+                  !workspaceId.isEmpty else {
+                return nil
+            }
+
+            return { sessionId, toolCallId in
+                let isShellTool = ToolCallFormatting.isBashTool(tool)
+                    || ToolCallFormatting.isGrepTool(tool)
+                    || ToolCallFormatting.isFindTool(tool)
+                    || ToolCallFormatting.isLsTool(tool)
+
+                if isShellTool,
+                   let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
+                       workspaceId: workspaceId,
+                       sessionId: sessionId,
+                       toolCallId: toolCallId
+                   ) {
+                    return fullOutput
+                }
+
+                return try await apiClient.getNonEmptyToolOutput(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    toolCallId: toolCallId
+                ) ?? ""
+            }
         }
 
         private func cancelToolOutputRetryWork(for itemID: String) {
