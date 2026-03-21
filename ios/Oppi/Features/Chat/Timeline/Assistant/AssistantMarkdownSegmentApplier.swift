@@ -81,7 +81,23 @@ final class AssistantMarkdownSegmentApplier {
         signatures: [SegmentSignature],
         config: AssistantMarkdownContentView.Configuration
     ) {
-        clear()
+        // Collect old views BEFORE clearing state. They stay in the stack
+        // as placeholders until new views are inserted, preventing the
+        // zero-height flash that occurs when clear() removes everything
+        // before new views are added (visible as bubble "collapse then expand").
+        let oldViews = Array(stackView.arrangedSubviews)
+
+        // Reset tracking state (tasks, view refs, counters) but DON'T
+        // remove old views yet — they still provide intrinsic height.
+        textRevealer.reset()
+        lastStreamingTextCharCount = 0
+        for task in highlightTasks.values { task.cancel() }
+        highlightTasks.removeAll()
+        textViews.removeAll()
+        codeBlockViews.removeAll()
+        tableViews.removeAll()
+        imageViews.removeAll()
+        renderedSegmentSignatures = []
 
         let palette = config.themeID.palette
         for (index, segment) in segments.enumerated() {
@@ -131,6 +147,13 @@ final class AssistantMarkdownSegmentApplier {
                 stackView.addArrangedSubview(imageView)
                 imageViews[index] = imageView
             }
+        }
+
+        // NOW remove old views — new views are already in the stack,
+        // so intrinsic height never drops to zero.
+        for view in oldViews {
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
 
         renderedSegmentSignatures = signatures
