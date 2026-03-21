@@ -148,7 +148,7 @@ const spawnAgentParams = Type.Object({
   model: Type.Optional(
     Type.String({
       description:
-        "Model override for the child session (e.g. 'anthropic/claude-sonnet-4-20250514'). Inherits from parent if omitted.",
+        "Model override for the child session (e.g. 'anthropic/claude-sonnet-4-6'). Inherits from parent if omitted.",
     }),
   ),
   thinking: Type.Optional(
