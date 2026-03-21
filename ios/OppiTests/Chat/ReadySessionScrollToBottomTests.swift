@@ -170,6 +170,7 @@ struct ReadySessionScrollToBottomTests {
             )
             .environment(reducer)
             .environment(audioPlayer)
+            .environment(connection)
             .environment(connection.permissionStore)
         )
 

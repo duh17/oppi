@@ -526,6 +526,8 @@ struct ScrollPropertyTestHarness {
 
         case .fullReload(let newItems):
             currentItems = newItems
+            currentStreamingID = nil
+            currentIsBusy = false
             let validIDs = Set(currentItems.map(\.id))
             reducer.expandedItemIDs = reducer.expandedItemIDs.intersection(validIDs)
             applyConfiguration()

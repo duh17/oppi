@@ -65,10 +65,8 @@ enum TimelineSnapshotApplier {
                 changedCount: changedIDs.count
             )
             if let dataSource, !changedIDs.isEmpty {
-                // Skip the validIDs filter: since idsUnchanged is true,
-                // changedIDs is a subset of nextIDs which equals the current
-                // snapshot items. All IDs are guaranteed valid. This avoids
-                // O(k) hash table lookups per tick.
+                // changedItemIDsForReconfigure validates streaming IDs
+                // against nextItemByID before including them.
                 var snapshot = dataSource.snapshot()
                 snapshot.reconfigureItems(changedIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
@@ -243,7 +241,12 @@ enum TimelineSnapshotApplier {
             changed.append(ChatTimelineCollectionHost.loadMoreID)
         }
 
+        // Streaming IDs can be arbitrary (not necessarily item IDs in the
+        // snapshot). Validate against nextItemByID before appending — the
+        // idsUnchanged fast path skips the nextIDSet filter that the
+        // structural branch uses.
         if let streamingAssistantID,
+           nextItemByID[streamingAssistantID] != nil,
            shouldReconfigureStreamingAssistant(
                id: streamingAssistantID,
                nextItemByID: nextItemByID,
@@ -253,7 +256,8 @@ enum TimelineSnapshotApplier {
         }
 
         if let previousStreamingAssistantID,
-           previousStreamingAssistantID != streamingAssistantID {
+           previousStreamingAssistantID != streamingAssistantID,
+           nextItemByID[previousStreamingAssistantID] != nil {
             changed.append(previousStreamingAssistantID)
         }
 
