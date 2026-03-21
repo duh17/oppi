@@ -116,18 +116,11 @@ enum TimelineSnapshotApplier {
         }
 
         // Structural change: IDs changed (new rows inserted or removed).
-        // Animate only during busy sessions (new content appearing).
-        // When transitioning to idle (working indicator removed, session ended),
-        // skip animation to avoid layout settlement issues that leave content
-        // behind the input bar overlay.
-        // Never animate structural snapshot applies. UIKit's animation
-        // transaction state persists across layout passes, adding ~25ms
-        // settlement overhead to subsequent layoutIfNeeded calls. The visual
-        // trade-off (rows appear instantly vs slide in) is minimal since
-        // users focus on the growing text, not insertion animation.
-        // (Supersedes the selective working-indicator-only skip from 3d683f5
-        // — the autoresearch session proved ALL animation is harmful here.)
-        let shouldAnimate = false
+        // Animate during busy sessions so new tool/system rows slide in
+        // smoothly instead of popping. Skip animation on idle transitions
+        // (working indicator removed, session ended) to avoid layout
+        // settlement issues that leave content behind the input bar.
+        let shouldAnimate = isBusy
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count
