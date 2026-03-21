@@ -114,7 +114,7 @@ enum ToolRowTextRenderer {
         rendered.addAttribute(.foregroundColor, value: UIColor(Color.themeFg), range: fullRange)
         AttributedStringNormalizer.ensureFont(
             in: rendered,
-            fallback: .systemFont(ofSize: 12, weight: .regular)
+            fallback: AppFont.monoMedium
         )
 
         return rendered

@@ -73,12 +73,12 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
         iconImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+        titleLabel.font = AppFont.monoMediumBold
         titleLabel.numberOfLines = 1
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        summaryLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        summaryLabel.font = AppFont.monoMedium
         summaryLabel.numberOfLines = 1
         summaryLabel.lineBreakMode = .byTruncatingTail
 

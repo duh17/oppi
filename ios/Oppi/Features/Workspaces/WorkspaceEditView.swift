@@ -4,7 +4,8 @@ import SwiftUI
 struct WorkspaceEditView: View {
     let workspace: Workspace
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var name: String = ""
@@ -27,12 +28,12 @@ struct WorkspaceEditView: View {
     @State private var loadedWorkspaceID: String?
 
     private var activeServerId: String? {
-        connection.currentServerId
+        workspaceStore.activeServerId
     }
 
     private var skills: [SkillInfo] {
         guard let activeServerId,
-              let scoped = connection.workspaceStore.skillsByServer[activeServerId] else {
+              let scoped = workspaceStore.skillsByServer[activeServerId] else {
             return []
         }
         return scoped
@@ -48,7 +49,7 @@ struct WorkspaceEditView: View {
 
     private var workspaceForEditing: Workspace {
         guard let activeServerId,
-              let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
+              let scoped = workspaceStore.workspacesByServer[activeServerId]?
                 .first(where: { $0.id == workspace.id }) else {
             return workspace
         }
@@ -377,7 +378,7 @@ struct WorkspaceEditView: View {
     }
 
     private func loadModels() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             availableModels = try await api.listModels()
         } catch {
@@ -386,7 +387,7 @@ struct WorkspaceEditView: View {
     }
 
     private func loadExtensions() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         isLoadingExtensions = true
         extensionsError = nil
@@ -400,7 +401,7 @@ struct WorkspaceEditView: View {
     }
 
     private func save() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         isSaving = true
         error = nil
@@ -421,7 +422,7 @@ struct WorkspaceEditView: View {
         do {
             let updated = try await api.updateWorkspace(id: workspace.id, request)
             if let activeServerId {
-                connection.workspaceStore.upsert(updated, serverId: activeServerId)
+                workspaceStore.upsert(updated, serverId: activeServerId)
             }
             dismiss()
         } catch {
@@ -438,7 +439,7 @@ private struct WorkspaceSystemPromptEditorView: View {
     @Binding var systemPrompt: String
     let mode: WorkspaceSystemPromptMode
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
 
     @State private var isLoadingBasePrompt = false
     @State private var basePromptError: String?
@@ -557,7 +558,7 @@ private struct WorkspaceSystemPromptEditorView: View {
     }
 
     private func loadBasePrompt() async {
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             basePromptError = "Server is offline — reconnecting in background"
             return
         }

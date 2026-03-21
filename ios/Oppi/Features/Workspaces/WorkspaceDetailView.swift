@@ -7,9 +7,11 @@ import SwiftUI
 struct WorkspaceDetailView: View {
     let workspace: Workspace
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
+    @Environment(WorkspaceStore.self) private var workspaceStore
+    @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(AppNavigation.self) private var navigation
 
     @State private var isCreating = false
@@ -78,8 +80,8 @@ struct WorkspaceDetailView: View {
     /// lookup the screen can show stale fields after editing (name, icon,
     /// hostMount, model, etc.) until navigating away and back.
     private var currentWorkspace: Workspace {
-        guard let currentServerId = connection.currentServerId,
-              let latest = connection.workspaceStore.workspacesByServer[currentServerId]?
+        guard let currentServerId = workspaceStore.activeServerId,
+              let latest = workspaceStore.workspacesByServer[currentServerId]?
                 .first(where: { $0.id == workspace.id }) else {
             return workspace
         }
@@ -305,7 +307,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo, !gitStatus.isClean {
+            if let gitStatus = gitStatusStore.gitStatus, gitStatus.isGitRepo, !gitStatus.isClean {
                 WorkspaceContextBar(
                     gitStatus: gitStatus,
                     isLoading: false,
@@ -374,8 +376,8 @@ struct WorkspaceDetailView: View {
             await refreshLineage()
             await refreshLocalSessions()
             await refreshPolicyFallback()
-            if let api = connection.apiClient {
-                connection.gitStatusStore.loadInitial(
+            if let api = apiClient {
+                gitStatusStore.loadInitial(
                     workspaceId: workspace.id,
                     apiClient: api,
                     gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
@@ -472,7 +474,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func refreshLineage() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
 
         let sessions = workspaceSessions
         guard !sessions.isEmpty else {
@@ -553,7 +555,7 @@ struct WorkspaceDetailView: View {
     // MARK: - Actions
 
     private func createSession() async {
-        guard let api = connection.apiClient else {
+        guard let api = apiClient else {
             error = "Server is offline — reconnecting in background"
             return
         }
@@ -572,7 +574,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func stopSession(_ session: Session) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             let updated = try await api.stopWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
             sessionStore.upsert(updated)
@@ -583,7 +585,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func resumeSession(_ session: Session) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             let updated = try await api.resumeWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
             sessionStore.upsert(updated)
@@ -594,7 +596,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func deleteSession(_ session: Session) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         sessionStore.remove(id: session.id)
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
@@ -610,7 +612,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func importAndResumeLocal(_ local: LocalSession) async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         isImportingLocal = true
         error = nil
 
@@ -633,7 +635,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func refreshSessions() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             let sessions = try await api.listWorkspaceSessions(workspaceId: workspace.id)
             for session in sessions {
@@ -646,7 +648,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func refreshLocalSessions() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             localSessions = try await api.listLocalSessions()
         } catch {
@@ -655,7 +657,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func refreshPolicyFallback() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = apiClient else { return }
         do {
             policyFallback = try await api.getPolicyFallback()
         } catch {

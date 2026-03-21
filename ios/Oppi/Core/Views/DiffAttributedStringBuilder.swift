@@ -47,10 +47,10 @@ enum DiffAttributedStringBuilder {
 
         static func current() -> Self {
             if let cached { return cached }
-            let codeFont = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-            let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
-            let gutterFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
-            let lineNumFont = UIFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+            let codeFont = AppFont.monoMedium
+            let headerFont = AppFont.monoBold
+            let gutterFont = AppFont.monoBold
+            let lineNumFont = AppFont.monoSmall
 
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byClipping

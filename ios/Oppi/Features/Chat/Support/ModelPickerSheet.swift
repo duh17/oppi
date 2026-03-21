@@ -8,7 +8,7 @@ struct ModelPickerSheet: View {
     let currentModel: String?
     let onSelect: (ModelInfo) -> Void
 
-    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
     @Environment(ChatSessionState.self) private var chatState
     @Environment(\.dismiss) private var dismiss
 
@@ -84,7 +84,9 @@ struct ModelPickerSheet: View {
             }
             .task {
                 // Background refresh — UI already shows cached data
-                await connection.refreshModelCache()
+                if let api = apiClient {
+                    await chatState.refreshModelCache(api: api)
+                }
             }
         }
     }

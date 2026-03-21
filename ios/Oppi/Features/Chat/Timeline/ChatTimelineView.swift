@@ -25,6 +25,8 @@ struct ChatTimelineView: View {
     let sessionId: String
     let workspaceId: String?
     let isBusy: Bool
+    let currentModel: String?
+    let connection: ServerConnection
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let onFork: (String) -> Void
@@ -34,7 +36,6 @@ struct ChatTimelineView: View {
     let bottomOverlap: CGFloat
 
     @Environment(TimelineReducer.self) private var reducer
-    @Environment(ServerConnection.self) private var connection
     @Environment(AudioPlayerService.self) private var audioPlayer
 
     @State private var renderWindow = Self.initialRenderWindow
@@ -100,6 +101,7 @@ struct ChatTimelineView: View {
                 toolSegmentStore: reducer.toolSegmentStore,
                 toolDetailsStore: reducer.toolDetailsStore,
                 connection: connection,
+                currentModel: currentModel,
                 audioPlayer: audioPlayer,
                 themeID: ThemeRuntimeState.currentThemeID(),
                 selectedTextPiRouter: selectedTextPiRouter,

@@ -261,20 +261,20 @@ final class NativeFullScreenDiffBody: UIView {
         if stats.added > 0 {
             let addedLabel = UILabel()
             addedLabel.text = "+\(stats.added)"
-            addedLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+            addedLabel.font = AppFont.monoMediumBold
             addedLabel.textColor = UIColor(palette.green)
             statsStack.addArrangedSubview(addedLabel)
         }
         if stats.removed > 0 {
             let removedLabel = UILabel()
             removedLabel.text = "-\(stats.removed)"
-            removedLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+            removedLabel.font = AppFont.monoMediumBold
             removedLabel.textColor = UIColor(palette.red)
             statsStack.addArrangedSubview(removedLabel)
         }
         let countLabel = UILabel()
         countLabel.text = "\(lines.count) lines"
-        countLabel.font = .systemFont(ofSize: 11)
+        countLabel.font = AppFont.systemSmall
         countLabel.textColor = UIColor(palette.comment)
         statsStack.addArrangedSubview(countLabel)
         statsStack.addArrangedSubview(UIView()) // spacer

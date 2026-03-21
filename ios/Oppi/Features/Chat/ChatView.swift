@@ -9,6 +9,9 @@ struct ChatView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(FileIndexStore.self) private var fileIndexStore
+    @Environment(MessageQueueStore.self) private var messageQueueStore
     @Environment(AppNavigation.self) private var appNavigation
     @Environment(PiQuickActionStore.self) private var piQuickActionStore
     @Environment(\.scenePhase) private var scenePhase
@@ -92,7 +95,7 @@ struct ChatView: View {
     }
 
     private var messageQueueState: MessageQueueState {
-        connection.messageQueueStore.queue(for: sessionId)
+        messageQueueStore.queue(for: sessionId)
     }
 
     private var showsMessageQueue: Bool {
@@ -125,6 +128,8 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             isBusy: isBusy,
+            currentModel: session?.model,
+            connection: connection,
             scrollController: scrollController,
             sessionManager: sessionManager,
             onFork: forkFromMessage,
@@ -152,8 +157,8 @@ struct ChatView: View {
             }
             .overlay(alignment: .top) {
                 WorkspaceContextBar(
-                    gitStatus: connection.gitStatusStore.gitStatus,
-                    isLoading: connection.gitStatusStore.isLoading,
+                    gitStatus: gitStatusStore.gitStatus,
+                    isLoading: gitStatusStore.isLoading,
                     workspaceId: session?.workspaceId,
                     sessionId: sessionId,
                     childSessions: childSessions,
@@ -272,7 +277,7 @@ struct ChatView: View {
                 // Load initial git status for the workspace
                 if let wsId = session?.workspaceId, let api = connection.apiClient {
                     let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
-                    connection.gitStatusStore.loadInitial(
+                    gitStatusStore.loadInitial(
                         workspaceId: wsId,
                         apiClient: api,
                         gitStatusEnabled: ws?.gitStatusEnabled ?? true
@@ -280,7 +285,7 @@ struct ChatView: View {
                 }
                 // Pre-load file index for @file fuzzy search
                 if let wsId = session?.workspaceId, let api = connection.apiClient {
-                    connection.fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
+                    fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in

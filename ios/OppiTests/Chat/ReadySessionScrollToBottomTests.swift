@@ -158,6 +158,8 @@ struct ReadySessionScrollToBottomTests {
                 sessionId: sessionManager.sessionId,
                 workspaceId: "ws-test",
                 isBusy: isBusy,
+                currentModel: nil,
+                connection: connection,
                 scrollController: scrollController,
                 sessionManager: sessionManager,
                 onFork: { _ in },
@@ -167,7 +169,6 @@ struct ReadySessionScrollToBottomTests {
                 bottomOverlap: 0
             )
             .environment(reducer)
-            .environment(connection)
             .environment(audioPlayer)
             .environment(connection.permissionStore)
         )

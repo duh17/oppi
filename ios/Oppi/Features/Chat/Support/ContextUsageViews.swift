@@ -58,7 +58,7 @@ struct ContextUsageRingBadge: View {
             }
 
             Text(usage.progress.map { String(Int(($0 * 100).rounded())) } ?? "0")
-                .font(.system(size: 7, weight: .semibold, design: .rounded))
+                .font(.appBadgeCountRounded)
                 .foregroundStyle(.themeFg)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)

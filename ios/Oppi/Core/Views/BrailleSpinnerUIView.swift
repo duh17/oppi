@@ -34,7 +34,7 @@ final class BrailleSpinnerUIView: UIView {
         backgroundColor = .clear
 
         label.text = Self.brailleFrames[0]
-        label.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
+        label.font = AppFont.monoLarge
         label.textColor = tintUIColor
         label.textAlignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false

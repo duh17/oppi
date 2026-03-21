@@ -209,8 +209,7 @@ extension ChatTimelineCollectionHost.Controller {
                 return
             }
 
-            let modelId = self.connection?.sessionStore.sessions
-                .first(where: { $0.id == self.sessionId })?.model
+            let modelId = self.currentModel
             cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
                 themeID: self.currentThemeID,
                 modelId: modelId
@@ -427,9 +426,9 @@ extension ChatTimelineCollectionHost.Controller {
         var fallback = UIListContentConfiguration.subtitleCell()
         fallback.text = title
         fallback.secondaryText = detail
-        fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        fallback.textProperties.font = AppFont.monoMediumSemibold
         fallback.textProperties.color = UIColor(Color.themeOrange)
-        fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        fallback.secondaryTextProperties.font = AppFont.mono
         fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
         cell.contentConfiguration = fallback
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()

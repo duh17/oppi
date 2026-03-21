@@ -98,7 +98,7 @@ struct PiActionsSettingsView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: action.systemImage)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.appAction)
                     .foregroundStyle(.themeBlue)
                     .frame(width: 24, alignment: .center)
 
@@ -124,7 +124,7 @@ struct PiActionsSettingsView: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appChip)
                     .foregroundStyle(.themeComment.opacity(0.5))
             }
             .padding(.vertical, 2)
@@ -232,7 +232,7 @@ struct PiActionEditorView: View {
     private var previewSection: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
+                .font(.appSectionHeader)
                 .foregroundStyle(.themeBlue)
                 .frame(width: 24)
 
@@ -299,7 +299,7 @@ struct SFSymbolPicker: View {
             showPicker = true
         } label: {
             Image(systemName: selection)
-                .font(.system(size: 16, weight: .medium))
+                .font(.appSectionHeader)
                 .foregroundStyle(.themeBlue)
                 .frame(width: 32, height: 32)
                 .background(.themeComment.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
@@ -319,7 +319,7 @@ struct SFSymbolPicker: View {
                 } label: {
                     VStack(spacing: 2) {
                         Image(systemName: symbol)
-                            .font(.system(size: 18))
+                            .font(.appEmoji)
                             .frame(width: 36, height: 36)
                             .background(
                                 selection == symbol
@@ -328,7 +328,7 @@ struct SFSymbolPicker: View {
                                 in: RoundedRectangle(cornerRadius: 6)
                             )
                         Text(label)
-                            .font(.system(size: 8))
+                            .font(.appEmojiCaption)
                             .foregroundStyle(.themeComment)
                     }
                 }

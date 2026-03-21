@@ -122,7 +122,7 @@ struct WorkspaceHomeView: View {
 
                 NavigationLink(value: server) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.appCaption)
                         .foregroundStyle(.tertiary)
                         .frame(width: 30, height: 30)
                         .background(.quaternary.opacity(0.45), in: Circle())
@@ -134,7 +134,7 @@ struct WorkspaceHomeView: View {
                     createOnServer = server
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.appButton)
                         .foregroundStyle(.themeBlue)
                         .frame(width: 32, height: 32)
                         .background(.quaternary.opacity(0.55), in: Circle())

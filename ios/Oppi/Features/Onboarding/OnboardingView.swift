@@ -33,7 +33,7 @@ struct OnboardingView: View {
 
             VStack(spacing: 12) {
                 Image(systemName: "terminal")
-                    .font(.system(size: 48))
+                    .font(.appHero)
                     .foregroundStyle(.tint)
 
                 Text("Oppi")

@@ -312,7 +312,7 @@ struct ExpandedComposerView: View {
 
         return HStack(spacing: 4) {
             Image(systemName: icon.symbolName)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.appTag)
                 .foregroundStyle(icon.color)
 
             Text(file.displayName)
@@ -325,7 +325,7 @@ struct ExpandedComposerView: View {
                 removeFile(file.id)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.appBadge)
                     .foregroundStyle(.themeComment)
             }
             .buttonStyle(.plain)
@@ -355,7 +355,7 @@ struct ExpandedComposerView: View {
                 Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
 
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.appButton)
                     .foregroundStyle(.themeComment)
             }
             .frame(width: 32, height: 32)

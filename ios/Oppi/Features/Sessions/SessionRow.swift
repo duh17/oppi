@@ -190,7 +190,7 @@ struct SessionRow: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: tree.isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.appBadge)
                     .foregroundStyle(.themeCyan)
 
                 if let counts = tree.statusCounts, !tree.isExpanded {

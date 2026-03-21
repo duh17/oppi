@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 enum FullScreenCodeTypography {
-    static let codeFont = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let codeFont = AppFont.monoMedium
 }
 
 func fullScreenAttributedCodeText(from attributed: NSAttributedString) -> NSAttributedString {

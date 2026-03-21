@@ -38,7 +38,7 @@ struct FreshnessChip: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.appChip)
                 .foregroundStyle(tint)
 
             Text(displayLabel)

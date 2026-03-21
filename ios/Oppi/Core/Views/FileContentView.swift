@@ -251,7 +251,7 @@ private struct MarkdownFileView: View {
                 Group {
                     if showRaw {
                         Text(content)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.appCaptionMono)
                             .foregroundStyle(.themeFg)
                             .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                     } else {
