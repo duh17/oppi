@@ -17,11 +17,25 @@ struct StatsActiveSession: Codable, Sendable {
     let model: String?
     let cost: Double
     let name: String?
+    let firstMessage: String?
+    let workspaceName: String?
     let thinkingLevel: String?
     let parentSessionId: String?
     let contextTokens: Int?
     let contextWindow: Int?
     let createdAt: Double?  // epoch ms from server
+
+    /// Display title matching iOS SessionRow logic: name → first message preview → Session <id>.
+    var displayTitle: String {
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let firstMessage = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firstMessage.isEmpty {
+            return String(firstMessage.prefix(80))
+        }
+        return "Session \(String(id.prefix(8)))"
+    }
 }
 
 // MARK: - Daily entry

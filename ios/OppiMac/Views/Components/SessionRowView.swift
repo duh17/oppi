@@ -23,7 +23,7 @@ struct SessionRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 // Name + model/cost row
                 HStack(alignment: .firstTextBaseline) {
-                    Text(session.name ?? "Session")
+                    Text(session.displayTitle)
                         .font(.caption)
                         .fontWeight(.medium)
                         .lineLimit(1)
@@ -42,11 +42,21 @@ struct SessionRowView: View {
                     }
                 }
 
-                // Status text
-                Text(statusText)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                // Workspace + status
+                HStack(spacing: 4) {
+                    if let ws = session.workspaceName {
+                        Text(ws)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("·")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .lineLimit(1)
 
                 // Context usage bar
                 if let tokens = session.contextTokens,

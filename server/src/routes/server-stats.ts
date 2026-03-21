@@ -20,6 +20,8 @@ export interface StatsActiveSession {
   model?: string;
   cost: number;
   name?: string;
+  firstMessage?: string;
+  workspaceName?: string;
   thinkingLevel?: string;
   parentSessionId?: string;
   contextTokens?: number;
@@ -127,6 +129,8 @@ export function getActiveSessions(
       model: s.model,
       cost: round2(s.cost),
       name: s.name,
+      firstMessage: s.firstMessage,
+      workspaceName: s.workspaceName,
       thinkingLevel: s.thinkingLevel,
       parentSessionId: s.parentSessionId,
       contextTokens: s.contextTokens,

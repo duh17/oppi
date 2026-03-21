@@ -118,6 +118,8 @@ describe("getActiveSessions", () => {
       model: "anthropic/opus",
       cost: 1.23,
       name: "my session",
+      firstMessage: undefined,
+      workspaceName: "coding",
       thinkingLevel: "high",
       parentSessionId: "s-0",
       contextTokens: 50000,
