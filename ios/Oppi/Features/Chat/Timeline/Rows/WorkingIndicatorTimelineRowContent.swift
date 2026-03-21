@@ -86,10 +86,10 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         golView.isHidden = style != .gameOfLife
 
         let palette = ThemeRuntimeState.currentPalette()
-        let commentColor = UIColor(palette.comment).withAlphaComponent(0.6)
+        let accentColor = UIColor(palette.purple)
 
-        brailleView.tintUIColor = commentColor
+        brailleView.tintUIColor = accentColor
         golView.tintUIColor = .label
-        workingLabel.textColor = commentColor
+        workingLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.6)
     }
 }
