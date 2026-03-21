@@ -11,6 +11,7 @@ import AppIntents
 /// - Shortcuts app
 struct StartQuickSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "New Session"
+    // periphery:ignore
     static let description: IntentDescription = "Start a new Oppi agent session"
     static let openAppWhenRun: Bool = true
 

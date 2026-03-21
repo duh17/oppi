@@ -693,6 +693,7 @@ actor APIClient {
     ///
     /// Returns the raw file content as a string. Used when the user taps a file path
     /// in a tool call row to view the current file on disk.
+    // periphery:ignore - used by APIClientTests + RemoteFileView (transitively unused)
     func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
         let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
         // File content is returned as raw bytes — decode as UTF-8 text
@@ -702,6 +703,7 @@ actor APIClient {
         return text
     }
 
+    // periphery:ignore - used by RemoteFileView (transitively unused)
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
@@ -729,13 +731,6 @@ actor APIClient {
         }
         let data = try await get(route)
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
-    }
-
-    /// Search for files by name/path substring within a workspace.
-    func searchWorkspaceFiles(workspaceId: String, query: String) async throws -> FileSearchResponse {
-        let encoded = try encodeQueryPath(query)
-        let data = try await get("/workspaces/\(workspaceId)/files?search=\(encoded)")
-        return try JSONDecoder().decode(FileSearchResponse.self, from: data)
     }
 
     /// Fetch the complete file index for client-side fuzzy search.

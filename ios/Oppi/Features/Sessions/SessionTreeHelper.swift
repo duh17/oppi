@@ -166,6 +166,7 @@ enum SessionTreeHelper {
         return counts
     }
 
+    // periphery:ignore - used by SessionTreeHelperTests via @testable import
     /// Get all immediate child session IDs for a given parent session.
     static func childSessions(of parentId: String, in sessions: [Session]) -> [Session] {
         sessions.filter { $0.parentSessionId == parentId }

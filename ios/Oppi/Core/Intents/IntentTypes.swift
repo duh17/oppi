@@ -22,10 +22,6 @@ enum ThinkingLevelEnum: String, AppEnum {
         .xhigh: "Extra High",
     ]
 
-    /// Convert to the internal ThinkingLevel used by the networking layer.
-    var thinkingLevel: ThinkingLevel {
-        ThinkingLevel(rawValue: rawValue) ?? .medium
-    }
 }
 
 // MARK: - Workspace Entity

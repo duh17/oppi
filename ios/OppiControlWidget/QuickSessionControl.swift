@@ -35,6 +35,7 @@ struct QuickSessionControl: ControlWidget {
 /// with a non-background intent triggers app launch.
 struct QuickSessionControlIntent: AppIntent {
     static let title: LocalizedStringResource = "New Session"
+    // periphery:ignore - required by AppIntent protocol
     static let description: IntentDescription = "Start a new Oppi agent session"
     static let openAppWhenRun: Bool = true
 

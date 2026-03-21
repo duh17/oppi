@@ -309,6 +309,7 @@ enum BashEmbeddedLanguageDetector {
 
     // MARK: - Convenience
 
+    // periphery:ignore
     /// Returns the detected embedded language, if any.
     static func embeddedLanguage(in command: String) -> SyntaxLanguage? {
         let segments = detect(command)

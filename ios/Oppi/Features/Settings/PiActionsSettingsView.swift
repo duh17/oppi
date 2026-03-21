@@ -6,7 +6,6 @@ import SwiftUI
 /// Tapping an action opens an editor sheet. "Add Action" creates a new one.
 struct PiActionsSettingsView: View {
     @Environment(PiQuickActionStore.self) private var store
-    @Environment(\.theme) private var theme
 
     @State private var editingAction: PiQuickAction?
     @State private var isAdding = false

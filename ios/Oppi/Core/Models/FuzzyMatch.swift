@@ -60,7 +60,7 @@ enum FuzzyMatch {
         guard !query.isEmpty, !candidate.isEmpty else { return nil }
         let qBytes = Array(query.utf8).map { asciiLower($0) }
         let cBytes = Array(candidate.utf8)
-        guard let r = matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true) else { return nil }
+        guard let r = matchBytes(qLower: qBytes, cBytes: cBytes, true) else { return nil }
         return Result(score: r.score, positions: byteToScalarPositions(r.positions, candidate: candidate))
     }
 
@@ -143,7 +143,7 @@ enum FuzzyMatch {
         for sc in scored {
             let candidate = candidates[sc.index]
             let cBytes = Array(candidate.utf8)
-            if let r = matchBytes(qLower: qBytes, cBytes: cBytes, needPositions: true) {
+            if let r = matchBytes(qLower: qBytes, cBytes: cBytes, true) {
                 let scalarPositions = byteToScalarPositions(r.positions, candidate: candidate)
                 results.append(ScoredPath(path: candidate, index: sc.index,
                                           score: r.score, positions: scalarPositions))
@@ -274,7 +274,7 @@ enum FuzzyMatch {
 
     /// Match with position backtracking. Used by match() and for top-K position recovery.
     private static func matchBytes(
-        qLower: [UInt8], cBytes: [UInt8], needPositions: Bool
+        qLower: [UInt8], cBytes: [UInt8], _ _needPositions: Bool
     ) -> Result? {
         let qLen = qLower.count
         let cLen = cBytes.count
@@ -360,48 +360,4 @@ enum FuzzyMatch {
         return Result(score: bestScore, positions: positions)
     }
 
-    // MARK: - Legacy Internals (kept for non-UTF8 paths)
-
-    private static func charScore(
-        qi: Int, ci: Int, consecutive: Bool,
-        boundaries: [Bool], filenameStart: Int
-    ) -> Int {
-        var score = matchBase
-        if consecutive { score += consecutiveBonus }
-        if ci < boundaries.count, boundaries[ci] { score += boundaryBonus }
-        if ci == 0 { score += firstCharBonus }
-        if ci >= filenameStart { score += filenameBonus }
-        return score
-    }
-
-    private static func computeBoundaries(_ chars: [Unicode.Scalar]) -> [Bool] {
-        var result = [Bool](repeating: false, count: chars.count)
-        if !chars.isEmpty { result[0] = true }
-        for i in 1..<chars.count {
-            let prev = chars[i - 1]
-            let curr = chars[i]
-            if prev == "/" || prev == "." || prev == "_" || prev == "-" || prev == " " {
-                result[i] = true
-            } else if CharacterProperties.isUppercase(curr) && CharacterProperties.isLowercase(prev) {
-                result[i] = true
-            }
-        }
-        return result
-    }
-
-    private static func computeFilenameStart(_ chars: [Unicode.Scalar]) -> Int {
-        for i in stride(from: chars.count - 1, through: 0, by: -1) where chars[i] == "/" {
-            return i + 1
-        }
-        return 0
-    }
-}
-
-private enum CharacterProperties {
-    static func isUppercase(_ s: Unicode.Scalar) -> Bool {
-        s.value >= 0x41 && s.value <= 0x5A
-    }
-    static func isLowercase(_ s: Unicode.Scalar) -> Bool {
-        s.value >= 0x61 && s.value <= 0x7A
-    }
 }

@@ -36,7 +36,6 @@ final class LANDiscovery: NSObject {
         browser.searchForServices(ofType: "_oppi._tcp.", inDomain: "local.")
     }
 
-    // periphery:ignore - intentional API surface; companion to start()
     func stop() {
         netServiceBrowser?.stop()
         netServiceBrowser = nil

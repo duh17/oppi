@@ -17,6 +17,7 @@ final class SelectedTextPiActionRouter {
 /// Shim for backward compatibility with tests and call sites that
 /// reference the old hardcoded action kinds.  Maps 1:1 to built-in
 /// `PiQuickAction` entries via their stable UUIDs.
+// periphery:ignore - used by PiQuickActionTests via @testable import
 enum SelectedTextPiActionKind: String, CaseIterable, Equatable {
     case explain
     case doIt

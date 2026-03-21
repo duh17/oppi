@@ -317,14 +317,6 @@ enum SyntaxHighlighter {
             return attrs
         }
 
-        static func resetCache() {
-            cached = nil
-        }
-    }
-
-    /// Invalidate cached token colors. Call when the theme changes.
-    static func resetCachedAttrs() {
-        TokenAttrs.resetCache()
     }
 
     // MARK: - Token Type (for range-based highlighting)
@@ -351,6 +343,7 @@ enum SyntaxHighlighter {
 
     // MARK: - Public API
 
+    // periphery:ignore
     /// Highlight a single line independently (no cross-line block comment state).
     /// Suitable for short snippets like diff lines where each line is rendered separately.
     static func highlightLine(_ line: String, language: SyntaxLanguage) -> NSAttributedString {
@@ -361,6 +354,7 @@ enum SyntaxHighlighter {
         return result
     }
 
+    // periphery:ignore
     /// Highlight source code and return per-line attributed strings.
     ///
     /// Shares a single `TokenAttrs` allocation and tracks block-comment state
@@ -371,6 +365,7 @@ enum SyntaxHighlighter {
         return splitAttributedStringByNewlines(full)
     }
 
+    // periphery:ignore
     /// Split a single `NSAttributedString` by newline characters into per-line strings.
     private static func splitAttributedStringByNewlines(_ source: NSAttributedString) -> [NSAttributedString] {
         let string = source.string as NSString
@@ -426,6 +421,7 @@ enum SyntaxHighlighter {
         scanTokenRangesInternal(truncatedCode(code), language: language)
     }
 
+    // periphery:ignore
     /// Scan pre-built character array for token ranges.
     /// Avoids the `Array(text)` conversion cost when the caller already has characters.
     static func scanTokenRanges(
@@ -516,6 +512,7 @@ enum SyntaxHighlighter {
         return result
     }
 
+    // periphery:ignore
     /// Scanner taking pre-built [Character] array (avoids Array(text) conversion).
     private static func scanTokenRangesFromChars(
         _ allChars: [Character],
@@ -1051,6 +1048,7 @@ enum SyntaxHighlighter {
 
     // MARK: - Legacy Line Scanner (kept for highlightLine single-line API)
 
+    // periphery:ignore
     private static func appendHighlightedLine(
         _ chars: [Character],
         language: SyntaxLanguage,
@@ -1153,6 +1151,7 @@ enum SyntaxHighlighter {
 
     // MARK: - Shell Scanner
 
+    // periphery:ignore
     private static func appendHighlightedShellLine(
         _ chars: [Character],
         attrs: TokenAttrs,
@@ -1551,6 +1550,7 @@ enum SyntaxHighlighter {
         return (String(chars[start...]), chars.count)
     }
 
+    // periphery:ignore
     private static func scanNumber(_ chars: [Character], from start: Int) -> (String, Int) {
         var i = start
 
@@ -1580,6 +1580,7 @@ enum SyntaxHighlighter {
         return (String(chars[start..<i]), i)
     }
 
+    // periphery:ignore
     private static func scanWord(_ chars: [Character], from start: Int) -> (String, Int) {
         var i = start
         while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
@@ -1588,6 +1589,7 @@ enum SyntaxHighlighter {
         return (String(chars[start..<i]), i)
     }
 
+    // periphery:ignore
     /// Heuristic: CamelCase starting with uppercase is likely a type.
     private static func isTypeLike(_ word: String) -> Bool {
         guard let first = word.first, first.isUppercase else { return false }

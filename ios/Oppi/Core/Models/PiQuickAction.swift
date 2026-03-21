@@ -119,6 +119,7 @@ final class PiQuickActionStore {
         }
     }
 
+    // periphery:ignore
     /// Test seam: initialize with specific actions.
     init(actions: [PiQuickAction]) {
         self.actions = actions
@@ -142,12 +143,6 @@ final class PiQuickActionStore {
 
     func delete(at offsets: IndexSet) {
         actions.remove(atOffsets: offsets)
-        reindex()
-        persist()
-    }
-
-    func delete(id: UUID) {
-        actions.removeAll { $0.id == id }
         reindex()
         persist()
     }

@@ -73,12 +73,14 @@ final class ServerConnection {
         let contextWindow: Int
     }
 
+    // periphery:ignore - test seam used by ServerConnection*Tests via @testable import
     /// Test seam: override outbound send path without opening a real WebSocket.
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)? {
         get { sender._sendMessageForTesting }
         set { sender._sendMessageForTesting = newValue }
     }
 
+    // periphery:ignore - test seam used by ServerConnection*Tests via @testable import
     /// Test seam: shorten ack timeout in integration-style tests.
     var _sendAckTimeoutForTesting: Duration? {
         get { sender._sendAckTimeoutForTesting }
@@ -457,8 +459,6 @@ final class ServerConnection {
 
     static let resubscribeMaxAttempts = 3
     static let resubscribeAckTimeout: Duration = .seconds(6)
-    static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
-
     /// Typed stream error code emitted by server/src/stream.ts when a command
     /// arrives for a session without full-level subscription.
     static let missingFullSubscriptionErrorCode = "stream_not_subscribed_full"

@@ -37,7 +37,6 @@ final class ScreenAwakeController {
         self.sleepFunction = sleepFunction
     }
 
-    // periphery:ignore - used by ScreenAwakeControllerTests via @testable import
     func setSessionActivity(_ isActive: Bool, sessionId: String) {
         let reason = sessionReason(for: sessionId)
 
@@ -50,7 +49,6 @@ final class ScreenAwakeController {
         reevaluateLockState()
     }
 
-    // periphery:ignore - API surface for clearing session-based screen lock override
     func clearSessionActivity(sessionId: String) {
         activeSessionReasons.remove(sessionReason(for: sessionId))
         reevaluateLockState()
@@ -60,7 +58,6 @@ final class ScreenAwakeController {
         reevaluateLockState()
     }
 
-    // periphery:ignore - called by setSessionActivity / clearSessionActivity
     private func sessionReason(for sessionId: String) -> String {
         "session::\(sessionId)"
     }

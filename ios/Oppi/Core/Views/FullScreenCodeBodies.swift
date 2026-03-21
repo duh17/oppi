@@ -51,36 +51,6 @@ final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    // MARK: - WKNavigationDelegate
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-    ) {
-        if navigationAction.navigationType == .other {
-            decisionHandler(.allow)
-            return
-        }
-        if let url = navigationAction.request.url,
-           url.scheme == "http" || url.scheme == "https" {
-            UIApplication.shared.open(url)
-        }
-        decisionHandler(.cancel)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        createWebViewWith configuration: WKWebViewConfiguration,
-        for navigationAction: WKNavigationAction,
-        windowFeatures: WKWindowFeatures
-    ) -> WKWebView? {
-        if let url = navigationAction.request.url,
-           url.scheme == "http" || url.scheme == "https" {
-            UIApplication.shared.open(url)
-        }
-        return nil
-    }
 }
 
 // MARK: - Code Body

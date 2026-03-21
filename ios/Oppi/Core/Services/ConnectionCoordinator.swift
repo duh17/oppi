@@ -132,6 +132,7 @@ final class ConnectionCoordinator {
         monitor.start(queue: queue)
     }
 
+    // periphery:ignore - used by NetworkPathChangeTests via @testable import
     func stopNetworkPathMonitor() {
         pathMonitor?.pathUpdateHandler = nil
         pathMonitor?.cancel()

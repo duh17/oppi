@@ -15,9 +15,6 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Quic
 struct QuickSessionSheet: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(WorkspaceStore.self) private var workspaceStore
-    @Environment(ChatSessionState.self) private var chatState
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme

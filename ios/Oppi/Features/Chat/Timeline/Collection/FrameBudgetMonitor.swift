@@ -125,9 +125,6 @@ final class FrameBudgetMonitor {
         return report
     }
 
-    /// Whether a section is currently being recorded.
-    var isActive: Bool { sectionName != nil }
-
     // MARK: - Private
 
     private func recordFrame(timestamp: CFTimeInterval, duration: CFTimeInterval) {
