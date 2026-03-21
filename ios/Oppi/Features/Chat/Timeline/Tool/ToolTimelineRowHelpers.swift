@@ -69,22 +69,6 @@ enum ToolTimelineRowPresentationHelpers {
         presenter.present(controller, animated: true)
     }
 
-    static func presentFullScreenPlot(spec: PlotChartSpec, fallbackText: String?, from sourceView: UIView) {
-        guard let presenter = nearestViewController(from: sourceView) else { return }
-        guard !isWithinFullScreenModalContext(presenter) else { return }
-        guard presenter.presentedViewController == nil else { return }
-
-        let controller = FullScreenPlotViewController(spec: spec, fallbackText: fallbackText)
-        controller.modalPresentationStyle = .pageSheet
-        if let sheet = controller.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-            sheet.prefersEdgeAttachedInCompactHeight = true
-        }
-        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
-        presenter.present(controller, animated: true)
-    }
-
     static func nearestViewController(from sourceView: UIView) -> UIViewController? {
         var responder: UIResponder? = sourceView
         while let current = responder {
@@ -100,8 +84,7 @@ enum ToolTimelineRowPresentationHelpers {
         var current: UIViewController? = presenter
         while let node = current {
             if node is FullScreenCodeViewController
-                || node is FullScreenImageViewController
-                || node is FullScreenPlotViewController {
+                || node is FullScreenImageViewController {
                 return true
             }
             current = node.parent
@@ -110,8 +93,7 @@ enum ToolTimelineRowPresentationHelpers {
         var ancestor: UIViewController? = presenter.presentingViewController
         while let node = ancestor {
             if node is FullScreenCodeViewController
-                || node is FullScreenImageViewController
-                || node is FullScreenPlotViewController {
+                || node is FullScreenImageViewController {
                 return true
             }
             ancestor = node.presentingViewController
@@ -119,15 +101,14 @@ enum ToolTimelineRowPresentationHelpers {
 
         if let presented = presenter.presentedViewController {
             if presented is FullScreenCodeViewController
-                || presented is FullScreenImageViewController
-                || presented is FullScreenPlotViewController {
+                || presented is FullScreenImageViewController {
                 return true
             }
             if let nav = presented as? UINavigationController,
                nav.viewControllers.contains(where: {
                    $0 is FullScreenCodeViewController
                        || $0 is FullScreenImageViewController
-                       || $0 is FullScreenPlotViewController
+                       || $0 is FullScreenImageViewController
                }) {
                 return true
             }
@@ -359,39 +340,6 @@ enum ToolTimelineRowUIHelpers {
             return currentAutoFollow
         } else {
             return false
-        }
-    }
-
-    /// Unified auto-follow logic for expanded tool content (code, diff, text).
-    ///
-    /// Determines whether to enable/disable auto-follow and whether to scroll
-    /// after a render pass. Delegates to `computeAutoFollow` for the pure
-    /// state computation, then applies the scroll side effects.
-    static func applyExpandedAutoFollow(
-        isStreaming: Bool,
-        shouldRerender: Bool,
-        wasExpandedVisible: Bool,
-        previousRenderedText: String?,
-        currentDisplayText: String,
-        expandedShouldAutoFollow: inout Bool,
-        expandedScrollView: UIScrollView,
-        scheduleFollowTail: () -> Void
-    ) {
-        expandedShouldAutoFollow = computeAutoFollow(
-            isStreaming: isStreaming,
-            shouldRerender: shouldRerender,
-            wasExpandedVisible: wasExpandedVisible,
-            previousRenderedText: previousRenderedText,
-            currentDisplayText: currentDisplayText,
-            currentAutoFollow: expandedShouldAutoFollow
-        )
-
-        if shouldRerender {
-            if expandedShouldAutoFollow {
-                scheduleFollowTail()
-            } else if !isStreaming {
-                resetScrollPosition(expandedScrollView)
-            }
         }
     }
 

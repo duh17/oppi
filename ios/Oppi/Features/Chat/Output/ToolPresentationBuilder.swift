@@ -64,7 +64,6 @@ enum ToolPresentationBuilder {
             normalizedTool: normalizedTool,
             tool: tool,
             args: args,
-            details: context.details,
             argsSummary: argsSummary,
             isExpanded: isExpanded,
             isError: isError,
@@ -196,7 +195,6 @@ enum ToolPresentationBuilder {
         normalizedTool: String,
         tool: String,
         args: [String: JSONValue]?,
-        details: JSONValue?,
         argsSummary: String,
         isExpanded: Bool,
         isError: Bool,
@@ -263,12 +261,6 @@ enum ToolPresentationBuilder {
                 }
             }
 
-        case "plot":
-            let title = PlotChartSpec.collapsedTitle(from: args, details: details)
-            result.title = title ?? (argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)")
-            result.toolNamePrefix = tool
-            result.toolNameColor = UIColor(Color.themePurple)
-
         default:
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
@@ -295,8 +287,6 @@ enum ToolPresentationBuilder {
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md)
         case markdown(text: String)
-        /// Native chart renderer for `plot` tool specs.
-        case plot(spec: PlotChartSpec, fallbackText: String?)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
@@ -417,25 +407,6 @@ enum ToolPresentationBuilder {
                         startLine: nil
                     )
                     : .text(text: outputTrimmed, language: nil)
-            }
-
-        case "plot":
-            if NativePlotPreferences.isEnabled {
-                if let detailsChart = PlotChartSpec.fromToolDetails(details) {
-                    content = .plot(
-                        spec: detailsChart.spec,
-                        fallbackText: detailsChart.fallbackText ?? (outputTrimmed.isEmpty ? nil : outputTrimmed)
-                    )
-                } else if let spec = PlotChartSpec.fromPlotArgs(args) {
-                    content = .plot(
-                        spec: spec,
-                        fallbackText: outputTrimmed.isEmpty ? nil : outputTrimmed
-                    )
-                } else if !outputTrimmed.isEmpty {
-                    content = .text(text: outputTrimmed, language: .json)
-                }
-            } else if !outputTrimmed.isEmpty {
-                content = .text(text: outputTrimmed, language: .json)
             }
 
         default:
@@ -585,8 +556,6 @@ enum ToolPresentationBuilder {
             return "Writing…"
         case "edit":
             return "Editing…"
-        case "plot":
-            return "Rendering plot…"
         default:
             return "Waiting for output…"
         }
@@ -599,7 +568,7 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let tool = ToolCallFormatting.normalized(normalizedTool)
         switch tool {
-        case "bash", "read", "write", "edit", "plot":
+        case "bash", "read", "write", "edit":
             return false
         default:
             break
@@ -679,6 +648,7 @@ enum ToolPresentationBuilder {
         return candidate
     }
 
+    // periphery:ignore - used by ToolPresentationBuilderTests via @testable import
     static func readOutputLanguage(args: [String: JSONValue]?, argsSummary: String) -> SyntaxLanguage? {
         guard let fileType = readOutputFileType(args: args, argsSummary: argsSummary) else { return nil }
         switch fileType {

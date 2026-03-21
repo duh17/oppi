@@ -96,47 +96,6 @@ struct AsyncAudioBlob: View {
     }
 }
 
-// MARK: - Async Diff View
-
-/// Computes LCS diff off main thread, then renders.
-struct AsyncDiffView: View {
-    let oldText: String
-    let newText: String
-    let filePath: String?
-    var showHeader: Bool = true
-    var precomputedLines: [DiffLine]? = nil
-    var selectedTextSourceContext: SelectedTextSourceContext?
-
-    @State private var ready = false
-
-    var body: some View {
-        if ready {
-            DiffContentView(
-                oldText: oldText,
-                newText: newText,
-                filePath: filePath,
-                showHeader: showHeader,
-                precomputedLines: precomputedLines,
-                selectedTextSourceContext: selectedTextSourceContext
-            )
-        } else {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(precomputedLines == nil ? "Computing diff…" : "Loading diff…")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
-            .padding(8)
-            .task {
-                if precomputedLines == nil {
-                    try? await Task.sleep(for: .milliseconds(16))
-                }
-                ready = true
-            }
-        }
-    }
-}
-
 // MARK: - ToolPresentationBuilder Generic Extension Output Parsing
 
 extension ToolPresentationBuilder {
@@ -169,13 +128,6 @@ extension ToolPresentationBuilder {
         let startLineHint = extensionDetailInt(details, keys: ["startLine", "start_line", "start"])
         let note: (String) -> ToolExpandedContent = {
             .text(text: textOutput + "\n\n[render note: \($0)]", language: nil)
-        }
-
-        if let chart = PlotChartSpec.fromToolDetails(details) {
-            return (
-                .plot(spec: chart.spec, fallbackText: chart.fallbackText ?? (textOutput.isEmpty ? nil : textOutput)),
-                textOutput
-            )
         }
 
         if format == "json" || (format != "markdown" && textOutput.utf8.count <= extensionStructuredParseBudgetBytes) {

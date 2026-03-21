@@ -33,11 +33,10 @@ struct ExpandedRenderOutput {
     }
 
     /// Declarative view-installation intent returned by hosted-view strategies
-    /// (plot, read-media). The parent interprets this in `applyExpandedRenderOutput`
+    /// (read-media). The parent interprets this in `applyExpandedRenderOutput`
     /// instead of the strategy calling installation closures directly.
     enum InstallAction {
         case none
-        case plot(spec: PlotChartSpec, fallbackText: String?)
         case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int)
     }
 }

@@ -1078,26 +1078,6 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test(.disabled("test seam properties removed")) func plotExpandedDoesNotSupportFullScreen() {
-        let spec = PlotChartSpec(
-            rows: [PlotChartSpec.Row(id: 0, values: ["x": .number(1), "y": .number(2)])],
-            marks: [PlotChartSpec.Mark(id: "m1", type: .line, x: "x", y: "y")],
-            xAxis: PlotChartSpec.Axis(),
-            yAxis: PlotChartSpec.Axis(),
-            interaction: PlotChartSpec.Interaction()
-        )
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .plot(spec: spec, fallbackText: "x=1, y=2"),
-            toolNamePrefix: "plot",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(!view.canShowFullScreenContentForTesting)
-    }
-
-    @MainActor
     @Test(.disabled("test seam properties removed")) func readMediaExpandedDoesNotSupportFullScreen() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .readMedia(

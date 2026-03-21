@@ -110,15 +110,6 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
-    static func plotSignature(spec: PlotChartSpec, fallbackText: String?) -> Int {
-        var hasher = Hasher()
-        hasher.combine("plot")
-        combineActiveTheme(into: &hasher)
-        hasher.combine(spec)
-        hasher.combine(fallbackText)
-        return hasher.finalize()
-    }
-
     static func textSignature(
         displayText: String,
         language: SyntaxLanguage?,

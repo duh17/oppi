@@ -14,7 +14,6 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     case extensionMarkdown
     case extensionLookup
     case customText
-    case plot
     case readMarkdown
     case readMedia
 
@@ -29,7 +28,6 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         case .extensionMarkdown: return "extension-markdown"
         case .extensionLookup: return "extension-lookup"
         case .customText: return "custom-text"
-        case .plot: return "plot"
         case .readMarkdown: return "read-markdown"
         case .readMedia: return "read-media"
         }
@@ -39,7 +37,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var expectedSupportsFullScreenPreview: Bool {
         switch self {
-        case .plot, .readMedia:
+        case .readMedia:
             return false
         case .writeCode, .readCode, .bashOutput, .editDiff, .extensionMutation,
                 .extensionStructured, .extensionMarkdown, .extensionLookup,
@@ -302,48 +300,6 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 argsSummary: "query: scroll reset bug",
                 outputPreview: "custom-result-1",
                 outputByteCount: output.utf8.count,
-                isError: false,
-                isDone: true
-            )
-
-        case .plot:
-            let rows: [JSONValue] = (0..<50).map { step in
-                .object([
-                    "step": .number(Double(step)),
-                    "latencyMs": .number(110 + Double((step * 7) % 17)),
-                ])
-            }
-
-            let spec: JSONValue = .object([
-                "title": .string("Latency trend"),
-                "dataset": .object([
-                    "rows": .array(rows),
-                ]),
-                "marks": .array([
-                    .object([
-                        "type": .string("line"),
-                        "x": .string("step"),
-                        "y": .string("latencyMs"),
-                    ]),
-                ]),
-                "axes": .object([
-                    "x": .object(["label": .string("Step")]),
-                    "y": .object(["label": .string("Latency (ms)")]),
-                ]),
-                "height": .number(240),
-            ])
-
-            toolArgsStore.set([
-                "spec": spec,
-            ], for: itemID)
-            toolOutputStore.append("", to: itemID)
-
-            return .toolCall(
-                id: itemID,
-                tool: "plot",
-                argsSummary: "plot latency",
-                outputPreview: "rendered chart",
-                outputByteCount: rows.count * 16,
                 isError: false,
                 isDone: true
             )

@@ -1,11 +1,7 @@
 enum ToolTimelineRowFullScreenSupport {
     static func supportsPreview(toolNamePrefix: String?) -> Bool {
-        switch toolNamePrefix {
-        case "plot":
-            return false
-        default:
-            return true
-        }
+        _ = toolNamePrefix
+        return true
     }
 
     static func fullScreenContent(
@@ -49,7 +45,7 @@ enum ToolTimelineRowFullScreenSupport {
 
                 return .plainText(content: snapshot.text, filePath: snapshot.filePath)
 
-            case .readMedia, .plot, .status:
+            case .readMedia, .status:
                 return nil
             }
         }
@@ -118,7 +114,7 @@ enum ToolTimelineRowFullScreenSupport {
                 stream: terminalStream
             )
 
-        case .readMedia, .plot, .status:
+        case .readMedia, .status:
             return nil
         }
     }
@@ -171,7 +167,7 @@ enum ToolTimelineRowFullScreenSupport {
                 finalContent: nil
             )
 
-        case .bash, .readMedia, .plot, .status:
+        case .bash, .readMedia, .status:
             return nil
         }
     }

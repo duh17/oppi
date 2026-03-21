@@ -807,9 +807,9 @@ describe("translatePiEvent", () => {
             {
               type: "toolCall",
               id: "tc-1",
-              name: "plot",
+              name: "some_extension",
               arguments: {
-                spec: { dataset: { rows: Array(100).fill({ x: 1, y: 2 }) } },
+                data: { nested: { rows: Array(100).fill({ x: 1, y: 2 }) } },
                 title: "short",
               },
             },

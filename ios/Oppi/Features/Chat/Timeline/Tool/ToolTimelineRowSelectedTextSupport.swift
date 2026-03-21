@@ -22,13 +22,6 @@ enum ToolTimelineRowSelectedTextSupport {
         /// When true, tap-copy gestures and pinch should be disabled.
         let disableGestureInterception: Bool
 
-        static let none = Self(
-            commandSelectable: false,
-            outputSelectable: false,
-            expandedLabelSelectable: false,
-            markdownSelectable: false,
-            disableGestureInterception: false
-        )
     }
 
     // MARK: - Source context resolution
@@ -169,7 +162,7 @@ enum ToolTimelineRowSelectedTextSupport {
                 languageHint: language?.displayName
             )
 
-        case .bash, .markdown, .plot, .readMedia, .status:
+        case .bash, .markdown, .readMedia, .status:
             return nil
         }
     }

@@ -57,33 +57,6 @@ struct ToolTimelineRowModeDispatchTests {
                 expected: .init(expanded: true, command: false, output: false)
             ),
             DispatchCase(
-                name: "plot",
-                toolNamePrefix: "plot",
-                content: .plot(
-                    spec: PlotChartSpec(
-                        title: "Pace",
-                        rows: [
-                            .init(id: 0, values: ["x": .number(0), "pace": .number(295)]),
-                            .init(id: 1, values: ["x": .number(1), "pace": .number(292)]),
-                        ],
-                        marks: [
-                            .init(
-                                id: "pace-line",
-                                type: .line,
-                                x: "x",
-                                y: "pace"
-                            ),
-                        ],
-                        xAxis: .init(label: "Distance", invert: false),
-                        yAxis: .init(label: "Pace", invert: true),
-                        interaction: .init(xSelection: true, xRangeSelection: false, scrollableX: false),
-                        preferredHeight: 200
-                    ),
-                    fallbackText: "pace chart"
-                ),
-                expected: .init(expanded: true, command: false, output: false)
-            ),
-            DispatchCase(
                 name: "readMedia",
                 toolNamePrefix: "read",
                 content: .readMedia(
@@ -196,23 +169,6 @@ struct ToolTimelineRowModeDispatchTests {
             .init(content: .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), expectedMode: .diff, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
-            .init(
-                content: .plot(
-                    spec: PlotChartSpec(
-                        title: nil,
-                        rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
-                        marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
-                        xAxis: .init(label: "x", invert: false),
-                        yAxis: .init(label: "y", invert: false),
-                        interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
-                        preferredHeight: 180
-                    ),
-                    fallbackText: nil
-                ),
-                expectedMode: .plot,
-                expectsFullScreen: false,
-                expectsHorizontalScroll: false
-            ),
             .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
             .init(content: .text(text: "extension output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
         ]
@@ -298,28 +254,17 @@ struct ToolTimelineRowModeDispatchTests {
         })
         #expect(textDoubleTap.isEnabled)
 
-        let plotView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
-            toolNamePrefix: "plot",
-            expandedContent: .plot(
-                spec: PlotChartSpec(
-                    title: nil,
-                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
-                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
-                    xAxis: .init(label: "x", invert: false),
-                    yAxis: .init(label: "y", invert: false),
-                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
-                    preferredHeight: 180
-                ),
-                fallbackText: nil
-            ),
+        let mediaView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
             isExpanded: true
         ))
-        _ = fittedSize(for: plotView, width: 360)
-        let plotScrollView = try #require(privateScrollView(named: "expandedScrollView", in: plotView))
-        let plotDoubleTap = try #require(plotScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
+        _ = fittedSize(for: mediaView, width: 360)
+        let mediaScrollView = try #require(privateScrollView(named: "expandedScrollView", in: mediaView))
+        let mediaDoubleTap = try #require(mediaScrollView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }.first {
             $0.numberOfTapsRequired == 2
         })
-        #expect(!plotDoubleTap.isEnabled)
+        #expect(!mediaDoubleTap.isEnabled)
     }
 
     @Test func expandedMarkdownDisablesInlineTextSelectionWhenFullScreenIsPreferred() throws {
@@ -569,24 +514,13 @@ struct ToolTimelineRowModeDispatchTests {
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(!markdownStack.arrangedSubviews.isEmpty)
 
-        let plotConfig = makeToolConfiguration(
-            toolNamePrefix: "plot",
-            expandedContent: .plot(
-                spec: PlotChartSpec(
-                    title: nil,
-                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
-                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
-                    xAxis: .init(label: "x", invert: false),
-                    yAxis: .init(label: "y", invert: false),
-                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
-                    preferredHeight: 180
-                ),
-                fallbackText: nil
-            ),
+        let mediaConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
             isExpanded: true
         )
 
-        view.configuration = plotConfig
+        view.configuration = mediaConfig
         _ = fittedSize(for: view, width: 360)
 
         #expect(
@@ -890,24 +824,13 @@ struct ToolTimelineRowModeDispatchTests {
         let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required)
 
-        // Reuse for plot (hosted view)
-        let plotConfig = makeToolConfiguration(
-            toolNamePrefix: "plot",
-            expandedContent: .plot(
-                spec: PlotChartSpec(
-                    title: nil,
-                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
-                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
-                    xAxis: .init(label: "x", invert: false),
-                    yAxis: .init(label: "y", invert: false),
-                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
-                    preferredHeight: 180
-                ),
-                fallbackText: nil
-            ),
+        // Reuse for readMedia (hosted view)
+        let mediaConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .readMedia(output: "data:image/png;base64,abc", filePath: "icon.png", startLine: 1),
             isExpanded: true
         )
-        view.configuration = plotConfig
+        view.configuration = mediaConfig
         _ = fittedSize(for: view, width: 360)
 
         #expect(
@@ -1460,7 +1383,6 @@ private enum RoutedExpandedMode: Equatable {
     case diff
     case code
     case markdown
-    case plot
     case readMedia
     case text
 }
@@ -1472,7 +1394,6 @@ private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Ro
     case .diff:                   return .diff
     case .code:                   return .code
     case .markdown:               return .markdown
-    case .plot:                   return .plot
     case .readMedia:              return .readMedia
     case .status, .text:          return .text
     }

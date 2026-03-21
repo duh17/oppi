@@ -80,7 +80,6 @@ enum ToolTimelineRowViewportKind {
     case text
     case markdown
     case readMedia
-    case plot
 }
 
 struct ToolTimelineRowViewportProfile {
@@ -108,9 +107,6 @@ struct ToolTimelineRowViewportProfile {
 
     fileprivate var effectiveLineCount: Int {
         switch kind {
-        case .plot:
-            return 14
-
         case .text, .markdown, .readMedia:
             let wrappedLineEstimate = Int(ceil(Double(max(inputBytes, 1)) / 72.0))
             return max(1, lineCount, wrappedLineEstimate)
@@ -197,9 +193,6 @@ enum ToolTimelineRowLayoutPerformance {
         let lines = profile.effectiveLineCount
 
         switch profile.kind {
-        case .plot:
-            return 220
-
         case .bashOutput, .text:
             return bucketHeight(
                 effectiveLineCount: lines,
