@@ -67,7 +67,7 @@ describe("parseRange", () => {
 // ─── getActiveSessions ───
 
 describe("getActiveSessions", () => {
-  test("filters to non-stopped, non-error sessions", () => {
+  test("without activeSessionIds, filters to non-stopped, non-error sessions (backward compat)", () => {
     const sessions = [
       makeSession({ id: "s-1", status: "busy" }),
       makeSession({ id: "s-2", status: "stopped" }),
@@ -78,6 +78,21 @@ describe("getActiveSessions", () => {
 
     const active = getActiveSessions(sessions);
     expect(active.map((s) => s.id)).toEqual(["s-1", "s-3", "s-5"]);
+  });
+
+  test("with activeSessionIds, excludes zombie sessions not in memory", () => {
+    const sessions = [
+      makeSession({ id: "s-1", status: "busy" }),
+      makeSession({ id: "s-2", status: "stopped" }),
+      makeSession({ id: "s-3", status: "ready" }),
+      makeSession({ id: "s-4", status: "error" }),
+      makeSession({ id: "s-5", status: "starting" }), // zombie — not in active set
+    ];
+
+    // Only s-1 and s-3 are genuinely in memory
+    const activeIds = new Set(["s-1", "s-3"]);
+    const active = getActiveSessions(sessions, activeIds);
+    expect(active.map((s) => s.id)).toEqual(["s-1", "s-3"]);
   });
 
   test("maps fields correctly", () => {

@@ -492,6 +492,10 @@ export class Server {
     // Heal stale persisted contextWindow fallbacks before any client connects.
     this.models.healPersistedSessionContextWindows();
 
+    // Mark zombie sessions (non-terminal status on disk but not in memory) as stopped.
+    // These are sessions that crashed mid-startup or were orphaned by a server restart.
+    this.healOrphanedSessions();
+
     const securityWarnings = formatStartupSecurityWarnings(config);
     for (const warning of securityWarnings) {
       console.warn(`[startup][security] ${warning}`);
@@ -598,6 +602,23 @@ export class Server {
   private stopBonjourAdvertisement(): void {
     this.bonjourAdvertiser?.stop();
     this.bonjourAdvertiser = null;
+  }
+
+  // ─── Startup Healing ───
+
+  private healOrphanedSessions(): void {
+    const sessions = this.storage.listSessions();
+    let healed = 0;
+    for (const s of sessions) {
+      if (s.status !== "stopped" && s.status !== "error") {
+        s.status = "stopped";
+        this.storage.saveSession(s);
+        healed++;
+      }
+    }
+    if (healed > 0) {
+      console.log("[startup] healed orphaned sessions", { count: healed });
+    }
   }
 
   // ─── Permission Forwarding ───

@@ -102,9 +102,25 @@ export function getMemoryStats(): StatsMemory {
 
 // ─── Active sessions ───
 
-export function getActiveSessions(sessions: Session[]): StatsActiveSession[] {
+/**
+ * Return sessions that are genuinely active.
+ *
+ * A session is active only if it has a non-terminal disk status AND is
+ * present in the in-memory `activeSessionIds` set. Sessions that crashed
+ * mid-startup (status "starting" on disk but not in memory) are zombies
+ * and excluded.
+ */
+export function getActiveSessions(
+  sessions: Session[],
+  activeSessionIds?: Set<string>,
+): StatsActiveSession[] {
   return sessions
-    .filter((s) => s.status !== "stopped" && s.status !== "error")
+    .filter((s) => {
+      if (s.status === "stopped" || s.status === "error") return false;
+      // If we have in-memory state, cross-reference — disk-only zombies are excluded
+      if (activeSessionIds && !activeSessionIds.has(s.id)) return false;
+      return true;
+    })
     .map((s) => ({
       id: s.id,
       status: s.status,

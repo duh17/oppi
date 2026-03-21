@@ -478,6 +478,15 @@ export class SessionManager extends EventEmitter {
     return this.active.has(this.sessionKey(sessionId));
   }
 
+  /** Set of session IDs currently held in memory (genuinely running). */
+  getActiveSessionIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const active of this.active.values()) {
+      ids.add(active.session.id);
+    }
+    return ids;
+  }
+
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
