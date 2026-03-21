@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 // MARK: - Global Segment Cache
 
@@ -303,7 +302,22 @@ enum FlatSegment: Sendable {
     private static func attributedString(for block: MarkdownBlock, palette: ThemePalette) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
-            // Font stays in SwiftUI scope (normalizedAttributedText fills body fallback).
+            // Fast path: single text inline heading (common for simple headings).
+            if inlines.count == 1, case .text(let string) = inlines[0] {
+                let font: Font = switch level {
+                case 1: .title.bold()
+                case 2: .title2.bold()
+                case 3: .title3.bold()
+                case 4: .headline
+                case 5: .subheadline.bold()
+                default: .subheadline
+                }
+                var container = AttributeContainer()
+                container.font = font
+                container.foregroundColor = palette.fg
+                return AttributedString(string, attributes: container)
+            }
+            var result = renderInlines(inlines, palette: palette)
             let font: Font = switch level {
             case 1: .title.bold()
             case 2: .title2.bold()
@@ -312,37 +326,29 @@ enum FlatSegment: Sendable {
             case 5: .subheadline.bold()
             default: .subheadline
             }
-            // Fast path: single text inline heading (common for simple headings).
-            if inlines.count == 1, case .text(let string) = inlines[0] {
-                var container = AttributeContainer()
-                container.uiKit.foregroundColor = UIColor(palette.fg)
-                container.font = font
-                return AttributedString(string, attributes: container)
-            }
-            var result = renderInlines(inlines, palette: palette)
-            result.uiKit.foregroundColor = UIColor(palette.fg)
             result.font = font
+            result.foregroundColor = palette.fg
             return result
 
         case .paragraph(let inlines):
             // Fast path: single text inline (most common paragraph shape).
             if inlines.count == 1, case .text(let string) = inlines[0] {
                 var container = AttributeContainer()
-                container.uiKit.foregroundColor = UIColor(palette.fg)
+                container.foregroundColor = palette.fg
                 return AttributedString(string, attributes: container)
             }
             // Build with foreground baked into initial construction,
             // then override specific inline colors (code, links) by range.
-            return renderInlinesWithDefaultColor(inlines, palette: palette, defaultColor: UIColor(palette.fg))
+            return renderInlinesWithDefaultColor(inlines, palette: palette, defaultColor: palette.fg)
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
-            result.uiKit.foregroundColor = UIColor(palette.purple)
+            result.foregroundColor = palette.purple
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 result.append(attributedString(for: child, palette: palette))
             }
-            result.uiKit.foregroundColor = UIColor(palette.fgDim)
+            result.foregroundColor = palette.fgDim
             return result
 
         case .unorderedList(let items):
@@ -350,7 +356,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var bullet = AttributedString("  • ")
-                bullet.uiKit.foregroundColor = UIColor(palette.fgDim)
+                bullet.foregroundColor = palette.fgDim
                 result.append(bullet)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n    ")) }
@@ -364,7 +370,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
-                num.uiKit.foregroundColor = UIColor(palette.fgDim)
+                num.foregroundColor = palette.fgDim
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
@@ -379,18 +385,18 @@ enum FlatSegment: Sendable {
                 if i > 0 { result.append(AttributedString("\n")) }
                 if item.checked {
                     var check = AttributedString("  \u{25C9} ")
-                    check.uiKit.foregroundColor = UIColor(palette.green)
+                    check.foregroundColor = palette.green
                     result.append(check)
                 } else {
                     var check = AttributedString("  \u{25CB} ")
-                    check.uiKit.foregroundColor = UIColor(palette.fgDim)
+                    check.foregroundColor = palette.fgDim
                     result.append(check)
                 }
                 for (j, block) in item.content.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
                     var content = attributedString(for: block, palette: palette)
                     if item.checked {
-                        content.uiKit.foregroundColor = UIColor(palette.comment)
+                        content.foregroundColor = palette.comment
                         content.strikethroughStyle = .single
                     }
                     result.append(content)
@@ -401,7 +407,7 @@ enum FlatSegment: Sendable {
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
             result.font = .system(.caption, design: .monospaced)
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.foregroundColor = palette.comment
             return result
 
         case .codeBlock, .table, .thematicBreak:
@@ -430,7 +436,7 @@ enum FlatSegment: Sendable {
     private static func renderInlinesWithDefaultColor(
         _ inlines: [MarkdownInline],
         palette: ThemePalette,
-        defaultColor: UIColor
+        defaultColor: Color
     ) -> AttributedString {
         return renderInlinesCore(inlines, palette: palette, defaultColor: defaultColor)
     }
@@ -438,13 +444,13 @@ enum FlatSegment: Sendable {
     private static func renderInlinesCore(
         _ inlines: [MarkdownInline],
         palette: ThemePalette,
-        defaultColor: UIColor?
+        defaultColor: Color?
     ) -> AttributedString {
         // Fast path: single text inline (most common paragraph).
         if inlines.count == 1, case .text(let string) = inlines[0] {
             if let color = defaultColor {
                 var container = AttributeContainer()
-                container.uiKit.foregroundColor = color
+                container.foregroundColor = color
                 return AttributedString(string, attributes: container)
             }
             return AttributedString(string)
@@ -453,7 +459,7 @@ enum FlatSegment: Sendable {
         if inlines.count == 1 {
             var result = renderInlineFallback(inlines[0], palette: palette)
             if let color = defaultColor {
-                result.uiKit.foregroundColor = color
+                result.foregroundColor = color
             }
             return result
         }
@@ -469,7 +475,7 @@ enum FlatSegment: Sendable {
         var result: AttributedString
         if let color = defaultColor {
             var container = AttributeContainer()
-            container.uiKit.foregroundColor = color
+            container.foregroundColor = color
             result = AttributedString(plainText, attributes: container)
         } else {
             result = AttributedString(plainText)
@@ -524,10 +530,9 @@ enum FlatSegment: Sendable {
             case .code(let code):
                 text += code
                 let end = text.utf8.count
-                let codeColor = UIColor(palette.cyan)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                     sub.font = .system(.body, design: .monospaced)
-                    sub.uiKit.foregroundColor = codeColor
+                    sub.foregroundColor = palette.cyan
                 })
             case .link(let children, let destination):
                 collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
@@ -537,9 +542,8 @@ enum FlatSegment: Sendable {
                         guard let destination, let url = URL(string: destination), url.scheme != nil else { return nil }
                         return url
                     }()
-                    let linkColor = UIColor(palette.blue)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = linkColor
+                        sub.foregroundColor = palette.blue
                         sub.underlineStyle = .single
                         if let url = resolvedURL {
                             sub.link = url
@@ -550,9 +554,8 @@ enum FlatSegment: Sendable {
                 if !alt.isEmpty {
                     text += "[\(alt)]"
                     let end = text.utf8.count
-                    let commentColor = UIColor(palette.comment)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = commentColor
+                        sub.foregroundColor = palette.comment
                     })
                 }
             case .softBreak, .hardBreak:
@@ -560,9 +563,8 @@ enum FlatSegment: Sendable {
             case .html(let raw):
                 text += raw
                 let end = text.utf8.count
-                let commentColor = UIColor(palette.comment)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.foregroundColor = commentColor
+                    sub.foregroundColor = palette.comment
                 })
             case .strikethrough(let children):
                 collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
@@ -592,11 +594,11 @@ enum FlatSegment: Sendable {
         case .code(let code):
             var result = AttributedString(code)
             result.font = .system(.body, design: .monospaced)
-            result.uiKit.foregroundColor = UIColor(palette.cyan)
+            result.foregroundColor = palette.cyan
             return result
         case .link(let children, let destination):
             var result = renderInlines(children, palette: palette)
-            result.uiKit.foregroundColor = UIColor(palette.blue)
+            result.foregroundColor = palette.blue
             result.underlineStyle = .single
             if let destination,
                let url = URL(string: destination),
@@ -607,13 +609,13 @@ enum FlatSegment: Sendable {
         case .image(let alt, _):
             if alt.isEmpty { return AttributedString() }
             var result = AttributedString("[\(alt)]")
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.foregroundColor = palette.comment
             return result
         case .softBreak, .hardBreak:
             return AttributedString("\n")
         case .html(let raw):
             var result = AttributedString(raw)
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.foregroundColor = palette.comment
             return result
         case .strikethrough(let children):
             var result = renderInlines(children, palette: palette)
