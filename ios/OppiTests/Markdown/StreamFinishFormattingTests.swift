@@ -5,16 +5,14 @@ import UIKit
 
 @testable import Oppi
 
-/// Tests that FlatSegment.build produces UIKit attributes (UIColor/UIFont)
-/// so normalizedAttributedText can find them, and that the streaming ->
-/// finished transition preserves colors.
+/// Tests that FlatSegment.build uses UIKit foreground colors so
+/// normalizedAttributedText finds them, and the streaming -> finished
+/// transition preserves colors.
 @Suite("Stream finish formatting preservation")
 @MainActor
 struct StreamFinishFormattingTests {
 
     let darkPalette = ThemeID.dark.palette
-
-    // MARK: - FlatSegment.build produces UIKit attributes
 
     @Test func paragraphUsesUIKitForegroundColor() {
         let blocks: [MarkdownBlock] = [.paragraph([.text("hello")])]
@@ -27,29 +25,10 @@ struct StreamFinishFormattingTests {
         ns.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: ns.length)) { value, _, _ in
             if value is UIColor { found = true }
         }
-        #expect(found, "Paragraph should use UIKit foregroundColor key")
+        #expect(found, "Paragraph should produce UIKit foregroundColor")
     }
 
-    @Test func headingUsesUIKitFont() {
-        let blocks: [MarkdownBlock] = [.heading(level: 1, inlines: [.text("Title")])]
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
-        guard case .text(let attributed) = segments[0] else {
-            Issue.record("Expected .text segment"); return
-        }
-        let ns = NSAttributedString(attributed)
-        var foundUIFont = false
-        var isBold = false
-        ns.enumerateAttribute(.font, in: NSRange(location: 0, length: ns.length)) { value, _, _ in
-            if let font = value as? UIFont {
-                foundUIFont = true
-                isBold = font.fontDescriptor.symbolicTraits.contains(.traitBold)
-            }
-        }
-        #expect(foundUIFont, "Heading should use UIKit font key")
-        #expect(isBold, "H1 should be bold")
-    }
-
-    @Test func inlineCodeUsesUIKitColorAndFont() {
+    @Test func inlineCodeUsesUIKitColor() {
         let blocks: [MarkdownBlock] = [.paragraph([.text("Use "), .code("foo()"), .text(" here")])]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
         guard case .text(let attributed) = segments[0] else {
@@ -60,16 +39,18 @@ struct StreamFinishFormattingTests {
         #expect(codeRange.location != NSNotFound)
 
         let color = ns.attribute(.foregroundColor, at: codeRange.location, effectiveRange: nil) as? UIColor
-        let font = ns.attribute(.font, at: codeRange.location, effectiveRange: nil) as? UIFont
-
         #expect(color != nil, "Inline code should have UIColor")
-        #expect(font != nil, "Inline code should have UIFont")
-        if let font {
-            #expect(font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace), "Code font should be monospaced")
+
+        let baseFG = UIColor(darkPalette.fg)
+        if let color {
+            var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+            var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+            color.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+            baseFG.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+            let matches = abs(r1 - r2) < 0.02 && abs(g1 - g2) < 0.02 && abs(b1 - b2) < 0.02
+            #expect(!matches, "Code color should differ from base fg")
         }
     }
-
-    // MARK: - Applier: streaming -> finished preserves formatting
 
     @Test func applierPreservesColorsAfterStreamFinish() {
         let stackView = UIStackView()
@@ -83,7 +64,6 @@ struct StreamFinishFormattingTests {
         let blocks = parseCommonMark(markdown)
         let segments = FlatSegment.build(from: blocks, themeID: .dark)
 
-        // Stream then finish
         applier.apply(segments: segments, config: .init(content: markdown, isStreaming: true, themeID: .dark))
         applier.apply(segments: segments, config: .init(content: markdown, isStreaming: false, themeID: .dark))
 
@@ -94,24 +74,19 @@ struct StreamFinishFormattingTests {
         let baseFG = UIColor(darkPalette.fg)
         let codeRange = (attrText.string as NSString).range(of: "foo()")
         guard codeRange.location != NSNotFound else {
-            Issue.record("foo() not found in rendered text"); return
+            Issue.record("foo() not found"); return
         }
 
         let codeColor = attrText.attribute(.foregroundColor, at: codeRange.location, effectiveRange: nil) as? UIColor
         #expect(codeColor != nil, "Code should have UIColor after stream finish")
         if let codeColor {
-            #expect(!colorsMatch(codeColor, baseFG), "Code should keep distinct color after stream finish")
+            var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+            var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+            codeColor.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+            baseFG.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+            let matches = abs(r1 - r2) < 0.02 && abs(g1 - g2) < 0.02 && abs(b1 - b2) < 0.02
+            #expect(!matches, "Code color should differ from base fg after stream finish")
         }
-    }
-
-    // MARK: - Helpers
-
-    private func colorsMatch(_ a: UIColor, _ b: UIColor) -> Bool {
-        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
-        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
-        a.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
-        b.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-        return abs(r1 - r2) < 0.02 && abs(g1 - g2) < 0.02 && abs(b1 - b2) < 0.02
     }
 
     private func findTextViews(in view: UIView) -> [UITextView] {

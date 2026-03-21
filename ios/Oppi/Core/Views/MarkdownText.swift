@@ -1,15 +1,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - UIFont Bold Helper
-
-private extension UIFont {
-    func withBold() -> UIFont {
-        guard let descriptor = fontDescriptor.withSymbolicTraits(.traitBold) else { return self }
-        return UIFont(descriptor: descriptor, size: 0)
-    }
-}
-
 // MARK: - Global Segment Cache
 
 /// Process-wide cache for parsed markdown segments.
@@ -309,53 +300,28 @@ enum FlatSegment: Sendable {
 
     // MARK: - Block → AttributedString
 
-    // MARK: - UIFont helpers
-
-    private static func uiFont(forHeadingLevel level: Int) -> UIFont {
-        switch level {
-        case 1:
-            return UIFont.preferredFont(forTextStyle: .title1).withBold()
-        case 2:
-            return UIFont.preferredFont(forTextStyle: .title2).withBold()
-        case 3:
-            return UIFont.preferredFont(forTextStyle: .title3).withBold()
-        case 4:
-            return UIFont.preferredFont(forTextStyle: .headline)
-        case 5:
-            return UIFont.preferredFont(forTextStyle: .subheadline).withBold()
-        default:
-            return UIFont.preferredFont(forTextStyle: .subheadline)
-        }
-    }
-
-    private static let monoBodyFont: UIFont = {
-        UIFont.monospacedSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize,
-            weight: .regular
-        )
-    }()
-
-    private static let monoCaptionFont: UIFont = {
-        UIFont.monospacedSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize,
-            weight: .regular
-        )
-    }()
-
     private static func attributedString(for block: MarkdownBlock, palette: ThemePalette) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
-            let font = uiFont(forHeadingLevel: level)
+            // Font stays in SwiftUI scope (normalizedAttributedText fills body fallback).
+            let font: Font = switch level {
+            case 1: .title.bold()
+            case 2: .title2.bold()
+            case 3: .title3.bold()
+            case 4: .headline
+            case 5: .subheadline.bold()
+            default: .subheadline
+            }
             // Fast path: single text inline heading (common for simple headings).
             if inlines.count == 1, case .text(let string) = inlines[0] {
                 var container = AttributeContainer()
                 container.uiKit.foregroundColor = UIColor(palette.fg)
-                container.uiKit.font = font
+                container.font = font
                 return AttributedString(string, attributes: container)
             }
             var result = renderInlines(inlines, palette: palette)
             result.uiKit.foregroundColor = UIColor(palette.fg)
-            result.uiKit.font = font
+            result.font = font
             return result
 
         case .paragraph(let inlines):
@@ -434,7 +400,7 @@ enum FlatSegment: Sendable {
 
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
-            result.uiKit.font = monoCaptionFont
+            result.font = .system(.caption, design: .monospaced)
             result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
 
@@ -558,10 +524,9 @@ enum FlatSegment: Sendable {
             case .code(let code):
                 text += code
                 let end = text.utf8.count
-                let codeFont = monoBodyFont
                 let codeColor = UIColor(palette.cyan)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.font = codeFont
+                    sub.font = .system(.body, design: .monospaced)
                     sub.uiKit.foregroundColor = codeColor
                 })
             case .link(let children, let destination):
@@ -626,7 +591,7 @@ enum FlatSegment: Sendable {
             return result
         case .code(let code):
             var result = AttributedString(code)
-            result.uiKit.font = monoBodyFont
+            result.font = .system(.body, design: .monospaced)
             result.uiKit.foregroundColor = UIColor(palette.cyan)
             return result
         case .link(let children, let destination):
