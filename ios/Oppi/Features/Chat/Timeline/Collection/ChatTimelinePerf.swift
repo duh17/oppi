@@ -585,6 +585,29 @@ enum ChatTimelinePerf {
         scrollWindowCount &+= 1
     }
 
+    // MARK: - Jank Snapshot (bench / test access)
+
+    /// Current jank counters without resetting or emitting telemetry.
+    struct JankSnapshot {
+        let hitchCount: Int
+        let totalApplyCycles: Int
+        var pct: Double {
+            guard totalApplyCycles > 0 else { return 0 }
+            return Double(hitchCount) / Double(totalApplyCycles) * 100.0
+        }
+    }
+
+    /// Read current jank counters without resetting.
+    static func jankSnapshot() -> JankSnapshot {
+        JankSnapshot(hitchCount: hitchCount, totalApplyCycles: totalApplyCycles)
+    }
+
+    /// Reset jank counters without emitting. Use before a bench measurement window.
+    static func resetJankCounters() {
+        hitchCount = 0
+        totalApplyCycles = 0
+    }
+
     // MARK: - Jank Rate Emission
 
     /// Compute and emit `chat.jank_pct` — percentage of collection-apply cycles
