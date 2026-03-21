@@ -93,9 +93,13 @@ private func convertCMarkBlock(_ node: UnsafeMutablePointer<cmark_node>) -> Mark
 
     case CMARK_NODE_CODE_BLOCK:
         let rawCode = cmark_node_get_literal(node).flatMap { String(cString: $0) } ?? ""
-        let code = rawCode.hasSuffix("\n") ? String(rawCode.dropLast()) : rawCode
+        var code = rawCode.hasSuffix("\n") ? String(rawCode.dropLast()) : rawCode
         let lang = cmark_node_get_fence_info(node).flatMap { String(cString: $0) }
         let language = (lang?.isEmpty == false) ? lang : nil
+        // Strip trailing inner fences from 4+ backtick code blocks.
+        var fl: Int32 = 0; var fo: Int32 = 0; var fc: CChar = 0
+        cmark_node_get_fenced(node, &fl, &fo, &fc)
+        if fl > 3 { code = stripTrailingInnerFence(code) }
         return .codeBlock(language: language, code: code)
 
     case CMARK_NODE_BLOCK_QUOTE:
@@ -278,4 +282,32 @@ private func convertCMarkInline(_ node: UnsafeMutablePointer<cmark_node>) -> Mar
         }
         return nil
     }
+}
+
+// MARK: - Inner Fence Cleanup
+
+/// Strip a trailing fence-like line from code block content produced by 4+
+/// backtick/tilde fences. Only the LAST line is checked; internal fence lines
+/// are preserved for legitimate cases (e.g., markdown tutorials).
+private func stripTrailingInnerFence(_ code: String) -> String {
+    guard let lastNewline = code.lastIndex(of: "\n") else {
+        return isFenceLine(code) ? "" : code
+    }
+    let lastLine = code[code.index(after: lastNewline)...]
+    guard isFenceLine(lastLine) else { return code }
+    return String(code[..<lastNewline])
+}
+
+/// True if `line` consists only of 3+ backticks or tildes (optional whitespace).
+private func isFenceLine<S: StringProtocol>(_ line: S) -> Bool {
+    let trimmed = line.drop(while: { $0 == " " })
+    guard let fenceChar = trimmed.first,
+          fenceChar == "`" || fenceChar == "~" else { return false }
+    var count = 0
+    for char in trimmed {
+        if char == fenceChar { count += 1 }
+        else if char == " " { break }
+        else { return false }
+    }
+    return count >= 3
 }
