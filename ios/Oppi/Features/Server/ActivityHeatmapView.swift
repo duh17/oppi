@@ -47,8 +47,21 @@ struct ActivityHeatmapView: View {
             let weekCol = (dayDiff + oldestMonSun) / 7
             let displayRow = 6 - monSun
 
-            let dominant = entry.byModel?
-                .max(by: { $0.value.sessions < $1.value.sessions })?.key
+            // Aggregate by display name before picking dominant,
+            // so duplicate raw model names merge properly.
+            let dominant: String? = {
+                guard let byModel = entry.byModel else { return nil }
+                var byDisplay: [String: (raw: String, sessions: Int)] = [:]
+                for (model, data) in byModel {
+                    let name = displayModelName(model)
+                    if let existing = byDisplay[name] {
+                        byDisplay[name] = (existing.raw, existing.sessions + data.sessions)
+                    } else {
+                        byDisplay[name] = (model, data.sessions)
+                    }
+                }
+                return byDisplay.max(by: { $0.value.sessions < $1.value.sessions })?.value.raw
+            }()
 
             return HeatCell(
                 id: "\(weekCol)-\(displayRow)",
@@ -124,13 +137,25 @@ struct ActivityHeatmapView: View {
 
     private var legendRow: some View {
         HStack(spacing: 8) {
-            let models = Array(Set(cells.compactMap(\.dominantModel))).sorted()
-            ForEach(models, id: \.self) { model in
+            // Dedupe legend by display name to avoid showing
+            // e.g. "opus-4-6" twice from different raw model strings.
+            let uniqueByDisplay: [(name: String, raw: String)] = {
+                var seen: Set<String> = []
+                var result: [(String, String)] = []
+                for raw in cells.compactMap(\.dominantModel).sorted() {
+                    let name = displayModelName(raw)
+                    if seen.insert(name).inserted {
+                        result.append((name, raw))
+                    }
+                }
+                return result
+            }()
+            ForEach(uniqueByDisplay, id: \.name) { name, raw in
                 HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(modelColor(model))
+                        .fill(modelColor(raw))
                         .frame(width: 8, height: 8)
-                    Text(displayModelName(model))
+                    Text(name)
                         .font(.caption2)
                         .foregroundStyle(.themeComment)
                 }

@@ -34,13 +34,26 @@ struct DailyCostChartView: View {
 
     // MARK: - Derived data
 
+    /// Aggregate by display name per day so duplicate raw model names
+    /// (e.g. "anthropic/claude-opus-4-6-20250514" and "claude-opus-4-6")
+    /// merge into one bar segment with consistent color.
     private var chartData: [ModelDayCost] {
         var result: [ModelDayCost] = []
         for entry in daily {
             guard let date = Self.dateParser.date(from: entry.date) else { continue }
             if let byModel = entry.byModel, !byModel.isEmpty {
+                // Group by display name to merge duplicates
+                var byDisplay: [String: (raw: String, cost: Double)] = [:]
                 for (model, data) in byModel where data.cost > 0 {
-                    result.append(ModelDayCost(date: date, model: model, cost: data.cost))
+                    let name = displayModelName(model)
+                    if let existing = byDisplay[name] {
+                        byDisplay[name] = (existing.raw, existing.cost + data.cost)
+                    } else {
+                        byDisplay[name] = (model, data.cost)
+                    }
+                }
+                for (_, value) in byDisplay {
+                    result.append(ModelDayCost(date: date, model: value.raw, cost: value.cost))
                 }
             } else if entry.cost > 0 {
                 result.append(ModelDayCost(date: date, model: "other", cost: entry.cost))
