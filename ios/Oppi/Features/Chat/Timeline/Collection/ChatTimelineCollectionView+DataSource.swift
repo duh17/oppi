@@ -209,7 +209,12 @@ extension ChatTimelineCollectionHost.Controller {
                 return
             }
 
-            cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(themeID: self.currentThemeID)
+            let modelId = self.connection?.sessionStore.sessions
+                .first(where: { $0.id == self.sessionId })?.model
+            cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
+                themeID: self.currentThemeID,
+                modelId: modelId
+            )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             ChatTimelinePerf.recordCellConfigure(
                 rowType: "working_indicator",
