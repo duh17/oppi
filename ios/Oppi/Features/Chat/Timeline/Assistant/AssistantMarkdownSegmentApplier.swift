@@ -89,10 +89,7 @@ final class AssistantMarkdownSegmentApplier {
             case .text(let attributed):
                 let textView = makeTextView(palette: palette)
                 textView.isSelectable = config.textSelectionEnabled
-                textView.attributedText = Self.normalizedAttributedText(
-                    from: attributed,
-                    palette: palette
-                )
+                textView.attributedText = NSAttributedString(attributed)
                 stackView.addArrangedSubview(textView)
                 textViews[index] = textView
 
@@ -156,15 +153,10 @@ final class AssistantMarkdownSegmentApplier {
                 if let textView = textViews[index] {
                     textView.isSelectable = config.textSelectionEnabled
 
-                    // normalizedAttributedText sets UIKit foreground color and
-                    // body font on all ranges. Required because FlatSegment.build
-                    // uses SwiftUI AttributedString scope (.foregroundColor = Color)
-                    // which stores under "SwiftUI.ForegroundColor" — invisible to
-                    // UITextView without normalization (renders as black text).
-                    let attrText = Self.normalizedAttributedText(
-                        from: attributed,
-                        palette: palette
-                    )
+                    // FlatSegment.build uses UIKit attribute scope (UIFont/UIColor)
+                    // directly, so direct conversion produces correct NSAttributedString
+                    // attributes — no normalization pass needed.
+                    let attrText = NSAttributedString(attributed)
                     textView.attributedText = attrText
 
                     // Smooth reveal for the last (actively growing) text segment during streaming.
@@ -279,55 +271,6 @@ final class AssistantMarkdownSegmentApplier {
         hr.translatesAutoresizingMaskIntoConstraints = false
         hr.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return hr
-    }
-
-    private static func normalizedAttributedText(
-        from attributed: AttributedString,
-        palette: ThemePalette
-    ) -> NSAttributedString {
-        let mutable = NSMutableAttributedString(attributedString: NSAttributedString(attributed))
-        let fullRange = NSRange(location: 0, length: mutable.length)
-        guard fullRange.length > 0 else { return mutable }
-
-        let baseFont = UIFont.preferredFont(forTextStyle: .body)
-        let baseColor = UIColor(palette.fg)
-        let baseLuminance = perceivedLuminance(of: baseColor)
-        let shouldCorrectDarkText = baseLuminance > 0.55
-
-        mutable.enumerateAttributes(in: fullRange) { attributes, range, _ in
-            var updates: [NSAttributedString.Key: Any] = [:]
-
-            if attributes[.font] == nil {
-                updates[.font] = baseFont
-            }
-
-            if let color = attributes[.foregroundColor] as? UIColor {
-                if shouldCorrectDarkText && perceivedLuminance(of: color) < 0.2 {
-                    updates[.foregroundColor] = baseColor
-                }
-            } else {
-                updates[.foregroundColor] = baseColor
-            }
-
-            if !updates.isEmpty {
-                mutable.addAttributes(updates, range: range)
-            }
-        }
-
-        return mutable
-    }
-
-    private static func perceivedLuminance(of color: UIColor) -> CGFloat {
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else {
-            var white: CGFloat = 0
-            guard color.getWhite(&white, alpha: &a) else { return 0 }
-            return white
-        }
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
 
     private func scheduleHighlight(index: Int, language: String?, code: String) {
