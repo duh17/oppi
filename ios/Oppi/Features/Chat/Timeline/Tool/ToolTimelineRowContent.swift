@@ -202,26 +202,23 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let fullScreenTerminalStream: TerminalTraceStream
     private let fullScreenSourceStream: SourceTraceStream
 
-    private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCommandDoubleTap))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = true
-        return recognizer
-    }()
+    private lazy var commandDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleCommandDoubleTap),
+        cancelsTouchesInView: true
+    )
 
-    private lazy var outputDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleOutputDoubleTap))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = true
-        return recognizer
-    }()
+    private lazy var outputDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleOutputDoubleTap),
+        cancelsTouchesInView: true
+    )
 
-    private lazy var expandedDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleExpandedDoubleTap))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = true
-        return recognizer
-    }()
+    private lazy var expandedDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleExpandedDoubleTap),
+        cancelsTouchesInView: true
+    )
 
     private lazy var expandedPinchGesture: UIPinchGestureRecognizer = {
         let recognizer = UIPinchGestureRecognizer(target: self, action: #selector(handleExpandedPinch(_:)))
@@ -229,29 +226,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return recognizer
     }()
 
-    private lazy var commandSingleTapBlocker: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(ignoreTap))
-        recognizer.numberOfTapsRequired = 1
-        recognizer.cancelsTouchesInView = true
-        recognizer.require(toFail: commandDoubleTapGesture)
-        return recognizer
-    }()
-
-    private lazy var outputSingleTapBlocker: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(ignoreTap))
-        recognizer.numberOfTapsRequired = 1
-        recognizer.cancelsTouchesInView = true
-        recognizer.require(toFail: outputDoubleTapGesture)
-        return recognizer
-    }()
-
-    private lazy var expandedSingleTapBlocker: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(ignoreTap))
-        recognizer.numberOfTapsRequired = 1
-        recognizer.cancelsTouchesInView = true
-        recognizer.require(toFail: expandedDoubleTapGesture)
-        return recognizer
-    }()
+    private lazy var commandSingleTapBlocker = makeTapBlocker(requiringFailureOf: commandDoubleTapGesture)
+    private lazy var outputSingleTapBlocker = makeTapBlocker(requiringFailureOf: outputDoubleTapGesture)
+    private lazy var expandedSingleTapBlocker = makeTapBlocker(requiringFailureOf: expandedDoubleTapGesture)
 
     init(configuration: ToolTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -1379,9 +1356,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
     #endif
 
-    @objc private func ignoreTap() {
-        // Intentionally empty: consumes single taps inside copy-target areas so
-        // collection-view row selection does not interfere with copy gestures.
+    /// Creates a target-less tap recognizer that consumes single taps so the
+    /// collection view's row-selection tap doesn't fire through gesture-enabled
+    /// containers. Waits for the paired double-tap to fail before recognizing.
+    private func makeTapBlocker(
+        requiringFailureOf doubleTap: UITapGestureRecognizer
+    ) -> UITapGestureRecognizer {
+        let r = UITapGestureRecognizer()
+        r.require(toFail: doubleTap)
+        return r
     }
 
     @objc private func handleCommandDoubleTap() {

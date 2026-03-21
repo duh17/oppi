@@ -54,11 +54,12 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     private var currentConfiguration: CompactionTimelineRowConfiguration
 
     private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleContainerDoubleTapCopy))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = false
-        recognizer.delegate = self
-        return recognizer
+        let gesture = DoubleTapCopyGesture.makeGesture(
+            target: self,
+            action: #selector(handleContainerDoubleTapCopy)
+        )
+        gesture.delegate = self
+        return gesture
     }()
 
     init(configuration: CompactionTimelineRowConfiguration) {

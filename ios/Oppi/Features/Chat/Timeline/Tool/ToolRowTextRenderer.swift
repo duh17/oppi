@@ -65,7 +65,7 @@ enum ToolRowTextRenderer {
         return ANSIOutputPresentation(
             attributedText: withMonospaceFont(
                 SyntaxHighlighter.highlight(text, language: language),
-                font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                font: ToolFont.regular
             ),
             plainText: nil
         )
@@ -112,15 +112,10 @@ enum ToolRowTextRenderer {
 
         rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
         rendered.addAttribute(.foregroundColor, value: UIColor(Color.themeFg), range: fullRange)
-        rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            if value == nil {
-                rendered.addAttribute(
-                    .font,
-                    value: UIFont.systemFont(ofSize: 12, weight: .regular),
-                    range: range
-                )
-            }
-        }
+        AttributedStringNormalizer.ensureFont(
+            in: rendered,
+            fallback: .systemFont(ofSize: 12, weight: .regular)
+        )
 
         return rendered
     }
@@ -144,8 +139,8 @@ enum ToolRowTextRenderer {
         let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
         let separatorColor = UIColor(Color.themeComment.opacity(0.35))
         let foregroundColor = UIColor(Color.themeFg)
-        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        let lineNumberFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let codeFont = ToolFont.regular
+        let lineNumberFont = ToolFont.small
 
         // Phase 1: Build the full guttered text using NSMutableString (avoids
         // Swift String += copy-on-write overhead). Track per-line offsets manually
@@ -283,7 +278,7 @@ enum ToolRowTextRenderer {
                 NSAttributedString(
                     string: "No textual changes",
                     attributes: [
-                        .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                        .font: ToolFont.regular,
                         .foregroundColor: UIColor(Color.themeComment),
                         .paragraphStyle: paragraph,
                     ]
@@ -293,9 +288,9 @@ enum ToolRowTextRenderer {
         }
 
         // Pre-compute reusable attributes (avoids per-line dictionary allocations).
-        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        let numFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        let prefixFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
+        let codeFont = ToolFont.regular
+        let numFont = ToolFont.small
+        let prefixFont = ToolFont.regularBold
 
         let addedBg = UIColor(Color.themeDiffAdded.opacity(0.20))
         let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.18))
@@ -325,7 +320,7 @@ enum ToolRowTextRenderer {
             .font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph,
         ]
         let omissionAttrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+            .font: ToolFont.small,
             .foregroundColor: UIColor(Color.themeComment),
             .paragraphStyle: paragraph,
         ]
@@ -659,7 +654,7 @@ enum ToolRowTextRenderer {
     static func shellHighlighted(_ text: String) -> NSAttributedString {
         withMonospaceFont(
             SyntaxHighlighter.highlight(text, language: .shell),
-            font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            font: ToolFont.regular
         )
     }
 
@@ -678,7 +673,7 @@ enum ToolRowTextRenderer {
             return shellHighlighted(text)
         }
 
-        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let font = ToolFont.regular
         let result = NSMutableAttributedString()
 
         for segment in segments {
@@ -716,7 +711,7 @@ enum ToolRowTextRenderer {
         let base = NSMutableAttributedString(
             string: title,
             attributes: [
-                .font: UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold),
+                .font: ToolFont.title,
                 .foregroundColor: UIColor(Color.themeFg),
             ]
         )

@@ -150,7 +150,7 @@ struct ToolRowCodeRenderStrategy {
         label.attributedText = nil
         label.text = text
         label.textColor = UIColor(.themeFg)
-        label.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        label.font = ToolFont.regular
     }
 
     static func languageCategory(

@@ -38,7 +38,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if let filePath, !filePath.isEmpty {
             let pathLabel = UILabel()
-            pathLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            pathLabel.font = ToolFont.small
             pathLabel.textColor = UIColor(palette.comment)
             pathLabel.numberOfLines = 1
             pathLabel.lineBreakMode = .byTruncatingMiddle
@@ -48,7 +48,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if !parsed.strippedText.isEmpty {
             let textLabel = UILabel()
-            textLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            textLabel.font = ToolFont.regular
             textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
             textLabel.numberOfLines = 0
             textLabel.text = String(parsed.strippedText.prefix(3_000))
@@ -57,7 +57,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if !parsed.images.isEmpty {
             let hint = UILabel()
-            hint.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            hint.font = ToolFont.regular
             hint.textColor = UIColor(palette.comment)
             hint.numberOfLines = 0
             hint.text = imageAttachmentHint(count: parsed.images.count)
@@ -66,14 +66,14 @@ final class NativeExpandedReadMediaView: UIView {
 
         if !parsed.audio.isEmpty {
             let countLabel = UILabel()
-            countLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+            countLabel.font = ToolFont.smallBold
             countLabel.textColor = UIColor(palette.comment)
             countLabel.text = "Audio (\(parsed.audio.count))"
             rootStack.addArrangedSubview(countLabel)
 
             for (index, clip) in parsed.audio.prefix(6).enumerated() {
                 let row = UILabel()
-                row.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+                row.font = ToolFont.regular
                 row.textColor = UIColor(palette.fg)
                 row.numberOfLines = 1
                 row.lineBreakMode = .byTruncatingTail
@@ -82,7 +82,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
             if parsed.audio.count > 6 {
                 let more = UILabel()
-                more.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+                more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(parsed.audio.count - 6) more audio attachment(s)"
                 rootStack.addArrangedSubview(more)
@@ -91,7 +91,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.audio.isEmpty {
             let empty = UILabel()
-            empty.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
             empty.numberOfLines = 0
             empty.text = "No readable media output"
@@ -183,3 +183,4 @@ private enum NativeExpandedReadMediaParser {
         )
     }
 }
+

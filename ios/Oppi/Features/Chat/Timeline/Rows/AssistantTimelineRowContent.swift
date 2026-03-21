@@ -61,12 +61,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
 
-    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = false
-        return recognizer
-    }()
+    private lazy var copyDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
+        target: self,
+        action: #selector(handleBubbleDoubleTapCopy)
+    )
 
     init(configuration: AssistantTimelineRowConfiguration) {
         self.currentConfiguration = configuration
