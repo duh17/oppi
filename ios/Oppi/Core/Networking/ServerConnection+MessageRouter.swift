@@ -431,6 +431,21 @@ extension ServerConnection {
             return
         }
 
+        // Subscribe/unsubscribe are stream plumbing — never surface in timeline.
+        // Failures are already handled by SessionStreamCoordinator catch blocks.
+        // Without this guard, eagerly-resolved command_results that also flow
+        // through the per-session AsyncStream fall through to the coalescer
+        // and render as error banners (e.g. "subscribe failed: rate limit").
+        if command == "subscribe" || command == "unsubscribe" {
+            if let requestId {
+                _ = commands.resolveCommandResult(
+                    command: command, requestId: requestId,
+                    success: success, data: data, error: error
+                )
+            }
+            return
+        }
+
         if command == "get_commands" {
             handleSlashCommandsResult(
                 requestId: requestId,
