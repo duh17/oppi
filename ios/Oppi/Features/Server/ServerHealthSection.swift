@@ -26,9 +26,10 @@ struct ServerHealthSection: View {
 
     // MARK: - Memory bar
 
-    private var heapUsedMB: Int { Int(memory.heapUsed / (1024 * 1024)) }
-    private var heapTotalMB: Int { Int(memory.heapTotal / (1024 * 1024)) }
-    private var rssMB: Int { Int(memory.rss / (1024 * 1024)) }
+    // Server returns memory values already in MB.
+    private var heapUsedMB: Int { Int(memory.heapUsed.rounded()) }
+    private var heapTotalMB: Int { Int(memory.heapTotal.rounded()) }
+    private var rssMB: Int { Int(memory.rss.rounded()) }
 
     private var heapFraction: Double {
         guard memory.heapTotal > 0 else { return 0 }
