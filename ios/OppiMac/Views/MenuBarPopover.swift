@@ -15,25 +15,6 @@ struct MenuBarPopover: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
 
-                // Status header
-                HStack {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                    Text(statusLabel)
-                        .font(.headline)
-                }
-
-                if let info = healthMonitor.serverInfo {
-                    Text(info.serverURL)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                permissionsRow
-
-                Divider()
-
                 // Tab switcher
                 Picker("", selection: $selectedTab) {
                     Text("Sessions").tag(0)
@@ -52,6 +33,26 @@ struct MenuBarPopover: View {
                 }
 
                 Divider()
+
+                // Server status
+                HStack {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                    Text(statusLabel)
+                        .font(.caption)
+                        .fontWeight(.medium)
+
+                    Spacer()
+
+                    if let info = healthMonitor.serverInfo {
+                        Text(info.serverURL)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                permissionsRow
 
                 serverControls
 
