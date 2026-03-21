@@ -71,12 +71,15 @@ extension AppTab {
     var rawString: String {
         switch self {
         case .workspaces: return "workspaces"
+        case .server: return "server"
         case .settings: return "settings"
         }
     }
 
     init(rawString: String) {
         switch rawString {
+        case "server":
+            self = .server
         case "settings":
             self = .settings
         default:

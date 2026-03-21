@@ -52,5 +52,6 @@ struct QuickSessionNav {
 
 enum AppTab: Hashable {
     case workspaces
+    case server
     case settings
 }
