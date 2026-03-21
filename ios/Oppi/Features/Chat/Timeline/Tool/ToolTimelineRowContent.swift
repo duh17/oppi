@@ -783,6 +783,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func apply(configuration: ToolTimelineRowConfiguration) {
+        // 1. Save previous state
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
@@ -793,6 +794,109 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isDone: configuration.isDone
         )
 
+        // 2. Header: title, icon, badge, trailing, preview
+        let showPreview = applyHeader(configuration: configuration)
+
+        // Collapsed image thumbnail for read tool image files
+        applyImagePreview(configuration: configuration)
+
+        // 3. Build render plan and dispatch expanded content
+        let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
+        let renderPlan = ToolRowPlanBuilder.build(configuration: configuration)
+        let wasExpandedVisible = !expandedContainer.isHidden
+        let wasCommandVisible = !commandContainer.isHidden
+        let wasOutputVisible = !outputContainer.isHidden
+
+        expandedNeedsFollowTail = false
+        setExpandedContainerGestureInterceptionEnabled(true)
+        currentInteractionPolicy = renderPlan.interactionPolicy
+        updateFullScreenSourceStream(configuration: configuration)
+
+        var showExpanded = false
+        var showCommand = false
+        var showOutput = false
+        var activeExpandedContent: ToolPresentationBuilder.ToolExpandedContent?
+
+        if configuration.isExpanded, let expandedContent = configuration.expandedContent {
+            activeExpandedContent = expandedContent
+
+            if case .bash(let command, let output, let unwrapped) = expandedContent {
+                cancelDeferredCodeHighlight()
+                hideExpandedContainer(outputColor: outputColor)
+
+                let input = BashRenderInput(
+                    command: command,
+                    output: output,
+                    unwrapped: unwrapped,
+                    isError: configuration.isError,
+                    isStreaming: !configuration.isDone
+                )
+                let result = bashToolRowView.apply(
+                    input: input,
+                    outputColor: outputColor,
+                    wasOutputVisible: wasOutputVisible
+                )
+
+                if result.showOutput {
+                    bashToolRowView.setOutputVerticalLockEnabled(bashToolRowView.outputUsesUnwrappedLayout)
+                    bashToolRowView.updateOutputLabelWidthIfNeeded()
+                } else {
+                    bashToolRowView.setOutputVerticalLockEnabled(false)
+                }
+
+                showCommand = result.showCommand
+                showOutput = result.showOutput
+            } else {
+                let output = makeExpandedRenderOutput(
+                    expandedContent: expandedContent,
+                    configuration: configuration,
+                    renderPlan: renderPlan,
+                    outputColor: outputColor,
+                    wasExpandedVisible: wasExpandedVisible
+                )
+                applyExpandedRenderOutput(output)
+                showExpanded = true
+            }
+        }
+
+        // 4. Container visibility
+        applyContainerVisibility(
+            showExpanded: showExpanded,
+            showCommand: showCommand,
+            showOutput: showOutput,
+            isExpandingTransition: isExpandingTransition,
+            wasExpandedVisible: wasExpandedVisible,
+            wasCommandVisible: wasCommandVisible,
+            wasOutputVisible: wasOutputVisible,
+            outputColor: outputColor
+        )
+
+        // 5. Interactions, selected text, viewport updates, follow-tail
+        applyInteractionsAndScrolling(
+            plan: renderPlan,
+            showCommand: showCommand,
+            showOutput: showOutput,
+            showExpanded: showExpanded,
+            showPreview: showPreview,
+            expandedContent: activeExpandedContent,
+            configuration: configuration,
+            isExpandingTransition: isExpandingTransition
+        )
+
+        // 6. Status appearance
+        ToolTimelineRowDisplayState.applyStatusAppearance(
+            isDone: configuration.isDone,
+            isError: configuration.isError,
+            statusImageView: statusImageView,
+            borderView: borderView
+        )
+    }
+
+    // MARK: - apply() decomposition
+
+    /// Apply header elements: title, tool icon, language badge, trailing labels, preview.
+    /// Returns whether the preview label is visible.
+    private func applyHeader(configuration: ToolTimelineRowConfiguration) -> Bool {
         ToolTimelineRowDisplayState.applyTitle(
             configuration: configuration,
             titleLabel: titleLabel
@@ -821,122 +925,75 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             trailingLabel: trailingLabel
         )
 
-        let showPreview = ToolTimelineRowDisplayState.applyPreview(
+        return ToolTimelineRowDisplayState.applyPreview(
             configuration: configuration,
             previewLabel: previewLabel
         )
+    }
 
-        // Collapsed image thumbnail for read tool image files
-        applyImagePreview(configuration: configuration)
-
-        let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
-        let renderPlan = ToolRowPlanBuilder.build(configuration: configuration)
-        let wasExpandedVisible = !expandedContainer.isHidden
-        let wasCommandVisible = !commandContainer.isHidden
-        let wasOutputVisible = !outputContainer.isHidden
-
-        // Reset follow-tail flags; render strategies will set them if needed.
-        expandedNeedsFollowTail = false
-
-        // Reset gesture interception (specific cases disable it below)
-        setExpandedContainerGestureInterceptionEnabled(true)
-        currentInteractionPolicy = renderPlan.interactionPolicy
-        updateFullScreenSourceStream(configuration: configuration)
-
-        var showExpandedContainer = false
-        var showCommandContainer = false
-        var showOutputContainer = false
-        var activeExpandedContent: ToolPresentationBuilder.ToolExpandedContent?
-
-        if configuration.isExpanded, let expandedContent = configuration.expandedContent {
-            activeExpandedContent = expandedContent
-
-            if case .bash(let command, let output, let unwrapped) = expandedContent {
-                // Bash mode: uses command/output containers, not expanded container.
-                cancelDeferredCodeHighlight()
-                hideExpandedContainer(outputColor: outputColor)
-
-                let input = BashRenderInput(
-                    command: command,
-                    output: output,
-                    unwrapped: unwrapped,
-                    isError: configuration.isError,
-                    isStreaming: !configuration.isDone
-                )
-                let result = bashToolRowView.apply(
-                    input: input,
-                    outputColor: outputColor,
-                    wasOutputVisible: wasOutputVisible
-                )
-
-                if result.showOutput {
-                    bashToolRowView.setOutputVerticalLockEnabled(bashToolRowView.outputUsesUnwrappedLayout)
-                    bashToolRowView.updateOutputLabelWidthIfNeeded()
-                } else {
-                    bashToolRowView.setOutputVerticalLockEnabled(false)
-                }
-
-                showCommandContainer = result.showCommand
-                showOutputContainer = result.showOutput
-            } else {
-                // All non-bash modes use the expanded container.
-                let output = makeExpandedRenderOutput(
-                    expandedContent: expandedContent,
-                    configuration: configuration,
-                    renderPlan: renderPlan,
-                    outputColor: outputColor,
-                    wasExpandedVisible: wasExpandedVisible
-                )
-                applyExpandedRenderOutput(output)
-                showExpandedContainer = true
-            }
-        }
-
-        // Hide containers that aren't needed by the active content
-        if !showExpandedContainer {
+    /// Show/hide containers based on which content is active.
+    private func applyContainerVisibility(
+        showExpanded: Bool,
+        showCommand: Bool,
+        showOutput: Bool,
+        isExpandingTransition: Bool,
+        wasExpandedVisible: Bool,
+        wasCommandVisible: Bool,
+        wasOutputVisible: Bool,
+        outputColor: UIColor
+    ) {
+        if !showExpanded {
             hideExpandedContainer(outputColor: outputColor)
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
             expandedContainer,
-            shouldShow: showExpandedContainer,
+            shouldShow: showExpanded,
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasExpandedVisible
         )
 
-        if !showCommandContainer {
+        if !showCommand {
             bashToolRowView.resetCommandState()
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
             commandContainer,
-            shouldShow: showCommandContainer,
+            shouldShow: showCommand,
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasCommandVisible
         )
 
-        if !showOutputContainer {
-            // resetOutputState() resets contentOffset, which synchronously triggers
-            // scrollViewDidScroll inside BashToolRowView — no exclusivity hazard
-            // since all state is now internal to BashToolRowView.
+        if !showOutput {
             bashToolRowView.resetOutputState(outputColor: outputColor)
             bashToolRowView.updateOutputLabelWidthIfNeeded()
             outputScrollView.isScrollEnabled = false
             bashToolRowView.setOutputVerticalLockEnabled(false)
         }
-        // Also hide the bash container when neither command nor output shows.
-        bashToolRowView.isHidden = !showCommandContainer && !showOutputContainer
+        bashToolRowView.isHidden = !showCommand && !showOutput
         ToolTimelineRowDisplayState.applyContainerVisibility(
             outputContainer,
-            shouldShow: showOutputContainer,
+            shouldShow: showOutput,
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasOutputVisible
         )
+    }
 
+    /// Apply interaction policy, selected text integration, viewport heights, and follow-tail.
+    private func applyInteractionsAndScrolling(
+        plan: ToolRowRenderPlan,
+        showCommand: Bool,
+        showOutput: Bool,
+        showExpanded: Bool,
+        showPreview: Bool,
+        expandedContent: ToolPresentationBuilder.ToolExpandedContent?,
+        configuration: ToolTimelineRowConfiguration,
+        isExpandingTransition: Bool
+    ) {
         if let policy = currentInteractionPolicy,
-           showExpandedContainer || showOutputContainer {
+           showExpanded || showOutput {
             applyInteractionPolicy(
                 policy,
-                spec: renderPlan.interactionSpec,
-                showOutputContainer: showOutputContainer
+                spec: plan.interactionSpec,
+                showOutputContainer: showOutput
             )
         } else {
             setExpandedContainerGestureInterceptionEnabled(true)
@@ -945,32 +1002,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         updateSelectedTextIntegration(
-            plan: renderPlan,
-            showCommandContainer: showCommandContainer,
-            showOutputContainer: showOutputContainer,
-            showExpandedContainer: showExpandedContainer,
-            expandedContent: activeExpandedContent
+            plan: plan,
+            showCommandContainer: showCommand,
+            showOutputContainer: showOutput,
+            showExpandedContainer: showExpanded,
+            expandedContent: expandedContent
         )
 
         let showImagePreview = !imagePreviewContainer.isHidden
-        let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
+        let showBody = showPreview || showImagePreview || showExpanded || showCommand || showOutput
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
 
-        if isExpandingTransition, showExpandedContainer || showOutputContainer {
+        if isExpandingTransition, showExpanded || showOutput {
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
 
-        // Drive auto-scroll after containers are visible and have valid bounds.
         flushPendingFollowTail()
-
-        ToolTimelineRowDisplayState.applyStatusAppearance(
-            isDone: configuration.isDone,
-            isError: configuration.isError,
-            statusImageView: statusImageView,
-            borderView: borderView
-        )
     }
 
     // MARK: - Expanded render dispatch + apply
