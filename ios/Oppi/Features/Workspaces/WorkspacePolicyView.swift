@@ -51,7 +51,7 @@ struct WorkspacePolicyView: View {
                     Text("No remembered rules for this workspace.")
                         .foregroundStyle(.themeComment)
                 } else {
-                    ForEach(rules.prefix(25)) { rule in
+                    ForEach(rules) { rule in
                         Button {
                             rememberedRuleDraft = RememberedRuleDraft(rule: rule)
                         } label: {
@@ -66,12 +66,6 @@ struct WorkspacePolicyView: View {
                             }
                         }
                     }
-
-                    if rules.count > 25 {
-                        Text("Showing 25 of \(rules.count) rules")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
                 }
             }
 
@@ -80,7 +74,7 @@ struct WorkspacePolicyView: View {
                     Text("No recent policy decisions.")
                         .foregroundStyle(.themeComment)
                 } else {
-                    ForEach(auditEntries.prefix(30)) { entry in
+                    ForEach(auditEntries) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(entry.displaySummary)
                                 .font(.subheadline)
@@ -99,12 +93,6 @@ struct WorkspacePolicyView: View {
                             }
                         }
                         .padding(.vertical, 2)
-                    }
-
-                    if auditEntries.count > 30 {
-                        Text("Showing 30 of \(auditEntries.count) entries")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
                     }
                 }
             }
