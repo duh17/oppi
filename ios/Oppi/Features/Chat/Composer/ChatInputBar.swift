@@ -41,6 +41,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let onExpand: () -> Void
     let externalFocusRequestID: Int
     let appliesOuterPadding: Bool
+    var alwaysShowActionRow: Bool = false
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -141,7 +142,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        isBusy || isInputFocused || !pendingImages.isEmpty || !pendingFiles.isEmpty
+        alwaysShowActionRow || isBusy || isInputFocused || !pendingImages.isEmpty || !pendingFiles.isEmpty
     }
 
     /// Tapping the input while voice is active should switch back to typing:
