@@ -3,14 +3,10 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// Measures viewport stability when structural items are inserted into
-/// the timeline during streaming. The primary metric captures the
-/// contentOffset deviation caused by each type of structural insert.
-///
-/// Since UICollectionViewDiffableDataSource.apply(animatingDifferences: false)
-/// resolves all cell heights synchronously, the drift measurement captures
-/// the offset jump that occurs during the snapshot apply + forced layout
-/// cycle. Lower = more stable.
+/// Measures viewport stability when structural items are inserted and
+/// during streaming text updates. The primary metric captures the total
+/// height mismatch between what UIKit has resolved after snapshot apply
+/// vs after explicit layout. Lower = smoother.
 @Suite("InsertStabilityBench")
 struct InsertStabilityBench {
 
@@ -22,7 +18,7 @@ struct InsertStabilityBench {
         var allToolDrift: [Double] = []
         var allSystemDrift: [Double] = []
         var allPermDrift: [Double] = []
-        var allMultiDrift: [Double] = []
+        var allStreamDrift: [Double] = []
         var allTotalMs: [Double] = []
         var inv_allFinite = true
 
@@ -33,7 +29,7 @@ struct InsertStabilityBench {
             allToolDrift.append(r.toolDrift)
             allSystemDrift.append(r.systemDrift)
             allPermDrift.append(r.permissionDrift)
-            allMultiDrift.append(r.multiDrift)
+            allStreamDrift.append(r.streamingDrift)
             allTotalMs.append(r.totalInsertMs)
 
             if !r.allFinite { inv_allFinite = false }
@@ -42,19 +38,19 @@ struct InsertStabilityBench {
         let toolDrift = median(allToolDrift)
         let sysDrift = median(allSystemDrift)
         let permDrift = median(allPermDrift)
-        let multiDrift = median(allMultiDrift)
+        let streamDrift = median(allStreamDrift)
         let totalMs = median(allTotalMs)
 
         let score = toolDrift * 3
             + sysDrift * 2
             + permDrift * 3
-            + multiDrift * 2
+            + streamDrift * 2
 
         print("METRIC insert_stability_score=\(fmt(score))")
         print("METRIC tool_insert_drift_pt=\(fmt(toolDrift))")
         print("METRIC system_insert_drift_pt=\(fmt(sysDrift))")
         print("METRIC permission_insert_drift_pt=\(fmt(permDrift))")
-        print("METRIC multi_insert_drift_pt=\(fmt(multiDrift))")
+        print("METRIC streaming_bubble_drift_pt=\(fmt(streamDrift))")
         print("METRIC total_insert_ms=\(fmt(totalMs))")
 
         print("INVARIANT all_finite=\(inv_allFinite ? "pass" : "FAIL")")
@@ -69,7 +65,7 @@ struct InsertStabilityBench {
         let toolDrift: Double
         let systemDrift: Double
         let permissionDrift: Double
-        let multiDrift: Double
+        let streamingDrift: Double
         let totalInsertMs: Double
         let allFinite: Bool
     }
@@ -113,12 +109,8 @@ struct InsertStabilityBench {
 
         var totalInsertNs: UInt64 = 0
 
-        // --- Test 1: Tool call in animation context ---
-        // Simulate what happens in production when a SwiftUI animation
-        // transaction wraps the updateUIView call (e.g. from PermissionOverlay).
-        let toolDrift = measureInsertWithAnimationContext(
-            harness: harness, cv: cv, totalNs: &totalInsertNs
-        ) {
+        // --- Test 1: Tool call insertion ---
+        let toolDrift = measureDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             let toolId = "bench-tool-1"
             reducer.processBatch([
                 .toolStart(
@@ -136,17 +128,23 @@ struct InsertStabilityBench {
                 .toolEnd(sessionId: "bench", toolEventId: toolId, isError: false),
             ])
             harness.items = reducer.items
+            harness.applyItems(
+                streamingID: reducer.streamingAssistantID,
+                isBusy: true
+            )
         }
         settle(harness: harness, cv: cv, reducer: reducer)
 
-        // --- Test 2: System event in animation context ---
-        let sysDrift = measureInsertWithAnimationContext(
-            harness: harness, cv: cv, totalNs: &totalInsertNs
-        ) {
+        // --- Test 2: System event ---
+        let sysDrift = measureDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             reducer.processBatch([
                 .compactionStart(sessionId: "bench", reason: "overflow"),
             ])
             harness.items = reducer.items
+            harness.applyItems(
+                streamingID: reducer.streamingAssistantID,
+                isBusy: true
+            )
         }
         reducer.processBatch([
             .compactionEnd(
@@ -159,10 +157,8 @@ struct InsertStabilityBench {
         ])
         settle(harness: harness, cv: cv, reducer: reducer)
 
-        // --- Test 3: Permission resolved in animation context ---
-        let permDrift = measureInsertWithAnimationContext(
-            harness: harness, cv: cv, totalNs: &totalInsertNs
-        ) {
+        // --- Test 3: Permission resolved ---
+        let permDrift = measureDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
             reducer.resolvePermission(
                 id: "bench-perm-1",
                 outcome: .allowed,
@@ -170,37 +166,34 @@ struct InsertStabilityBench {
                 summary: "rm -rf /tmp/test"
             )
             harness.items = reducer.items
+            harness.applyItems(
+                streamingID: reducer.streamingAssistantID,
+                isBusy: true
+            )
         }
         settle(harness: harness, cv: cv, reducer: reducer)
 
-        // --- Test 4: Multiple items in animation context ---
-        let multiDrift = measureInsertWithAnimationContext(
-            harness: harness, cv: cv, totalNs: &totalInsertNs
-        ) {
-            let toolId2 = "bench-tool-multi"
+        // --- Test 4: Streaming text growth (bubble expand) ---
+        // Measure how much the viewport shifts when the assistant text
+        // grows significantly across a single coalescer flush.
+        let streamDrift = measureDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
+            // Simulate a large coalescer flush that adds multiple lines
             reducer.processBatch([
-                .toolStart(
-                    sessionId: "bench",
-                    toolEventId: toolId2,
-                    tool: "bash",
-                    args: ["command": .string("echo test")]
-                ),
-                .toolOutput(
-                    sessionId: "bench",
-                    toolEventId: toolId2,
-                    output: "test\n",
-                    isError: false
-                ),
-                .toolEnd(sessionId: "bench", toolEventId: toolId2, isError: false),
-            ])
-            reducer.processBatch([
-                .compactionStart(sessionId: "bench", reason: "manual"),
+                .textDelta(sessionId: "bench", delta: "Here is a detailed analysis:\n\n"),
+                .textDelta(sessionId: "bench", delta: "1. The first point is about performance.\n"),
+                .textDelta(sessionId: "bench", delta: "2. The second point covers architecture.\n"),
+                .textDelta(sessionId: "bench", delta: "3. The third examines data flow patterns.\n\n"),
+                .textDelta(sessionId: "bench", delta: "```swift\nfunc optimize() {\n    let x = 42\n}\n```\n\n"),
             ])
             harness.items = reducer.items
+            harness.applyItems(
+                streamingID: reducer.streamingAssistantID,
+                isBusy: true
+            )
         }
 
         let totalMs = Double(totalInsertNs) / 1_000_000.0
-        let allMetrics = [toolDrift, sysDrift, permDrift, multiDrift, totalMs]
+        let allMetrics = [toolDrift, sysDrift, permDrift, streamDrift, totalMs]
         let allFinite = allMetrics.allSatisfy { $0.isFinite && $0 >= 0 }
 
         harness.window.isHidden = true
@@ -209,92 +202,71 @@ struct InsertStabilityBench {
             toolDrift: toolDrift,
             systemDrift: sysDrift,
             permissionDrift: permDrift,
-            multiDrift: multiDrift,
+            streamingDrift: streamDrift,
             totalInsertMs: totalMs,
             allFinite: allFinite
         )
     }
 
-    // MARK: - Drift with Animation Context
+    // MARK: - Drift Measurement
 
-    /// Measures drift when the apply happens inside a UIKit animation context.
+    /// Measures the visual drift caused by a content change.
     ///
-    /// In production, SwiftUI can wrap `updateUIView` in an implicit animation
-    /// transaction (from `.animation()` modifiers on sibling views). This
-    /// causes snapshot applies and layout changes to animate with spring
-    /// dynamics, creating visible bounce.
+    /// Captures the last visible item's screen position before the change,
+    /// then measures how far it moved after the change. In an ideal stable
+    /// timeline, visible items shouldn't shift when new items are added
+    /// below them (user is at bottom following content).
     ///
-    /// The metric captures the offset deviation during and after a
-    /// spring-animated insertion, then drains 10 frames to measure the
-    /// cumulative bounce.
+    /// When the coordinator forces layoutIfNeeded, all heights resolve in
+    /// one pass and drift should be near zero. When layout is deferred,
+    /// estimated heights create intermediate frames where items are at
+    /// wrong positions.
     @MainActor
-    private func measureInsertWithAnimationContext(
+    private func measureDrift(
         harness: BenchHarness,
         cv: AnchoredCollectionView,
         totalNs: inout UInt64,
-        insert: () -> Void
+        change: () -> Void
     ) -> Double {
         scrollToBottom(cv)
         cv.layoutIfNeeded()
         harness.scrollController.updateNearBottom(true)
 
-        let offsetBefore = cv.contentOffset.y
+        // Find the second-to-last visible item (the "anchor" that should
+        // stay stable during the change — the last item is the one growing).
+        let visibleIPs = cv.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        guard visibleIPs.count >= 2 else { return 0 }
+        let anchorIP = visibleIPs[visibleIPs.count - 2]
+
+        guard let attrsBefore = cv.layoutAttributesForItem(at: anchorIP) else { return 0 }
+        let anchorScreenYBefore = attrsBefore.frame.origin.y - cv.contentOffset.y
 
         let start = DispatchTime.now().uptimeNanoseconds
 
-        // Simulate SwiftUI animation context leaking into updateUIView.
-        // Use UIView.animate with spring to match what .animation(.snappy)
-        // would produce.
-        insert()
+        // Apply the change
+        change()
 
-        UIView.animate(
-            withDuration: 0.3,
-            delay: 0,
-            usingSpringWithDamping: 0.7,
-            initialSpringVelocity: 0,
-            options: [.beginFromCurrentState]
-        ) {
-            harness.applyItems(
-                streamingID: harness.reducer.streamingAssistantID,
-                isBusy: true
-            )
-            cv.layoutIfNeeded()
-        }
+        // Measure: after the coordinator's apply (which may or may not
+        // have forced layout), where is the anchor item now?
+        // If layout was forced, it should be at the same screen position.
+        // If layout was deferred, estimated heights may have shifted it.
 
-        // The apply happened inside the animation block. Capture the
-        // presentation layer's position vs model layer to measure bounce.
-        let modelOffset = cv.contentOffset.y
-
-        // Drain frames to let the spring animation play out
-        var maxDrift: CGFloat = 0
-        for _ in 0 ..< 10 {
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.033))
-
-            // Check presentation layer offset
-            if let presentationLayer = cv.layer.presentation() {
-                let presentationOffset = -presentationLayer.bounds.origin.y
-                let drift = abs(presentationOffset - modelOffset)
-                maxDrift = max(maxDrift, drift)
-            }
-
-            // Also check the actual contentOffset (model)
-            let offsetDrift = abs(cv.contentOffset.y - modelOffset)
-            maxDrift = max(maxDrift, offsetDrift)
-        }
-
-        // Settle
-        cv.layer.removeAllAnimations()
-        cv.layoutIfNeeded()
-
+        // Don't force additional layout here — we want to measure what
+        // the coordinator left us with.
         let end = DispatchTime.now().uptimeNanoseconds
         totalNs += (end &- start)
 
-        // Scroll back to bottom
+        guard let attrsAfter = cv.layoutAttributesForItem(at: anchorIP) else { return 0 }
+        let anchorScreenYAfter = attrsAfter.frame.origin.y - cv.contentOffset.y
+        let drift = abs(anchorScreenYAfter - anchorScreenYBefore)
+
+        // Re-settle for the next measurement
+        cv.layoutIfNeeded()
         scrollToBottom(cv)
         cv.layoutIfNeeded()
         harness.scrollController.updateNearBottom(true)
 
-        return Double(maxDrift)
+        return Double(drift)
     }
 
     // MARK: - Helpers
