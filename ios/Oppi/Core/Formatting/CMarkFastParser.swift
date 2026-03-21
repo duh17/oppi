@@ -287,14 +287,23 @@ private func convertCMarkInline(_ node: UnsafeMutablePointer<cmark_node>) -> Mar
 // MARK: - Inner Fence Cleanup
 
 /// Strip a trailing fence-like line from code block content produced by 4+
-/// backtick/tilde fences. Only the LAST line is checked; internal fence lines
-/// are preserved for legitimate cases (e.g., markdown tutorials).
+/// backtick/tilde fences. Uses parity: if fence-like lines appear in pairs
+/// (even count), they're legitimate content (e.g., markdown tutorials showing
+/// code fences). If odd, the trailing one is a stray — strip it.
 private func stripTrailingInnerFence(_ code: String) -> String {
     guard let lastNewline = code.lastIndex(of: "\n") else {
         return isFenceLine(code) ? "" : code
     }
     let lastLine = code[code.index(after: lastNewline)...]
     guard isFenceLine(lastLine) else { return code }
+
+    // Count all fence-like lines. Even = paired content, odd = stray trailing.
+    var fenceLineCount = 0
+    for line in code.split(separator: "\n", omittingEmptySubsequences: false) {
+        if isFenceLine(line) { fenceLineCount += 1 }
+    }
+    guard fenceLineCount % 2 == 1 else { return code }
+
     return String(code[..<lastNewline])
 }
 
