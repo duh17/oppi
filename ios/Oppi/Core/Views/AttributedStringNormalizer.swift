@@ -8,6 +8,11 @@ enum AttributedStringNormalizer {
     /// falls back to its own font property for those runs, but that default
     /// may differ from the intended design. This helper ensures every run
     /// has an explicit font.
+    ///
+    /// - Important: Only detects UIKit-scoped fonts (`NSAttributedString.Key.font`).
+    ///   SwiftUI-scoped fonts (set via `AttributedString.font = Font.xxx`) are stored
+    ///   under a different key and will appear as `nil` here. Callers must use
+    ///   `.uiKit.font` when building `AttributedString` destined for UIKit.
     static func ensureFont(
         in mutable: NSMutableAttributedString,
         fallback: UIFont
