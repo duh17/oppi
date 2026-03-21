@@ -89,7 +89,10 @@ final class AssistantMarkdownSegmentApplier {
             case .text(let attributed):
                 let textView = makeTextView(palette: palette)
                 textView.isSelectable = config.textSelectionEnabled
-                textView.attributedText = NSAttributedString(attributed)
+                textView.attributedText = Self.normalizedAttributedText(
+                    from: attributed,
+                    palette: palette
+                )
                 stackView.addArrangedSubview(textView)
                 textViews[index] = textView
 
@@ -153,14 +156,20 @@ final class AssistantMarkdownSegmentApplier {
                 if let textView = textViews[index] {
                     textView.isSelectable = config.textSelectionEnabled
 
-                    // Direct conversion — FlatSegment.build already applies
-                    // correct theme attributes (colors, fonts). The old
-                    // normalizedAttributedText path was broken: it checked
-                    // NSAttributedString.Key.foregroundColor ("NSColor") but
-                    // SwiftUI AttributedString stores colors under the
-                    // "SwiftUI.ForegroundColor" key. The cast `as? UIColor`
-                    // always failed, replacing all colors with baseColor.
-                    let attrText = NSAttributedString(attributed)
+                    // During streaming, skip the expensive normalizedAttributedText
+                    // call (which enumerates ALL attributes in the full range to fix
+                    // fonts/colors). FlatSegment.build already applies correct theme
+                    // attributes, so the normalization is redundant. Direct conversion
+                    // avoids the NSMutableAttributedString copy + attribute enumeration.
+                    let attrText: NSAttributedString
+                    if config.isStreaming {
+                        attrText = NSAttributedString(attributed)
+                    } else {
+                        attrText = Self.normalizedAttributedText(
+                            from: attributed,
+                            palette: palette
+                        )
+                    }
                     textView.attributedText = attrText
 
                     // Smooth reveal for the last (actively growing) text segment during streaming.
@@ -275,6 +284,55 @@ final class AssistantMarkdownSegmentApplier {
         hr.translatesAutoresizingMaskIntoConstraints = false
         hr.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return hr
+    }
+
+    private static func normalizedAttributedText(
+        from attributed: AttributedString,
+        palette: ThemePalette
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: NSAttributedString(attributed))
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard fullRange.length > 0 else { return mutable }
+
+        let baseFont = UIFont.preferredFont(forTextStyle: .body)
+        let baseColor = UIColor(palette.fg)
+        let baseLuminance = perceivedLuminance(of: baseColor)
+        let shouldCorrectDarkText = baseLuminance > 0.55
+
+        mutable.enumerateAttributes(in: fullRange) { attributes, range, _ in
+            var updates: [NSAttributedString.Key: Any] = [:]
+
+            if attributes[.font] == nil {
+                updates[.font] = baseFont
+            }
+
+            if let color = attributes[.foregroundColor] as? UIColor {
+                if shouldCorrectDarkText && perceivedLuminance(of: color) < 0.2 {
+                    updates[.foregroundColor] = baseColor
+                }
+            } else {
+                updates[.foregroundColor] = baseColor
+            }
+
+            if !updates.isEmpty {
+                mutable.addAttributes(updates, range: range)
+            }
+        }
+
+        return mutable
+    }
+
+    private static func perceivedLuminance(of color: UIColor) -> CGFloat {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else {
+            var white: CGFloat = 0
+            guard color.getWhite(&white, alpha: &a) else { return 0 }
+            return white
+        }
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
 
     private func scheduleHighlight(index: Int, language: String?, code: String) {
