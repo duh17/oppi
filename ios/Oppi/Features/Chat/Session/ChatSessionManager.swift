@@ -234,81 +234,14 @@ final class ChatSessionManager {
         telemetry.updateTransportPath(connection.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
-        // Re-entry from a different session (e.g. parent→child→parent):
-        // skip the cache to avoid a 200-500ms flash of stale data. The
-        // background trace fetch is the source of truth and will populate
-        // the timeline. The loading spinner shows via entryState in the
-        // meantime.
         let isReentry = hasConnectedBefore && switchingSessions
         hasConnectedBefore = true
 
-        transitionTo(.loadingCache)
-
-        if !isReentry {
-            // Show cached timeline immediately (before network).
-            let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
-            let cached = await TimelineCache.shared.loadTrace(sessionId)
-            let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
-            if let cached {
-                latestTraceSignature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
-            } else {
-                latestTraceSignature = nil
-            }
-
-            ChatSessionTelemetry.recordCacheLoad(
-                durationMs: cacheLoadDurationMs,
-                sessionId: sessionId,
-                hit: cached != nil,
-                eventCount: cached?.eventCount ?? 0
-            )
-
-            if let cached, !cached.events.isEmpty {
-                telemetry.markCacheLoaded()
-
-                // Skip cache load when the reducer already has items (same-session
-                // re-entry). The live items are strictly more recent than the cache.
-                // Loading a stale cache would trigger a full rebuild whose orphan
-                // detection preserves user messages but drops their corresponding
-                // assistant responses — producing a wall of user-only messages at
-                // the bottom. The scheduled fresh trace load will reconcile properly.
-                if reducer.items.isEmpty {
-                    let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
-                    reducer.loadSession(cached.events)
-                    let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
-
-                    ChatSessionTelemetry.recordReducerLoad(
-                        durationMs: reducerLoadDurationMs,
-                        sessionId: sessionId,
-                        source: "cache",
-                        eventCount: cached.eventCount,
-                        itemCount: reducer.items.count
-                    )
-
-                    let footprint = SentryService.currentFootprintMB()
-                    ClientLog.info("Memory", "Session loaded (cache)", metadata: [
-                        "footprintMB": footprint.map(String.init) ?? "n/a",
-                        "traceEvents": String(cached.events.count),
-                        "timelineItems": String(reducer.items.count),
-                        "sessionId": sessionId,
-                    ])
-
-                    log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
-                } else {
-                    log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
-                }
-
-                needsInitialScroll = true
-                telemetry.recordSessionLoadIfNeeded(
-                    path: "cache_hit",
-                    itemCount: reducer.items.count,
-                    sessionId: sessionId,
-                    workspaceId: resolveWorkspaceId(from: sessionStore)
-                )
-            }
-        } else {
-            latestTraceSignature = nil
-            log.info("Re-entry for \(self.sessionId) — skipping stale cache, awaiting trace fetch")
-        }
+        latestTraceSignature = await loadCachedTimeline(
+            reducer: reducer,
+            sessionStore: sessionStore,
+            isReentry: isReentry
+        )
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
         // Opening the WS would auto-resume the pi process on the server.
@@ -366,153 +299,282 @@ final class ChatSessionManager {
 
         var hasReceivedConnected = false
         for await message in stream {
-            if generation != connectionGeneration {
-                transitionTo(.disconnected(reason: .generationChanged))
-                break
-            }
-
-            if Task.isCancelled {
-                transitionTo(.disconnected(reason: .cancelled))
-                break
-            }
-
-            markSyncSucceeded()
-            telemetry.updateTransportPath(connection.transportPath)
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
-
-            switch entryState {
-            case .awaitingConnected:
-                if case .connected = message {
-                    let transportTag = connection.transportPath.rawValue
-
-                    if let receivedAtMs = inboundMeta?.receivedAtMs {
-                        let dispatchLagMs = max(0, ChatSessionTelemetry.nowMs() - receivedAtMs)
-                        ChatSessionTelemetry.recordConnectedDispatchLag(
-                            lagMs: dispatchLagMs,
-                            sessionId: sessionId,
-                            transport: transportTag
-                        )
-
-                        if dispatchLagMs >= 1_000 {
-                            ClientLog.error(
-                                "WebSocket",
-                                "Connected message dispatch lag",
-                                metadata: [
-                                    "sessionId": sessionId,
-                                    "transport": transportTag,
-                                    "lagMs": String(dispatchLagMs),
-                                ]
-                            )
-                        }
-                    }
-
-                    // Record time from WS open to first .connected message.
-                    if !hasReceivedConnected {
-                        let wsConnectDurationMs = max(0, ChatSessionTelemetry.nowMs() - wsOpenStartMs)
-                        ChatSessionTelemetry.recordWsConnect(
-                            durationMs: wsConnectDurationMs,
-                            sessionId: sessionId,
-                            transport: transportTag
-                        )
-                    }
-
-                    // Seed seq tracking from the server's current position.
-                    // History reload runs independently — no catch-up interaction.
-                    if let currentSeq = inboundMeta?.currentSeq {
-                        await connection.sessionStreamCoordinator.seedLastSeenSeq(
-                            sessionId: sessionId,
-                            value: currentSeq
-                        )
-                        persistLastSeenSeq(currentSeq)
-                        log.info("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
-                    }
-
-                    // Request freshest server session state only once the stream is connected.
-                    // This avoids speculative pre-connect sends that can stall/fail during startup.
-                    scheduleStateSync(generation: generation, connection: connection)
-
-                    hasReceivedConnected = true
-                    unexpectedStreamExitCount = 0
-                    transitionTo(.streaming)
-
-                    // Start replay buffering if the session is busy and we have a
-                    // pending trace rebuild (from cache or re-entry). This captures
-                    // live WS events so they survive the loadHistory() rebuild.
-                    let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
-                        || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
-                    if sessionIsBusy, telemetry.loadedFromCacheAtConnect || isReentry {
-                        reducer.startReplayBuffer()
-                    }
-                }
-
-            case .streaming:
-                // Detect reconnection: a second `.connected` message means the WS
-                // dropped and recovered. Use ring catch-up to fill the gap;
-                // fall back to full history reload on ring miss.
-                if case .connected = message {
-                    if let currentSeq = inboundMeta?.currentSeq {
-                        let outcome = await performCatchUpIfNeeded(
-                            currentSeq: currentSeq,
-                            generation: generation,
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore
-                        )
-                        switch outcome {
-                        case .noGap:
-                            log.info("WS reconnected — no gap for \(self.sessionId)")
-                        case .applied:
-                            log.info("WS reconnected — catch-up applied for \(self.sessionId)")
-                        case .fullReloadScheduled:
-                            log.info("WS reconnected — full history reload scheduled for \(self.sessionId)")
-                        }
-                        telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)", sessionId: sessionId)
-                    } else {
-                        log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
-                        scheduleHistoryReload(
-                            generation: generation,
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore,
-                            cachedSignature: latestTraceSignature
-                        )
-                    }
-                    scheduleStateSync(generation: generation, connection: connection)
-                    hasReceivedConnected = true
-                    unexpectedStreamExitCount = 0
-                }
-
-                if let seq = inboundMeta?.seq {
-                    let accepted = await connection.sessionStreamCoordinator.consumeLiveSeq(
-                        sessionId: sessionId,
-                        seq: seq
-                    )
-                    guard accepted else { continue }
-
-                    telemetry.recordFreshContentLagIfNeeded(reason: "stream_seq", sessionId: sessionId)
-                    let updatedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
-                    persistLastSeenSeq(updatedSeq)
-                }
-
-                if case .turnAck(let command, _, let stage, _, _) = message,
-                   stage == .dispatched,
-                   command == "prompt" || command == "steer" || command == "follow_up" {
-                    telemetry.startTTFT(modelTags: ChatSessionTelemetryTracker.modelTags(from: sessionStore, sessionId: sessionId))
-                }
-
-                if case .agentEnd = message {
-                    telemetry.cancelTTFT()
-                }
-
-                telemetry.completeTTFTIfNeeded(signal: message, sessionId: sessionId)
-
-            case .idle, .loadingCache, .stopped, .disconnected:
-                log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
-            }
-
-            connection.handleServerMessage(message, sessionId: sessionId)
+            await handleStreamMessage(
+                message,
+                inboundMeta: inboundMeta,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                generation: generation,
+                wsOpenStartMs: wsOpenStartMs,
+                isReentry: isReentry,
+                hasReceivedConnected: &hasReceivedConnected
+            )
+            if case .disconnected = entryState { break }
         }
 
+        handleStreamEnded(
+            hasReceivedConnected: hasReceivedConnected,
+            generation: generation,
+            connection: connection,
+            sessionStore: sessionStore,
+            reducer: reducer
+        )
+    }
+
+    // MARK: - Connection Helpers
+
+    /// Load and apply cached timeline data for instant display before network.
+    ///
+    /// Returns the cached trace signature if data was loaded, nil otherwise.
+    /// Skips cache on re-entry to avoid a flash of stale data.
+    private func loadCachedTimeline(
+        reducer: TimelineReducer,
+        sessionStore: SessionStore,
+        isReentry: Bool
+    ) async -> TraceSignature? {
+        transitionTo(.loadingCache)
+
+        guard !isReentry else {
+            log.info("Re-entry for \(self.sessionId) — skipping stale cache, awaiting trace fetch")
+            return nil
+        }
+
+        let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
+        let cached = await TimelineCache.shared.loadTrace(sessionId)
+        let cacheLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - cacheLoadStartMs)
+
+        let signature: TraceSignature?
+        if let cached {
+            signature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
+        } else {
+            signature = nil
+        }
+
+        ChatSessionTelemetry.recordCacheLoad(
+            durationMs: cacheLoadDurationMs,
+            sessionId: sessionId,
+            hit: cached != nil,
+            eventCount: cached?.eventCount ?? 0
+        )
+
+        if let cached, !cached.events.isEmpty {
+            telemetry.markCacheLoaded()
+
+            // Skip cache load when the reducer already has items (same-session
+            // re-entry). The live items are strictly more recent than the cache.
+            // Loading a stale cache would trigger a full rebuild whose orphan
+            // detection preserves user messages but drops their corresponding
+            // assistant responses — producing a wall of user-only messages at
+            // the bottom. The scheduled fresh trace load will reconcile properly.
+            if reducer.items.isEmpty {
+                let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
+                reducer.loadSession(cached.events)
+                let reducerLoadDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerLoadStartMs)
+
+                ChatSessionTelemetry.recordReducerLoad(
+                    durationMs: reducerLoadDurationMs,
+                    sessionId: sessionId,
+                    source: "cache",
+                    eventCount: cached.eventCount,
+                    itemCount: reducer.items.count
+                )
+
+                let footprint = SentryService.currentFootprintMB()
+                ClientLog.info("Memory", "Session loaded (cache)", metadata: [
+                    "footprintMB": footprint.map(String.init) ?? "n/a",
+                    "traceEvents": String(cached.events.count),
+                    "timelineItems": String(reducer.items.count),
+                    "sessionId": sessionId,
+                ])
+
+                log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+            } else {
+                log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
+            }
+
+            needsInitialScroll = true
+            telemetry.recordSessionLoadIfNeeded(
+                path: "cache_hit",
+                itemCount: reducer.items.count,
+                sessionId: sessionId,
+                workspaceId: resolveWorkspaceId(from: sessionStore)
+            )
+        }
+
+        return signature
+    }
+
+    /// Process a single message from the WebSocket stream.
+    ///
+    /// Transitions to `.disconnected` on generation change or cancellation;
+    /// the caller breaks the stream loop when it detects that state.
+    private func handleStreamMessage(
+        _ message: ServerMessage,
+        inboundMeta: WebSocketClient.InboundMeta?,
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionStore: SessionStore,
+        generation: Int,
+        wsOpenStartMs: Int64,
+        isReentry: Bool,
+        hasReceivedConnected: inout Bool
+    ) async {
+        if generation != connectionGeneration {
+            transitionTo(.disconnected(reason: .generationChanged))
+            return
+        }
+
+        if Task.isCancelled {
+            transitionTo(.disconnected(reason: .cancelled))
+            return
+        }
+
+        markSyncSucceeded()
+        telemetry.updateTransportPath(connection.transportPath)
+
+        switch entryState {
+        case .awaitingConnected:
+            if case .connected = message {
+                let transportTag = connection.transportPath.rawValue
+
+                if let receivedAtMs = inboundMeta?.receivedAtMs {
+                    let dispatchLagMs = max(0, ChatSessionTelemetry.nowMs() - receivedAtMs)
+                    ChatSessionTelemetry.recordConnectedDispatchLag(
+                        lagMs: dispatchLagMs,
+                        sessionId: sessionId,
+                        transport: transportTag
+                    )
+
+                    if dispatchLagMs >= 1_000 {
+                        ClientLog.error(
+                            "WebSocket",
+                            "Connected message dispatch lag",
+                            metadata: [
+                                "sessionId": sessionId,
+                                "transport": transportTag,
+                                "lagMs": String(dispatchLagMs),
+                            ]
+                        )
+                    }
+                }
+
+                // Record time from WS open to first .connected message.
+                if !hasReceivedConnected {
+                    let wsConnectDurationMs = max(0, ChatSessionTelemetry.nowMs() - wsOpenStartMs)
+                    ChatSessionTelemetry.recordWsConnect(
+                        durationMs: wsConnectDurationMs,
+                        sessionId: sessionId,
+                        transport: transportTag
+                    )
+                }
+
+                // Seed seq tracking from the server's current position.
+                // History reload runs independently — no catch-up interaction.
+                if let currentSeq = inboundMeta?.currentSeq {
+                    await connection.sessionStreamCoordinator.seedLastSeenSeq(
+                        sessionId: sessionId,
+                        value: currentSeq
+                    )
+                    persistLastSeenSeq(currentSeq)
+                    log.info("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
+                }
+
+                // Request freshest server session state only once the stream is connected.
+                // This avoids speculative pre-connect sends that can stall/fail during startup.
+                scheduleStateSync(generation: generation, connection: connection)
+
+                hasReceivedConnected = true
+                unexpectedStreamExitCount = 0
+                transitionTo(.streaming)
+
+                // Start replay buffering if the session is busy and we have a
+                // pending trace rebuild (from cache or re-entry). This captures
+                // live WS events so they survive the loadHistory() rebuild.
+                let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
+                    || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
+                if sessionIsBusy, telemetry.loadedFromCacheAtConnect || isReentry {
+                    reducer.startReplayBuffer()
+                }
+            }
+
+        case .streaming:
+            // Detect reconnection: a second `.connected` message means the WS
+            // dropped and recovered. Use ring catch-up to fill the gap;
+            // fall back to full history reload on ring miss.
+            if case .connected = message {
+                if let currentSeq = inboundMeta?.currentSeq {
+                    let outcome = await performCatchUpIfNeeded(
+                        currentSeq: currentSeq,
+                        generation: generation,
+                        connection: connection,
+                        reducer: reducer,
+                        sessionStore: sessionStore
+                    )
+                    switch outcome {
+                    case .noGap:
+                        log.info("WS reconnected — no gap for \(self.sessionId)")
+                    case .applied:
+                        log.info("WS reconnected — catch-up applied for \(self.sessionId)")
+                    case .fullReloadScheduled:
+                        log.info("WS reconnected — full history reload scheduled for \(self.sessionId)")
+                    }
+                    telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)", sessionId: sessionId)
+                } else {
+                    log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
+                    scheduleHistoryReload(
+                        generation: generation,
+                        connection: connection,
+                        reducer: reducer,
+                        sessionStore: sessionStore,
+                        cachedSignature: latestTraceSignature
+                    )
+                }
+                scheduleStateSync(generation: generation, connection: connection)
+                hasReceivedConnected = true
+                unexpectedStreamExitCount = 0
+            }
+
+            if let seq = inboundMeta?.seq {
+                let accepted = await connection.sessionStreamCoordinator.consumeLiveSeq(
+                    sessionId: sessionId,
+                    seq: seq
+                )
+                guard accepted else { return }
+
+                telemetry.recordFreshContentLagIfNeeded(reason: "stream_seq", sessionId: sessionId)
+                let updatedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+                persistLastSeenSeq(updatedSeq)
+            }
+
+            if case .turnAck(let command, _, let stage, _, _) = message,
+               stage == .dispatched,
+               command == "prompt" || command == "steer" || command == "follow_up" {
+                telemetry.startTTFT(modelTags: ChatSessionTelemetryTracker.modelTags(from: sessionStore, sessionId: sessionId))
+            }
+
+            if case .agentEnd = message {
+                telemetry.cancelTTFT()
+            }
+
+            telemetry.completeTTFTIfNeeded(signal: message, sessionId: sessionId)
+
+        case .idle, .loadingCache, .stopped, .disconnected:
+            log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
+        }
+
+        connection.handleServerMessage(message, sessionId: sessionId)
+    }
+
+    /// Handle post-stream cleanup: state transition, auto-reconnect, and teardown.
+    private func handleStreamEnded(
+        hasReceivedConnected: Bool,
+        generation: Int,
+        connection: ServerConnection,
+        sessionStore: SessionStore,
+        reducer: TimelineReducer
+    ) {
         if Task.isCancelled {
             transitionTo(.disconnected(reason: .cancelled))
         } else {
