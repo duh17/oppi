@@ -48,17 +48,16 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         addSubview(golView)
 
         NSLayoutConstraint.activate([
-            golView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            golView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             golView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             golView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            golView.widthAnchor.constraint(equalToConstant: 20),
-            golView.heightAnchor.constraint(equalToConstant: 20),
+            golView.widthAnchor.constraint(equalToConstant: 16),
+            golView.heightAnchor.constraint(equalToConstant: 16),
         ])
     }
 
     private func apply(configuration: WorkingIndicatorTimelineRowConfiguration) {
         currentConfiguration = configuration
-        let palette = configuration.themeID.palette
-        golView.tintUIColor = UIColor(palette.purple)
+        golView.tintUIColor = .label
     }
 }
