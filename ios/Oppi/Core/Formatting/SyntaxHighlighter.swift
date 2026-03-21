@@ -371,7 +371,7 @@ enum SyntaxHighlighter {
         _ code: String,
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        scanTokenRangesInternal(truncatedCode(code), language: language)
+        scanTokenRangesInternal(Array(truncatedCode(code)), language: language)
     }
 
     /// ASCII-optimized scanner using raw UTF-8 bytes.
@@ -390,7 +390,7 @@ enum SyntaxHighlighter {
 
         // Shell has complex state; JSON is already fast. Use existing scanner.
         if language == .shell || language == .json {
-            return scanTokenRangesInternal(text, language: language)
+            return scanTokenRangesInternal(Array(text), language: language)
         }
 
         let utf8 = Array(text.utf8)
@@ -398,7 +398,7 @@ enum SyntaxHighlighter {
         // Verify all-ASCII. Any non-ASCII byte → fall back to [Character] scanner
         // where byte offsets ≠ character offsets.
         for b in utf8 where b >= 0x80 {
-            return scanTokenRangesInternal(text, language: language)
+            return scanTokenRangesInternal(Array(text), language: language)
         }
 
         return scanTokenRangesFromUTF8(utf8, language: language)
@@ -417,7 +417,7 @@ enum SyntaxHighlighter {
         let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
 
         // Scan for token ranges using the shared single-array scanner.
-        let tokenRanges = scanTokenRangesInternal(truncated, language: language)
+        let tokenRanges = scanTokenRangesInternal(Array(truncated), language: language)
 
         // Pre-extract UIColors to avoid dictionary lookup + cast per token.
         let commentColor = attrs.comment[.foregroundColor] as? UIColor
@@ -456,13 +456,11 @@ enum SyntaxHighlighter {
     }
 
     /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
-    /// Converts text to `[Character]` once and scans line-by-line using
-    /// newline detection (no per-line `Array(line)` allocation).
+    /// Scans line-by-line using newline detection (no per-line `Array(line)` allocation).
     private static func scanTokenRangesInternal(
-        _ text: String,
+        _ allChars: [Character],
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        let allChars = Array(text)
         var tokenRanges: [TokenRange] = []
         tokenRanges.reserveCapacity(allChars.count / 4)
 
@@ -544,6 +542,8 @@ enum SyntaxHighlighter {
 
         return tokenRanges
     }
+
+    // MARK: Intentionally parallel to scanLineRangesSlice for ASCII fast-path performance — do not merge.
 
     /// Scan a single line within bytes[start..<end] for token ranges.
     /// All offsets are byte positions (== character positions for ASCII input).
