@@ -23,6 +23,7 @@ struct SettingsView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ThemeStore.self) private var themeStore
 
+    @State private var spinnerStyleRaw = UserDefaults.standard.string(forKey: "spinnerStyle") ?? SpinnerStyle.brailleDots.rawValue
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
         forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
@@ -112,6 +113,15 @@ struct SettingsView: View {
 
                 NavigationLink("Import from Server") {
                     ThemeImportView()
+                }
+
+                Picker("Spinner Style", selection: $spinnerStyleRaw) {
+                    ForEach(SpinnerStyle.allCases, id: \.rawValue) { style in
+                        Text(style.displayName).tag(style.rawValue)
+                    }
+                }
+                .onChange(of: spinnerStyleRaw) { _, newValue in
+                    UserDefaults.standard.set(newValue, forKey: "spinnerStyle")
                 }
             }
 

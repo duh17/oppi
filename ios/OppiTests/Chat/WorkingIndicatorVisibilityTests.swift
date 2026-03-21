@@ -2,12 +2,11 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Tests that the working indicator (Game of Life) appears at the right times
-/// and doesn't flicker or vanish unexpectedly during agent activity.
+/// Tests that the working indicator appears at the right times and doesn't
+/// flicker or vanish unexpectedly during agent activity.
 ///
-/// The indicator should show whenever the session is busy but no assistant
-/// content is streaming yet. Once `streamingAssistantID` becomes non-nil
-/// (text/thinking/tool deltas flowing), the indicator yields to real content.
+/// The indicator shows for the entire `isBusy` period (agent_start to
+/// agent_end), regardless of whether assistant content is streaming.
 @Suite("Working indicator visibility")
 @MainActor
 struct WorkingIndicatorVisibilityTests {
@@ -79,7 +78,7 @@ struct WorkingIndicatorVisibilityTests {
                 "Indicator must not show when session is idle")
     }
 
-    @Test func hiddenWhenStreamingAssistantContent() {
+    @Test func showsWhileStreamingAssistantContent() {
         let assistantMsg = ChatItem.assistantMessage(
             id: "asst-1", text: "thinking...", timestamp: Date()
         )
@@ -89,8 +88,8 @@ struct WorkingIndicatorVisibilityTests {
             isBusy: true,
             streamingAssistantID: "asst-1"
         )
-        #expect(!plan.nextIDs.contains(workingID),
-                "Indicator must hide once assistant content is streaming")
+        #expect(plan.nextIDs.contains(workingID),
+                "Indicator must show for entire busy period including during streaming")
     }
 
     @Test func hiddenWhenSessionEnds() {
@@ -105,7 +104,7 @@ struct WorkingIndicatorVisibilityTests {
 
     // MARK: - Transition scenarios (the flicker cases)
 
-    @Test func transitionFromBusyToStreaming() {
+    @Test func indicatorPersistsDuringStreaming() {
         // Step 1: busy, no streaming -> indicator present
         let plan1 = ChatTimelineApplyPlan.build(
             items: [],
@@ -115,7 +114,7 @@ struct WorkingIndicatorVisibilityTests {
         )
         #expect(plan1.nextIDs.contains(workingID))
 
-        // Step 2: assistant starts streaming -> indicator gone
+        // Step 2: assistant starts streaming -> indicator still present
         let assistantMsg = ChatItem.assistantMessage(
             id: "asst-1", text: "", timestamp: Date()
         )
@@ -125,22 +124,19 @@ struct WorkingIndicatorVisibilityTests {
             isBusy: true,
             streamingAssistantID: "asst-1"
         )
-        #expect(!plan2.nextIDs.contains(workingID))
-
-        // Indicator should be in the removed set
-        let plan2WithRemoved = plan2.withRemovedIDs(from: plan1.nextIDs)
-        #expect(plan2WithRemoved.removedIDs.contains(workingID),
-                "Indicator should be cleanly removed, not left orphaned")
+        #expect(plan2.nextIDs.contains(workingID),
+                "Indicator persists for entire busy period")
+        #expect(plan2.nextIDs.last == workingID,
+                "Indicator stays at end of timeline during streaming")
     }
 
-    @Test func transitionFromStreamingBackToBusy() {
-        // Simulates the gap between turns: agentEnd fires clearing
-        // streamingAssistantID while session is still busy.
+    @Test func indicatorShowsDuringTurnGap() {
+        // Between turns: streamingAssistantID cleared but still busy.
+        // Indicator remains visible throughout.
         let assistantMsg = ChatItem.assistantMessage(
             id: "asst-1", text: "done with first part", timestamp: Date()
         )
 
-        // During turn gap: busy but streamingAssistantID went nil
         let plan = ChatTimelineApplyPlan.build(
             items: [assistantMsg],
             hiddenCount: 0,
@@ -148,7 +144,7 @@ struct WorkingIndicatorVisibilityTests {
             streamingAssistantID: nil
         )
         #expect(plan.nextIDs.contains(workingID),
-                "Indicator must reappear in the gap between turns")
+                "Indicator must show during gap between turns")
         #expect(plan.nextIDs.last == workingID,
                 "Indicator must be last (after existing content)")
     }
@@ -180,8 +176,8 @@ struct WorkingIndicatorVisibilityTests {
 
     @Test func reducerKeepsStreamingIDDuringToolExecution() {
         // The reducer keeps streamingAssistantID non-nil during tool execution
-        // (turnInProgress + lastAssistantIDThisTurn). This prevents the
-        // indicator from flickering between tool calls within the same turn.
+        // (turnInProgress + lastAssistantIDThisTurn). This is used for
+        // streaming cell reconfigure gating in the snapshot applier.
         let reducer = TimelineReducer()
 
         // agentStart -> textDelta -> toolStart
@@ -229,14 +225,9 @@ struct WorkingIndicatorVisibilityTests {
             streamingAssistantID: streamID
         )
 
-        if streamID == nil {
-            // No streaming ID -> indicator shows as bridge
-            #expect(plan.nextIDs.contains(workingID),
-                    "Indicator must show in pre-delta gap after agentStart")
-        } else {
-            // Streaming ID set -> content row exists, indicator yields
-            #expect(!plan.nextIDs.contains(workingID))
-        }
+        // Indicator always shows when busy, regardless of streaming state
+        #expect(plan.nextIDs.contains(workingID),
+                "Indicator must show whenever busy")
     }
 
     @Test func reducerMultiToolTurnNeverDropsStreamingID() {

@@ -60,9 +60,11 @@ struct TimelineSnapshotApplierTests {
             themeChanged: false
         )
 
-        // Order: changedItemIDs finds item-4, item-519 (skips item-250 as streaming assistant),
-        // then loadMore appended for hiddenCount change, then item-250 via streaming gate.
-        let expected: Set<String> = ["item-4", "item-250", "item-519", ChatTimelineCollectionHost.loadMoreID]
+        // isStreamingMutableItem skips finalized .assistantMessage items during
+        // streaming, so item-4 and item-519 are NOT detected by changedItemIDs.
+        // item-250 is reconfigured via the streaming assistant gate (content changed).
+        // loadMore is reconfigured because hiddenCount changed.
+        let expected: Set<String> = ["item-250", ChatTimelineCollectionHost.loadMoreID]
         #expect(Set(reconfigureIDs) == expected)
         #expect(Set(reconfigureIDs).count == reconfigureIDs.count)
     }
