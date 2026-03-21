@@ -183,6 +183,13 @@ const inspectAgentParams = Type.Object({
         "Tool index within the turn (1-based). Requires turn. Shows full args and output.",
     }),
   ),
+  response: Type.Optional(
+    Type.Boolean({
+      description:
+        "If true, return the full assistant response text (no truncation). " +
+        "With turn: returns that turn's response. Without turn: returns the last turn's response.",
+    }),
+  ),
 });
 
 // ---------------------------------------------------------------------------
@@ -521,10 +528,24 @@ function renderTurnDetail(turns: ParsedTurn[], n: number): string {
 
   if (turn.assistantText) {
     out.push("");
-    out.push(`Response: "${truncate(turn.assistantText, 500)}"`);
+    out.push(`Response: "${truncate(turn.assistantText, 5000)}"`);
   }
 
   return out.join("\n");
+}
+
+function renderFullResponse(turns: ParsedTurn[], turnNumber?: number): string {
+  if (turnNumber !== undefined) {
+    const turn = turns.find((t) => t.turnNumber === turnNumber);
+    if (!turn)
+      return `Turn ${turnNumber} not found. ${turns.length} turns available (1-${turns.length}).`;
+    if (!turn.assistantText) return `Turn ${turnNumber} has no assistant response text.`;
+    return turn.assistantText;
+  }
+  // No turn specified: return last turn's response
+  const last = turns[turns.length - 1];
+  if (!last?.assistantText) return "No assistant response found in trace.";
+  return last.assistantText;
 }
 
 function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): string {
@@ -859,7 +880,19 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
             }
           }
 
-          if (result.lastMessage) {
+          // Read full last response from JSONL trace (session.lastMessage is truncated to 100 chars)
+          const childSession = ctx.getSession(session.id);
+          const tracePath = childSession?.piSessionFile;
+          if (tracePath) {
+            const turns = parseJsonlTrace(tracePath);
+            const lastTurn = turns[turns.length - 1];
+            if (lastTurn?.assistantText) {
+              lines.push("");
+              lines.push("Last response:");
+              lines.push(lastTurn.assistantText);
+            }
+          } else if (result.lastMessage) {
+            // Fallback to truncated lastMessage if no trace available
             lines.push("");
             lines.push("Last message:");
             lines.push(result.lastMessage);
@@ -967,11 +1000,12 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "(2) turn detail — tool list with condensed args and error previews, " +
         "(3) tool detail — full arguments and output. Works on active or stopped sessions.",
       promptSnippet:
-        "inspect_agent(id) overview | inspect_agent(id, turn) drill into turn | inspect_agent(id, turn, tool) full output",
+        "inspect_agent(id) overview | inspect_agent(id, turn) drill into turn | inspect_agent(id, turn, tool) full output | inspect_agent(id, response) full last response",
       promptGuidelines: [
         "Start with inspect_agent(id) to get the overview. Look for error markers to find problems.",
         "Drill into specific turns with inspect_agent(id, turn: N) only when you need details.",
         "Use inspect_agent(id, turn: N, tool: M) to see full tool output — only when investigating a specific issue.",
+        "Use inspect_agent(id, response: true) to get the full last response text with no truncation. Add turn: N to get a specific turn's response.",
         "The trace is live — you can inspect active sessions to see progress so far.",
       ],
       parameters: inspectAgentParams,
@@ -1037,7 +1071,10 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         let text: string;
         let level: "overview" | "turn" | "tool";
 
-        if (params.turn !== undefined && params.tool !== undefined) {
+        if (params.response) {
+          text = renderFullResponse(turns, params.turn);
+          level = params.turn !== undefined ? "turn" : "overview";
+        } else if (params.turn !== undefined && params.tool !== undefined) {
           text = renderToolDetail(turns, params.turn, params.tool);
           level = "tool";
         } else if (params.turn !== undefined) {

@@ -514,6 +514,63 @@ describe("spawn-agent-extension", () => {
       }
     });
 
+    it("wait mode: reads full response from JSONL trace instead of truncated lastMessage", async () => {
+      const { ctx, tool } = setup();
+      const fullResponse = "This is a very long response that would normally be truncated. ".repeat(
+        20,
+      );
+      const tracePath = writeTrace(tmpDir, "child-trace.jsonl", [
+        userMsg("do the analysis"),
+        assistantMsg(fullResponse),
+      ]);
+
+      const promise = tool("spawn_agent").execute("tc1", {
+        message: "analyze",
+        wait: true,
+      });
+
+      await vi.waitFor(() => expect(ctx.spawnChildCalls.length).toBe(1));
+
+      const childId = [...ctx.sessions.keys()].find((k) => k !== "parent-1")!;
+      const child = ctx.sessions.get(childId)!;
+      child.status = "stopped";
+      child.lastMessage = fullResponse.slice(0, 100); // simulates the 100-char truncation
+      child.piSessionFile = tracePath;
+
+      emitMessage(ctx, childId, { type: "session_ended", reason: "done" });
+
+      const result = await promise;
+      const text = result.content[0].text;
+      // Should contain the FULL response, not the truncated 100-char version
+      expect(text).toContain("Last response:");
+      expect(text).toContain(fullResponse);
+      expect(text.length).toBeGreaterThan(200); // proves it's not truncated
+    });
+
+    it("wait mode: falls back to lastMessage when no trace file available", async () => {
+      const { ctx, tool } = setup();
+
+      const promise = tool("spawn_agent").execute("tc1", {
+        message: "quick task",
+        wait: true,
+      });
+
+      await vi.waitFor(() => expect(ctx.spawnChildCalls.length).toBe(1));
+
+      const childId = [...ctx.sessions.keys()].find((k) => k !== "parent-1")!;
+      const child = ctx.sessions.get(childId)!;
+      child.status = "stopped";
+      child.lastMessage = "Short truncated msg";
+      // No piSessionFile set
+
+      emitMessage(ctx, childId, { type: "session_ended", reason: "done" });
+
+      const result = await promise;
+      const text = result.content[0].text;
+      expect(text).toContain("Last message:");
+      expect(text).toContain("Short truncated msg");
+    });
+
     it("wait mode abort: respects AbortSignal", async () => {
       const { ctx, tool } = setup();
       const controller = new AbortController();
@@ -1132,6 +1189,111 @@ describe("spawn-agent-extension", () => {
         turn: 1,
       });
       expect(result.content[0].text).toContain("(session start)");
+    });
+
+    // --- response param ---
+
+    it("response=true without turn: returns full last response text", async () => {
+      const { ctx, tool } = setup();
+      const longResponse = "Detailed analysis:\n" + "Finding ".repeat(500);
+      const tracePath = writeTrace(tmpDir, "trace.jsonl", [
+        userMsg("analyze the codebase"),
+        assistantMsg("Looking at it...", [
+          { id: "tc1", name: "read", arguments: { path: "src/foo.ts" } },
+        ]),
+        toolResult("tc1", "file contents"),
+        userMsg("what did you find?"),
+        assistantMsg(longResponse),
+      ]);
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: true,
+      });
+      const text = result.content[0].text;
+      // Full response — no truncation
+      expect(text).toBe(longResponse);
+    });
+
+    it("response=true with turn: returns that turn's response", async () => {
+      const { ctx, tool } = setup();
+      const tracePath = writeTrace(tmpDir, "trace.jsonl", [
+        userMsg("first question"),
+        assistantMsg("first answer — very specific"),
+        userMsg("second question"),
+        assistantMsg("second answer — different content"),
+      ]);
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        turn: 1,
+        response: true,
+      });
+      expect(result.content[0].text).toBe("first answer — very specific");
+    });
+
+    it("response=true: turn not found returns error", async () => {
+      const { ctx, tool } = setup();
+      const tracePath = writeTrace(tmpDir, "trace.jsonl", [
+        userMsg("only turn"),
+        assistantMsg("only response"),
+      ]);
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        turn: 99,
+        response: true,
+      });
+      expect(result.content[0].text).toContain("Turn 99 not found");
+    });
+
+    it("response=true: no response text returns descriptive message", async () => {
+      const { ctx, tool } = setup();
+      const tracePath = writeTrace(tmpDir, "trace.jsonl", [
+        userMsg("do it"),
+        assistantMsg("", [{ id: "tc1", name: "bash", arguments: { command: "ls" } }]),
+        toolResult("tc1", "file list"),
+        // No final text response after tool call
+      ]);
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", {
+        id: "c1",
+        response: true,
+      });
+      // The last turn has no assistantText (only tool calls)
+      expect(result.content[0].text).toContain("No assistant response");
     });
   });
 
