@@ -91,6 +91,7 @@ export interface SessionCoordinatorBundleDeps {
   ) => Promise<Session>;
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
+  getAvailableModelIds: () => string[];
 }
 
 export function createSessionCoordinatorBundle(
@@ -162,6 +163,7 @@ export function createSessionCoordinatorBundle(
       deps.spawnDetachedSession(originSessionId, params),
     listChildSessions: (parentSessionId) => deps.listChildSessions(parentSessionId),
     subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
+    getAvailableModelIds: () => deps.getAvailableModelIds(),
   });
 
   const activationCoordinator = new SessionActivationCoordinator({

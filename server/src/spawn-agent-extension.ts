@@ -46,6 +46,8 @@ export interface SpawnAgentContext {
   listWorkspaceSessions(): Session[];
   /** Subscribe to a child session's ServerMessage stream. Returns unsubscribe fn. */
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
+  /** Return available model IDs from the catalog (for spawn_agent model validation). */
+  getAvailableModelIds(): string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +802,27 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
             ],
             details: { agentId: "", name, status: "error" },
           };
+        }
+
+        // Model validation: reject unknown model IDs early
+        if (params.model) {
+          const available = ctx.getAvailableModelIds();
+          if (available.length > 0 && !available.includes(params.model)) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text:
+                    `Unknown model "${params.model}". Available models:\n` +
+                    available
+                      .sort()
+                      .map((id) => `  - ${id}`)
+                      .join("\n"),
+                },
+              ],
+              details: { agentId: "", name, status: "error" },
+            };
+          }
         }
 
         onUpdate?.({

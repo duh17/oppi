@@ -69,6 +69,9 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
 
+  /** Injected by the server to return available model IDs for spawn_agent validation. */
+  availableModelIdsResolver: (() => string[]) | null = null;
+
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
 
@@ -123,6 +126,7 @@ export class SessionManager extends EventEmitter {
         this.spawnDetachedSession(originSessionId, params),
       listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
       subscribeToSession: (sessionId, callback) => this.subscribe(sessionId, callback),
+      getAvailableModelIds: () => this.getAvailableModelIds(),
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -135,6 +139,10 @@ export class SessionManager extends EventEmitter {
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
     this.uiCoordinator = bundle.uiCoordinator;
+  }
+
+  private getAvailableModelIds(): string[] {
+    return this.availableModelIdsResolver?.() ?? [];
   }
 
   private ensureMobileRenderersLoaded(): void {

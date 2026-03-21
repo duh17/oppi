@@ -149,6 +149,10 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
         ctx.subscribers.get(id)?.delete(callback);
       };
     },
+
+    getAvailableModelIds() {
+      return [];
+    },
   };
 
   // Add the parent session itself
