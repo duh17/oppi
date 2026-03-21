@@ -27,7 +27,7 @@ struct ChatTimelineApplyPlanTests {
         #expect(plan.nextItemByID["middle"] == middle)
     }
 
-    @Test func planOmitsWorkingIndicatorWhileAssistantIsStreaming() {
+    @Test func planIncludesWorkingIndicatorWhileAssistantIsStreaming() {
         let plan = ChatTimelineApplyPlan.build(
             items: [.assistantMessage(id: "assistant-1", text: "hi", timestamp: Date())],
             hiddenCount: 0,
@@ -35,7 +35,10 @@ struct ChatTimelineApplyPlanTests {
             streamingAssistantID: "assistant-1"
         )
 
-        #expect(plan.nextIDs == ["assistant-1"])
+        #expect(plan.nextIDs == [
+            "assistant-1",
+            ChatTimelineCollectionHost.workingIndicatorID,
+        ])
     }
 
     @Test func removedIDsReflectItemsDroppedFromCurrentSnapshot() {
