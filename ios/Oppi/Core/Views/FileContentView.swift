@@ -116,62 +116,38 @@ private struct CodeFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.selectedTextPiActionRouter) private var piRouter
-    @State private var showFullScreen = false
 
     var body: some View {
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        let isTruncated = lines.count > FileContentView.maxDisplayLines
-        let displayContent = isTruncated
-            ? lines.prefix(lineCount).joined(separator: "\n")
-            : content
-        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
-
-        Group {
-            if presentation.usesInlineChrome {
-                VStack(alignment: .leading, spacing: 0) {
-                    FileHeader(
-                        label: language.displayName,
-                        lineCount: lines.count,
-                        copyContent: content,
-                        showCopy: false,
-                        onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
-                    )
-
-                    NativeCodeBodyView(
-                        content: displayContent,
-                        language: language.displayName,
-                        startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight
-                    )
-
-                    if isTruncated {
-                        TruncationNotice(showing: lineCount, total: lines.count)
-                    }
-                }
-                .codeBlockChrome(showBorder: false)
-            } else {
+        if presentation.usesInlineChrome {
+            InlineFileContentChrome(
+                label: language.displayName,
+                content: content,
+                fullScreenContent: .code(
+                    content: content, language: language.displayName,
+                    filePath: filePath, startLine: startLine
+                ),
+                maxDisplayLines: FileContentView.maxDisplayLines,
+                presentation: presentation,
+                showCopy: false,
+                showBorder: false
+            ) { displayContent, _ in
                 NativeCodeBodyView(
-                    content: content,
+                    content: displayContent,
                     language: language.displayName,
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: language.displayName)
-                        : nil
+                    maxHeight: presentation.viewportMaxHeight
                 )
             }
-        }
-        .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(
-                content: .code(
-                    content: content, language: language.displayName, filePath: filePath, startLine: startLine
-                ),
-                selectedTextPiRouter: piRouter
+        } else {
+            NativeCodeBodyView(
+                content: content,
+                language: language.displayName,
+                startLine: startLine,
+                selectedTextSourceContext: piRouter != nil
+                    ? fileContentSourceContext(filePath: filePath, language: language.displayName)
+                    : nil
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -514,48 +490,31 @@ private struct JSONFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var prettyContent: String?
-    @State private var showFullScreen = false
 
     var body: some View {
         let effectiveContent = prettyContent ?? content
-        let lines = effectiveContent.split(separator: "\n", omittingEmptySubsequences: false)
-        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
 
         Group {
             if presentation.usesInlineChrome {
-                let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-                let isTruncated = lines.count > FileContentView.maxDisplayLines
-                let displayContent = isTruncated
-                    ? lines.prefix(lineCount).joined(separator: "\n")
-                    : effectiveContent
-
-                VStack(alignment: .leading, spacing: 0) {
-                    FileHeader(
-                        label: "JSON",
-                        lineCount: lines.count,
-                        copyContent: content,
-                        onExpand: hasFullScreenAffordance ? { showFullScreen = true } : nil
-                    )
-
+                InlineFileContentChrome(
+                    label: "JSON",
+                    content: effectiveContent,
+                    fullScreenContent: .code(
+                        content: content, language: "json",
+                        filePath: filePath, startLine: startLine
+                    ),
+                    maxDisplayLines: FileContentView.maxDisplayLines,
+                    presentation: presentation,
+                    copyContent: content
+                ) { displayContent, _ in
                     NativeCodeBodyView(
                         content: displayContent,
                         language: "json",
                         startLine: startLine,
                         maxHeight: presentation.viewportMaxHeight
                     )
-
-                    if isTruncated {
-                        TruncationNotice(showing: lineCount, total: lines.count)
-                    }
-                }
-                .codeBlockChrome()
-                .contextMenu {
-                    Button("Copy", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = content
-                    }
                 }
             } else {
                 NativeCodeBodyView(
@@ -569,16 +528,6 @@ private struct JSONFileView: View {
             }
         }
         .id(prettyContent != nil ? 1 : 0)
-        .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(
-                content: .code(
-                    content: content, language: "json", filePath: filePath, startLine: startLine
-                ),
-                selectedTextPiRouter: piRouter
-            )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
         .task(id: content.count) {
             let raw = content
             prettyContent = await Task.detached(priority: .userInitiated) {
@@ -610,63 +559,33 @@ private struct PlainTextView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.selectedTextPiActionRouter) private var piRouter
-    @State private var showFullScreen = false
 
     var body: some View {
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-        let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
-
-        Group {
-            if presentation.usesInlineChrome {
-                let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-                let isTruncated = lines.count > FileContentView.maxDisplayLines
-                let displayContent = isTruncated
-                    ? lines.prefix(lineCount).joined(separator: "\n")
-                    : content
-
-                VStack(alignment: .leading, spacing: 0) {
-                    NativeCodeBodyView(
-                        content: displayContent,
-                        language: nil,
-                        startLine: startLine,
-                        maxHeight: presentation.viewportMaxHeight
-                    )
-
-                    if isTruncated {
-                        TruncationNotice(showing: lineCount, total: lines.count)
-                    }
-                }
-                .codeBlockChrome()
-                .contextMenu {
-                    if hasFullScreenAffordance {
-                        Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
-                            showFullScreen = true
-                        }
-                    }
-                    Button("Copy", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = content
-                    }
-                }
-            } else {
+        if presentation.usesInlineChrome {
+            InlineFileContentChrome(
+                label: "Text",
+                content: content,
+                fullScreenContent: .plainText(content: content, filePath: filePath),
+                maxDisplayLines: FileContentView.maxDisplayLines,
+                presentation: presentation
+            ) { displayContent, _ in
                 NativeCodeBodyView(
-                    content: content,
+                    content: displayContent,
                     language: nil,
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, surface: .fullScreenSource)
-                        : nil
+                    maxHeight: presentation.viewportMaxHeight
                 )
             }
-        }
-        .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(
-                content: .plainText(content: content, filePath: filePath),
-                selectedTextPiRouter: piRouter
+        } else {
+            NativeCodeBodyView(
+                content: content,
+                language: nil,
+                startLine: startLine,
+                selectedTextSourceContext: piRouter != nil
+                    ? fileContentSourceContext(filePath: filePath, surface: .fullScreenSource)
+                    : nil
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -757,7 +676,7 @@ private struct AudioOutputView: View {
 // MARK: - Shared Components
 
 /// Header bar with language label, line count, and copy button.
-private struct FileHeader: View {
+struct FileHeader: View {
     let label: String
     let lineCount: Int
     let copyContent: String
@@ -798,7 +717,7 @@ private struct FileHeader: View {
 }
 
 /// Small copy button with "Copied" feedback.
-private struct CopyButton: View {
+struct CopyButton: View {
     let content: String
     @State private var isCopied = false
     @State private var resetTask: Task<Void, Never>?
@@ -825,7 +744,7 @@ private struct CopyButton: View {
 }
 
 /// "Showing X of Y lines" indicator.
-private struct TruncationNotice: View {
+struct TruncationNotice: View {
     let showing: Int
     let total: Int
 
@@ -850,7 +769,7 @@ func lineNumberInfo(lineCount: Int, startLine: Int) -> (numbers: String, width: 
 
 // MARK: - View Modifiers
 
-private extension View {
+extension View {
     /// Standard chrome for code block containers (dark bg, rounded corners).
     /// Border is optional for cleaner reader-style presentation.
     func codeBlockChrome(showBorder: Bool = true) -> some View {
@@ -877,7 +796,7 @@ private extension View {
 /// When `maxHeight` is set (inline mode), reports estimated content
 /// height via `sizeThatFits` so the view shrinks for short snippets.
 /// Vertical bounce is disabled in inline mode.
-private struct NativeCodeBodyView: UIViewRepresentable {
+struct NativeCodeBodyView: UIViewRepresentable {
     let content: String
     let language: String?
     let startLine: Int
