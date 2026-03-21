@@ -3,12 +3,14 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// Measures viewport stability when structural items (tool calls, system events,
-/// permission markers) are inserted into the timeline while the user is attached
-/// to the bottom (following streaming).
+/// Measures viewport stability when structural items are inserted into
+/// the timeline during streaming. The primary metric captures the
+/// contentOffset deviation caused by each type of structural insert.
 ///
-/// The primary metric `insert_stability_score` captures maximum contentOffset
-/// drift across different insertion types. Lower = more stable = less bounce.
+/// Since UICollectionViewDiffableDataSource.apply(animatingDifferences: false)
+/// resolves all cell heights synchronously, the drift measurement captures
+/// the offset jump that occurs during the snapshot apply + forced layout
+/// cycle. Lower = more stable.
 @Suite("InsertStabilityBench")
 struct InsertStabilityBench {
 
@@ -28,10 +30,10 @@ struct InsertStabilityBench {
             let r = runInsertStability()
             guard run >= Self.warmupIterations else { continue }
 
-            allToolDrift.append(r.toolInsertDriftPt)
-            allSystemDrift.append(r.systemInsertDriftPt)
-            allPermDrift.append(r.permissionInsertDriftPt)
-            allMultiDrift.append(r.multiInsertDriftPt)
+            allToolDrift.append(r.toolDrift)
+            allSystemDrift.append(r.systemDrift)
+            allPermDrift.append(r.permissionDrift)
+            allMultiDrift.append(r.multiDrift)
             allTotalMs.append(r.totalInsertMs)
 
             if !r.allFinite { inv_allFinite = false }
@@ -64,10 +66,10 @@ struct InsertStabilityBench {
     // MARK: - Result
 
     private struct InsertResult {
-        let toolInsertDriftPt: Double
-        let systemInsertDriftPt: Double
-        let permissionInsertDriftPt: Double
-        let multiInsertDriftPt: Double
+        let toolDrift: Double
+        let systemDrift: Double
+        let permissionDrift: Double
+        let multiDrift: Double
         let totalInsertMs: Double
         let allFinite: Bool
     }
@@ -80,22 +82,20 @@ struct InsertStabilityBench {
         let cv = harness.collectionView
         let reducer = harness.reducer
 
-        // Load some history to fill the viewport
+        // Load history to fill viewport
         let trace = makeBaseHistory(turnCount: 10)
         reducer.loadSession(trace)
         harness.items = reducer.items
         harness.applyItems(isBusy: false)
         cv.layoutIfNeeded()
 
-        // Force all cells to be measured (scroll through all content)
+        // Force all cells measured
         scrollThroughAll(cv)
         scrollToBottom(cv)
         cv.layoutIfNeeded()
 
-        // Start streaming — user is attached to bottom
+        // Start streaming
         reducer.processBatch([.agentStart(sessionId: "bench")])
-
-        // Add some streaming text so there's an active assistant row at bottom
         for i in 0 ..< 5 {
             reducer.processBatch([
                 .textDelta(sessionId: "bench", delta: "Analysis chunk \(i). ")
@@ -109,11 +109,16 @@ struct InsertStabilityBench {
         cv.layoutIfNeeded()
         scrollToBottom(cv)
         cv.layoutIfNeeded()
+        harness.scrollController.updateNearBottom(true)
 
         var totalInsertNs: UInt64 = 0
 
-        // --- Test 1: Single tool call insertion ---
-        let toolDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
+        // --- Test 1: Tool call in animation context ---
+        // Simulate what happens in production when a SwiftUI animation
+        // transaction wraps the updateUIView call (e.g. from PermissionOverlay).
+        let toolDrift = measureInsertWithAnimationContext(
+            harness: harness, cv: cv, totalNs: &totalInsertNs
+        ) {
             let toolId = "bench-tool-1"
             reducer.processBatch([
                 .toolStart(
@@ -131,58 +136,33 @@ struct InsertStabilityBench {
                 .toolEnd(sessionId: "bench", toolEventId: toolId, isError: false),
             ])
             harness.items = reducer.items
-            harness.applyItems(
-                streamingID: reducer.streamingAssistantID,
-                isBusy: true
-            )
         }
+        settle(harness: harness, cv: cv, reducer: reducer)
 
-        // Continue streaming after tool
-        reducer.processBatch([
-            .textDelta(sessionId: "bench", delta: "After tool result. ")
-        ])
-        harness.items = reducer.items
-        harness.applyItems(
-            streamingID: reducer.streamingAssistantID,
-            isBusy: true
-        )
-        cv.layoutIfNeeded()
-        scrollToBottom(cv)
-        cv.layoutIfNeeded()
-
-        // --- Test 2: System event (compaction) insertion ---
-        let sysDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
+        // --- Test 2: System event in animation context ---
+        let sysDrift = measureInsertWithAnimationContext(
+            harness: harness, cv: cv, totalNs: &totalInsertNs
+        ) {
             reducer.processBatch([
                 .compactionStart(sessionId: "bench", reason: "overflow"),
             ])
             harness.items = reducer.items
-            harness.applyItems(
-                streamingID: reducer.streamingAssistantID,
-                isBusy: true
-            )
         }
-
-        // Complete compaction and continue
         reducer.processBatch([
             .compactionEnd(
                 sessionId: "bench",
                 aborted: false,
                 willRetry: false,
-                summary: "Compacted successfully",
+                summary: "Compacted",
                 tokensBefore: 45000
             ),
         ])
-        harness.items = reducer.items
-        harness.applyItems(
-            streamingID: reducer.streamingAssistantID,
-            isBusy: true
-        )
-        cv.layoutIfNeeded()
-        scrollToBottom(cv)
-        cv.layoutIfNeeded()
+        settle(harness: harness, cv: cv, reducer: reducer)
 
-        // --- Test 3: Permission resolved insertion ---
-        let permDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
+        // --- Test 3: Permission resolved in animation context ---
+        let permDrift = measureInsertWithAnimationContext(
+            harness: harness, cv: cv, totalNs: &totalInsertNs
+        ) {
             reducer.resolvePermission(
                 id: "bench-perm-1",
                 outcome: .allowed,
@@ -190,27 +170,13 @@ struct InsertStabilityBench {
                 summary: "rm -rf /tmp/test"
             )
             harness.items = reducer.items
-            harness.applyItems(
-                streamingID: reducer.streamingAssistantID,
-                isBusy: true
-            )
         }
+        settle(harness: harness, cv: cv, reducer: reducer)
 
-        // Continue streaming
-        reducer.processBatch([
-            .textDelta(sessionId: "bench", delta: "Permission handled. ")
-        ])
-        harness.items = reducer.items
-        harness.applyItems(
-            streamingID: reducer.streamingAssistantID,
-            isBusy: true
-        )
-        cv.layoutIfNeeded()
-        scrollToBottom(cv)
-        cv.layoutIfNeeded()
-
-        // --- Test 4: Multiple items inserted at once ---
-        let multiDrift = measureInsertDrift(harness: harness, cv: cv, totalNs: &totalInsertNs) {
+        // --- Test 4: Multiple items in animation context ---
+        let multiDrift = measureInsertWithAnimationContext(
+            harness: harness, cv: cv, totalNs: &totalInsertNs
+        ) {
             let toolId2 = "bench-tool-multi"
             reducer.processBatch([
                 .toolStart(
@@ -227,100 +193,126 @@ struct InsertStabilityBench {
                 ),
                 .toolEnd(sessionId: "bench", toolEventId: toolId2, isError: false),
             ])
-            // Also a system event in the same batch
             reducer.processBatch([
                 .compactionStart(sessionId: "bench", reason: "manual"),
             ])
             harness.items = reducer.items
-            harness.applyItems(
-                streamingID: reducer.streamingAssistantID,
-                isBusy: true
-            )
         }
 
         let totalMs = Double(totalInsertNs) / 1_000_000.0
-
         let allMetrics = [toolDrift, sysDrift, permDrift, multiDrift, totalMs]
         let allFinite = allMetrics.allSatisfy { $0.isFinite && $0 >= 0 }
 
         harness.window.isHidden = true
 
         return InsertResult(
-            toolInsertDriftPt: toolDrift,
-            systemInsertDriftPt: sysDrift,
-            permissionInsertDriftPt: permDrift,
-            multiInsertDriftPt: multiDrift,
+            toolDrift: toolDrift,
+            systemDrift: sysDrift,
+            permissionDrift: permDrift,
+            multiDrift: multiDrift,
             totalInsertMs: totalMs,
             allFinite: allFinite
         )
     }
 
-    // MARK: - Drift Measurement
+    // MARK: - Drift with Animation Context
 
-    /// Measure the maximum contentOffset drift caused by an insertion.
+    /// Measures drift when the apply happens inside a UIKit animation context.
     ///
-    /// The key insight: when the user is at the bottom and new items are inserted,
-    /// the viewport should stay pinned to the bottom. Any transient jump in
-    /// contentOffset between the snapshot apply and the settled layout is
-    /// visible bounce.
+    /// In production, SwiftUI can wrap `updateUIView` in an implicit animation
+    /// transaction (from `.animation()` modifiers on sibling views). This
+    /// causes snapshot applies and layout changes to animate with spring
+    /// dynamics, creating visible bounce.
     ///
-    /// We measure this by capturing the contentOffset and contentSize before
-    /// the insertion, then after insertion + layout, checking if the relationship
-    /// between contentOffset and contentSize bottom edge has changed.
+    /// The metric captures the offset deviation during and after a
+    /// spring-animated insertion, then drains 10 frames to measure the
+    /// cumulative bounce.
     @MainActor
-    private func measureInsertDrift(
+    private func measureInsertWithAnimationContext(
         harness: BenchHarness,
         cv: AnchoredCollectionView,
         totalNs: inout UInt64,
         insert: () -> Void
     ) -> Double {
-        // Settle at bottom
         scrollToBottom(cv)
         cv.layoutIfNeeded()
+        harness.scrollController.updateNearBottom(true)
 
-        // Capture pre-insert state
         let offsetBefore = cv.contentOffset.y
-        let contentHeightBefore = cv.contentSize.height
 
         let start = DispatchTime.now().uptimeNanoseconds
 
-        // Perform the insertion
+        // Simulate SwiftUI animation context leaking into updateUIView.
+        // Use UIView.animate with spring to match what .animation(.snappy)
+        // would produce.
         insert()
 
-        // After the coordinator.apply() inside the insert block, the snapshot
-        // is applied but cells may not be fully self-sized yet. Capture
-        // the intermediate state.
-        let offsetAfterApply = cv.contentOffset.y
-        let contentHeightAfterApply = cv.contentSize.height
+        UIView.animate(
+            withDuration: 0.3,
+            delay: 0,
+            usingSpringWithDamping: 0.7,
+            initialSpringVelocity: 0,
+            options: [.beginFromCurrentState]
+        ) {
+            harness.applyItems(
+                streamingID: harness.reducer.streamingAssistantID,
+                isBusy: true
+            )
+            cv.layoutIfNeeded()
+        }
 
-        // Force full layout resolution
+        // The apply happened inside the animation block. Capture the
+        // presentation layer's position vs model layer to measure bounce.
+        let modelOffset = cv.contentOffset.y
+
+        // Drain frames to let the spring animation play out
+        var maxDrift: CGFloat = 0
+        for _ in 0 ..< 10 {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.033))
+
+            // Check presentation layer offset
+            if let presentationLayer = cv.layer.presentation() {
+                let presentationOffset = -presentationLayer.bounds.origin.y
+                let drift = abs(presentationOffset - modelOffset)
+                maxDrift = max(maxDrift, drift)
+            }
+
+            // Also check the actual contentOffset (model)
+            let offsetDrift = abs(cv.contentOffset.y - modelOffset)
+            maxDrift = max(maxDrift, offsetDrift)
+        }
+
+        // Settle
+        cv.layer.removeAllAnimations()
         cv.layoutIfNeeded()
-        let offsetAfterLayout = cv.contentOffset.y
-        let contentHeightAfterLayout = cv.contentSize.height
 
         let end = DispatchTime.now().uptimeNanoseconds
         totalNs += (end &- start)
 
-        // The drift is the difference in distance-from-bottom before and after.
-        // If the insertion was perfectly stable, the user would stay at the bottom
-        // throughout. Any intermediate deviation is visible as a bounce.
-        let insets = cv.adjustedContentInset
-        let viewportH = cv.bounds.height - insets.top - insets.bottom
+        // Scroll back to bottom
+        scrollToBottom(cv)
+        cv.layoutIfNeeded()
+        harness.scrollController.updateNearBottom(true)
 
-        // Distance from bottom after apply (before layout settles)
-        let bottomAfterApply = contentHeightAfterApply - (offsetAfterApply + insets.top + viewportH)
+        return Double(maxDrift)
+    }
 
-        // Distance from bottom after layout settles
-        let bottomAfterLayout = contentHeightAfterLayout - (offsetAfterLayout + insets.top + viewportH)
+    // MARK: - Helpers
 
-        // The drift the user sees is the maximum deviation from "at bottom" (0pt)
-        // during the insertion process
-        let maxDeviation = max(abs(bottomAfterApply), abs(bottomAfterLayout))
-
-        // Also track the jump between apply and layout (the self-sizing correction)
-        let layoutJump = abs(offsetAfterLayout - offsetAfterApply)
-
-        return max(maxDeviation, layoutJump)
+    @MainActor
+    private func settle(harness: BenchHarness, cv: AnchoredCollectionView, reducer: TimelineReducer) {
+        reducer.processBatch([
+            .textDelta(sessionId: "bench", delta: "Continue. ")
+        ])
+        harness.items = reducer.items
+        harness.applyItems(
+            streamingID: reducer.streamingAssistantID,
+            isBusy: true
+        )
+        cv.layoutIfNeeded()
+        scrollToBottom(cv)
+        cv.layoutIfNeeded()
+        harness.scrollController.updateNearBottom(true)
     }
 
     // MARK: - Harness

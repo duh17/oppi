@@ -117,7 +117,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
-        context.coordinator.apply(configuration: configuration, to: collectionView)
+        // Break any SwiftUI animation inheritance. When a sibling view
+        // (e.g. PermissionOverlay with .animation(.snappy)) triggers an
+        // animation transaction, SwiftUI can wrap this updateUIView call
+        // in an implicit animation context. UIKit then inherits it,
+        // causing snapshot applies and layout changes to animate with
+        // spring/bounce dynamics — visible as "bouncy" item insertion.
+        UIView.performWithoutAnimation {
+            context.coordinator.apply(configuration: configuration, to: collectionView)
+        }
     }
 
     func makeCoordinator() -> Controller {
