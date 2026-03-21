@@ -65,19 +65,18 @@ enum TimelineSnapshotApplier {
                 changedCount: changedIDs.count
             )
             if let dataSource, !changedIDs.isEmpty {
+                // Skip the validIDs filter: since idsUnchanged is true,
+                // changedIDs is a subset of nextIDs which equals the current
+                // snapshot items. All IDs are guaranteed valid. This avoids
+                // O(k) hash table lookups per tick.
                 var snapshot = dataSource.snapshot()
-                let validIDs = changedIDs.filter {
-                    snapshot.indexOfItem($0) != nil
-                }
-                if !validIDs.isEmpty {
-                    snapshot.reconfigureItems(validIDs)
-                    let applyToken = ChatTimelinePerf.beginCollectionApply(
-                        itemCount: nextIDs.count,
-                        changedCount: validIDs.count
-                    )
-                    dataSource.apply(snapshot, animatingDifferences: false)
-                    ChatTimelinePerf.endCollectionApply(applyToken)
-                }
+                snapshot.reconfigureItems(changedIDs)
+                let applyToken = ChatTimelinePerf.beginCollectionApply(
+                    itemCount: nextIDs.count,
+                    changedCount: changedIDs.count
+                )
+                dataSource.apply(snapshot, animatingDifferences: false)
+                ChatTimelinePerf.endCollectionApply(applyToken)
             }
             return
         }
