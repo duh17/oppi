@@ -83,6 +83,25 @@ struct FileContentView: View {
     }
 }
 
+// MARK: - Source Context Helper
+
+/// Creates a ``SelectedTextSourceContext`` for file content views.
+///
+/// Centralises the boilerplate shared by every file-type view so the
+/// surface and language hint are the only things that vary per call site.
+private func fileContentSourceContext(
+    filePath: String?,
+    language: String? = nil,
+    surface: SelectedTextSurfaceKind = .fullScreenCode
+) -> SelectedTextSourceContext {
+    SelectedTextSourceContext(
+        sessionId: "",
+        surface: surface,
+        filePath: filePath,
+        languageHint: language
+    )
+}
+
 // MARK: - CodeFileView
 
 /// Source code with line numbers and syntax highlighting.
@@ -100,15 +119,6 @@ private struct CodeFileView: View {
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showFullScreen = false
-
-    private var sourceContext: SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: "",
-            surface: .fullScreenCode,
-            filePath: filePath,
-            languageHint: language.displayName
-        )
-    }
 
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
@@ -147,7 +157,9 @@ private struct CodeFileView: View {
                     content: content,
                     language: language.displayName,
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                    selectedTextSourceContext: piRouter != nil
+                        ? fileContentSourceContext(filePath: filePath, language: language.displayName)
+                        : nil
                 )
             }
         }
@@ -279,15 +291,6 @@ private struct MarkdownFileView: View {
         }
     }
 
-    private var markdownSourceContext: SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: "",
-            surface: .fullScreenCode,
-            filePath: filePath,
-            languageHint: "markdown"
-        )
-    }
-
     private var documentBody: some View {
         Group {
             if showRaw {
@@ -295,7 +298,9 @@ private struct MarkdownFileView: View {
                     content: content,
                     language: "markdown",
                     startLine: 1,
-                    selectedTextSourceContext: piRouter != nil ? markdownSourceContext : nil
+                    selectedTextSourceContext: piRouter != nil
+                        ? fileContentSourceContext(filePath: filePath, language: "markdown")
+                        : nil
                 )
             } else {
                 ScrollView(.vertical) {
@@ -303,11 +308,7 @@ private struct MarkdownFileView: View {
                         content: content,
                         plainTextFallbackThreshold: nil,
                         selectedTextSourceContext: piRouter != nil
-                            ? SelectedTextSourceContext(
-                                sessionId: "",
-                                surface: .fullScreenMarkdown,
-                                filePath: filePath
-                            )
+                            ? fileContentSourceContext(filePath: filePath, surface: .fullScreenMarkdown)
                             : nil
                     )
                     .allowsFullScreenExpansion(false)
@@ -351,11 +352,7 @@ private struct HTMLFileView: View {
             let request = SelectedTextPiRequest(
                 action: quickAction,
                 selectedText: text,
-                source: SelectedTextSourceContext(
-                    sessionId: "",
-                    surface: .fullScreenSource,
-                    filePath: path
-                )
+                source: fileContentSourceContext(filePath: path, surface: .fullScreenSource)
             )
             if let router {
                 router.dispatch(request)
@@ -463,15 +460,6 @@ private struct HTMLFileView: View {
 
     // MARK: - Document body (file browser, remote file)
 
-    private var sourceContext: SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: "",
-            surface: .fullScreenCode,
-            filePath: filePath,
-            languageHint: "html"
-        )
-    }
-
     private var documentBody: some View {
         ZStack(alignment: .topTrailing) {
             if showSource {
@@ -479,7 +467,9 @@ private struct HTMLFileView: View {
                     content: content,
                     language: "html",
                     startLine: 1,
-                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                    selectedTextSourceContext: piRouter != nil
+                        ? fileContentSourceContext(filePath: filePath, language: "html")
+                        : nil
                 )
             } else {
                 HTMLWebView(
@@ -529,15 +519,6 @@ private struct JSONFileView: View {
     @State private var prettyContent: String?
     @State private var showFullScreen = false
 
-    private var sourceContext: SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: "",
-            surface: .fullScreenCode,
-            filePath: filePath,
-            languageHint: "json"
-        )
-    }
-
     var body: some View {
         let effectiveContent = prettyContent ?? content
         let lines = effectiveContent.split(separator: "\n", omittingEmptySubsequences: false)
@@ -581,7 +562,9 @@ private struct JSONFileView: View {
                     content: effectiveContent,
                     language: "json",
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                    selectedTextSourceContext: piRouter != nil
+                        ? fileContentSourceContext(filePath: filePath, language: "json")
+                        : nil
                 )
             }
         }
@@ -631,14 +614,6 @@ private struct PlainTextView: View {
     @Environment(\.selectedTextPiActionRouter) private var piRouter
     @State private var showFullScreen = false
 
-    private var sourceContext: SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: "",
-            surface: .fullScreenSource,
-            filePath: filePath
-        )
-    }
-
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let hasFullScreenAffordance = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
@@ -679,7 +654,9 @@ private struct PlainTextView: View {
                     content: content,
                     language: nil,
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil ? sourceContext : nil
+                    selectedTextSourceContext: piRouter != nil
+                        ? fileContentSourceContext(filePath: filePath, surface: .fullScreenSource)
+                        : nil
                 )
             }
         }
