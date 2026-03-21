@@ -37,11 +37,6 @@ final class ChatSessionManager {
         case fullReloadScheduled
     }
 
-    private struct PendingTTFTContext {
-        let startedAtMs: Int64
-        let tags: [String: String]
-    }
-
     let sessionId: String
 
     /// Bumped to restart the `.task(id:)` connection loop.
@@ -63,19 +58,11 @@ final class ChatSessionManager {
 
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
-    private var pendingTTFTContext: PendingTTFTContext?
-    private var freshContentLagStartMs: Int64?
-    private var freshContentLagRecorded = false
-    private var loadedFromCacheAtConnect = false
-    private var observedTransportPath: ConnectionTransportPath = .paired
+    private let telemetry = ChatSessionTelemetryTracker()
 
     private var hasConnectedBefore = false
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
-
-    /// Session load timing: measures tap-to-first-content-visible.
-    private var sessionLoadStartMs: Int64?
-    private var sessionLoadRecorded = false
 
     /// Freshness metadata for chat timeline sync.
     private(set) var lastSuccessfulSyncAt: Date?
@@ -152,43 +139,6 @@ final class ChatSessionManager {
         resolveWorkspaceId(from: sessionStore) ?? ""
     }
 
-    private func ttftModelTags(from sessionStore: SessionStore) -> [String: String] {
-        guard let rawModel = sessionStore.session(id: sessionId)?.model?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawModel.isEmpty else {
-            return [
-                "provider": "unknown",
-                "model": "unknown",
-            ]
-        }
-
-        let parts = rawModel.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
-        if parts.count == 2 {
-            let provider = String(parts[0]).isEmpty ? "unknown" : String(parts[0])
-            let model = String(parts[1]).isEmpty ? "unknown" : String(parts[1])
-            return [
-                "provider": provider,
-                "model": model,
-            ]
-        }
-
-        return [
-            "provider": "unknown",
-            "model": rawModel,
-        ]
-    }
-
-    private func isTTFTCompletionSignal(_ message: ServerMessage) -> Bool {
-        if case .thinkingDelta = message {
-            return true
-        }
-
-        if case .textDelta = message {
-            return true
-        }
-
-        return false
-    }
-
     private func transitionTo(_ newState: SessionEntryState) {
         let oldState = entryState
         guard oldState != newState else { return }
@@ -223,41 +173,6 @@ final class ChatSessionManager {
     private func markSyncFailed() {
         isSyncing = false
         lastSyncFailed = true
-    }
-
-    private func recordSessionLoadIfNeeded(path: String, itemCount: Int, workspaceId: String? = nil) {
-        guard !sessionLoadRecorded, let startMs = sessionLoadStartMs else { return }
-        sessionLoadRecorded = true
-        let durationMs = max(0, ChatSessionTelemetry.nowMs() - startMs)
-        ChatSessionTelemetry.recordSessionLoad(
-            durationMs: durationMs,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            path: path,
-            itemCount: itemCount
-        )
-    }
-
-    private func beginFreshContentLagMeasurement(hadCache: Bool) {
-        freshContentLagStartMs = ChatSessionTelemetry.nowMs()
-        freshContentLagRecorded = false
-        loadedFromCacheAtConnect = hadCache
-    }
-
-    private func recordFreshContentLagIfNeeded(reason: String, workspaceId: String? = nil) {
-        guard !freshContentLagRecorded,
-              let startedAt = freshContentLagStartMs else { return }
-
-        freshContentLagRecorded = true
-        let durationMs = max(0, ChatSessionTelemetry.nowMs() - startedAt)
-        ChatSessionTelemetry.recordFreshContentLag(
-            durationMs: durationMs,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            reason: reason,
-            cached: loadedFromCacheAtConnect,
-            transport: observedTransportPath.rawValue
-        )
     }
 
     // MARK: - Lifecycle
@@ -305,9 +220,8 @@ final class ChatSessionManager {
 
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId
-        pendingTTFTContext = nil
-        sessionLoadStartMs = ChatSessionTelemetry.nowMs()
-        sessionLoadRecorded = false
+        telemetry.cancelTTFT()
+        telemetry.startSessionLoad()
         markSyncStarted()
 
         let persistedLastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
@@ -317,8 +231,8 @@ final class ChatSessionManager {
         )
 
         // Measure stale-cache window: from session entry until first confirmed fresh content.
-        observedTransportPath = connection.transportPath
-        beginFreshContentLagMeasurement(hadCache: false)
+        telemetry.updateTransportPath(connection.transportPath)
+        telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
         // Re-entry from a different session (e.g. parent→child→parent):
         // skip the cache to avoid a 200-500ms flash of stale data. The
@@ -349,7 +263,7 @@ final class ChatSessionManager {
             )
 
             if let cached, !cached.events.isEmpty {
-                loadedFromCacheAtConnect = true
+                telemetry.markCacheLoaded()
 
                 // Skip cache load when the reducer already has items (same-session
                 // re-entry). The live items are strictly more recent than the cache.
@@ -384,9 +298,10 @@ final class ChatSessionManager {
                 }
 
                 needsInitialScroll = true
-                recordSessionLoadIfNeeded(
+                telemetry.recordSessionLoadIfNeeded(
                     path: "cache_hit",
                     itemCount: reducer.items.count,
+                    sessionId: sessionId,
                     workspaceId: resolveWorkspaceId(from: sessionStore)
                 )
             }
@@ -462,7 +377,7 @@ final class ChatSessionManager {
             }
 
             markSyncSucceeded()
-            observedTransportPath = connection.transportPath
+            telemetry.updateTransportPath(connection.transportPath)
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
 
             switch entryState {
@@ -525,7 +440,7 @@ final class ChatSessionManager {
                     // live WS events so they survive the loadHistory() rebuild.
                     let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
                         || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
-                    if sessionIsBusy, loadedFromCacheAtConnect || isReentry {
+                    if sessionIsBusy, telemetry.loadedFromCacheAtConnect || isReentry {
                         reducer.startReplayBuffer()
                     }
                 }
@@ -551,7 +466,7 @@ final class ChatSessionManager {
                         case .fullReloadScheduled:
                             log.info("WS reconnected — full history reload scheduled for \(self.sessionId)")
                         }
-                        recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)")
+                        telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)", sessionId: sessionId)
                     } else {
                         log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
                         scheduleHistoryReload(
@@ -574,35 +489,22 @@ final class ChatSessionManager {
                     )
                     guard accepted else { continue }
 
-                    recordFreshContentLagIfNeeded(reason: "stream_seq")
+                    telemetry.recordFreshContentLagIfNeeded(reason: "stream_seq", sessionId: sessionId)
                     let updatedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
                     persistLastSeenSeq(updatedSeq)
                 }
 
                 if case .turnAck(let command, _, let stage, _, _) = message,
                    stage == .dispatched,
-                   command == "prompt" || command == "steer" || command == "follow_up",
-                   pendingTTFTContext == nil {
-                    pendingTTFTContext = PendingTTFTContext(
-                        startedAtMs: ChatSessionTelemetry.nowMs(),
-                        tags: ttftModelTags(from: sessionStore)
-                    )
+                   command == "prompt" || command == "steer" || command == "follow_up" {
+                    telemetry.startTTFT(modelTags: ChatSessionTelemetryTracker.modelTags(from: sessionStore, sessionId: sessionId))
                 }
 
                 if case .agentEnd = message {
-                    pendingTTFTContext = nil
+                    telemetry.cancelTTFT()
                 }
 
-                if isTTFTCompletionSignal(message),
-                   let pendingTTFTContext {
-                    self.pendingTTFTContext = nil
-                    let ttftMs = max(0, ChatSessionTelemetry.nowMs() - pendingTTFTContext.startedAtMs)
-                    ChatSessionTelemetry.recordTTFT(
-                        durationMs: ttftMs,
-                        sessionId: sessionId,
-                        tags: pendingTTFTContext.tags
-                    )
-                }
+                telemetry.completeTTFTIfNeeded(signal: message, sessionId: sessionId)
 
             case .idle, .loadingCache, .stopped, .disconnected:
                 log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
@@ -974,9 +876,10 @@ final class ChatSessionManager {
                     )
 
                     needsInitialScroll = true
-                    recordSessionLoadIfNeeded(
+                    telemetry.recordSessionLoadIfNeeded(
                         path: usedReplay ? "full_reload" : "cache_miss",
                         itemCount: reducer.items.count,
+                        sessionId: sessionId,
                         workspaceId: workspaceId
                     )
                     let footprint = SentryService.currentFootprintMB()
@@ -992,7 +895,7 @@ final class ChatSessionManager {
                 }
             }
 
-            recordFreshContentLagIfNeeded(reason: freshnessReason, workspaceId: workspaceId)
+            telemetry.recordFreshContentLagIfNeeded(reason: freshnessReason, sessionId: sessionId, workspaceId: workspaceId)
 
             // Always update cache with fresh data
             Task.detached {
