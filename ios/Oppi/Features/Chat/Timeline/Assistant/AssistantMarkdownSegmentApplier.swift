@@ -156,20 +156,15 @@ final class AssistantMarkdownSegmentApplier {
                 if let textView = textViews[index] {
                     textView.isSelectable = config.textSelectionEnabled
 
-                    // During streaming, skip the expensive normalizedAttributedText
-                    // call (which enumerates ALL attributes in the full range to fix
-                    // fonts/colors). FlatSegment.build already applies correct theme
-                    // attributes, so the normalization is redundant. Direct conversion
-                    // avoids the NSMutableAttributedString copy + attribute enumeration.
-                    let attrText: NSAttributedString
-                    if config.isStreaming {
-                        attrText = NSAttributedString(attributed)
-                    } else {
-                        attrText = Self.normalizedAttributedText(
-                            from: attributed,
-                            palette: palette
-                        )
-                    }
+                    // normalizedAttributedText sets UIKit foreground color and
+                    // body font on all ranges. Required because FlatSegment.build
+                    // uses SwiftUI AttributedString scope (.foregroundColor = Color)
+                    // which stores under "SwiftUI.ForegroundColor" — invisible to
+                    // UITextView without normalization (renders as black text).
+                    let attrText = Self.normalizedAttributedText(
+                        from: attributed,
+                        palette: palette
+                    )
                     textView.attributedText = attrText
 
                     // Smooth reveal for the last (actively growing) text segment during streaming.
