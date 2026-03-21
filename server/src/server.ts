@@ -329,6 +329,7 @@ export class Server {
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
+    this.sessions.availableModelIdsResolver = () => this.models.getAll().map((m) => m.id);
 
     this.wsMessageHandler = new WsMessageHandler({
       sessions: this.sessions,
