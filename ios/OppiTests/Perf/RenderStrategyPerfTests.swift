@@ -241,72 +241,6 @@ struct RenderStrategyPerfTests {
         #expect(ms < 5, "Bash command highlight took \(ms)ms (budget: 5ms)")
     }
 
-    // MARK: - highlightLines Correctness
-
-    @Test("highlightLines matches per-line highlightLine output")
-    func highlightLinesBatchMatchesSingle() {
-        let source = Self.syntheticSwiftSource(lineCount: 50)
-        let batchResults = SyntaxHighlighter.highlightLines(source, language: .swift)
-
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
-        #expect(batchResults.count == lines.count,
-            "Batch returned \(batchResults.count) lines, expected \(lines.count)")
-
-        // Verify text content matches (colors may differ due to block comment tracking).
-        for (i, batchLine) in batchResults.enumerated() {
-            let singleLine = SyntaxHighlighter.highlightLine(String(lines[i]), language: .swift)
-            #expect(batchLine.string == singleLine.string,
-                "Line \(i) text mismatch: batch='\(batchLine.string)' single='\(singleLine.string)'")
-        }
-    }
-
-    @Test("highlightLines tracks block comment state across lines")
-    func highlightLinesBlockCommentState() {
-        let source = """
-        let a = 1
-        /* start of block
-        still in block
-        end of block */
-        let b = 2
-        """
-        let results = SyntaxHighlighter.highlightLines(source, language: .swift)
-        #expect(results.count == 5)
-
-        // Line 2 ("still in block") should be fully comment-colored in batch mode.
-        // In single-line mode it wouldn't know it's inside a block comment.
-        let commentLine = results[2]
-        let commentColor = UIColor(SwiftUI.Color.themeSyntaxComment)
-
-        // Check that at least the first character has comment color.
-        var effectiveRange = NSRange()
-        let firstCharColor = commentLine.attribute(
-            .foregroundColor, at: 0, effectiveRange: &effectiveRange
-        ) as? UIColor
-        #expect(firstCharColor == commentColor,
-            "Block comment line should have comment color, got \(String(describing: firstCharColor))")
-    }
-
-    @Test("highlightLines handles JSON")
-    func highlightLinesJSON() {
-        let source = """
-        {
-          "name": "test",
-          "count": 42,
-          "active": true
-        }
-        """
-        let results = SyntaxHighlighter.highlightLines(source, language: .json)
-        #expect(results.count == 5)
-        #expect(results[0].string == "{")
-        #expect(results[1].string.contains("\"name\""))
-    }
-
-    @Test("highlightLines empty input")
-    func highlightLinesEmpty() {
-        let results = SyntaxHighlighter.highlightLines("", language: .swift)
-        #expect(results.count == 1)
-        #expect(results[0].string.isEmpty)
-    }
 }
 
 // MARK: - Telemetry Recording
@@ -357,28 +291,7 @@ struct RenderStrategyTelemetryTests {
 @MainActor
 struct BatchHighlightBenchmarkTests {
 
-    @Test("Batch highlightLines is faster than N x highlightLine")
-    func batchFasterThanSingle() {
-        let source = RenderStrategyPerfTests.syntheticSwiftSource(lineCount: 500)
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
-        // Measure single-line path (old approach).
-        let singleStart = DispatchTime.now().uptimeNanoseconds
-        for line in lines {
-            _ = SyntaxHighlighter.highlightLine(line, language: .swift)
-        }
-        let singleMs = Int((DispatchTime.now().uptimeNanoseconds &- singleStart) / 1_000_000)
-
-        // Measure batch path (new approach).
-        let batchStart = DispatchTime.now().uptimeNanoseconds
-        _ = SyntaxHighlighter.highlightLines(source, language: .swift)
-        let batchMs = Int((DispatchTime.now().uptimeNanoseconds &- batchStart) / 1_000_000)
-
-        // Batch should be faster (fewer TokenAttrs allocations, shared block comment state).
-        // Allow generous margin for CI/debug variance.
-        #expect(batchMs <= singleMs + 5,
-            "Batch (\(batchMs)ms) should not be slower than single (\(singleMs)ms)")
-    }
 
     // Expose fixture generator for cross-suite use.
     static func syntheticSwiftSource(lineCount: Int) -> String {

@@ -54,9 +54,9 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
     private static let maxValidHeight: CGFloat = 10_000
     static let minOutputViewportHeight: CGFloat = 56
-    private static let minDiffViewportHeight: CGFloat = 68
-    private static let maxOutputViewportHeight: CGFloat = 620
-    private static let maxDiffViewportHeight: CGFloat = 760
+    static let minDiffViewportHeight: CGFloat = 68
+    static let maxOutputViewportHeight: CGFloat = 620
+    static let maxDiffViewportHeight: CGFloat = 760
     /// Fixed viewport height used during streaming. The cell height stays
     /// constant while content grows inside, eliminating the nested-scroll
     /// invalidation cascade (inner content resize → cell height change →
@@ -64,8 +64,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     /// full-screen for the complete content. On completion (isDone), the
     /// viewport resizes once to the natural bucketed height.
     static let streamingViewportHeight: CGFloat = 200
-    private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
-    private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
+    static let outputViewportCloseSafeAreaReserve: CGFloat = 128
+    static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let collapsedImagePreviewHeight: CGFloat = 136
 
     @MainActor

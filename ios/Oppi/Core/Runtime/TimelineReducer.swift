@@ -807,7 +807,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     // MARK: - Event Handlers (extracted from processInternal)
 
-    private func handleToolStart(toolEventId: String, tool: String, args: [String: ToolArgValue], callSegments: [ServerToolSegment]?) -> Bool {
+    private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?) -> Bool {
         let before = renderMutationCheckpoint()
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
@@ -866,7 +866,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             toolSegmentStore.callSegments(for: toolEventId) != previousCallSegments
     }
 
-    private func handleToolEnd(toolEventId: String, details: ToolResultDetails?, isError: Bool, resultSegments: [ServerToolSegment]?) -> Bool {
+    private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
         let before = renderMutationCheckpoint()
         let previousDetails = toolDetailsStore.details(for: toolEventId)
         let previousResultSegments = toolSegmentStore.resultSegments(for: toolEventId)
@@ -917,7 +917,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         } else if willRetry {
             message = String(localized: "Context compacted — retrying...")
         } else {
-            let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(formatTokenCount(tokensBefore ?? 0)) tokens)" : ""
+            let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(formatTokenCountDecimal(tokensBefore ?? 0)) tokens)" : ""
             let cleanedSummary = summary?.trimmingCharacters(in: .whitespacesAndNewlines)
             message = if let cleanedSummary, !cleanedSummary.isEmpty {
                 "Context compacted\(tokenBadge): \(cleanedSummary)"
