@@ -56,7 +56,7 @@ struct DailyDetailView: View {
                         byDisplay[name] = (model, data.cost)
                     }
                 }
-                for (_, value) in byDisplay {
+                for (_, value) in byDisplay.sorted(by: { $0.key < $1.key }) {
                     result.append(HourlyCost(hour: entry.hour, model: value.raw, cost: value.cost))
                 }
             } else if entry.cost > 0 {
