@@ -344,12 +344,12 @@ enum FlatSegment: Sendable {
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
-            result.uiKit.foregroundColor = UIColor(palette.purple)
+            result.uiKit.foregroundColor = UIColor(palette.mdQuoteBorder)
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 result.append(attributedString(for: child, palette: palette))
             }
-            result.uiKit.foregroundColor = UIColor(palette.fgDim)
+            result.uiKit.foregroundColor = UIColor(palette.mdQuote)
             return result
 
         case .unorderedList(let items):
@@ -357,7 +357,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var bullet = AttributedString("  • ")
-                bullet.uiKit.foregroundColor = UIColor(palette.fgDim)
+                bullet.uiKit.foregroundColor = UIColor(palette.mdListBullet)
                 result.append(bullet)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n    ")) }
@@ -371,7 +371,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
-                num.uiKit.foregroundColor = UIColor(palette.fgDim)
+                num.uiKit.foregroundColor = UIColor(palette.mdListBullet)
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
@@ -532,7 +532,7 @@ enum FlatSegment: Sendable {
                 text += code
                 let end = text.utf8.count
                 let codeFont = Self.monospacedFont(forTextStyle: .subheadline)
-                let codeFg = UIColor(palette.cyan)
+                let codeFg = UIColor(palette.mdCode)
                 let codeBg = UIColor(palette.bgHighlight)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                     sub.uiKit.font = codeFont
@@ -547,8 +547,9 @@ enum FlatSegment: Sendable {
                         guard let destination, let url = URL(string: destination), url.scheme != nil else { return nil }
                         return url
                     }()
+                    let linkColor = UIColor(palette.mdLink)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = UIColor(palette.blue)
+                        sub.uiKit.foregroundColor = linkColor
                         sub.underlineStyle = .single
                         if let url = resolvedURL {
                             sub.link = url
@@ -599,12 +600,12 @@ enum FlatSegment: Sendable {
         case .code(let code):
             var result = AttributedString(code)
             result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
-            result.uiKit.foregroundColor = UIColor(palette.cyan)
+            result.uiKit.foregroundColor = UIColor(palette.mdCode)
             result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
             return result
         case .link(let children, let destination):
             var result = renderInlines(children, palette: palette)
-            result.uiKit.foregroundColor = UIColor(palette.blue)
+            result.uiKit.foregroundColor = UIColor(palette.mdLink)
             result.underlineStyle = .single
             if let destination,
                let url = URL(string: destination),
@@ -646,7 +647,8 @@ enum FlatSegment: Sendable {
 
     private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
         switch level {
-        case 1, 2, 3: return UIColor(palette.fg)
+        case 1, 2: return UIColor(palette.mdHeading)
+        case 3: return UIColor(palette.fg)
         case 4, 5: return UIColor(palette.fgDim)
         default: return UIColor(palette.comment)
         }

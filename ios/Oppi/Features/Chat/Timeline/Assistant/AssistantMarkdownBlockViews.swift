@@ -146,7 +146,7 @@ final class NativeCodeBlockView: UIView {
     func apply(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         backgroundColor = UIColor(palette.bgDark)
         headerBackground.backgroundColor = UIColor(palette.bgHighlight)
-        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
+        layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
 
         languageLabel.text = language ?? "code"
         languageLabel.textColor = UIColor(palette.comment)
@@ -392,7 +392,7 @@ final class NativeTableBlockView: UIView {
         }
 
         cardView.backgroundColor = UIColor(palette.bgDark)
-        cardView.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
+        cardView.layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
         let attrText = Self.makeTableAttributedText(headers: headers, rows: rows, palette: palette)
         tableLabel.attributedText = attrText
         tableLabel.linkTextAttributes = [
