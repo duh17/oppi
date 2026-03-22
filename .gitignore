@@ -15,6 +15,7 @@ scripts/*
 !scripts/autoresearch-dashboard.py
 !server/scripts/
 server/scripts/*
+!server/scripts/dev-watch.mjs
 !server/scripts/telemetry-review.mjs
 !server/scripts/manual/
 !server/scripts/manual/telemetry-import-sqlite.mjs
