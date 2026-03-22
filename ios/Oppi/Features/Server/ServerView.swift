@@ -54,6 +54,8 @@ struct ServerView: View {
             await loadServerInfo()
         }
         .refreshable {
+            dailyDetailCache = [:]
+            dailyDetail = nil
             async let s: () = loadStats()
             async let i: () = loadServerInfo()
             _ = await (s, i)
