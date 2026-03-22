@@ -267,7 +267,7 @@ final class AssistantMarkdownSegmentApplier {
 
     private func makeThematicBreak(palette: ThemePalette) -> UIView {
         let hr = UIView()
-        hr.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.4)
+        hr.backgroundColor = UIColor(palette.mdHr).withAlphaComponent(0.6)
         hr.translatesAutoresizingMaskIntoConstraints = false
         hr.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return hr
