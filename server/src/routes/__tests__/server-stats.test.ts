@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type { Session, Workspace } from "../../types.js";
 import {
+  aggregateDailyDetail,
   aggregateStats,
   getActiveSessions,
   parseRange,
@@ -377,5 +378,195 @@ describe("aggregateStats", () => {
 
     const result = aggregate({ sessions });
     expect(result.modelBreakdown[0].share).toBe(0);
+  });
+});
+
+// ─── aggregateDailyDetail ───
+
+describe("aggregateDailyDetail", () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  const baseDate = new Date("2026-03-21T00:00:00Z").getTime();
+
+  test("returns empty results for day with no sessions", () => {
+    const result = aggregateDailyDetail([], "2026-03-21");
+    expect(result.date).toBe("2026-03-21");
+    expect(result.totals).toEqual({ sessions: 0, cost: 0, tokens: 0 });
+    expect(result.hourly).toEqual([]);
+    expect(result.sessions).toEqual([]);
+  });
+
+  test("groups sessions by hour correctly", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        createdAt: baseDate + 8.5 * HOUR_MS,
+        cost: 10,
+        tokens: { input: 20000, output: 10000 },
+      }),
+      makeSession({
+        id: "s-2",
+        createdAt: baseDate + 14 * HOUR_MS,
+        cost: 20,
+        tokens: { input: 40000, output: 20000 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.hourly).toHaveLength(2);
+    expect(result.hourly[0].hour).toBe(8);
+    expect(result.hourly[0].sessions).toBe(1);
+    expect(result.hourly[0].cost).toBe(10);
+    expect(result.hourly[0].tokens).toBe(30000);
+    expect(result.hourly[1].hour).toBe(14);
+    expect(result.hourly[1].sessions).toBe(1);
+  });
+
+  test("includes byModel breakdown per hour", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        createdAt: baseDate + 8.5 * HOUR_MS,
+        cost: 10,
+        model: "anthropic/claude-opus-4-6",
+        tokens: { input: 20000, output: 10000 },
+      }),
+      makeSession({
+        id: "s-2",
+        createdAt: baseDate + 8.75 * HOUR_MS,
+        cost: 5,
+        model: "openai/gpt-5.4",
+        tokens: { input: 10000, output: 5000 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.hourly).toHaveLength(1);
+    expect(result.hourly[0].hour).toBe(8);
+    expect(result.hourly[0].byModel["anthropic/claude-opus-4-6"]).toEqual({
+      sessions: 1,
+      cost: 10,
+      tokens: 30000,
+    });
+    expect(result.hourly[0].byModel["openai/gpt-5.4"]).toEqual({
+      sessions: 1,
+      cost: 5,
+      tokens: 15000,
+    });
+  });
+
+  test("returns session list sorted by createdAt", () => {
+    const sessions = [
+      makeSession({ id: "s-3", createdAt: baseDate + 14 * HOUR_MS, cost: 20 }),
+      makeSession({ id: "s-1", createdAt: baseDate + 8 * HOUR_MS, cost: 10 }),
+      makeSession({ id: "s-2", createdAt: baseDate + 10 * HOUR_MS, cost: 5 }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.sessions.map((s) => s.id)).toEqual(["s-1", "s-2", "s-3"]);
+  });
+
+  test("excludes sessions from other days", () => {
+    const sessions = [
+      makeSession({ id: "s-today", createdAt: baseDate + 8 * HOUR_MS, cost: 10 }),
+      makeSession({
+        id: "s-yesterday",
+        createdAt: baseDate - 1 * HOUR_MS,
+        cost: 50,
+      }),
+      makeSession({
+        id: "s-tomorrow",
+        createdAt: baseDate + 25 * HOUR_MS,
+        cost: 50,
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0].id).toBe("s-today");
+    expect(result.totals.sessions).toBe(1);
+    expect(result.totals.cost).toBe(10);
+  });
+
+  test("handles multiple sessions in same hour", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        createdAt: baseDate + 8.5 * HOUR_MS,
+        cost: 10,
+        model: "anthropic/claude-opus-4-6",
+        tokens: { input: 20000, output: 10000 },
+      }),
+      makeSession({
+        id: "s-2",
+        createdAt: baseDate + 8.75 * HOUR_MS,
+        cost: 5,
+        model: "openai/gpt-5.4",
+        tokens: { input: 10000, output: 5000 },
+      }),
+      makeSession({
+        id: "s-3",
+        createdAt: baseDate + 14 * HOUR_MS,
+        cost: 20,
+        tokens: { input: 40000, output: 20000 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.hourly).toHaveLength(2);
+    expect(result.hourly[0].hour).toBe(8);
+    expect(result.hourly[0].sessions).toBe(2);
+    expect(result.hourly[0].cost).toBe(15);
+    expect(result.hourly[0].tokens).toBe(45000);
+    expect(result.hourly[1].hour).toBe(14);
+    expect(result.hourly[1].sessions).toBe(1);
+
+    expect(result.sessions).toHaveLength(3);
+    expect(result.totals).toEqual({ sessions: 3, cost: 35, tokens: 105000 });
+  });
+
+  test("maps session fields correctly", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        name: "Fix crash in timeline",
+        model: "anthropic/claude-opus-4-6",
+        cost: 10.456,
+        tokens: { input: 20000, output: 10000 },
+        createdAt: baseDate + 8 * HOUR_MS,
+        workspaceName: "oppi",
+        status: "stopped",
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.sessions[0]).toEqual({
+      id: "s-1",
+      name: "Fix crash in timeline",
+      model: "anthropic/claude-opus-4-6",
+      cost: 10.46,
+      tokens: 30000,
+      createdAt: baseDate + 8 * HOUR_MS,
+      workspaceName: "oppi",
+      status: "stopped",
+    });
+  });
+
+  test("sessions without model grouped as 'unknown' in hourly", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        createdAt: baseDate + 8 * HOUR_MS,
+        cost: 5,
+        model: undefined,
+        tokens: { input: 1000, output: 500 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21");
+    expect(result.hourly[0].byModel["unknown"]).toEqual({
+      sessions: 1,
+      cost: 5,
+      tokens: 1500,
+    });
   });
 });

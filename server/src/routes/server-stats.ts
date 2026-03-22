@@ -64,6 +64,34 @@ export interface StatsTotals {
   tokens: number;
 }
 
+// ─── Daily detail types ───
+
+export interface StatsDailyHourlyEntry {
+  hour: number; // 0-23
+  sessions: number;
+  cost: number;
+  tokens: number;
+  byModel: Record<string, StatsDailyModelEntry>;
+}
+
+export interface StatsDailySession {
+  id: string;
+  name?: string;
+  model?: string;
+  cost: number;
+  tokens: number;
+  createdAt: number;
+  workspaceName?: string;
+  status: string;
+}
+
+export interface DailyDetailResult {
+  date: string;
+  totals: StatsTotals;
+  hourly: StatsDailyHourlyEntry[];
+  sessions: StatsDailySession[];
+}
+
 // ─── Helpers ───
 
 const VALID_RANGES = new Set([7, 30, 90]);
@@ -280,5 +308,95 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
       cost: round2(totalCost),
       tokens: totalTokens,
     },
+  };
+}
+
+// ─── Daily detail aggregation ───
+
+export function aggregateDailyDetail(sessions: Session[], date: string): DailyDetailResult {
+  const dayStart = new Date(date + "T00:00:00.000Z").getTime();
+  const dayEnd = new Date(date + "T23:59:59.999Z").getTime();
+
+  const inDay = sessions.filter((s) => s.createdAt >= dayStart && s.createdAt <= dayEnd);
+
+  // Hourly buckets
+  const hourlyMap = new Map<
+    number,
+    { sessions: number; cost: number; tokens: number; byModel: Map<string, StatsDailyModelEntry> }
+  >();
+
+  let totalSessions = 0;
+  let totalCost = 0;
+  let totalTokens = 0;
+
+  for (const s of inDay) {
+    const hour = new Date(s.createdAt).getUTCHours();
+    const model = s.model ?? "unknown";
+    const cost = s.cost ?? 0;
+    const tokens = sessionTokens(s);
+
+    totalSessions++;
+    totalCost += cost;
+    totalTokens += tokens;
+
+    let bucket = hourlyMap.get(hour);
+    if (!bucket) {
+      bucket = { sessions: 0, cost: 0, tokens: 0, byModel: new Map() };
+      hourlyMap.set(hour, bucket);
+    }
+    bucket.sessions++;
+    bucket.cost += cost;
+    bucket.tokens += tokens;
+
+    let modelEntry = bucket.byModel.get(model);
+    if (!modelEntry) {
+      modelEntry = { sessions: 0, cost: 0, tokens: 0 };
+      bucket.byModel.set(model, modelEntry);
+    }
+    modelEntry.sessions++;
+    modelEntry.cost += cost;
+    modelEntry.tokens += tokens;
+  }
+
+  // Sparse hourly array sorted by hour
+  const hourly: StatsDailyHourlyEntry[] = [...hourlyMap.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([hour, h]) => ({
+      hour,
+      sessions: h.sessions,
+      cost: round2(h.cost),
+      tokens: h.tokens,
+      byModel: Object.fromEntries(
+        [...h.byModel.entries()].map(([model, entry]) => [
+          model,
+          { sessions: entry.sessions, cost: round2(entry.cost), tokens: entry.tokens },
+        ]),
+      ),
+    }));
+
+  // Session list sorted by createdAt
+  const sessionList: StatsDailySession[] = inDay
+    .slice()
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      model: s.model,
+      cost: round2(s.cost ?? 0),
+      tokens: sessionTokens(s),
+      createdAt: s.createdAt,
+      workspaceName: s.workspaceName,
+      status: s.status,
+    }));
+
+  return {
+    date,
+    totals: {
+      sessions: totalSessions,
+      cost: round2(totalCost),
+      tokens: totalTokens,
+    },
+    hourly,
+    sessions: sessionList,
   };
 }
