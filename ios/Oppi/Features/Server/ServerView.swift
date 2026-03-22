@@ -21,6 +21,7 @@ struct ServerView: View {
     @State private var isLoadingDetail = false
     /// Cache fetched daily details to avoid refetching on re-selection.
     @State private var dailyDetailCache: [String: DailyDetail] = [:]
+    @State private var selectedMetric: StatsMetric = .cost
 
     private var activeServer: PairedServer? {
         serverStore.servers.first
@@ -104,9 +105,9 @@ struct ServerView: View {
 
     @ViewBuilder
     private func statsContent(_ stats: ServerStats) -> some View {
-        StatsHeroRow(totals: stats.totals, daily: stats.daily)
+        StatsHeroRow(totals: stats.totals, daily: stats.daily, selectedMetric: $selectedMetric)
 
-        DailyCostChartView(daily: stats.daily, onDaySelected: { dateString in
+        DailyCostChartView(daily: stats.daily, metric: selectedMetric, onDaySelected: { dateString in
             Task { await loadDailyDetail(date: dateString) }
         })
 

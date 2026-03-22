@@ -6,7 +6,7 @@ import SwiftUI
 private struct ModelDayCost: Identifiable {
     let date: Date
     let model: String
-    let cost: Double
+    let value: Double
 
     var id: String { "\(Int(date.timeIntervalSince1970))-\(model)" }
 }
@@ -17,11 +17,13 @@ struct DailyCostChartView: View {
 
     let daily: [StatsDailyEntry]
 
+    /// Which metric to chart. Defaults to cost.
+    var metric: StatsMetric = .cost
+
     /// Called when the user selects a day (date string "YYYY-MM-DD").
     var onDaySelected: ((String) -> Void)?
 
     @State private var selectedDate: Date?
-    @State private var debounceTask: Task<Void, Never>?
 
     private static let dateParser: DateFormatter = {
         let f = DateFormatter()
@@ -51,20 +53,25 @@ struct DailyCostChartView: View {
         for entry in daily {
             guard let date = Self.dateParser.date(from: entry.date) else { continue }
             if let byModel = entry.byModel, !byModel.isEmpty {
-                var byDisplay: [String: (raw: String, cost: Double)] = [:]
-                for (model, data) in byModel where data.cost > 0 {
+                var byDisplay: [String: (raw: String, value: Double)] = [:]
+                for (model, data) in byModel {
+                    let v = metricValue(from: data)
+                    guard v > 0 else { continue }
                     let name = displayModelName(model)
                     if let existing = byDisplay[name] {
-                        byDisplay[name] = (existing.raw, existing.cost + data.cost)
+                        byDisplay[name] = (existing.raw, existing.value + v)
                     } else {
-                        byDisplay[name] = (model, data.cost)
+                        byDisplay[name] = (model, v)
                     }
                 }
-                for (_, value) in byDisplay {
-                    result.append(ModelDayCost(date: date, model: value.raw, cost: value.cost))
+                for (_, item) in byDisplay {
+                    result.append(ModelDayCost(date: date, model: item.raw, value: item.value))
                 }
-            } else if entry.cost > 0 {
-                result.append(ModelDayCost(date: date, model: "other", cost: entry.cost))
+            } else {
+                let v = metricValue(from: entry)
+                if v > 0 {
+                    result.append(ModelDayCost(date: date, model: "other", value: v))
+                }
             }
         }
         return result.sorted { $0.date < $1.date }
@@ -75,7 +82,7 @@ struct DailyCostChartView: View {
         let cal = Calendar.current
         return chartData
             .filter { cal.isDate($0.date, inSameDayAs: sel) }
-            .sorted { $0.cost > $1.cost }
+            .sorted { $0.value > $1.value }
     }
 
     private var axisStride: Int {
@@ -90,7 +97,7 @@ struct DailyCostChartView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Daily Cost")
+            Text(metric.chartTitle)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.themeFg)
 
@@ -104,18 +111,7 @@ struct DailyCostChartView: View {
                 }
             }
         }
-        .onChange(of: selectedDate) { _, newDate in
-            debounceTask?.cancel()
-            guard let newDate else { return }
-            let dateString = Self.dateStringFormatter.string(from: newDate)
-            // Debounce: wait 400ms after the last selection change before
-            // firing the callback. Prevents rapid-fire API calls during drag.
-            debounceTask = Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                guard !Task.isCancelled else { return }
-                onDaySelected?(dateString)
-            }
-        }
+
     }
 
     // MARK: - Subviews
@@ -131,17 +127,49 @@ struct DailyCostChartView: View {
             }
     }
 
+    /// Whether a bar entry belongs to the selected day.
+    private func isSelected(_ entry: ModelDayCost) -> Bool {
+        guard let sel = selectedDate else { return false }
+        return Calendar.current.isDate(entry.date, inSameDayAs: sel)
+    }
+
     @ViewBuilder
     private var chartView: some View {
         Chart(chartData) { entry in
             BarMark(
                 x: .value("Date", entry.date, unit: .day),
-                y: .value("Cost", entry.cost)
+                y: .value(metric.chartTitle, entry.value)
             )
             .foregroundStyle(modelColor(entry.model))
+            // Dim non-selected bars when a day is selected (Screen Time style)
+            .opacity(selectedDate == nil || isSelected(entry) ? 1.0 : 0.3)
         }
-        .chartXSelection(value: $selectedDate)
-        .animation(.none, value: chartData.map(\.id))
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard let plotFrame = proxy.plotFrame else { return }
+                        let plotOrigin = geo[plotFrame].origin
+                        let x = location.x - plotOrigin.x
+                        guard let tappedDate: Date = proxy.value(atX: x) else { return }
+
+                        let cal = Calendar.current
+                        // Toggle: tap same day again → deselect
+                        if let current = selectedDate,
+                           cal.isDate(current, inSameDayAs: tappedDate) {
+                            selectedDate = nil
+                            dailyDetail(nil)
+                        } else {
+                            selectedDate = tappedDate
+                            let dateString = Self.dateStringFormatter.string(from: tappedDate)
+                            dailyDetail(dateString)
+                        }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: selectedDate)
         .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .stride(by: .day, count: axisStride)) { value in
@@ -160,10 +188,7 @@ struct DailyCostChartView: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        let label = v < 1.0
-                            ? String(format: "$%.2f", v)
-                            : String(format: "$%.1f", v)
-                        Text(label)
+                        Text(yAxisLabel(v))
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
                     }
@@ -171,6 +196,13 @@ struct DailyCostChartView: View {
             }
         }
         .frame(height: 240)
+    }
+
+    /// Notify the parent of the selected date (or nil to clear).
+    private func dailyDetail(_ dateString: String?) {
+        if let dateString {
+            onDaySelected?(dateString)
+        }
     }
 
     private var tooltipView: some View {
@@ -190,7 +222,7 @@ struct DailyCostChartView: View {
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
                     Spacer()
-                    Text(String(format: "$%.3f", entry.cost))
+                    Text(formatValue(entry.value))
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.themeComment)
@@ -200,5 +232,55 @@ struct DailyCostChartView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.themeComment.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Metric helpers
+
+    private func metricValue(from data: DailyModelEntry) -> Double {
+        switch metric {
+        case .sessions: return Double(data.sessions)
+        case .cost: return data.cost
+        case .tokens: return Double(data.tokens)
+        }
+    }
+
+    private func metricValue(from entry: StatsDailyEntry) -> Double {
+        switch metric {
+        case .sessions: return Double(entry.sessions)
+        case .cost: return entry.cost
+        case .tokens: return Double(entry.tokens)
+        }
+    }
+
+    private func yAxisLabel(_ v: Double) -> String {
+        switch metric {
+        case .cost:
+            return v < 1.0 ? String(format: "$%.2f", v) : String(format: "$%.1f", v)
+        case .sessions:
+            return String(format: "%.0f", v)
+        case .tokens:
+            if v >= 1_000_000 {
+                return String(format: "%.1fM", v / 1_000_000)
+            } else if v >= 1_000 {
+                return String(format: "%.0fK", v / 1_000)
+            }
+            return String(format: "%.0f", v)
+        }
+    }
+
+    private func formatValue(_ v: Double) -> String {
+        switch metric {
+        case .cost:
+            return String(format: "$%.3f", v)
+        case .sessions:
+            return String(format: "%.0f", v)
+        case .tokens:
+            if v >= 1_000_000 {
+                return String(format: "%.1fM", v / 1_000_000)
+            } else if v >= 1_000 {
+                return String(format: "%.1fK", v / 1_000)
+            }
+            return String(format: "%.0f", v)
+        }
     }
 }

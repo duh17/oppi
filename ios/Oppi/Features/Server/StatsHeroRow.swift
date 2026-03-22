@@ -1,19 +1,38 @@
 import SwiftUI
 
+/// Which metric the bar chart displays.
+enum StatsMetric: String, CaseIterable {
+    case sessions
+    case cost
+    case tokens
+
+    var chartTitle: String {
+        switch self {
+        case .sessions: return "Daily Sessions"
+        case .cost: return "Daily Cost"
+        case .tokens: return "Daily Tokens"
+        }
+    }
+}
+
 struct StatsHeroRow: View {
     let totals: StatsTotals
     let daily: [StatsDailyEntry]
+    @Binding var selectedMetric: StatsMetric
 
     var body: some View {
         HStack(spacing: 0) {
             heroBox(title: "Sessions", value: "\(totals.sessions)",
-                    trend: trendInfo(values: daily.map { Double($0.sessions) }, costMetric: false))
+                    trend: trendInfo(values: daily.map { Double($0.sessions) }, costMetric: false),
+                    metric: .sessions)
             Divider().frame(height: 44)
             heroBox(title: "Cost", value: formatCost(totals.cost),
-                    trend: trendInfo(values: daily.map { $0.cost }, costMetric: true))
+                    trend: trendInfo(values: daily.map { $0.cost }, costMetric: true),
+                    metric: .cost)
             Divider().frame(height: 44)
             heroBox(title: "Tokens", value: formatTokens(totals.tokens),
-                    trend: trendInfo(values: daily.map { Double($0.tokens) }, costMetric: false))
+                    trend: trendInfo(values: daily.map { Double($0.tokens) }, costMetric: false),
+                    metric: .tokens)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
@@ -22,22 +41,35 @@ struct StatsHeroRow: View {
 
     // MARK: - Hero box
 
-    private func heroBox(title: String, value: String, trend: TrendInfo?) -> some View {
-        VStack(spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-            Text(value)
-                .font(.title3.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.themeFg)
-            if let trend {
-                Label(trend.label, systemImage: trend.arrow)
-                    .font(.caption2)
-                    .foregroundStyle(trend.color)
+    private func heroBox(title: String, value: String, trend: TrendInfo?, metric: StatsMetric) -> some View {
+        Button {
+            selectedMetric = metric
+        } label: {
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                Text(value)
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.themeFg)
+                if let trend {
+                    Label(trend.label, systemImage: trend.arrow)
+                        .font(.caption2)
+                        .foregroundStyle(trend.color)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                if selectedMetric == metric {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.themeBlue)
+                        .frame(width: 32, height: 2)
+                        .padding(.bottom, 2)
+                }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
     }
 
     // MARK: - Trend
