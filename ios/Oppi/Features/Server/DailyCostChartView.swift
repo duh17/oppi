@@ -21,6 +21,7 @@ struct DailyCostChartView: View {
     var onDaySelected: ((String) -> Void)?
 
     @State private var selectedDate: Date?
+    @State private var debounceTask: Task<Void, Never>?
 
     private static let dateParser: DateFormatter = {
         let f = DateFormatter()
@@ -104,9 +105,16 @@ struct DailyCostChartView: View {
             }
         }
         .onChange(of: selectedDate) { _, newDate in
+            debounceTask?.cancel()
             guard let newDate else { return }
             let dateString = Self.dateStringFormatter.string(from: newDate)
-            onDaySelected?(dateString)
+            // Debounce: wait 400ms after the last selection change before
+            // firing the callback. Prevents rapid-fire API calls during drag.
+            debounceTask = Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                onDaySelected?(dateString)
+            }
         }
     }
 

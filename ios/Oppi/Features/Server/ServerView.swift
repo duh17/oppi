@@ -19,6 +19,8 @@ struct ServerView: View {
     @State private var error: String?
     @State private var dailyDetail: DailyDetail?
     @State private var isLoadingDetail = false
+    /// Cache fetched daily details to avoid refetching on re-selection.
+    @State private var dailyDetailCache: [String: DailyDetail] = [:]
 
     private var activeServer: PairedServer? {
         serverStore.servers.first
@@ -44,6 +46,7 @@ struct ServerView: View {
         .navigationTitle(activeServer?.name ?? "Server")
         .task(id: selectedRange) {
             dailyDetail = nil
+            dailyDetailCache = [:]
             await loadStats()
         }
         .task {
@@ -172,12 +175,21 @@ struct ServerView: View {
     }
 
     private func loadDailyDetail(date: String) async {
+        // Return cached detail if available
+        if let cached = dailyDetailCache[date] {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                dailyDetail = cached
+            }
+            return
+        }
+
         guard let apiClient else { return }
 
         isLoadingDetail = true
 
         do {
             let result = try await apiClient.fetchDailyDetail(date: date)
+            dailyDetailCache[date] = result
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = result
             }
