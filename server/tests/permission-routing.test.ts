@@ -76,10 +76,7 @@ async function waitForPendingCount(list: PendingDecision[], count: number): Prom
   expect(list).toHaveLength(count);
 }
 
-function findPendingBySession(
-  pending: PendingDecision[],
-  sessionId: string,
-): PendingDecision {
+function findPendingBySession(pending: PendingDecision[], sessionId: string): PendingDecision {
   const match = pending.find((decision) => decision.sessionId === sessionId);
   expect(match).toBeDefined();
   if (!match) {
@@ -289,7 +286,12 @@ describe("RQ-PERM-002: pending permission filtering and cleanup", () => {
       gate.createGuard("s2", "w1");
 
       const pending: PendingDecision[] = [];
+      const cancelled: Array<{ requestId: string; sessionId: string; reason: string }> = [];
       gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
+      gate.on(
+        "approval_cancelled",
+        (event: { requestId: string; sessionId: string; reason: string }) => cancelled.push(event),
+      );
 
       const p1 = gate.checkToolCall(
         "s1",
@@ -301,13 +303,21 @@ describe("RQ-PERM-002: pending permission filtering and cleanup", () => {
       );
 
       await waitForPendingCount(pending, 2);
+      const s1Pending = findPendingBySession(pending, "s1");
 
       gate.destroySessionGuard("s1");
-      await p1;
+      await expect(p1).resolves.toEqual({ action: "deny", reason: "Session ended" });
 
       const remaining = gate.getPendingForUser();
       expect(remaining).toHaveLength(1);
       expect(remaining[0].sessionId).toBe("s2");
+      expect(cancelled).toEqual([
+        {
+          requestId: s1Pending.id,
+          sessionId: "s1",
+          reason: "Session ended",
+        },
+      ]);
 
       gate.resolveDecision(remaining[0].id, "deny");
       await p2;

@@ -123,6 +123,11 @@ export class GateServer extends EventEmitter {
     for (const [id, decision] of this.pending) {
       if (decision.sessionId === sessionId) {
         decision.resolve({ action: "deny", reason: "Session ended" });
+        this.emit("approval_cancelled", {
+          requestId: id,
+          sessionId,
+          reason: "Session ended",
+        });
         this.cleanupPending(id);
       }
     }

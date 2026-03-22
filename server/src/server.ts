@@ -464,6 +464,30 @@ export class Server {
         });
       },
     );
+
+    this.gate.on(
+      "approval_cancelled",
+      ({
+        requestId,
+        sessionId,
+        reason,
+      }: {
+        requestId: string;
+        sessionId: string;
+        reason: string;
+      }) => {
+        this.broadcastToUser({
+          type: "permission_cancelled",
+          id: requestId,
+          sessionId,
+        });
+        this.liveActivity.queueUpdate({
+          sessionId,
+          lastEvent: reason,
+          priority: 5,
+        });
+      },
+    );
   }
 
   private createTransportServer(config: ServerConfig): {
