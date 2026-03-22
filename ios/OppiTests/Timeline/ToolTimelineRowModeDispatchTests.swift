@@ -1143,6 +1143,124 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
+    // MARK: - Write tool markdown transition
+
+    // Write tool streaming a .md file shows plain text. When done, it should
+    // switch to the markdown renderer. This tests the cell-level transition
+    // that mirrors ToolPresentationBuilder's streaming → done content type change.
+    @Test func writeToolStreamingToDoneMarkdownTransition() throws {
+        let markdownContent = "# Research\n\n## Problem\n\nHeaders are too large.\n\n```swift\nlet x = 1\n```"
+
+        // Phase 1: streaming — ToolPresentationBuilder returns .text for .md during streaming
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .text(text: markdownContent, language: nil),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+
+        // During streaming, the label should be visible (text mode), markdown hidden
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        #expect(!expandedLabel.isHidden, "Streaming write should use expandedLabel")
+        #expect(markdownView.isHidden, "Streaming write should hide markdown view")
+
+        // Phase 2: done — ToolPresentationBuilder returns .markdown for .md when done
+        let done = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .markdown(text: markdownContent),
+            isExpanded: true,
+            isDone: true
+        )
+
+        view.configuration = done
+        _ = fittedSize(for: view, width: 360)
+
+        // After completion, the markdown view should be visible with content,
+        // and the label should be hidden
+        #expect(expandedLabel.isHidden, "Done write should hide expandedLabel")
+        #expect(!markdownView.isHidden, "Done write should show markdown view")
+
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(
+            !markdownStack.arrangedSubviews.isEmpty,
+            "Markdown view should have rendered content after write completes"
+        )
+    }
+
+    // Write tool with large markdown content (> plainTextFallbackThreshold) should
+    // still render as formatted markdown, not fall back to plain text.
+    @Test func writeToolLargeMarkdownContentRendersAsMarkdown() throws {
+        // Build content that exceeds the 20K plainTextFallbackThreshold.
+        // A comprehensive research document with code blocks can easily reach this.
+        var sections: [String] = ["# Research Document\n"]
+        let codeBlock = String(repeating: "    let value = compute()\n", count: 20)
+        for i in 1...80 {
+            sections.append("## Section \(i)\n\nParagraph with **bold** and `inline code` examples.\n")
+            sections.append("```swift\nfunc example\(i)() {\n\(codeBlock)}\n```\n")
+        }
+        let largeMarkdown = sections.joined(separator: "\n")
+        #expect(largeMarkdown.count > 20_000, "Test content must exceed plainTextFallbackThreshold")
+
+        let config = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .markdown(text: largeMarkdown),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        #expect(!markdownView.isHidden, "Markdown view should be visible")
+
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        // With proper markdown rendering, the stack should have MULTIPLE segments
+        // (headings, paragraphs, code blocks). Plain text fallback produces just ONE.
+        #expect(
+            markdownStack.arrangedSubviews.count > 1,
+            "Large markdown should produce multiple rendered segments, not fall back to plain text. Got \(markdownStack.arrangedSubviews.count) view(s)"
+        )
+    }
+
+    // Write tool that is already done when first rendered (catch-up / session load)
+    // should render as markdown directly, not as plain text.
+    @Test func writeToolDoneMarkdownRendersDirectly() throws {
+        let markdownContent = "# Guide\n\nSome **bold** and `code`."
+
+        let config = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .markdown(text: markdownContent),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+
+        #expect(expandedLabel.isHidden, "Done markdown write should hide expandedLabel")
+        #expect(!markdownView.isHidden, "Done markdown write should show markdown view")
+
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(
+            !markdownStack.arrangedSubviews.isEmpty,
+            "Done markdown write should have rendered content"
+        )
+    }
+
     // MARK: - Streaming guard: code mode
 
     // During streaming, code mode should use plain text (no syntax

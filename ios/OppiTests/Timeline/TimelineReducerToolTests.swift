@@ -224,6 +224,91 @@ struct TimelineReducerToolTests {
         #expect(stored == details)
     }
 
+    // MARK: - Write tool args persistence
+
+    @MainActor
+    @Test func writeToolArgsContentSurvivesSecondToolStart() {
+        // The server sends two tool_start messages for the write tool:
+        // 1. From streaming (message_update) — has full args including content
+        // 2. From tool_execution_start — also has full args
+        // Verify args (especially content) survive the second tool_start.
+        let reducer = TimelineReducer()
+        let toolId = "write-1"
+        let writeArgs: [String: JSONValue] = [
+            "path": .string("docs/guide.md"),
+            "content": .string("# Guide\n\nSome **bold** text."),
+        ]
+
+        reducer.process(.agentStart(sessionId: "s1"))
+
+        // First tool_start (streaming phase)
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "write", args: writeArgs))
+        #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
+
+        // Second tool_start (execution phase) with same args
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "write", args: writeArgs))
+        #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
+
+        // Tool completes
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "Wrote 28 bytes", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+
+        // Args should still be available after tool completion
+        #expect(reducer.toolArgsStore.args(for: toolId)?["content"]?.stringValue == "# Guide\n\nSome **bold** text.")
+        #expect(reducer.toolArgsStore.args(for: toolId)?["path"]?.stringValue == "docs/guide.md")
+    }
+
+    @MainActor
+    @Test func writeToolArgsContentSurvivesTraceRoundTrip() {
+        // When loading a session from trace, the write tool's args (including
+        // content) should be available for rendering as markdown.
+        let reducer = TimelineReducer()
+        let toolId = "write-md"
+        let markdownContent = "# Research\n\n## Problem\n\nHeaders too large."
+        let events: [TraceEvent] = [
+            TraceEvent(
+                id: "u1", type: .user, timestamp: "2026-01-01T00:00:00Z",
+                text: "write a research doc", tool: nil, args: nil,
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: toolId, type: .toolCall, timestamp: "2026-01-01T00:00:01Z",
+                text: nil, tool: "write",
+                args: [
+                    "path": .string("research/typography.md"),
+                    "content": .string(markdownContent),
+                ],
+                output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+            TraceEvent(
+                id: "r1", type: .toolResult, timestamp: "2026-01-01T00:00:02Z",
+                text: nil, tool: nil, args: nil,
+                output: "Wrote 45 bytes to research/typography.md",
+                toolCallId: toolId, toolName: "write",
+                isError: false, thinking: nil
+            ),
+        ]
+
+        reducer.loadSession(events)
+
+        // After loading from trace, args should have content for markdown rendering
+        let storedArgs = reducer.toolArgsStore.args(for: toolId)
+        #expect(storedArgs?["content"]?.stringValue == markdownContent,
+                "Write tool content must survive trace round-trip for markdown rendering")
+        #expect(storedArgs?["path"]?.stringValue == "research/typography.md")
+
+        // The tool should be done
+        guard case .toolCall(_, let tool, _, _, _, _, let isDone) = reducer.items.first(where: {
+            if case .toolCall(let id, _, _, _, _, _, _) = $0 { return id == toolId }
+            return false
+        }) else {
+            Issue.record("Expected toolCall item for write tool")
+            return
+        }
+        #expect(tool == "write")
+        #expect(isDone)
+    }
+
     // MARK: - Replace mode (shell preview)
 
     @MainActor

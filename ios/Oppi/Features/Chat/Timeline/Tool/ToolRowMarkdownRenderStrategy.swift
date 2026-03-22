@@ -25,6 +25,11 @@ struct ToolRowMarkdownRenderStrategy {
             isStreaming: isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: textSelectionEnabled,
+            // Tool expanded content lives in a scrollable viewport, so there's
+            // no risk of blocking the timeline layout with large markdown.
+            // Disable the plain-text fallback threshold so write/read tools
+            // always render formatted markdown regardless of content size.
+            plainTextFallbackThreshold: nil,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext
         ))

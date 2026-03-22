@@ -351,6 +351,68 @@ struct ToolPresentationBuilderTests {
         #expect(config.copyOutputText == nil)
     }
 
+    @Test("write streaming markdown shows plain text, not rendered markdown")
+    func writeStreamingMarkdown() {
+        let content = "# Hello\n\nSome **bold** text."
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: README.md",
+            outputPreview: "",
+            isError: false, isDone: false,
+            context: emptyContext(
+                args: [
+                    "path": .string("README.md"),
+                    "content": .string(content),
+                ],
+                expanded: ["t1"]
+            )
+        )
+
+        // While streaming, markdown files use plain text (not rendered markdown)
+        // to avoid expensive CommonMark rendering on every delta.
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content during streaming, got \(String(describing: config.expandedContent))")
+            return
+        }
+        #expect(text == content)
+        #expect(language == nil)
+    }
+
+    @Test("write streaming-to-done transition switches markdown from text to rendered")
+    func writeStreamingToDoneMarkdownTransition() {
+        let content = "# Hello\n\nSome **bold** text."
+        let args: [String: JSONValue] = [
+            "path": .string("docs/guide.md"),
+            "content": .string(content),
+        ]
+
+        // Phase 1: streaming — should be .text
+        let streaming = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: docs/guide.md",
+            outputPreview: "",
+            isError: false, isDone: false,
+            context: emptyContext(args: args, expanded: ["t1"])
+        )
+        #expect(modeName(streaming.expandedContent) == "text",
+                "Streaming write of .md should use text mode")
+
+        // Phase 2: done — should switch to .markdown
+        let done = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: docs/guide.md",
+            outputPreview: "wrote 28 bytes",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: args,
+                expanded: ["t1"],
+                fullOutput: "Successfully wrote 28 bytes to docs/guide.md"
+            )
+        )
+        #expect(modeName(done.expandedContent) == "markdown",
+                "Done write of .md should use markdown mode")
+    }
+
     @Test("write expanded renders markdown files")
     func writeExpandedMarkdown() {
         let content = "# Hello\n\nSome **bold** text."
