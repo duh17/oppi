@@ -61,6 +61,8 @@ struct StatsModelBreakdown: Codable {
     let sessions: Int
     let cost: Double
     let tokens: Int
+    let cacheRead: Int?
+    let cacheWrite: Int?
     let share: Double
 }
 

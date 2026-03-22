@@ -48,6 +48,8 @@ export interface StatsModelBreakdown {
   sessions: number;
   cost: number;
   tokens: number;
+  cacheRead: number;
+  cacheWrite: number;
   share: number; // 0–1 fraction of total cost
 }
 
@@ -207,7 +209,10 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
   >();
 
   // ─── Model ───
-  const modelMap = new Map<string, { sessions: number; cost: number; tokens: number }>();
+  const modelMap = new Map<
+    string,
+    { sessions: number; cost: number; tokens: number; cacheRead: number; cacheWrite: number }
+  >();
 
   // ─── Workspace ───
   const wsMap = new Map<string, { sessions: number; cost: number }>();
@@ -249,12 +254,14 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
     // Model
     let m = modelMap.get(model);
     if (!m) {
-      m = { sessions: 0, cost: 0, tokens: 0 };
+      m = { sessions: 0, cost: 0, tokens: 0, cacheRead: 0, cacheWrite: 0 };
       modelMap.set(model, m);
     }
     m.sessions++;
     m.cost += cost;
     m.tokens += tokens;
+    m.cacheRead += s.tokens?.cacheRead ?? 0;
+    m.cacheWrite += s.tokens?.cacheWrite ?? 0;
 
     // Workspace
     const wsId = s.workspaceId ?? "unknown";
@@ -291,6 +298,8 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
       sessions: m.sessions,
       cost: round2(m.cost),
       tokens: m.tokens,
+      cacheRead: m.cacheRead,
+      cacheWrite: m.cacheWrite,
       share: totalCost > 0 ? round2(m.cost / totalCost) : 0,
     }));
 

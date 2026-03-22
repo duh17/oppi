@@ -13,9 +13,20 @@ private struct AggregatedModel: Identifiable {
     let sessions: Int
     let cost: Double
     let tokens: Int
+    let cacheRead: Int
+    let cacheWrite: Int
     var share: Double
 
     var id: String { displayName }
+
+    /// Cache hit rate: cacheRead / (input + cacheRead + cacheWrite).
+    /// Input tokens = tokens - output - cacheRead - cacheWrite, but we don't have
+    /// output separately. Use cacheRead / (tokens) as approximation since tokens
+    /// now includes all four fields.
+    var cacheHitRate: Double? {
+        guard cacheRead > 0, tokens > 0 else { return nil }
+        return Double(cacheRead) / Double(tokens)
+    }
 }
 
 /// Number of models shown before "Show more" disclosure.
@@ -41,6 +52,8 @@ struct ModelBreakdownSection: View {
                     sessions: existing.sessions + item.sessions,
                     cost: existing.cost + item.cost,
                     tokens: existing.tokens + item.tokens,
+                    cacheRead: existing.cacheRead + (item.cacheRead ?? 0),
+                    cacheWrite: existing.cacheWrite + (item.cacheWrite ?? 0),
                     share: existing.share + item.share
                 )
                 byName[name] = existing
@@ -51,6 +64,8 @@ struct ModelBreakdownSection: View {
                     sessions: item.sessions,
                     cost: item.cost,
                     tokens: item.tokens,
+                    cacheRead: item.cacheRead ?? 0,
+                    cacheWrite: item.cacheWrite ?? 0,
                     share: item.share
                 )
             }
@@ -168,39 +183,64 @@ struct ModelBreakdownSection: View {
     }
 
     private func modelRow(_ item: AggregatedModel) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(modelColor(item.representativeModel))
-                .frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(modelColor(item.representativeModel))
+                    .frame(width: 8, height: 8)
 
-            Text(item.displayName)
-                .font(.caption)
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-                .frame(width: 100, alignment: .leading)
+                Text(item.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .frame(width: 100, alignment: .leading)
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.themeComment.opacity(0.12))
-                        .frame(height: 5)
-                    Capsule()
-                        .fill(modelColor(item.representativeModel).opacity(0.55))
-                        .frame(width: max(2, geo.size.width * item.share), height: 5)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.themeComment.opacity(0.12))
+                            .frame(height: 5)
+                        Capsule()
+                            .fill(modelColor(item.representativeModel).opacity(0.55))
+                            .frame(width: max(2, geo.size.width * item.share), height: 5)
+                    }
                 }
+                .frame(height: 5)
+
+                Text(formatCost(item.cost))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.themeComment)
+                    .frame(width: 56, alignment: .trailing)
+
+                Text("\(Int((item.share * 100).rounded()))%")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .frame(width: 30, alignment: .trailing)
             }
-            .frame(height: 5)
 
-            Text(formatCost(item.cost))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.themeComment)
-                .frame(width: 56, alignment: .trailing)
+            // Cache stats (only show if model uses caching)
+            if item.cacheRead > 0 || item.cacheWrite > 0 {
+                HStack(spacing: 8) {
+                    // Indent to align with model name
+                    Color.clear.frame(width: 8)
 
-            Text("\(Int((item.share * 100).rounded()))%")
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-                .frame(width: 30, alignment: .trailing)
+                    if let hitRate = item.cacheHitRate {
+                        Text("cache \(Int((hitRate * 100).rounded()))%")
+                            .foregroundStyle(.themeGreen)
+                    }
+
+                    Text("R: \(formatTokens(item.cacheRead))")
+                        .foregroundStyle(.themeComment)
+
+                    Text("W: \(formatTokens(item.cacheWrite))")
+                        .foregroundStyle(.themeComment)
+
+                    Spacer()
+                }
+                .font(.caption2)
+                .padding(.leading, 6)
+            }
         }
     }
 
@@ -211,5 +251,16 @@ struct ModelBreakdownSection: View {
             return String(format: "$%.0f", value)
         }
         return String(format: "$%.2f", value)
+    }
+
+    private func formatTokens(_ value: Int) -> String {
+        if value >= 1_000_000_000 {
+            return String(format: "%.1fB", Double(value) / 1_000_000_000)
+        } else if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        } else if value >= 1_000 {
+            return String(format: "%.0fK", Double(value) / 1_000)
+        }
+        return "\(value)"
     }
 }

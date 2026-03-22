@@ -268,6 +268,8 @@ describe("aggregateStats", () => {
       sessions: 1,
       cost: 7,
       tokens: 7000,
+      cacheRead: 0,
+      cacheWrite: 0,
       share: 0.7,
     });
     expect(result.modelBreakdown[1]).toEqual({
@@ -275,6 +277,8 @@ describe("aggregateStats", () => {
       sessions: 1,
       cost: 3,
       tokens: 2000,
+      cacheRead: 0,
+      cacheWrite: 0,
       share: 0.3,
     });
   });
