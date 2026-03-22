@@ -52,7 +52,12 @@ struct ChatTimelineView: View {
     }
 
     private var hiddenCount: Int {
-        max(0, reducer.items.count - visibleItems.count)
+        // Must use the same session gate as visibleItems. Without this,
+        // navigating parent→child briefly shows the parent's item count
+        // as "hidden" while the child's visible items are gated to empty —
+        // producing a "Show N earlier messages" button with nothing below.
+        guard reducer.activeSessionId == sessionId else { return 0 }
+        return max(0, reducer.items.count - visibleItems.count)
     }
 
     private var showsWorkingIndicator: Bool {

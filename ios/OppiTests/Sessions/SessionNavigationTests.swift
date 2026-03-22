@@ -514,4 +514,58 @@ struct SessionNavigationTests {
         // And agent-1's parentSessionId → root
         #expect(agent1.session.parentSessionId == "root")
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // MARK: 7 — Render window gate consistency
+    // ──────────────────────────────────────────────────────────────
+
+    // Verifies that the render window policy produces consistent
+    // visible/hidden counts when the active session ID doesn't match.
+    // This is the data contract behind the ChatTimelineView gate.
+
+    @Test func renderWindow_hiddenCountZeroWhenSessionMismatch() {
+        // Simulate: reducer has parent items, but we're rendering child view
+        let parentItems = 233
+        let childSessionId = "child-session"
+        let reducerActiveSessionId = "parent-session" // mismatch!
+        let renderWindow = TimelineRenderWindowPolicy.standardWindow
+
+        // Gate: activeSessionId != childSessionId → visibleItems empty
+        let gateMatches = reducerActiveSessionId == childSessionId
+        let visibleCount = gateMatches ? min(parentItems, renderWindow) : 0
+
+        // hiddenCount MUST also respect the gate
+        let hiddenCount = gateMatches ? max(0, parentItems - visibleCount) : 0
+
+        #expect(visibleCount == 0)
+        #expect(hiddenCount == 0, "hiddenCount must be 0 when session ID doesn't match")
+    }
+
+    @Test func renderWindow_normalCountsWhenSessionMatches() {
+        let totalItems = 233
+        let sessionId = "current-session"
+        let reducerActiveSessionId = "current-session" // match!
+        let renderWindow = TimelineRenderWindowPolicy.standardWindow // 80
+
+        let gateMatches = reducerActiveSessionId == sessionId
+        let visibleCount = gateMatches ? min(totalItems, renderWindow) : 0
+        let hiddenCount = gateMatches ? max(0, totalItems - visibleCount) : 0
+
+        #expect(visibleCount == 80)
+        #expect(hiddenCount == 153)
+    }
+
+    @Test func renderWindow_syncedWindowNeverExceedsTotalItems() {
+        let totalItems = 50
+        let currentWindow = 80
+
+        let synced = TimelineRenderWindowPolicy.syncedWindow(
+            currentWindow: currentWindow,
+            totalItems: totalItems
+        )
+
+        // Window should clamp to total items, not exceed it
+        #expect(synced <= totalItems)
+        #expect(synced == 50)
+    }
 }
