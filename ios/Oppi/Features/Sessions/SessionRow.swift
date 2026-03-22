@@ -16,6 +16,7 @@ struct SessionRow: View {
     struct ChildSummary {
         let childCount: Int
         let statusCounts: SessionTreeHelper.StatusCounts
+        let aggregateCost: Double
     }
 
     init(session: Session, pendingCount: Int, lineageHint: String? = nil, children: ChildSummary? = nil) {
@@ -109,8 +110,9 @@ struct SessionRow: View {
                         NativeContextGauge(percent: pct)
                     }
 
-                    if session.cost > 0 {
-                        Text(costString(session.cost))
+                    let displayCost = children?.aggregateCost ?? session.cost
+                    if displayCost > 0 {
+                        Text(costString(displayCost))
                     }
                 }
                 .font(.caption)

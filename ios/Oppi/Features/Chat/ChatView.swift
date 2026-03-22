@@ -75,7 +75,13 @@ struct ChatView: View {
 
     /// Child sessions spawned by this session.
     private var childSessions: [Session] {
-        sessionStore.sessions.filter { $0.parentSessionId == sessionId }.sorted(by: { $0.createdAt < $1.createdAt })
+        SessionTreeHelper.sortedChildSessions(of: sessionId, in: sessionStore.sessions)
+    }
+
+    /// Parent session (when this is a spawned child).
+    private var parentSession: Session? {
+        guard let parentId = session?.parentSessionId else { return nil }
+        return sessionStore.sessions.first { $0.id == parentId }
     }
 
     private var sessionDisplayName: String {
@@ -528,24 +534,38 @@ struct ChatView: View {
     }
 
     private var sessionTitleLabel: some View {
-        HStack(spacing: 6) {
-            Text(sessionDisplayName)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            if let cost = session?.cost, cost > 0 {
-                Text(String(format: "$%.2f", cost))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.themeComment)
-                    .fixedSize()
+        VStack(spacing: 1) {
+            if let parent = parentSession {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.turn.left.up")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text(parent.displayTitle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .font(.caption2)
+                .foregroundStyle(.themeComment)
             }
 
-            Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
-                .font(.caption2)
-                .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
-                .fixedSize()
+            HStack(spacing: 6) {
+                Text(sessionDisplayName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let cost = session?.cost, cost > 0 {
+                    Text(String(format: "$%.2f", cost))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                        .fixedSize()
+                }
+
+                Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
+                    .font(.caption2)
+                    .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
+                    .fixedSize()
+            }
         }
     }
 

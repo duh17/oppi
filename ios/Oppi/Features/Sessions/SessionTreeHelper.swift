@@ -19,20 +19,6 @@ enum SessionTreeHelper {
         var hasChildren: Bool { !children.isEmpty }
     }
 
-    /// Flatten a tree into display rows with depth information.
-    struct FlatRow: Identifiable {
-        let session: Session
-        let depth: Int
-        let hasChildren: Bool
-        let childCount: Int
-        /// Whether this row is the last sibling at its depth level.
-        let isLastChild: Bool
-        /// Whether the parent-level tree line should continue through this row (for grandchildren).
-        let parentLinesContinue: [Int]
-
-        var id: String { session.id }
-    }
-
     /// Build tree nodes from a flat session list.
     /// Only root sessions (no parentSessionId, or parent not in the list) appear as top-level nodes.
     static func buildTree(from sessions: [Session]) -> [TreeNode] {
@@ -67,60 +53,6 @@ enum SessionTreeHelper {
             var visited = Set<String>()
             return buildNode(session: session, depth: 0, isLast: index == roots.count - 1, visited: &visited)
         }
-    }
-
-    /// Flatten tree nodes into display rows, respecting expansion state.
-    /// `isExpanded` closure determines whether a parent node's children should be shown.
-    ///
-    /// `continuingLines` tracks which depth levels have a vertical tree line continuing
-    /// through the current row. A line at depth D continues when the ancestor at depth D
-    /// has more children below the current branch.
-    static func flattenTree(
-        nodes: [TreeNode],
-        isExpanded: (String) -> Bool
-    ) -> [FlatRow] {
-        var result: [FlatRow] = []
-
-        func visit(node: TreeNode, continuingLines: Set<Int>) {
-            let row = FlatRow(
-                session: node.session,
-                depth: node.depth,
-                hasChildren: node.hasChildren,
-                childCount: countAllChildren(node),
-                isLastChild: node.isLastChild,
-                parentLinesContinue: continuingLines.sorted()
-            )
-            result.append(row)
-
-            if node.hasChildren, isExpanded(node.session.id) {
-                for (index, child) in node.children.enumerated() {
-                    let isLast = index == node.children.count - 1
-                    // Build the set of continuing lines for child rows.
-                    // The child inherits all parent continuing lines, plus
-                    // we add this node's depth if the child is NOT the last sibling
-                    // (meaning the vertical connector at this depth keeps going).
-                    var childLines = continuingLines
-                    if !isLast {
-                        childLines.insert(node.depth)
-                    } else {
-                        // Last child — the vertical line at this depth stops here
-                        childLines.remove(node.depth)
-                    }
-                    let childNode = TreeNode(
-                        session: child.session,
-                        depth: child.depth,
-                        children: child.children,
-                        isLastChild: isLast
-                    )
-                    visit(node: childNode, continuingLines: childLines)
-                }
-            }
-        }
-
-        for node in nodes {
-            visit(node: node, continuingLines: [])
-        }
-        return result
     }
 
     /// Count all descendants (children + grandchildren) of a node.
@@ -186,6 +118,11 @@ enum SessionTreeHelper {
             guard let parentId = session.parentSessionId else { return true }
             return !allIds.contains(parentId)
         }
+    }
+
+    /// Compute aggregate cost for a tree node (parent + all descendants, recursive).
+    static func aggregateCost(_ node: TreeNode) -> Double {
+        node.session.cost + node.children.reduce(0.0) { $0 + aggregateCost($1) }
     }
 
     /// Compute aggregate pending count for a tree node (parent + direct children only).

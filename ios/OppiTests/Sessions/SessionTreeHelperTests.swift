@@ -99,67 +99,83 @@ struct SessionTreeHelperTests {
         #expect(parentNode?.children.count == 1)
     }
 
-    // MARK: - flattenTree
+    // MARK: - sortedChildSessions
 
-    @Test func flattenTree_expandedParent() {
+    @Test func sortedChildSessions_orderedByCreatedAt() {
+        let baseTime = Date()
         let sessions = [
             makeSession(id: "parent"),
-            makeSession(id: "child1", parentId: "parent"),
-            makeSession(id: "child2", parentId: "parent"),
+            makeSession(id: "third", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
+            makeSession(id: "first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
+            makeSession(id: "second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rows = SessionTreeHelper.flattenTree(nodes: tree) { _ in true }
-        #expect(rows.count == 3)
-        #expect(rows[0].session.id == "parent")
-        #expect(rows[0].depth == 0)
-        #expect(rows[0].hasChildren == true)
-        #expect(rows[0].childCount == 2)
-        #expect(rows[1].depth == 1)
-        #expect(rows[2].depth == 1)
-        #expect(rows[2].isLastChild == true)
+        let sorted = SessionTreeHelper.sortedChildSessions(of: "parent", in: sessions)
+        #expect(sorted.map(\.id) == ["first", "second", "third"])
     }
 
-    @Test func flattenTree_collapsedParent() {
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "child1", parentId: "parent"),
-            makeSession(id: "child2", parentId: "parent"),
+    // MARK: - rootSessions
+
+    @Test func rootSessions_excludesChildrenWithParentInAllSessions() {
+        let all = [
+            makeSession(id: "parent", status: .busy),
+            makeSession(id: "child", parentId: "parent", status: .stopped),
+            makeSession(id: "standalone", status: .stopped),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rows = SessionTreeHelper.flattenTree(nodes: tree) { _ in false }
-        #expect(rows.count == 1)
-        #expect(rows[0].session.id == "parent")
-        #expect(rows[0].childCount == 2)
+        let stopped = all.filter { $0.status == .stopped }
+        let roots = SessionTreeHelper.rootSessions(from: stopped, allSessions: all)
+        // child's parent exists in allSessions → filtered out
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "standalone")
     }
 
-    @Test func flattenTree_nestedExpansion() {
+    // MARK: - aggregatePendingCount
+
+    @Test func aggregatePendingCount_includesDirectChildrenOnly() {
         let sessions = [
             makeSession(id: "root"),
             makeSession(id: "child", parentId: "root"),
             makeSession(id: "grandchild", parentId: "child"),
         ]
         let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rows = SessionTreeHelper.flattenTree(nodes: tree) { _ in true }
-        #expect(rows.count == 3)
-        #expect(rows[0].depth == 0)
-        #expect(rows[1].depth == 1)
-        #expect(rows[2].depth == 2)
+        let pending: [String: Int] = ["root": 1, "child": 2, "grandchild": 5]
+        let count = SessionTreeHelper.aggregatePendingCount(
+            node: tree[0],
+            pendingForSession: { pending[$0] ?? 0 }
+        )
+        // root(1) + child(2) = 3. Grandchild excluded.
+        #expect(count == 3)
     }
 
-    @Test func flattenTree_partialExpansion() {
-        // Expand root but collapse child
+    // MARK: - aggregateCost
+
+    @Test func aggregateCost_recursiveSum() {
         let sessions = [
             makeSession(id: "root"),
             makeSession(id: "child", parentId: "root"),
             makeSession(id: "grandchild", parentId: "child"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rows = SessionTreeHelper.flattenTree(nodes: tree) { id in id == "root" }
-        #expect(rows.count == 2)
-        #expect(rows[0].session.id == "root")
-        #expect(rows[1].session.id == "child")
-        #expect(rows[1].hasChildren == true)
-        #expect(rows[1].childCount == 1)
+        // Need cost on sessions — use the tree helper's cost field
+        var withCost = sessions
+        withCost[0] = Session(
+            id: "root", workspaceId: "ws1", workspaceName: "T",
+            name: "R", status: .busy, createdAt: Date(), lastActivity: Date(),
+            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
+            cost: 1.00, parentSessionId: nil
+        )
+        withCost[1] = Session(
+            id: "child", workspaceId: "ws1", workspaceName: "T",
+            name: "C", status: .busy, createdAt: Date(), lastActivity: Date(),
+            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
+            cost: 2.00, parentSessionId: "root"
+        )
+        withCost[2] = Session(
+            id: "grandchild", workspaceId: "ws1", workspaceName: "T",
+            name: "G", status: .busy, createdAt: Date(), lastActivity: Date(),
+            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
+            cost: 3.00, parentSessionId: "child"
+        )
+        let tree = SessionTreeHelper.buildTree(from: withCost)
+        #expect(SessionTreeHelper.aggregateCost(tree[0]) == 6.00) // 1 + 2 + 3
     }
 
     // MARK: - hasActiveChild
@@ -279,25 +295,6 @@ struct SessionTreeHelperTests {
         ]
         let tree = SessionTreeHelper.buildTree(from: sessions)
         #expect(SessionTreeHelper.countAllChildren(tree[0]) == 2)
-    }
-
-    // MARK: - FlatRow parentLinesContinue
-
-    @Test func flatRow_parentLinesContinue_forGrandchild() {
-        // When a grandchild row is visible, parent tree lines should continue through it
-        let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child1", parentId: "root"),
-            makeSession(id: "grandchild", parentId: "child1"),
-            makeSession(id: "child2", parentId: "root"),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rows = SessionTreeHelper.flattenTree(nodes: tree) { _ in true }
-        // grandchild row should have parent line at depth 0 (root's line continues)
-        let grandchildRow = rows.first { $0.session.id == "grandchild" }
-        #expect(grandchildRow != nil)
-        // child1 is NOT the last child of root, so depth 0 line continues
-        #expect(grandchildRow?.parentLinesContinue.contains(0) == true)
     }
 
     // MARK: - Safety and determinism tests
