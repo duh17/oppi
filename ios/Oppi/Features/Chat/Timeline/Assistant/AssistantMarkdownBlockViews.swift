@@ -481,8 +481,8 @@ final class NativeTableBlockView: UIView {
         paragraph.lineBreakMode = .byClipping
         paragraph.lineSpacing = 5
 
-        let headerFont = AppFont.monoBold
-        let cellFont = AppFont.mono
+        let headerFont = AppFont.monoMediumBold
+        let cellFont = AppFont.monoMedium
         let headerColor = UIColor(palette.cyan)
         let cellColor = UIColor(palette.fg)
         let linkColor = UIColor(palette.blue)
@@ -516,6 +516,16 @@ final class NativeTableBlockView: UIView {
             value: headerBgColor,
             range: NSRange(location: headerStart, length: headerEnd - headerStart)
         )
+
+        // Separator line between header and body rows.
+        let separatorWidth = colWidths.reduce(0, +) + colCount * 5 + 2
+        let separatorLine = String(repeating: "─", count: separatorWidth)
+        result.append(NSAttributedString(string: "\n"))
+        result.append(NSAttributedString(string: separatorLine, attributes: [
+            .font: cellFont,
+            .foregroundColor: dimColor,
+            .paragraphStyle: paragraph,
+        ]))
 
         for (rowIndex, row) in rows.enumerated() {
             result.append(NSAttributedString(string: "\n"))

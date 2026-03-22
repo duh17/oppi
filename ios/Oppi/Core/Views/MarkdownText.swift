@@ -302,18 +302,23 @@ enum FlatSegment: Sendable {
     private static func attributedString(for block: MarkdownBlock, palette: ThemePalette) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
+            let font = Self.headingFont(level: level)
+            let color = Self.headingColor(level: level, palette: palette)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.paragraphSpacingBefore = Self.headingSpacingAbove(level: level)
+
             // Fast path: single text inline heading (common for simple headings).
             if inlines.count == 1, case .text(let string) = inlines[0] {
-                let font = Self.headingFont(level: level)
                 var container = AttributeContainer()
                 container.uiKit.font = font
-                container.uiKit.foregroundColor = UIColor(palette.fg)
+                container.uiKit.foregroundColor = color
+                container.uiKit.paragraphStyle = paragraphStyle
                 return AttributedString(string, attributes: container)
             }
             var result = renderInlines(inlines, palette: palette)
-            let font = Self.headingFont(level: level)
             result.uiKit.font = font
-            result.uiKit.foregroundColor = UIColor(palette.fg)
+            result.uiKit.foregroundColor = color
+            result.uiKit.paragraphStyle = paragraphStyle
             return result
 
         case .paragraph(let inlines):
@@ -526,9 +531,13 @@ enum FlatSegment: Sendable {
             case .code(let code):
                 text += code
                 let end = text.utf8.count
+                let codeFont = Self.monospacedFont(forTextStyle: .subheadline)
+                let codeFg = UIColor(palette.cyan)
+                let codeBg = UIColor(palette.bgHighlight)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.font = Self.monospacedFont(forTextStyle: .subheadline)
-                    sub.uiKit.foregroundColor = UIColor(palette.cyan)
+                    sub.uiKit.font = codeFont
+                    sub.uiKit.foregroundColor = codeFg
+                    sub.uiKit.backgroundColor = codeBg
                 })
             case .link(let children, let destination):
                 collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
@@ -591,6 +600,7 @@ enum FlatSegment: Sendable {
             var result = AttributedString(code)
             result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
             result.uiKit.foregroundColor = UIColor(palette.cyan)
+            result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
             return result
         case .link(let children, let destination):
             var result = renderInlines(children, palette: palette)
@@ -623,22 +633,33 @@ enum FlatSegment: Sendable {
     // MARK: - UIFont Helpers
 
     private static func headingFont(level: Int) -> UIFont {
+        let metrics = UIFontMetrics(forTextStyle: .body)
         switch level {
-        case 1: return boldFont(forTextStyle: .title1)
-        case 2: return boldFont(forTextStyle: .title2)
-        case 3: return boldFont(forTextStyle: .title3)
-        case 4: return .preferredFont(forTextStyle: .headline)
-        case 5: return boldFont(forTextStyle: .subheadline)
-        default: return .preferredFont(forTextStyle: .subheadline)
+        case 1: return metrics.scaledFont(for: .systemFont(ofSize: 21, weight: .bold))
+        case 2: return metrics.scaledFont(for: .systemFont(ofSize: 19, weight: .semibold))
+        case 3: return metrics.scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
+        case 4: return metrics.scaledFont(for: .systemFont(ofSize: 17, weight: .medium))
+        case 5: return metrics.scaledFont(for: .systemFont(ofSize: 15, weight: .medium))
+        default: return metrics.scaledFont(for: .systemFont(ofSize: 15, weight: .regular))
         }
     }
 
-    private static func boldFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
-        let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: style)
-        guard let bold = descriptor.withSymbolicTraits(.traitBold) else {
-            return UIFont(descriptor: descriptor, size: 0)
+    private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
+        switch level {
+        case 1, 2, 3: return UIColor(palette.fg)
+        case 4, 5: return UIColor(palette.fgDim)
+        default: return UIColor(palette.comment)
         }
-        return UIFont(descriptor: bold, size: 0)
+    }
+
+    private static func headingSpacingAbove(level: Int) -> CGFloat {
+        switch level {
+        case 1: return 20
+        case 2: return 16
+        case 3: return 12
+        case 4: return 8
+        default: return 6
+        }
     }
 
     private static func monospacedFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
