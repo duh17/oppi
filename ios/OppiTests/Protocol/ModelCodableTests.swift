@@ -71,6 +71,33 @@ struct SessionCodableTests {
         #expect(session.contextTokens == nil)
         #expect(session.contextWindow == nil)
         #expect(session.lastMessage == nil)
+        #expect(session.tokens.cacheRead == nil)
+        #expect(session.tokens.cacheWrite == nil)
+    }
+
+    @Test func decodeSessionTokenUsageCacheFields() throws {
+        let json = """
+        {
+            "id": "s-cache",
+            "status": "ready",
+            "createdAt": 1700000000000,
+            "lastActivity": 1700000000000,
+            "messageCount": 0,
+            "tokens": {
+                "input": 120,
+                "output": 45,
+                "cacheRead": 30,
+                "cacheWrite": 12
+            },
+            "cost": 0
+        }
+        """
+        let session = try JSONDecoder().decode(Session.self, from: json.data(using: .utf8)!)
+
+        #expect(session.tokens.input == 120)
+        #expect(session.tokens.output == 45)
+        #expect(session.tokens.cacheRead == 30)
+        #expect(session.tokens.cacheWrite == 12)
     }
 
     @Test func encodeDecodeRoundTrip() throws {

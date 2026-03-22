@@ -61,6 +61,8 @@ struct Session: Identifiable, Sendable, Equatable {
 struct TokenUsage: Codable, Sendable, Equatable {
     var input: Int
     var output: Int
+    var cacheRead: Int?
+    var cacheWrite: Int?
 }
 
 struct SessionChangeStats: Codable, Sendable, Equatable {

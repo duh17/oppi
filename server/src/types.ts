@@ -893,7 +893,6 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "set_auto_retry"; enabled: boolean; requestId?: string }
     | { type: "abort_retry"; requestId?: string }
     // ── Bash ──
-    | { type: "bash"; command: string; requestId?: string }
     | { type: "abort_bash"; requestId?: string }
     // ── Commands ──
     | { type: "get_commands"; requestId?: string }

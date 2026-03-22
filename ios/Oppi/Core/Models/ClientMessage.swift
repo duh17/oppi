@@ -53,7 +53,6 @@ enum ClientMessage: Sendable {
     case abortRetry(requestId: String? = nil)
 
     // ── Bash ──
-    case bash(command: String, requestId: String? = nil)
     case abortBash(requestId: String? = nil)
 
     // ── Commands ──
@@ -277,11 +276,6 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Bash ──
-        case .bash(let command, let reqId):
-            try c.encode("bash", forKey: .type)
-            try c.encode(command, forKey: .command)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-
         case .abortBash(let reqId):
             try c.encode("abort_bash", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
@@ -408,7 +402,6 @@ extension ClientMessage {
         case .setFollowUpMode: return "set_follow_up_mode"
         case .setAutoRetry: return "set_auto_retry"
         case .abortRetry: return "abort_retry"
-        case .bash: return "bash"
         case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
         case .getFileSuggestions: return "get_file_suggestions"
