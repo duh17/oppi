@@ -17,6 +17,8 @@ struct ServerView: View {
     @State private var selectedRange: Int = 7
     @State private var isLoading = true
     @State private var error: String?
+    @State private var dailyDetail: DailyDetail?
+    @State private var isLoadingDetail = false
 
     private var activeServer: PairedServer? {
         serverStore.servers.first
@@ -41,6 +43,7 @@ struct ServerView: View {
         }
         .navigationTitle(activeServer?.name ?? "Server")
         .task(id: selectedRange) {
+            dailyDetail = nil
             await loadStats()
         }
         .task {
@@ -100,13 +103,29 @@ struct ServerView: View {
     private func statsContent(_ stats: ServerStats) -> some View {
         StatsHeroRow(totals: stats.totals, daily: stats.daily)
 
-        DailyCostChartView(daily: stats.daily)
+        DailyCostChartView(daily: stats.daily, onDaySelected: { dateString in
+            Task { await loadDailyDetail(date: dateString) }
+        })
+
+        if isLoadingDetail {
+            HStack {
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                Spacer()
+            }
+            .padding(.vertical, 8)
+        }
+
+        if let dailyDetail {
+            DailyDetailView(detail: dailyDetail) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    self.dailyDetail = nil
+                }
+            }
+        }
 
         ModelBreakdownSection(breakdown: stats.modelBreakdown)
-
-        if selectedRange != 7 {
-            ActivityHeatmapView(daily: stats.daily)
-        }
 
         WorkspaceBreakdownSection(workspaces: stats.workspaceBreakdown)
 
@@ -150,5 +169,22 @@ struct ServerView: View {
         } catch {
             // Non-fatal — stats still show without server info
         }
+    }
+
+    private func loadDailyDetail(date: String) async {
+        guard let apiClient else { return }
+
+        isLoadingDetail = true
+
+        do {
+            let result = try await apiClient.fetchDailyDetail(date: date)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                dailyDetail = result
+            }
+        } catch {
+            // Silently fail — the tooltip still shows summary data
+        }
+
+        isLoadingDetail = false
     }
 }

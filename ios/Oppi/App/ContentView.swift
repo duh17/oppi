@@ -45,7 +45,7 @@ struct ContentView: View {
                             WorkspaceHomeView()
                         }
                     }
-                    SwiftUI.Tab("Server", systemImage: "chart.bar", value: AppTab.server) {
+                    SwiftUI.Tab("Server", systemImage: "server.rack", value: AppTab.server) {
                         NavigationStack {
                             ServerView()
                         }

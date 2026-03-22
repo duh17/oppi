@@ -98,6 +98,34 @@ extension StatsActiveSession {
     var isBusy: Bool { status == "busy" || status == "starting" }
 }
 
+// MARK: - Daily detail (hourly drill-down)
+
+struct StatsDailyHourlyEntry: Codable, Sendable {
+    let hour: Int          // 0-23
+    let sessions: Int
+    let cost: Double
+    let tokens: Int
+    let byModel: [String: DailyModelEntry]?
+}
+
+struct StatsDailySession: Codable, Sendable {
+    let id: String
+    let name: String?
+    let model: String?
+    let cost: Double
+    let tokens: Int
+    let createdAt: Double  // epoch ms
+    let workspaceName: String?
+    let status: String
+}
+
+struct DailyDetail: Codable, Sendable {
+    let date: String       // "YYYY-MM-DD"
+    let totals: StatsTotals
+    let hourly: [StatsDailyHourlyEntry]
+    let sessions: [StatsDailySession]
+}
+
 // MARK: - Sendable conformances
 
 extension StatsMemory: Sendable {}

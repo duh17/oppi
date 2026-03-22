@@ -17,6 +17,9 @@ struct DailyCostChartView: View {
 
     let daily: [StatsDailyEntry]
 
+    /// Called when the user selects a day (date string "YYYY-MM-DD").
+    var onDaySelected: ((String) -> Void)?
+
     @State private var selectedDate: Date?
 
     private static let dateParser: DateFormatter = {
@@ -32,17 +35,21 @@ struct DailyCostChartView: View {
         return f
     }()
 
+    private static let dateStringFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
     // MARK: - Derived data
 
-    /// Aggregate by display name per day so duplicate raw model names
-    /// (e.g. "anthropic/claude-opus-4-6-20250514" and "claude-opus-4-6")
-    /// merge into one bar segment with consistent color.
+    /// Aggregate by display name per day so duplicate raw model names merge.
     private var chartData: [ModelDayCost] {
         var result: [ModelDayCost] = []
         for entry in daily {
             guard let date = Self.dateParser.date(from: entry.date) else { continue }
             if let byModel = entry.byModel, !byModel.isEmpty {
-                // Group by display name to merge duplicates
                 var byDisplay: [String: (raw: String, cost: Double)] = [:]
                 for (model, data) in byModel where data.cost > 0 {
                     let name = displayModelName(model)
@@ -95,6 +102,11 @@ struct DailyCostChartView: View {
                         .transition(.opacity)
                 }
             }
+        }
+        .onChange(of: selectedDate) { _, newDate in
+            guard let newDate else { return }
+            let dateString = Self.dateStringFormatter.string(from: newDate)
+            onDaySelected?(dateString)
         }
     }
 

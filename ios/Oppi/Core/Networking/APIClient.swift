@@ -85,6 +85,12 @@ actor APIClient {
         return try JSONDecoder().decode(ServerStats.self, from: data)
     }
 
+    /// Fetch hourly breakdown for a specific day.
+    func fetchDailyDetail(date: String) async throws -> DailyDetail {
+        let data = try await get("/server/stats/daily/\(date)")
+        return try JSONDecoder().decode(DailyDetail.self, from: data)
+    }
+
     struct RuntimeUpdateResult: Decodable, Sendable, Equatable {
         let ok: Bool
         let message: String
