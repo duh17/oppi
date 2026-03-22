@@ -26,6 +26,7 @@ import { UserStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
+import { ServerMetricsCollector } from "./server-metrics.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
@@ -262,6 +263,9 @@ export class Server {
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
 
+  // Server resource utilization metrics (CPU, memory, sessions)
+  private metricsCollector: ServerMetricsCollector;
+
   // Live Activity push bridge (debounced APNs updates)
   private liveActivity: LiveActivityBridge;
 
@@ -350,6 +354,26 @@ export class Server {
         this.wsMessageHandler.handleClientMessage(session, msg, send),
       trackConnection: (ws) => this.trackConnection(ws),
       untrackConnection: (ws) => this.untrackConnection(ws),
+    });
+
+    // Server resource utilization metrics collector
+    this.metricsCollector = new ServerMetricsCollector({
+      telemetryDir: join(dataDir, "diagnostics", "telemetry"),
+      getSessionCounts: () => {
+        const ids = this.sessions.getActiveSessionIds();
+        let busy = 0;
+        let ready = 0;
+        let starting = 0;
+        for (const id of ids) {
+          const s = this.sessions.getActiveSession(id);
+          if (!s) continue;
+          if (s.status === "busy") busy++;
+          else if (s.status === "ready") ready++;
+          else if (s.status === "starting") starting++;
+        }
+        return { busy, ready, starting, total: ids.size };
+      },
+      getWebSocketCount: () => this.connections.size,
     });
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
@@ -518,6 +542,8 @@ export class Server {
           console.warn(`[bonjour] advertisement disabled: ${message}`);
         }
 
+        this.metricsCollector.start();
+
         resolve();
       });
     });
@@ -535,6 +561,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.metricsCollector.stop();
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
