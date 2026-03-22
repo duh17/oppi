@@ -255,26 +255,14 @@ describe("spawn_agent", () => {
       expect(result.details.status).not.toBe("error");
     });
 
-    it("allows spawn at depth 1 (child of root)", async () => {
+    it("rejects spawn at depth 1 (child cannot spawn grandchildren)", async () => {
       const root = makeSession({ id: "root" });
       const child = makeSession({ id: "child-at-depth-1", parentSessionId: "root" });
       const { spawn } = setup({ sessionId: "child-at-depth-1", sessions: [root, child] });
-      const result = await spawn.execute("tc-1", { message: "test" });
-      expect(result.details.status).not.toBe("error");
-    });
-
-    it("rejects spawn at depth 2 (grandchild)", async () => {
-      const root = makeSession({ id: "root" });
-      const child = makeSession({ id: "child", parentSessionId: "root" });
-      const grandchild = makeSession({ id: "grandchild", parentSessionId: "child" });
-      const { spawn } = setup({
-        sessionId: "grandchild",
-        sessions: [root, child, grandchild],
-      });
 
       const result = await spawn.execute("tc-1", { message: "test" });
       expect(result.content[0].text).toContain("Cannot spawn: max depth reached");
-      expect(result.content[0].text).toContain("depth 2");
+      expect(result.content[0].text).toContain("depth 1");
       expect(result.details.status).toBe("error");
     });
 

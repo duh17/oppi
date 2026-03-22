@@ -331,14 +331,13 @@ describe("spawn-agent-extension", () => {
       expect(ctx.spawnChildCalls[0].name).toBe("A".repeat(80));
     });
 
-    it("rejects when depth >= MAX_SPAWN_DEPTH (2)", async () => {
-      // Build a chain: root -> parent -> current (depth=2)
-      const { ctx, tool } = setup("grandchild-1");
+    it("rejects when depth >= MAX_SPAWN_DEPTH (1)", async () => {
+      // Build a chain: root -> current (depth=1) — child cannot spawn
+      const { ctx, tool } = setup("child-1");
       ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
-      ctx.sessions.set("child-1", makeSession({ id: "child-1", parentSessionId: "root-1" }));
       ctx.sessions.set(
-        "grandchild-1",
-        makeSession({ id: "grandchild-1", parentSessionId: "child-1" }),
+        "child-1",
+        makeSession({ id: "child-1", parentSessionId: "root-1" }),
       );
 
       const result = await tool("spawn_agent").execute("tc1", {
@@ -348,22 +347,8 @@ describe("spawn-agent-extension", () => {
       const text = result.content[0].text;
       expect(text).toContain("Cannot spawn");
       expect(text).toContain("max depth reached");
-      expect(text).toContain("depth 2");
+      expect(text).toContain("depth 1");
       expect(ctx.spawnChildCalls.length).toBe(0);
-    });
-
-    it("allows spawn at depth 1 (child of root)", async () => {
-      // root -> current (depth=1)
-      const { ctx, tool } = setup("child-1");
-      ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
-      ctx.sessions.set("child-1", makeSession({ id: "child-1", parentSessionId: "root-1" }));
-
-      const result = await tool("spawn_agent").execute("tc1", {
-        message: "should succeed",
-      });
-
-      expect(result.content[0].text).toContain("Spawned agent");
-      expect(ctx.spawnChildCalls.length).toBe(1);
     });
 
     it("handles circular parentSessionId references without infinite loop", async () => {

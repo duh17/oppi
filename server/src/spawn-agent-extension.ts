@@ -54,8 +54,8 @@ export interface SpawnAgentContext {
 // Tree utilities
 // ---------------------------------------------------------------------------
 
-/** Maximum spawn depth. 0 = root (no spawning), 1 = parent→child, 2 = parent→child→grandchild. */
-const MAX_SPAWN_DEPTH = 2;
+/** Maximum spawn depth. 0 = root (no spawning), 1 = parent→child only. */
+const MAX_SPAWN_DEPTH = 1;
 
 /** Walk parentSessionId chain upward to compute depth. Root = 0. */
 function getSpawnDepth(ctx: SpawnAgentContext): number {
