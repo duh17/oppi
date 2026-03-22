@@ -102,10 +102,16 @@ struct WorkspaceDetailView: View {
     }
 
     private var stoppedSessions: [Session] {
-        SessionTreeHelper.rootSessions(
-            from: workspaceSessions.filter { $0.status == .stopped && matchesSessionSearch($0) },
-            allSessions: workspaceSessions
-        ).sorted { $0.lastActivity > $1.lastActivity }
+        let stoppedTreeNodes = SessionTreeHelper.buildTree(
+            from: workspaceSessions.filter { $0.status == .stopped }
+        )
+        let matchingRoots = hasSessionSearchQuery
+            ? stoppedTreeNodes.filter { treeMatchesSearch($0) }
+            : stoppedTreeNodes
+
+        return matchingRoots
+            .map(\.session)
+            .sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
