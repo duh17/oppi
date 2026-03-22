@@ -116,8 +116,7 @@ final class ServerProcessManager {
     static func killExistingServer() {
         // Find server processes matching our CLI pattern.
         // Use pgrep to avoid false positives from other node processes.
-        // Matches: node dist/cli.js serve, tsx src/cli.ts serve, node dev-watch.mjs serve
-        let serverPids = pidsMatching(pattern: "(node.*cli\\.js|tsx.*cli\\.ts|node.*dev-watch\\.mjs).*serve")
+        let serverPids = pidsMatching(pattern: "node.*cli\\.js.*serve")
         for pid in serverPids {
             logger.info("Killing existing server process (pid \(pid))")
             kill(pid, SIGTERM)
@@ -181,49 +180,8 @@ final class ServerProcessManager {
         }
         let dataDir = NSString("~/.config/oppi").expandingTildeInPath
 
-        #if DEBUG
-        // Dev mode: use gated dev-watch for hot reload if the repo source is available.
-        // dev-watch.mjs syntax-checks all .ts files before restarting the server.
-        // Broken edits log errors but don't kill the running server.
-        if let devConfig = Self.resolveDevWatchConfig(cliPath: cliPath) {
-            logger.info("Dev mode: using gated dev-watch for hot reload")
-            start(
-                nodePath: devConfig.nodePath,
-                cliPath: devConfig.watchScript,
-                dataDir: dataDir
-            )
-            return
-        }
-        #endif
-
         start(nodePath: nodePath, cliPath: cliPath, dataDir: dataDir)
     }
-
-    #if DEBUG
-    private struct DevWatchConfig {
-        let nodePath: String
-        let watchScript: String
-    }
-
-    /// Check if we can use the gated dev-watch script for hot reload.
-    ///
-    /// Looks for `scripts/dev-watch.mjs` in the server repo alongside the
-    /// resolved dist/cli.js. The dev-watch script syntax-checks all .ts files
-    /// before restarting, so broken edits don't kill the running server.
-    private static func resolveDevWatchConfig(cliPath: String) -> DevWatchConfig? {
-        // cliPath is like ~/workspace/oppi/server/dist/cli.js
-        let distDir = (cliPath as NSString).deletingLastPathComponent
-        let serverDir = (distDir as NSString).deletingLastPathComponent
-        let watchScript = (serverDir as NSString).appendingPathComponent("scripts/dev-watch.mjs")
-
-        guard FileManager.default.fileExists(atPath: watchScript) else { return nil }
-
-        // Need node to run the .mjs script
-        guard let nodePath = resolveNodePath() else { return nil }
-
-        return DevWatchConfig(nodePath: nodePath, watchScript: watchScript)
-    }
-    #endif
 
     /// Spawn the server process.
     ///
