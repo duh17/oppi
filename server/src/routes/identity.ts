@@ -4,7 +4,13 @@ import { hostname } from "node:os";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import { aggregateStats, getActiveSessions, getMemoryStats, parseRange } from "./server-stats.js";
+import {
+  aggregateDailyDetail,
+  aggregateStats,
+  getActiveSessions,
+  getMemoryStats,
+  parseRange,
+} from "./server-stats.js";
 
 const PAIRING_MAX_FAILURES = 5;
 const PAIRING_WINDOW_MS = 60_000;
@@ -186,6 +192,18 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
+  function handleGetDailyDetail(date: string, res: ServerResponse): void {
+    const parsed = new Date(date + "T00:00:00Z");
+    if (isNaN(parsed.getTime())) {
+      helpers.json(res, { error: "Invalid date format. Use YYYY-MM-DD." }, 400);
+      return;
+    }
+
+    const sessions = ctx.storage.listSessions();
+    const result = aggregateDailyDetail(sessions, date);
+    helpers.json(res, result);
+  }
+
   function handleGetServerStats(url: URL, res: ServerResponse): void {
     const rangeDays = parseRange(url.searchParams.get("range"));
     const sessions = ctx.storage.listSessions();
@@ -220,6 +238,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/server/info" && method === "GET") {
       await handleGetServerInfo(res);
+      return true;
+    }
+    // Match /server/stats/daily/YYYY-MM-DD (must come before /server/stats)
+    const dailyDetailMatch = path.match(/^\/server\/stats\/daily\/(\d{4}-\d{2}-\d{2})$/);
+    if (dailyDetailMatch && method === "GET") {
+      handleGetDailyDetail(dailyDetailMatch[1], res);
       return true;
     }
     if (path === "/server/stats" && method === "GET") {
