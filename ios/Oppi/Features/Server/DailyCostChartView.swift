@@ -64,7 +64,9 @@ struct DailyCostChartView: View {
                         byDisplay[name] = (model, v)
                     }
                 }
-                for (_, item) in byDisplay {
+                // Sort by display name so bar segment stacking order
+                // is consistent across days (prevents color shuffling).
+                for (_, item) in byDisplay.sorted(by: { $0.key < $1.key }) {
                     result.append(ModelDayCost(date: date, model: item.raw, value: item.value))
                 }
             } else {
