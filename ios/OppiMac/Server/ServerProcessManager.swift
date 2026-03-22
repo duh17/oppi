@@ -116,7 +116,7 @@ final class ServerProcessManager {
     static func killExistingServer() {
         // Find server processes matching our CLI pattern.
         // Use pgrep to avoid false positives from other node processes.
-        let serverPids = pidsMatching(pattern: "node.*cli\\.js.*serve")
+        let serverPids = pidsMatching(pattern: "(node.*cli\\.js|tsx.*cli\\.ts).*serve")
         for pid in serverPids {
             logger.info("Killing existing server process (pid \(pid))")
             kill(pid, SIGTERM)
@@ -179,16 +179,68 @@ final class ServerProcessManager {
             return
         }
         let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+
+        #if DEBUG
+        // Dev mode: use tsx watch for hot reload if the repo source is available.
+        // tsx watches .ts files and auto-restarts the server on changes.
+        if let devConfig = Self.resolveDevWatchConfig(cliPath: cliPath) {
+            logger.info("Dev mode: using tsx watch for hot reload")
+            start(
+                nodePath: devConfig.tsxPath,
+                cliPath: devConfig.srcCLIPath,
+                dataDir: dataDir,
+                extraArgs: ["watch"]
+            )
+            return
+        }
+        #endif
+
         start(nodePath: nodePath, cliPath: cliPath, dataDir: dataDir)
     }
+
+    #if DEBUG
+    private struct DevWatchConfig {
+        let tsxPath: String
+        let srcCLIPath: String
+    }
+
+    /// Check if we can use tsx watch for hot reload.
+    ///
+    /// Looks for tsx in the repo's node_modules and src/cli.ts alongside the
+    /// resolved dist/cli.js. Only activates for repo-local dev builds.
+    private static func resolveDevWatchConfig(cliPath: String) -> DevWatchConfig? {
+        // cliPath is like ~/workspace/oppi/server/dist/cli.js
+        // We need ~/workspace/oppi/server/src/cli.ts and tsx binary
+        let distDir = (cliPath as NSString).deletingLastPathComponent
+        let serverDir = (distDir as NSString).deletingLastPathComponent
+        let srcCLI = (serverDir as NSString).appendingPathComponent("src/cli.ts")
+
+        guard FileManager.default.fileExists(atPath: srcCLI) else { return nil }
+
+        // Prefer repo-local tsx, fall back to global
+        let candidates = [
+            (serverDir as NSString).appendingPathComponent("node_modules/.bin/tsx"),
+            "/opt/homebrew/bin/tsx",
+            "/usr/local/bin/tsx",
+        ]
+
+        guard let tsxPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            return nil
+        }
+
+        return DevWatchConfig(tsxPath: tsxPath, srcCLIPath: srcCLI)
+    }
+    #endif
 
     /// Spawn the server process.
     ///
     /// - Parameters:
-    ///   - nodePath: Absolute path to the `node` binary.
-    ///   - cliPath: Absolute path to the server CLI entry point (`cli.js`).
+    ///   - nodePath: Absolute path to the `node` (or `tsx`) binary.
+    ///   - cliPath: Absolute path to the server CLI entry point.
     ///   - dataDir: Absolute path to the Oppi data directory.
-    func start(nodePath: String, cliPath: String, dataDir: String) {
+    ///   - extraArgs: Additional arguments inserted before the CLI path
+    ///     (e.g. `["watch"]` for tsx watch mode).
+    func start(nodePath: String, cliPath: String, dataDir: String, extraArgs: [String] = []) {
         guard state == .stopped || isFailedState else {
             logger.warning("Cannot start server from state: \(String(describing: self.state))")
             return
@@ -196,11 +248,11 @@ final class ServerProcessManager {
 
         state = .starting
         isIntentionalStop = false
-        logger.info("Starting server: node=\(nodePath) cli=\(cliPath) data=\(dataDir)")
+        logger.info("Starting server: node=\(nodePath) cli=\(cliPath) data=\(dataDir) extra=\(extraArgs)")
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: nodePath)
-        proc.arguments = [cliPath, "serve", "--data-dir", dataDir]
+        proc.arguments = extraArgs + [cliPath, "serve", "--data-dir", dataDir]
 
         // Ensure homebrew paths are available for git, pi, etc.
         var env = ProcessRunner.augmentedEnvironment
