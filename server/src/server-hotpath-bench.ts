@@ -53,7 +53,7 @@ function makeSession(): Session {
     createdAt: Date.now(),
     lastActivity: Date.now(),
     messageCount: 5,
-    tokens: { input: 1200, output: 800 },
+    tokens: { input: 1200, output: 800, cacheRead: 0, cacheWrite: 0 },
     cost: 0.05,
   } as Session;
 }

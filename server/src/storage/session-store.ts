@@ -26,7 +26,7 @@ export class SessionStore {
       lastActivity: Date.now(),
       model: model || this.configStore.getConfig().defaultModel,
       messageCount: 0,
-      tokens: { input: 0, output: 0 },
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
     };
 
@@ -54,6 +54,11 @@ export class SessionStore {
       const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
       if (!isRecord(raw)) return undefined;
       const session = raw.session as Session | undefined;
+      // Backfill cache token fields for sessions created before this change
+      if (session?.tokens && !("cacheRead" in session.tokens)) {
+        (session.tokens as any).cacheRead = 0;
+        (session.tokens as any).cacheWrite = 0;
+      }
       return session;
     } catch {
       return undefined;
@@ -83,6 +88,12 @@ export class SessionStore {
         if (!session) {
           console.error(`[storage] Corrupt session file ${path}, skipping`);
           continue;
+        }
+
+        // Backfill cache token fields for sessions created before cache tracking
+        if (session.tokens && !("cacheRead" in session.tokens)) {
+          (session.tokens as Record<string, number>).cacheRead = 0;
+          (session.tokens as Record<string, number>).cacheWrite = 0;
         }
 
         sessions.push(session);

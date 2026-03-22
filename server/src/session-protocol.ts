@@ -915,6 +915,8 @@ export function appendSessionMessage(
   if (message.tokens) {
     session.tokens.input += message.tokens.input;
     session.tokens.output += message.tokens.output;
+    session.tokens.cacheRead += message.tokens.cacheRead ?? 0;
+    session.tokens.cacheWrite += message.tokens.cacheWrite ?? 0;
   }
 
   if (message.cost) {
@@ -937,7 +939,14 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   const assistantText = extractAssistantText(message);
 
   if (assistantText) {
-    const tokens = usage ? { input: usage.input, output: usage.output } : undefined;
+    const tokens = usage
+      ? {
+          input: usage.input,
+          output: usage.output,
+          cacheRead: usage.cacheRead,
+          cacheWrite: usage.cacheWrite,
+        }
+      : undefined;
 
     appendSessionMessage(session, {
       role: "assistant",
@@ -950,6 +959,8 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   } else if (usage) {
     session.tokens.input += usage.input;
     session.tokens.output += usage.output;
+    session.tokens.cacheRead += usage.cacheRead;
+    session.tokens.cacheWrite += usage.cacheWrite;
     session.cost += usage.cost;
   }
 

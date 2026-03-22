@@ -32,7 +32,7 @@ function makeSession(overrides?: Partial<Session>): Session {
     createdAt: Date.now(),
     lastActivity: Date.now(),
     messageCount: 0,
-    tokens: { input: 0, output: 0 },
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     cost: 0,
     ...overrides,
   };

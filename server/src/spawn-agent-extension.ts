@@ -110,6 +110,8 @@ interface TreeCostSummary {
   totalCost: number;
   totalTokensInput: number;
   totalTokensOutput: number;
+  totalTokensCacheRead: number;
+  totalTokensCacheWrite: number;
   totalMessages: number;
   busyCount: number;
   stoppedCount: number;
@@ -126,6 +128,8 @@ function computeTreeCost(rootId: string, allSessions: Session[]): TreeCostSummar
     totalCost: tree.reduce((s, t) => s + t.cost, 0),
     totalTokensInput: tree.reduce((s, t) => s + t.tokens.input, 0),
     totalTokensOutput: tree.reduce((s, t) => s + t.tokens.output, 0),
+    totalTokensCacheRead: tree.reduce((s, t) => s + (t.tokens.cacheRead ?? 0), 0),
+    totalTokensCacheWrite: tree.reduce((s, t) => s + (t.tokens.cacheWrite ?? 0), 0),
     totalMessages: tree.reduce((s, t) => s + t.messageCount, 0),
     busyCount: tree.filter((t) => t.status === "busy" || t.status === "starting").length,
     stoppedCount: tree.filter((t) => t.status === "stopped" || t.status === "ready").length,

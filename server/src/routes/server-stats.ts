@@ -111,7 +111,12 @@ function toDateString(ts: number): string {
 }
 
 function sessionTokens(s: Session): number {
-  return (s.tokens?.input ?? 0) + (s.tokens?.output ?? 0);
+  return (
+    (s.tokens?.input ?? 0) +
+    (s.tokens?.output ?? 0) +
+    (s.tokens?.cacheRead ?? 0) +
+    (s.tokens?.cacheWrite ?? 0)
+  );
 }
 
 function round2(n: number): number {

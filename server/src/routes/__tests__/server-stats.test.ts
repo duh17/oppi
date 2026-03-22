@@ -18,7 +18,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     createdAt: Date.now(),
     lastActivity: Date.now(),
     messageCount: 10,
-    tokens: { input: 5000, output: 3000 },
+    tokens: { input: 5000, output: 3000, cacheRead: 0, cacheWrite: 0 },
     cost: 0.5,
     model: "anthropic/claude-sonnet-4-20250514",
     workspaceId: "ws-1",
@@ -178,21 +178,21 @@ describe("aggregateStats", () => {
         createdAt: day1,
         cost: 1,
         model: "sonnet",
-        tokens: { input: 1000, output: 500 },
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s2",
         createdAt: day1,
         cost: 2,
         model: "opus",
-        tokens: { input: 2000, output: 1000 },
+        tokens: { input: 2000, output: 1000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s3",
         createdAt: day2,
         cost: 0.5,
         model: "sonnet",
-        tokens: { input: 500, output: 200 },
+        tokens: { input: 500, output: 200, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -248,14 +248,14 @@ describe("aggregateStats", () => {
         createdAt: now - DAY_MS,
         cost: 3,
         model: "sonnet",
-        tokens: { input: 1000, output: 1000 },
+        tokens: { input: 1000, output: 1000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s2",
         createdAt: now - DAY_MS,
         cost: 7,
         model: "opus",
-        tokens: { input: 5000, output: 2000 },
+        tokens: { input: 5000, output: 2000, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -341,19 +341,19 @@ describe("aggregateStats", () => {
         id: "s1",
         createdAt: now - 1 * DAY_MS,
         cost: 1.5,
-        tokens: { input: 1000, output: 500 },
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s2",
         createdAt: now - 2 * DAY_MS,
         cost: 2.3,
-        tokens: { input: 2000, output: 1000 },
+        tokens: { input: 2000, output: 1000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s3",
         createdAt: now - 2 * DAY_MS,
         cost: 0.7,
-        tokens: { input: 500, output: 200 },
+        tokens: { input: 500, output: 200, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -401,13 +401,13 @@ describe("aggregateDailyDetail", () => {
         id: "s-1",
         createdAt: baseDate + 8.5 * HOUR_MS,
         cost: 10,
-        tokens: { input: 20000, output: 10000 },
+        tokens: { input: 20000, output: 10000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s-2",
         createdAt: baseDate + 14 * HOUR_MS,
         cost: 20,
-        tokens: { input: 40000, output: 20000 },
+        tokens: { input: 40000, output: 20000, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -428,14 +428,14 @@ describe("aggregateDailyDetail", () => {
         createdAt: baseDate + 8.5 * HOUR_MS,
         cost: 10,
         model: "anthropic/claude-opus-4-6",
-        tokens: { input: 20000, output: 10000 },
+        tokens: { input: 20000, output: 10000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s-2",
         createdAt: baseDate + 8.75 * HOUR_MS,
         cost: 5,
         model: "openai/gpt-5.4",
-        tokens: { input: 10000, output: 5000 },
+        tokens: { input: 10000, output: 5000, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -494,20 +494,20 @@ describe("aggregateDailyDetail", () => {
         createdAt: baseDate + 8.5 * HOUR_MS,
         cost: 10,
         model: "anthropic/claude-opus-4-6",
-        tokens: { input: 20000, output: 10000 },
+        tokens: { input: 20000, output: 10000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s-2",
         createdAt: baseDate + 8.75 * HOUR_MS,
         cost: 5,
         model: "openai/gpt-5.4",
-        tokens: { input: 10000, output: 5000 },
+        tokens: { input: 10000, output: 5000, cacheRead: 0, cacheWrite: 0 },
       }),
       makeSession({
         id: "s-3",
         createdAt: baseDate + 14 * HOUR_MS,
         cost: 20,
-        tokens: { input: 40000, output: 20000 },
+        tokens: { input: 40000, output: 20000, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 
@@ -531,7 +531,7 @@ describe("aggregateDailyDetail", () => {
         name: "Fix crash in timeline",
         model: "anthropic/claude-opus-4-6",
         cost: 10.456,
-        tokens: { input: 20000, output: 10000 },
+        tokens: { input: 20000, output: 10000, cacheRead: 0, cacheWrite: 0 },
         createdAt: baseDate + 8 * HOUR_MS,
         workspaceName: "oppi",
         status: "stopped",
@@ -558,7 +558,7 @@ describe("aggregateDailyDetail", () => {
         createdAt: baseDate + 8 * HOUR_MS,
         cost: 5,
         model: undefined,
-        tokens: { input: 1000, output: 500 },
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
       }),
     ];
 

@@ -19,7 +19,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     createdAt: Date.now() - 60_000,
     lastActivity: Date.now(),
     messageCount: 5,
-    tokens: { input: 1000, output: 500 },
+    tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
     cost: 0.05,
     name: `Session ${id}`,
     model: "anthropic/claude-sonnet-4-20250514",

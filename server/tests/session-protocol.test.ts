@@ -19,7 +19,7 @@ function makeSession(): Session {
     lastActivity: now,
     model: "openai/gpt-test",
     messageCount: 0,
-    tokens: { input: 0, output: 0 },
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     cost: 0,
   };
 }
@@ -434,7 +434,7 @@ describe("session-protocol state mutation helpers", () => {
     });
 
     expect(session.messageCount).toBe(1);
-    expect(session.tokens).toEqual({ input: 5, output: 7 });
+    expect(session.tokens).toEqual({ input: 5, output: 7, cacheRead: 2, cacheWrite: 3 });
     expect(session.cost).toBe(1.25);
     expect(session.contextTokens).toBe(17);
     expect(session.lastMessage).toBe("final answer");

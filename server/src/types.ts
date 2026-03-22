@@ -82,7 +82,7 @@ export interface Session {
 
   // Stats
   messageCount: number;
-  tokens: { input: number; output: number };
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
   cost: number;
   changeStats?: SessionChangeStats;
 
@@ -121,7 +121,7 @@ export interface SessionMessage {
 
   // For assistant messages
   model?: string;
-  tokens?: { input: number; output: number };
+  tokens?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   cost?: number;
 }
 
