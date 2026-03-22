@@ -60,6 +60,35 @@ struct SessionNavigationTests {
 
     private var baseTime: Date { Date(timeIntervalSince1970: 1_700_000_000) }
 
+    private func visibleStoppedRootIds(
+        in sessions: [Session],
+        query: String? = nil
+    ) -> [String] {
+        let normalizedQuery = query?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        let hasQuery = !normalizedQuery.isEmpty
+
+        func matches(_ session: Session) -> Bool {
+            guard hasQuery else { return true }
+            return FuzzyMatch.match(query: normalizedQuery, candidate: session.displayTitle) != nil
+        }
+
+        func treeMatchesSearch(_ node: SessionTreeHelper.TreeNode) -> Bool {
+            if matches(node.session) { return true }
+            return node.children.contains { treeMatchesSearch($0) }
+        }
+
+        let stoppedTree = SessionTreeHelper.buildTree(from: sessions.filter { $0.status == .stopped })
+        let matchingRoots = hasQuery
+            ? stoppedTree.filter { treeMatchesSearch($0) }
+            : stoppedTree
+
+        return matchingRoots
+            .map(\.session.id)
+            .sorted()
+    }
+
     // ──────────────────────────────────────────────────────────────
     // MARK: 1 — Root session filtering
     // ──────────────────────────────────────────────────────────────
@@ -142,6 +171,24 @@ struct SessionNavigationTests {
         let tree = SessionTreeHelper.buildTree(from: sessions)
         #expect(tree.count == 3)
         #expect(tree.allSatisfy { $0.children.isEmpty })
+    }
+
+    @Test func stoppedRoots_activeParentStoppedChildChildRemainsVisible() {
+        let sessions = [
+            makeSession(id: "parent", status: .busy, name: "Active Parent"),
+            makeSession(id: "child", parentId: "parent", status: .stopped, name: "Stopped Child"),
+        ]
+
+        #expect(visibleStoppedRootIds(in: sessions) == ["child"])
+    }
+
+    @Test func stoppedRoots_searchSurfacesStoppedParentWhenChildMatches() {
+        let sessions = [
+            makeSession(id: "parent", status: .stopped, name: "Parent Session"),
+            makeSession(id: "child", parentId: "parent", status: .stopped, name: "Compile regression fix"),
+        ]
+
+        #expect(visibleStoppedRootIds(in: sessions, query: "compile") == ["parent"])
     }
 
     // ──────────────────────────────────────────────────────────────
