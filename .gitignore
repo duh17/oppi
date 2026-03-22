@@ -16,6 +16,8 @@ scripts/*
 !server/scripts/
 server/scripts/*
 !server/scripts/telemetry-review.mjs
+!server/scripts/manual/
+!server/scripts/manual/telemetry-import-sqlite.mjs
 !ios/scripts/
 ios/scripts/*
 !ios/scripts/check-coverage.sh

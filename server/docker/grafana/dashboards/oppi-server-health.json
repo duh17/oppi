@@ -1,0 +1,163 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "CPU Usage (%)",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "percent",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "cpu_user" }, "properties": [{ "id": "displayName", "value": "User" }] },
+          { "matcher": { "id": "byName", "options": "cpu_system" }, "properties": [{ "id": "displayName", "value": "System" }] },
+          { "matcher": { "id": "byName", "options": "cpu_total" }, "properties": [{ "id": "displayName", "value": "Total" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, cpu_user, cpu_system, cpu_total FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Memory (MB)",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "MB",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "decmbytes",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "mem_rss" }, "properties": [{ "id": "displayName", "value": "RSS" }, { "id": "custom.lineWidth", "value": 2 }] },
+          { "matcher": { "id": "byName", "options": "mem_heap_used" }, "properties": [{ "id": "displayName", "value": "Heap Used" }] },
+          { "matcher": { "id": "byName", "options": "mem_heap_total" }, "properties": [{ "id": "displayName", "value": "Heap Total" }] },
+          { "matcher": { "id": "byName", "options": "mem_external" }, "properties": [{ "id": "displayName", "value": "External" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, mem_heap_used, mem_heap_total, mem_rss, mem_external FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Active Sessions",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "Sessions",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "normal" }
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "sessions_busy" }, "properties": [{ "id": "displayName", "value": "Busy" }, { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "sessions_ready" }, "properties": [{ "id": "displayName", "value": "Idle" }, { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "sessions_starting" }, "properties": [{ "id": "displayName", "value": "Starting" }, { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, sessions_busy, sessions_ready, sessions_starting FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "WebSocket Connections",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "Connections",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ws_connections" }, "properties": [{ "id": "displayName", "value": "WebSocket Connections" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, ws_connections FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["oppi", "server"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "browser",
+  "title": "Oppi Server Health",
+  "uid": "oppi-server-health"
+}
