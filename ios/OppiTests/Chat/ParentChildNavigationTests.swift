@@ -351,6 +351,170 @@ struct ParentChildNavigationTests {
         await TimelineCache.shared.removeTrace(parentId)
     }
 
+    // MARK: - Session affinity gates stale items
+
+    /// Verify that reducer.activeSessionId prevents a child view from rendering
+    /// parent items. The shared reducer has parent items when the child ChatView
+    /// is pushed — visibleItems should return empty because activeSessionId
+    /// doesn't match the child's sessionId.
+    @MainActor
+    @Test func activeSessionIdGatesStaleParentItems() async {
+        let parentId = "parent-gate-\(UUID().uuidString)"
+        let childId = "child-gate-\(UUID().uuidString)"
+
+        let parentManager = ChatSessionManager(sessionId: parentId)
+        let parentStreams = ScriptedStreamFactory()
+
+        parentManager._streamSessionForTesting = { _ in parentStreams.makeStream() }
+        parentManager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let reducer = connection.reducer
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
+        var childSession = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
+        childSession.parentSessionId = parentId
+        sessionStore.upsert(childSession)
+
+        // Step 1: Parent connects and produces items
+        let parentTask = Task { @MainActor in
+            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await parentStreams.waitForCreated(1))
+        parentStreams.yield(index: 0, message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1")))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { parentManager.entryState == .streaming }
+        })
+
+        parentStreams.yield(index: 0, message: .agentStart)
+        parentStreams.yield(index: 0, message: .textDelta(delta: "PARENT_VISIBLE"))
+        parentStreams.yield(index: 0, message: .messageEnd(role: "assistant", content: ""))
+        parentStreams.yield(index: 0, message: .agentEnd)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(!reducer.items.isEmpty, "Reducer should have parent items")
+        #expect(reducer.activeSessionId == parentId, "activeSessionId should be parent")
+
+        // Step 2: Simulate what ChatTimelineView sees when child is pushed.
+        // Before child's connect() runs, the reducer still has parent items
+        // and activeSessionId is the parent. The child view's gate should
+        // return empty because activeSessionId (parentId) != childId.
+        let childVisibleItems = reducer.activeSessionId == childId
+            ? reducer.items.suffix(80)
+            : ArraySlice<ChatItem>()
+        #expect(childVisibleItems.isEmpty, "Child view should NOT see parent items — activeSessionId gate must block")
+
+        // Parent view should still see items (activeSessionId == parentId)
+        let parentVisibleItems = reducer.activeSessionId == parentId
+            ? reducer.items.suffix(80)
+            : ArraySlice<ChatItem>()
+        #expect(!parentVisibleItems.isEmpty, "Parent view should still see its own items during animation")
+
+        // Step 3: Disconnect parent, connect child — verify gate lifts
+        parentStreams.finish(index: 0)
+        await parentTask.value
+
+        let childManager = ChatSessionManager(sessionId: childId)
+        let childStreams = ScriptedStreamFactory()
+        childManager._streamSessionForTesting = { _ in childStreams.makeStream() }
+        childManager._loadHistoryForTesting = { _, _ in nil }
+
+        let childTask = Task { @MainActor in
+            await childManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await childStreams.waitForCreated(1))
+        childStreams.yield(index: 0, message: .connected(session: makeTestSession(id: childId, workspaceId: "w1")))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { childManager.entryState == .streaming }
+        })
+
+        // After child's connect(), activeSessionId should be childId
+        #expect(reducer.activeSessionId == childId, "activeSessionId should be child after connect()")
+
+        // Child items should now be gated correctly
+        childStreams.yield(index: 0, message: .agentStart)
+        childStreams.yield(index: 0, message: .textDelta(delta: "CHILD_VISIBLE"))
+        childStreams.yield(index: 0, message: .messageEnd(role: "assistant", content: ""))
+        childStreams.yield(index: 0, message: .agentEnd)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let childAfterConnect = reducer.activeSessionId == childId
+            ? reducer.items.suffix(80)
+            : ArraySlice<ChatItem>()
+        #expect(!childAfterConnect.isEmpty, "Child items should be visible after connect()")
+
+        let hasChildContent = childAfterConnect.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("CHILD_VISIBLE")
+            }
+            return false
+        }
+        #expect(hasChildContent, "Gate should now pass and show child content")
+
+        let hasParentContent = childAfterConnect.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("PARENT_VISIBLE")
+            }
+            return false
+        }
+        #expect(!hasParentContent, "Parent content should be gone after child connect reset")
+
+        childStreams.finish(index: 0)
+        await childTask.value
+    }
+
+    /// Verify that auto-reconnect doesn't hide items (activeSessionId stays stable).
+    @MainActor
+    @Test func autoReconnectPreservesActiveSessionId() async {
+        let sessionId = "reconnect-\(UUID().uuidString)"
+
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let reducer = connection.reducer
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
+
+        let task = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1")))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .textDelta(delta: "Some content"))
+        streams.yield(index: 0, message: .messageEnd(role: "assistant", content: ""))
+        streams.yield(index: 0, message: .agentEnd)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // activeSessionId should be set and items visible
+        #expect(reducer.activeSessionId == sessionId)
+        #expect(!reducer.items.isEmpty)
+
+        // Simulate WS drop → reconnect (stream ends, manager auto-reconnects)
+        streams.finish(index: 0)
+        await task.value
+
+        // After stream ends, activeSessionId should still be this session
+        // (not cleared). This ensures the view doesn't flash empty during reconnect.
+        #expect(reducer.activeSessionId == sessionId, "activeSessionId should survive stream end for reconnect")
+    }
+
     // MARK: - Helpers
 
     private func makeTraceEvent(

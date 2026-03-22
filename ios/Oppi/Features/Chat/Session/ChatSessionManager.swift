@@ -217,6 +217,12 @@ final class ChatSessionManager {
         if switchingSessions {
             reducer.reset()
         }
+        // Set session affinity after reset. ChatTimelineView gates rendering
+        // on reducer.activeSessionId == view.sessionId — prevents a flash of
+        // stale parent items during parent→child navigation. The previous
+        // session's activeSessionId naturally blocks the new view's first
+        // body evaluation; this line lifts the gate for subsequent renders.
+        reducer.activeSessionId = sessionId
 
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId

@@ -16,6 +16,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private(set) var items: [ChatItem] = []
 
+    /// The session whose items are currently in the reducer.
+    /// Set by `ChatSessionManager.connect()` before any async work.
+    /// `ChatTimelineView` gates rendering on this — if it doesn't match
+    /// the view's `sessionId`, no items are shown, preventing a flash
+    /// of stale parent items during parent→child navigation.
+    var activeSessionId: String?
+
     /// Incremented on timeline mutations so ChatView can react to row content
     /// updates (not only item insert/remove).
     private(set) var renderVersion: Int = 0
@@ -164,6 +171,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentCompactionItemID = nil
         liveEventReplayBuffer = nil
         itemsMutationSeq = 0
+        activeSessionId = nil
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()

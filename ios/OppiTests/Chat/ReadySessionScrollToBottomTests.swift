@@ -146,6 +146,7 @@ struct ReadySessionScrollToBottomTests {
             )
         }
         reducer.loadSession(events)
+        reducer.activeSessionId = sessionManager.sessionId
         sessionManager.needsInitialScroll = preloadNeedsInitialScroll
         if preloadDetachedState {
             scrollController.updateNearBottom(false)

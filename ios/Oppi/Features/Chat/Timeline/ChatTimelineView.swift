@@ -43,7 +43,12 @@ struct ChatTimelineView: View {
     @State private var pendingScrollCommand: ChatTimelineScrollCommand?
 
     private var visibleItems: ArraySlice<ChatItem> {
-        reducer.items.suffix(renderWindow)
+        // Gate: don't render items from a different session. During navigation
+        // (parent→child or child→parent), the shared reducer still holds the
+        // previous session's items until connect() runs reset(). Without this
+        // check, the pushed view briefly flashes stale items.
+        guard reducer.activeSessionId == sessionId else { return ArraySlice() }
+        return reducer.items.suffix(renderWindow)
     }
 
     private var hiddenCount: Int {
