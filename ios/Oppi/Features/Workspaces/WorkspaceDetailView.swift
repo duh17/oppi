@@ -30,8 +30,7 @@ struct WorkspaceDetailView: View {
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
 
-    // Parent-child tree expansion state
-    @State private var treeExpandedOverrides: [String: Bool] = [:]
+
 
     private struct SessionLineageSummary {
         let parentSessionName: String?
@@ -93,49 +92,14 @@ struct WorkspaceDetailView: View {
     }
 
     private var activeSessions: [Session] {
-        workspaceSessions
-            .filter { $0.status != .stopped && matchesSessionSearch($0) }
-            .sorted { lhs, rhs in
-                let lhsAttn = !permissionStore.pending(for: lhs.id).isEmpty
-                let rhsAttn = !permissionStore.pending(for: rhs.id).isEmpty
-                if lhsAttn != rhsAttn { return lhsAttn }
-                // Sort by last turn-ended date for stable ordering.
-                // Only agentEnd updates this — agentStart, stop events, etc. do not,
-                // preventing the list from constantly shuffling during parallel tool calling.
-                let lhsSort = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
-                let rhsSort = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
-                return lhsSort > rhsSort
-            }
-    }
-
-    /// Build a lookup from session ID to tree node for status count computation.
-    private var activeTreeNodes: [SessionTreeHelper.TreeNode] {
-        SessionTreeHelper.buildTree(from: activeSessions)
-    }
-
-    private func treeNodeLookup(nodes: [SessionTreeHelper.TreeNode]) -> [String: SessionTreeHelper.TreeNode] {
-        var result: [String: SessionTreeHelper.TreeNode] = [:]
-        func visit(_ node: SessionTreeHelper.TreeNode) {
-            result[node.session.id] = node
-            for child in node.children { visit(child) }
-        }
-        for node in nodes { visit(node) }
-        return result
-    }
-
-    private func isTreeNodeExpanded(sessionId: String, lookup: [String: SessionTreeHelper.TreeNode]) -> Bool {
-        if let override = treeExpandedOverrides[sessionId] {
-            return override
-        }
-        // Default: expanded if any child is active
-        guard let node = lookup[sessionId] else { return false }
-        return SessionTreeHelper.hasActiveChild(node)
+        workspaceSessions.filter { $0.status != .stopped && matchesSessionSearch($0) }
     }
 
     private var stoppedSessions: [Session] {
-        workspaceSessions
-            .filter { $0.status == .stopped && matchesSessionSearch($0) }
-            .sorted { $0.lastActivity > $1.lastActivity }
+        SessionTreeHelper.rootSessions(
+            from: workspaceSessions.filter { $0.status == .stopped && matchesSessionSearch($0) },
+            allSessions: workspaceSessions
+        ).sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
@@ -184,35 +148,35 @@ struct WorkspaceDetailView: View {
     // MARK: - Body
 
     private struct ViewData {
-        let active: [Session]
+        let rootNodes: [SessionTreeHelper.TreeNode]
         let stopped: [Session]
         let localFiltered: [LocalSession]
         let wsEmpty: Bool
-        let treeRows: [SessionTreeHelper.FlatRow]
-        let treeLookup: [String: SessionTreeHelper.TreeNode]
     }
 
     private var viewData: ViewData {
-        // Evaluate expensive computed properties once — each involves filter+sort
-        // over all sessions. Without local bindings, SwiftUI re-evaluates them
-        // on every access (activeSessions is read 3× per body, stoppedSessions 2×).
-        let active = activeSessions
-        let stopped = stoppedSessions
-        let localFiltered = filteredLocalSessions
-        let wsEmpty = workspaceSessions.isEmpty
-        let treeNodes = activeTreeNodes
-        let treeLookup = treeNodeLookup(nodes: treeNodes)
-        let treeRows = SessionTreeHelper.flattenTree(nodes: treeNodes) { sessionId in
-            isTreeNodeExpanded(sessionId: sessionId, lookup: treeLookup)
+        // Build tree from active sessions — root nodes are displayed, children
+        // are only accessible through the parent's ChatView / WorkspaceContextBar.
+        let treeNodes = SessionTreeHelper.buildTree(from: activeSessions)
+        let rootNodes = treeNodes.sorted { lhs, rhs in
+            // Sessions with pending permissions (parent or child) float to top
+            let lhsAttn = SessionTreeHelper.aggregatePendingCount(
+                node: lhs, pendingForSession: { permissionStore.pending(for: $0).count }
+            ) > 0
+            let rhsAttn = SessionTreeHelper.aggregatePendingCount(
+                node: rhs, pendingForSession: { permissionStore.pending(for: $0).count }
+            ) > 0
+            if lhsAttn != rhsAttn { return lhsAttn }
+            let lhsSort = sessionStore.turnEndedDate(for: lhs.session.id) ?? lhs.session.createdAt
+            let rhsSort = sessionStore.turnEndedDate(for: rhs.session.id) ?? rhs.session.createdAt
+            return lhsSort > rhsSort
         }
 
         return ViewData(
-            active: active,
-            stopped: stopped,
-            localFiltered: localFiltered,
-            wsEmpty: wsEmpty,
-            treeRows: treeRows,
-            treeLookup: treeLookup
+            rootNodes: rootNodes,
+            stopped: stoppedSessions,
+            localFiltered: filteredLocalSessions,
+            wsEmpty: workspaceSessions.isEmpty
         )
     }
 
@@ -220,33 +184,27 @@ struct WorkspaceDetailView: View {
         let data = viewData
 
         List {
-            if !data.active.isEmpty {
+            if !data.rootNodes.isEmpty {
                 Section("Active") {
-                    ForEach(data.treeRows) { row in
-                        NavigationLink(value: row.session.id) {
+                    ForEach(data.rootNodes) { node in
+                        NavigationLink(value: node.session.id) {
                             SessionRow(
-                                session: row.session,
-                                pendingCount: permissionStore.pending(for: row.session.id).count,
-                                tree: .init(
-                                    row: row,
-                                    isExpanded: isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup),
-                                    statusCounts: data.treeLookup[row.session.id].map {
-                                        SessionTreeHelper.childStatusCounts($0)
-                                    },
-                                    onToggleExpand: {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            let current = isTreeNodeExpanded(sessionId: row.session.id, lookup: data.treeLookup)
-                                            treeExpandedOverrides[row.session.id] = !current
-                                        }
-                                    }
-                                )
+                                session: node.session,
+                                pendingCount: SessionTreeHelper.aggregatePendingCount(
+                                    node: node,
+                                    pendingForSession: { permissionStore.pending(for: $0).count }
+                                ),
+                                children: node.hasChildren ? .init(
+                                    childCount: SessionTreeHelper.countAllChildren(node),
+                                    statusCounts: SessionTreeHelper.childStatusCounts(node)
+                                ) : nil
                             )
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
-                                Task { await stopSession(row.session) }
+                                Task { await stopSession(node.session) }
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
@@ -285,7 +243,7 @@ struct WorkspaceDetailView: View {
                     .listRowBackground(Color.themeBg)
                 }
             } else if hasSessionSearchQuery,
-                      data.active.isEmpty,
+                      data.rootNodes.isEmpty,
                       data.stopped.isEmpty,
                       data.localFiltered.isEmpty {
                 Section {

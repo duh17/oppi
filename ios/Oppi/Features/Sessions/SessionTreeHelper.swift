@@ -171,4 +171,31 @@ enum SessionTreeHelper {
     static func childSessions(of parentId: String, in sessions: [Session]) -> [Session] {
         sessions.filter { $0.parentSessionId == parentId }
     }
+
+    /// Get sorted immediate children of a parent session (by createdAt ascending).
+    static func sortedChildSessions(of parentId: String, in sessions: [Session]) -> [Session] {
+        childSessions(of: parentId, in: sessions).sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Filter sessions to only roots, checking parent existence against a broader session list.
+    /// A root has no parentSessionId, or its parent is not in allSessions.
+    /// Useful for stopped sessions where the parent may be in a different status group.
+    static func rootSessions(from sessions: [Session], allSessions: [Session]) -> [Session] {
+        let allIds = Set(allSessions.map(\.id))
+        return sessions.filter { session in
+            guard let parentId = session.parentSessionId else { return true }
+            return !allIds.contains(parentId)
+        }
+    }
+
+    /// Compute aggregate pending count for a tree node (parent + direct children only).
+    /// Grandchildren are not included — matches the one-level-deep spawn_agent UX.
+    static func aggregatePendingCount(
+        node: TreeNode,
+        pendingForSession: (String) -> Int
+    ) -> Int {
+        let own = pendingForSession(node.session.id)
+        let childPending = node.children.reduce(0) { $0 + pendingForSession($1.session.id) }
+        return own + childPending
+    }
 }

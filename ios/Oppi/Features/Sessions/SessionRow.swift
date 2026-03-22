@@ -2,28 +2,27 @@ import SwiftUI
 
 // MARK: - Session Row
 
-/// Unified session row used in both active (tree) and stopped (flat) sections.
+/// Unified session row used in both active and stopped sections.
 ///
-/// Tree features (indentation, disclosure, child badge) are opt-in via the `tree`
+/// Child session summary (agent count + status badge) is opt-in via the `children`
 /// parameter. When nil, the row renders as a simple flat row.
 struct SessionRow: View {
     let session: Session
     let pendingCount: Int
     let lineageHint: String?
-    let tree: TreeConfig?
+    let children: ChildSummary?
 
-    struct TreeConfig {
-        let row: SessionTreeHelper.FlatRow
-        let isExpanded: Bool
-        let statusCounts: SessionTreeHelper.StatusCounts?
-        let onToggleExpand: () -> Void
+    /// Summary of spawned child sessions, shown as a badge on parent rows.
+    struct ChildSummary {
+        let childCount: Int
+        let statusCounts: SessionTreeHelper.StatusCounts
     }
 
-    init(session: Session, pendingCount: Int, lineageHint: String? = nil, tree: TreeConfig? = nil) {
+    init(session: Session, pendingCount: Int, lineageHint: String? = nil, children: ChildSummary? = nil) {
         self.session = session
         self.pendingCount = pendingCount
         self.lineageHint = lineageHint
-        self.tree = tree
+        self.children = children
     }
 
     private var title: String {
@@ -41,18 +40,8 @@ struct SessionRow: View {
         return min(max(Double(used) / Double(window), 0), 1)
     }
 
-    // Tree geometry constants
-    private static let indentPerLevel: CGFloat = 24
-    private static let treeLineX: CGFloat = 12
-    private static let treeBranchWidth: CGFloat = 10
-
     var body: some View {
         HStack(spacing: 0) {
-            // Tree indentation + lines (only for child/grandchild rows)
-            if let tree, tree.row.depth > 0 {
-                treeIndentation(row: tree.row)
-            }
-
             // Status dot
             Circle()
                 .fill(session.status.color)
@@ -83,7 +72,7 @@ struct SessionRow: View {
                 }
 
                 // Row 3: change stats + child badge
-                if session.changeStats != nil || (tree?.row.hasChildren == true) {
+                if session.changeStats != nil || children != nil {
                     HStack(spacing: 8) {
                         if let stats = session.changeStats {
                             Text(filesTouchedSummary(stats.filesChanged))
@@ -98,9 +87,8 @@ struct SessionRow: View {
                                 .foregroundStyle(.themeDiffRemoved)
                         }
 
-                        // Child badge (tree mode only)
-                        if let tree, tree.row.hasChildren {
-                            childBadge(tree: tree)
+                        if let children {
+                            childBadge(children: children)
                         }
                     }
                     .font(.caption2)
@@ -152,71 +140,33 @@ struct SessionRow: View {
         .padding(.vertical, 2)
     }
 
-    // MARK: - Tree Lines
-
-    @ViewBuilder
-    private func treeIndentation(row: SessionTreeHelper.FlatRow) -> some View {
-        ZStack(alignment: .leading) {
-            ForEach(row.parentLinesContinue, id: \.self) { depth in
-                let xOffset = CGFloat(depth) * Self.indentPerLevel + Self.treeLineX
-                Rectangle()
-                    .fill(Color.themeBgHighlight)
-                    .frame(width: 2)
-                    .offset(x: xOffset)
-            }
-
-            let myX = CGFloat(row.depth - 1) * Self.indentPerLevel + Self.treeLineX
-            Rectangle()
-                .fill(Color.themeBgHighlight)
-                .frame(width: 2)
-                .frame(maxHeight: .infinity, alignment: row.isLastChild ? .top : .center)
-                .clipped()
-                .offset(x: myX)
-
-            Rectangle()
-                .fill(Color.themeBgHighlight)
-                .frame(width: Self.treeBranchWidth, height: 2)
-                .offset(x: myX + 2, y: 0)
-        }
-        .frame(width: CGFloat(row.depth) * Self.indentPerLevel)
-    }
-
     // MARK: - Child Badge
 
     @ViewBuilder
-    private func childBadge(tree: TreeConfig) -> some View {
-        Button {
-            tree.onToggleExpand()
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: tree.isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.appBadge)
-                    .foregroundStyle(.themeCyan)
+    private func childBadge(children: ChildSummary) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.appBadge)
+                .foregroundStyle(.themeCyan)
 
-                if let counts = tree.statusCounts, !tree.isExpanded {
-                    if counts.working > 0 {
-                        Text("\u{23F3}\(counts.working)")
-                            .foregroundStyle(.themeOrange)
-                    }
-                    if counts.done > 0 {
-                        Text("\u{2713}\(counts.done)")
-                            .foregroundStyle(.themeGreen)
-                    }
-                    if counts.error > 0 {
-                        Text("\u{2717}\(counts.error)")
-                            .foregroundStyle(.themeRed)
-                    }
-                } else {
-                    Text("\(tree.row.childCount)")
-                        .foregroundStyle(.themeCyan)
-                }
+            let counts = children.statusCounts
+            if counts.working > 0 {
+                Text("\u{23F3}\(counts.working)")
+                    .foregroundStyle(.themeOrange)
             }
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.themeCyan.opacity(0.1), in: Capsule())
+            if counts.done > 0 {
+                Text("\u{2713}\(counts.done)")
+                    .foregroundStyle(.themeGreen)
+            }
+            if counts.error > 0 {
+                Text("\u{2717}\(counts.error)")
+                    .foregroundStyle(.themeRed)
+            }
         }
-        .buttonStyle(.plain)
+        .font(.caption2.weight(.medium))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(Color.themeCyan.opacity(0.1), in: Capsule())
     }
 
     // MARK: - Helpers
