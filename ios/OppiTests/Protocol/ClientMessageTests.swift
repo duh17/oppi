@@ -175,13 +175,6 @@ struct ClientMessageTests {
         #expect(json["customInstructions"] as? String == "focus on code")
     }
 
-    @Test func encodesBash() throws {
-        let msg = ClientMessage.bash(command: "ls -la")
-        let json = try decode(msg)
-        #expect(json["type"] as? String == "bash")
-        #expect(json["command"] as? String == "ls -la")
-    }
-
     @Test func encodesRequestId() throws {
         let msg = ClientMessage.getMessages(requestId: "req-42")
         let json = try decode(msg)

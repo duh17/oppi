@@ -76,7 +76,6 @@ const KNOWN_CLIENT_MESSAGE_TYPES = new Set([
   "set_follow_up_mode",
   "set_auto_retry",
   "abort_retry",
-  "bash",
   "abort_bash",
   "get_commands",
   "get_file_suggestions",

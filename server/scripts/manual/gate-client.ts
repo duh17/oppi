@@ -2,8 +2,9 @@
 /**
  * Test client for the permission gate.
  *
- * Connects to oppi-server via WebSocket and handles permission requests
- * from the keyboard: y=allow, n=deny.
+ * Connects to oppi-server via the multiplexed /stream WebSocket, subscribes to a
+ * single session at level=full, and handles permission requests from the
+ * keyboard: y=allow, n=deny.
  *
  * Usage:
  *   npx tsx scripts/manual/gate-client.ts <host:port> <token> [workspaceId] [sessionId]
@@ -15,7 +16,7 @@
  *   # List sessions in one workspace and exit
  *   npx tsx scripts/manual/gate-client.ts localhost:7749 sk_abc123 ws_123
  *
- *   # Connect to a specific session
+ *   # Subscribe to a specific session via /stream
  *   npx tsx scripts/manual/gate-client.ts localhost:7749 sk_abc123 ws_123 sess_xyz
  */
 
@@ -32,6 +33,13 @@ interface SessionSummary {
   status?: string;
   name?: string;
   model?: string;
+}
+
+interface WireMessage {
+  type: string;
+  sessionId?: string;
+  requestId?: string;
+  [key: string]: unknown;
 }
 
 const [host, token, argWorkspaceId, argSessionId] = process.argv.slice(2);
@@ -144,28 +152,90 @@ async function main(): Promise<void> {
     console.log(`Resolved workspace ${workspaceId} for session ${sessionId}`);
   }
 
-  const wsUrl = `${wsBaseUrl}/workspaces/${workspaceId}/sessions/${sessionId}/stream`;
+  const wsUrl = `${wsBaseUrl}/stream`;
   console.log(`Connecting to ${wsUrl} ...`);
+  console.log(`Target session: ${sessionId} (workspace ${workspaceId})`);
 
   const ws = new WebSocket(wsUrl, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
   const pendingRequests: Map<string, { displaySummary: string; tool: string }> = new Map();
+  let subscribed = false;
+  let subscribeRequestId = 0;
+
+  const sendJson = (msg: Record<string, unknown>): void => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      console.log("Socket is not open.");
+      return;
+    }
+    ws.send(JSON.stringify(msg));
+  };
+
+  const sendSubscribe = (): void => {
+    subscribeRequestId += 1;
+    sendJson({
+      type: "subscribe",
+      sessionId,
+      level: "full",
+      requestId: `subscribe-${subscribeRequestId}`,
+    });
+  };
 
   ws.on("open", () => {
-    console.log("✅ Connected\n");
+    console.log("✅ Connected to /stream");
+    sendSubscribe();
   });
 
   ws.on("message", (data) => {
-    const msg = JSON.parse(data.toString()) as { type: string; [key: string]: unknown };
+    const msg = JSON.parse(data.toString()) as WireMessage;
+    const scopedSessionId = typeof msg.sessionId === "string" ? msg.sessionId : sessionId;
 
     switch (msg.type) {
+      case "stream_connected":
+        console.log(`User stream ready for ${String(msg.userName || "unknown user")}`);
+        break;
+
       case "connected":
         console.log(
-          `Session: ${String((msg.session as { id?: string })?.id || "?")} (${String((msg.session as { status?: string })?.status || "?")})`,
+          `Session: ${String((msg.session as { id?: string })?.id || scopedSessionId || "?")} (${String((msg.session as { status?: string })?.status || "?")})`,
         );
         break;
+
+      case "state":
+        if (!subscribed) {
+          console.log(
+            `Subscribed to ${String((msg.session as { id?: string })?.id || scopedSessionId || "?")}`,
+          );
+        }
+        break;
+
+      case "command_result": {
+        const command = String(msg.command || "unknown");
+        const success = Boolean(msg.success);
+        if (command === "subscribe") {
+          if (!success) {
+            console.error(`\n❌ Subscribe failed: ${String(msg.error || "unknown")}`);
+            ws.close();
+            return;
+          }
+          subscribed = true;
+          console.log(`Subscribed: session=${scopedSessionId} level=full`);
+          return;
+        }
+
+        if (command === "permission_response") {
+          if (!success) {
+            console.error(`\n❌ Permission response failed: ${String(msg.error || "unknown")}`);
+          }
+          return;
+        }
+
+        if (!success) {
+          console.error(`\n❌ ${command} failed: ${String(msg.error || "unknown")}`);
+        }
+        return;
+      }
 
       case "permission_request": {
         pendingRequests.set(String(msg.id), {
@@ -174,6 +244,7 @@ async function main(): Promise<void> {
         });
 
         console.log(`\n🔒 PERMISSION REQUEST [${String(msg.id)}]`);
+        console.log(`   Session: ${String(scopedSessionId)}`);
         console.log(`   ${String(msg.displaySummary)}`);
         console.log(`   Reason: ${String(msg.reason)}`);
         console.log(`   Tool: ${String(msg.tool)}`);
@@ -188,6 +259,11 @@ async function main(): Promise<void> {
 
       case "permission_expired":
         console.log(`⏰ Permission expired: ${String(msg.id)} — ${String(msg.reason)}`);
+        pendingRequests.delete(String(msg.id));
+        break;
+
+      case "permission_cancelled":
+        console.log(`🚫 Permission cancelled: ${String(msg.id)}`);
         pendingRequests.delete(String(msg.id));
         break;
 
@@ -248,6 +324,11 @@ async function main(): Promise<void> {
   rl.on("line", (line) => {
     const trimmed = line.trim();
 
+    if (!subscribed) {
+      console.log("Still waiting for subscribe to complete.");
+      return;
+    }
+
     // Check for permission response.
     if (trimmed === "y" || trimmed === "n") {
       const [id, req] = pendingRequests.entries().next().value || [];
@@ -257,7 +338,7 @@ async function main(): Promise<void> {
       }
 
       const action = trimmed === "y" ? "allow" : "deny";
-      ws.send(JSON.stringify({ type: "permission_response", id, action }));
+      sendJson({ type: "permission_response", id, action });
       console.log(`→ ${action === "allow" ? "✅ Allowed" : "❌ Denied"}: ${req.displaySummary}`);
       pendingRequests.delete(id);
       return;
@@ -265,7 +346,7 @@ async function main(): Promise<void> {
 
     // Otherwise treat as a prompt.
     if (trimmed) {
-      ws.send(JSON.stringify({ type: "prompt", message: trimmed }));
+      sendJson({ type: "prompt", sessionId, message: trimmed });
       console.log(`→ Sent prompt: ${trimmed}`);
     }
   });

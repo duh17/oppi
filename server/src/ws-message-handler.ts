@@ -223,16 +223,8 @@ export class WsMessageHandler {
       }
 
       default: {
-        const command = typeof msg.type === "string" ? msg.type : "unknown";
-        const requestId = "requestId" in msg ? msg.requestId : undefined;
-        send({
-          type: "command_result",
-          command,
-          requestId,
-          success: false,
-          error: `Unsupported command type: ${command}`,
-        });
-        return;
+        const _exhaustiveCheck: never = msg;
+        return _exhaustiveCheck;
       }
     }
   }
