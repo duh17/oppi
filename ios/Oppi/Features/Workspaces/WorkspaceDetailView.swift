@@ -92,7 +92,13 @@ struct WorkspaceDetailView: View {
     }
 
     private var activeSessions: [Session] {
-        workspaceSessions.filter { $0.status != .stopped && matchesSessionSearch($0) }
+        workspaceSessions.filter { $0.status != .stopped }
+    }
+
+    /// Whether any node in the subtree matches the current search query.
+    private func treeMatchesSearch(_ node: SessionTreeHelper.TreeNode) -> Bool {
+        if matchesSessionSearch(node.session) { return true }
+        return node.children.contains { treeMatchesSearch($0) }
     }
 
     private var stoppedSessions: [Session] {
@@ -155,9 +161,12 @@ struct WorkspaceDetailView: View {
     }
 
     private var viewData: ViewData {
-        // Build tree from active sessions — root nodes are displayed, children
-        // are only accessible through the parent's ChatView / WorkspaceContextBar.
-        let treeNodes = SessionTreeHelper.buildTree(from: activeSessions)
+        // Build tree from all active sessions, then filter roots by search.
+        // Searching for a child name surfaces its parent root.
+        let allTreeNodes = SessionTreeHelper.buildTree(from: activeSessions)
+        let treeNodes = hasSessionSearchQuery
+            ? allTreeNodes.filter { treeMatchesSearch($0) }
+            : allTreeNodes
         let rootNodes = treeNodes.sorted { lhs, rhs in
             // Sessions with pending permissions (parent or child) float to top
             let lhsAttn = SessionTreeHelper.aggregatePendingCount(
@@ -196,7 +205,8 @@ struct WorkspaceDetailView: View {
                                 ),
                                 children: node.hasChildren ? .init(
                                     childCount: SessionTreeHelper.countAllChildren(node),
-                                    statusCounts: SessionTreeHelper.childStatusCounts(node)
+                                    statusCounts: SessionTreeHelper.childStatusCounts(node),
+                                    aggregateCost: SessionTreeHelper.aggregateCost(node)
                                 ) : nil
                             )
                         }
