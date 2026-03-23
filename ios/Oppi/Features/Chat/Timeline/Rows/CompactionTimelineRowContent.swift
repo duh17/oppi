@@ -86,7 +86,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer.cornerRadius = 10
+        containerView.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false

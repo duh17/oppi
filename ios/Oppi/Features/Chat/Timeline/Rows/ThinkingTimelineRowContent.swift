@@ -170,7 +170,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         // --- Bubble ---
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
-        bubbleView.layer.cornerRadius = 10
+        bubbleView.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleView.clipsToBounds = true
         bubbleView.addGestureRecognizer(bubbleDoubleTapGesture)
         bubbleView.addGestureRecognizer(bubblePinchGesture)
@@ -302,7 +302,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
             bubbleView.isHidden = false
             brainIcon.isHidden = false
-            bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.08)
+            bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
             if needsTextUpdate {
                 textLabel.attributedText = makeThinkingAttributedText(
                     text,
@@ -330,7 +330,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                 removeFadeMask()
             } else {
                 bubbleView.isHidden = false
-                bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.06)
+                bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.streamingBgAlpha)
                 if needsTextUpdate {
                     // Streaming: plain text — skip expensive markdown parsing.
                     // Full markdown rendering applies once on isDone transition.

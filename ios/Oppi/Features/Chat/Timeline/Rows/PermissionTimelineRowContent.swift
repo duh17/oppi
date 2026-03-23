@@ -60,7 +60,7 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer.cornerRadius = 8
+        containerView.layer.cornerRadius = TimelineBubbleStyle.chipCornerRadius
         containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
@@ -121,7 +121,7 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
         summaryLabel.text = Self.truncatedSummary(configuration.summary)
         summaryLabel.textColor = UIColor(palette.fgDim)
 
-        containerView.backgroundColor = style.color.withAlphaComponent(0.08)
+        containerView.backgroundColor = style.color.withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
     }
 
     private static func style(for outcome: PermissionOutcome, palette: ThemePalette) -> Style {
