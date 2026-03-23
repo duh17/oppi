@@ -593,10 +593,18 @@ final class ChatSessionManager {
         let shouldAutoReconnect: Bool
         switch entryState {
         case .disconnected(reason: .streamEnded):
+            // Don't reconnect if another session has taken over the active slot.
+            // During parent→child→parent navigation, the parent's connect() breaks
+            // the child's stream. Without this check, the child schedules an
+            // auto-reconnect that races with the parent's connect(), creating a
+            // ping-pong where both sessions fight over reducer.activeSessionId.
+            let anotherSessionTookOver = sessionStore.activeSessionId != sessionId
+                && sessionStore.activeSessionId != nil
             shouldAutoReconnect = hasReceivedConnected
                 && generation == connectionGeneration
                 && wantsAutoReconnect
                 && !connection.fatalSetupError
+                && !anotherSessionTookOver
                 && sessionStore.sessions.first(where: { $0.id == sessionId })?.status != .stopped
         default:
             shouldAutoReconnect = false
