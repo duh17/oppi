@@ -313,6 +313,11 @@ struct ChatView: View {
                     }
                 }
             }
+            .onChange(of: sessionManager.entryState) { _, newState in
+                if newState == .streaming {
+                    actionHandler.clearReconnectFailure()
+                }
+            }
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
@@ -386,6 +391,29 @@ struct ChatView: View {
             )
         } else {
             VStack(spacing: 8) {
+                if let reconnectFailureMessage = actionHandler.reconnectFailureMessage {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.themeRed)
+                            .padding(.top, 1)
+
+                        Text(reconnectFailureMessage)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.themeRed.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.themeRed.opacity(0.35), lineWidth: 1)
+                    }
+                    .padding(.horizontal, 16)
+                }
+
                 // Floating Game of Life indicator — pinned above input bar.
                 // Visible while agent is working, hidden when scrolled up.
                 if showsMessageQueue {
@@ -637,7 +665,6 @@ struct ChatView: View {
         }
         let images = pendingImages
 
-        let reducerRef = reducer
         let sessionManagerRef = sessionManager
         let scrollRef = scrollController
 
@@ -650,6 +677,7 @@ struct ChatView: View {
             reducer: reducer,
             sessionId: sessionId,
             sessionStore: sessionStore,
+            sessionManager: sessionManager,
             onDispatchStarted: {
                 inputText = ""
                 pendingImages = []
@@ -664,7 +692,6 @@ struct ChatView: View {
                 pendingImages = failedImages
             },
             onNeedsReconnect: {
-                reducerRef.appendSystemEvent("Connection dropped — reconnecting…")
                 sessionManagerRef.reconnect()
             }
         )
