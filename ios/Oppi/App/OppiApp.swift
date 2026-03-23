@@ -161,17 +161,30 @@ struct OppiApp: App {
                 coordinator.startLANDiscovery()
                 coordinator.startNetworkPathMonitor()
                 await setupNotifications()
-                await reconnectOnLaunch()
 #if DEBUG
-                // E2E test support: process invite URL from launch environment
+                // E2E test support: process invite URL from launch environment.
+                // Must run BEFORE reconnectOnLaunch to prevent stale simulator
+                // Keychain entries from flooding the ephemeral Docker server with
+                // 401s on every old device token.
                 if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
                    let e2eURL = URL(string: e2eInvite) {
+                    // Wipe all stale servers before connecting anything
+                    let staleCount = serverStore.servers.count
+                    for server in serverStore.servers {
+                        coordinator.removeServer(id: server.id)
+                    }
+                    os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
+
                     os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
                     await handleIncomingURL(e2eURL)
                     os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
                            navigation.showOnboarding ? 1 : 0,
                            connection.workspaceStore.workspaces.count)
+                } else {
+                    await reconnectOnLaunch()
                 }
+#else
+                await reconnectOnLaunch()
 #endif
             }
     }

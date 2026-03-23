@@ -78,11 +78,10 @@ final class ChatTimelineE2ETests: XCTestCase {
         }
 
         let sessionList = app.collectionViews["workspace.sessionList"]
-        let sessionCell = sessionList.cells.firstMatch
+        // Skip the first cell (section header "Active") and tap the actual session row.
+        let sessionCell = sessionList.cells.element(boundBy: 1)
         XCTAssertTrue(sessionCell.waitForExistence(timeout: 15), "Session cell did not appear")
         // Tap the center of the cell to trigger the NavigationLink push.
-        // Using coordinate tap avoids XCUITest's automatic button detection
-        // which can intercept and tap cancel/dismiss buttons instead.
         sessionCell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
         let chatInput = app.textViews["chat.input"]
