@@ -51,6 +51,8 @@
     "telemetry:review": "node scripts/telemetry-review.mjs",
     "telemetry:review:gate": "node scripts/telemetry-review.mjs --days 3 --gate",
     "dead-code": "knip",
+    "test:gate:pr-fast": "node scripts/testing-gates.mjs pr-fast",
+    "test:gate:nightly-deep": "node scripts/testing-gates.mjs nightly-deep",
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {
