@@ -48,6 +48,8 @@ export interface SpawnAgentContext {
   subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void;
   /** Return available model IDs from the catalog (for spawn_agent model validation). */
   getAvailableModelIds(): string[];
+  /** Stop a session by ID. Used by stop_agent to terminate child sessions. */
+  stopSession(sessionId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +192,12 @@ const spawnAgentParams = Type.Object({
 
 const checkAgentsParams = Type.Object({});
 
+const stopAgentParams = Type.Object({
+  id: Type.String({
+    description: "Session ID of the child agent to stop.",
+  }),
+});
+
 const inspectAgentParams = Type.Object({
   id: Type.String({
     description: "Session ID of the child agent to inspect.",
@@ -227,6 +235,12 @@ interface SpawnAgentDetails {
   waited?: boolean;
   cost?: number;
   durationMs?: number;
+}
+
+interface StopAgentDetails {
+  agentId: string;
+  name?: string;
+  status: string;
 }
 
 interface CheckAgentsDetails {
@@ -974,6 +988,94 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           return {
             content: [{ type: "text", text: `Failed to spawn agent: ${msg}` }],
             details: { agentId: "", name, status: "error" },
+          };
+        }
+      },
+    });
+
+    // ─── stop_agent ───
+
+    pi.registerTool<typeof stopAgentParams, StopAgentDetails>({
+      name: "stop_agent",
+      label: "Stop Agent",
+      description:
+        "Stop a running child agent session. The session will be gracefully terminated. " +
+        "Use when a child agent is no longer needed, stuck, or going in the wrong direction.",
+      promptSnippet: "stop_agent(id) — stop a running child agent session",
+      promptGuidelines: [
+        "Use stop_agent to terminate a child that is no longer needed or is going in the wrong direction.",
+        "The stop is graceful — the child gets a chance to clean up before terminating.",
+        "Use check_agents first to find the session ID of the child you want to stop.",
+      ],
+      parameters: stopAgentParams,
+
+      async execute(_toolCallId: string, params: Static<typeof stopAgentParams>) {
+        // Look up the session
+        const session = ctx.getSession(params.id);
+        if (!session) {
+          return {
+            content: [{ type: "text" as const, text: `Session not found: ${params.id}` }],
+            details: { agentId: params.id, status: "not_found" },
+          };
+        }
+
+        // Verify the session is a child in this session's tree
+        const rootId = getRootSessionId(ctx);
+        const allSessions = ctx.listWorkspaceSessions();
+        const descendants = getDescendants(rootId, allSessions);
+        const isInTree =
+          session.parentSessionId === ctx.sessionId || descendants.some((d) => d.id === params.id);
+        if (!isInTree) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
+              },
+            ],
+            details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
+          };
+        }
+
+        // Check if already terminal
+        if (isTerminal(session.status)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Agent "${session.name ?? params.id}" is already ${session.status}. No action needed.`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: session.status,
+            },
+          };
+        }
+
+        try {
+          await ctx.stopSession(params.id);
+          const updated = ctx.getSession(params.id);
+          const finalStatus = updated?.status ?? "stopped";
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Stopped agent "${session.name ?? params.id}" (${params.id}). Status: ${finalStatus}`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: finalStatus,
+            },
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: "text" as const, text: `Failed to stop agent: ${msg}` }],
+            details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
           };
         }
       },

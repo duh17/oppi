@@ -74,6 +74,7 @@ function createMockAPI(): MockExtensionAPI {
 interface MockCtx extends SpawnAgentContext {
   sessions: Map<string, Session>;
   subscribers: Map<string, Set<(msg: ServerMessage) => void>>;
+  stopSessionCalls: string[];
   spawnChildCalls: Array<{
     name?: string;
     model?: string;
@@ -96,6 +97,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
     sessionId,
     sessions: new Map(),
     subscribers: new Map(),
+    stopSessionCalls: [],
     spawnChildCalls: [],
     spawnDetachedCalls: [],
     spawnChildError: undefined,
@@ -152,6 +154,17 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
 
     getAvailableModelIds() {
       return [];
+    },
+
+    async stopSession(sessionId: string) {
+      ctx.stopSessionCalls.push(sessionId);
+      const session = ctx.sessions.get(sessionId);
+      if (session) {
+        ctx.sessions.set(
+          sessionId,
+          makeSession({ ...session, status: "stopped" }),
+        );
+      }
     },
   };
 
@@ -263,12 +276,13 @@ describe("spawn-agent-extension", () => {
   // -----------------------------------------------------------------------
 
   describe("tool registration", () => {
-    it("registers spawn_agent, check_agents, inspect_agent", () => {
+    it("registers spawn_agent, stop_agent, check_agents, inspect_agent", () => {
       const { api } = setup();
       expect(api.tools.has("spawn_agent")).toBe(true);
+      expect(api.tools.has("stop_agent")).toBe(true);
       expect(api.tools.has("check_agents")).toBe(true);
       expect(api.tools.has("inspect_agent")).toBe(true);
-      expect(api.tools.size).toBe(3);
+      expect(api.tools.size).toBe(4);
     });
   });
 
@@ -668,6 +682,55 @@ describe("spawn-agent-extension", () => {
       const result = await promise;
       // Should resolve (not throw) with current status
       expect(result.content[0].text).toBeTruthy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // stop_agent
+  // -----------------------------------------------------------------------
+
+  describe("stop_agent", () => {
+    it("stops a running child session", async () => {
+      const { ctx, tool } = setup();
+      // Spawn a child first
+      await tool("spawn_agent").execute("tc1", { message: "Do work" });
+      const childId = ctx.listChildren()[0].id;
+
+      const result = await tool("stop_agent").execute("tc2", { id: childId });
+      const details = result.details as Record<string, unknown>;
+      expect(result.content[0].text).toContain("Stopped agent");
+      expect(details.status).toBe("stopped");
+      expect(ctx.stopSessionCalls).toContain(childId);
+      // Verify mock updated the session status
+      expect(ctx.getSession(childId)?.status).toBe("stopped");
+    });
+
+    it("returns error for unknown session ID", async () => {
+      const { tool } = setup();
+      const result = await tool("stop_agent").execute("tc1", { id: "nonexistent" });
+      expect(result.content[0].text).toContain("Session not found");
+    });
+
+    it("returns already-stopped for terminal sessions", async () => {
+      const { ctx, tool } = setup();
+      // Add a stopped child
+      ctx.sessions.set(
+        "child-done",
+        makeSession({ id: "child-done", parentSessionId: "parent-1", status: "stopped" }),
+      );
+
+      const result = await tool("stop_agent").execute("tc1", { id: "child-done" });
+      expect(result.content[0].text).toContain("already stopped");
+      expect(ctx.stopSessionCalls).toHaveLength(0);
+    });
+
+    it("rejects sessions outside the spawn tree", async () => {
+      const { ctx, tool } = setup();
+      // Add an unrelated session (no parentSessionId linking to us)
+      ctx.sessions.set("unrelated", makeSession({ id: "unrelated", status: "busy" }));
+
+      const result = await tool("stop_agent").execute("tc1", { id: "unrelated" });
+      expect(result.content[0].text).toContain("not in this session's tree");
     });
   });
 

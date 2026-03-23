@@ -164,6 +164,7 @@ export function createSessionCoordinatorBundle(
     listChildSessions: (parentSessionId) => deps.listChildSessions(parentSessionId),
     subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
     getAvailableModelIds: () => deps.getAvailableModelIds(),
+    stopSession: (sessionId) => deps.stopSession(sessionId),
   });
 
   const activationCoordinator = new SessionActivationCoordinator({
