@@ -732,8 +732,8 @@ final class ChatSessionManager {
 
     /// Route a server message to the per-session timeline pipeline.
     ///
-    /// This handles all coalescer/reducer mutations that were previously in
-    /// `ServerConnection.handleServerMessage`. Each ChatSessionManager owns
+    /// This handles all coalescer/reducer mutations for the active session.
+    /// Each ChatSessionManager owns
     /// its own coalescer + reducer, so parent/child sessions maintain
     /// independent timelines across NavigationStack navigation.
     private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {

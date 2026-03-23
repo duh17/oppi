@@ -32,7 +32,7 @@ struct ServerConnectionRecoveryGuardsTests {
 
     @MainActor
     @Test func streamReconnectRetriesWhenSubscribeAckFails() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         conn._sendMessageForTesting = { message in
@@ -89,7 +89,7 @@ struct ServerConnectionRecoveryGuardsTests {
 
     @MainActor
     @Test func typedMissingFullSubscriptionCodeTriggersRecovery() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         conn._sendMessageForTesting = { message in
@@ -101,7 +101,7 @@ struct ServerConnectionRecoveryGuardsTests {
             #expect(sessionId == "s1")
             #expect(level == .full)
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .commandResult(
                     command: "subscribe",
                     requestId: requestId,
@@ -113,7 +113,7 @@ struct ServerConnectionRecoveryGuardsTests {
             )
         }
 
-        conn.handleServerMessage(
+        pipe.handle(
             .error(
                 message: "server wording changed",
                 code: ServerConnection.missingFullSubscriptionErrorCode,
@@ -131,7 +131,7 @@ struct ServerConnectionRecoveryGuardsTests {
 
     @MainActor
     @Test func triggerFullSubscriptionRecoverySkipsWhenRecoveryAlreadyInFlight() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
         let gate = RecoveryGate()
 
@@ -146,7 +146,7 @@ struct ServerConnectionRecoveryGuardsTests {
 
             await gate.wait()
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .commandResult(
                     command: "subscribe",
                     requestId: requestId,
@@ -175,7 +175,7 @@ struct ServerConnectionRecoveryGuardsTests {
 
     @MainActor
     @Test func triggerFullSubscriptionRecoveryRespectsCooldown() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         conn.lastFullSubscriptionRecoveryAt = Date()

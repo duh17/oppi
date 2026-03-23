@@ -12,7 +12,7 @@ final class ServerConnectionScenario {
     let toolCallCorrelator = ToolCallCorrelator()
 
     init(sessionId: String = "s1") {
-        self.connection = makeTestConnection(sessionId: sessionId)
+        self.connection = makeTestConnection(sessionId: sessionId).conn
         self.activeSessionId = sessionId
 
         coalescer.onFlush = { [weak self] events in

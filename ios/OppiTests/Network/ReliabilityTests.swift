@@ -191,30 +191,30 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogSetOnRequest() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input",
             title: "Enter value", message: "Please enter a value", timeout: 30
         )
-        conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
     }
 
     @MainActor
     @Test func extensionDialogReplacedByNewRequest() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         let req1 = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "First", timeout: 30
         )
-        conn.handleServerMessage(.extensionUIRequest(req1), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(req1), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext1")
 
         let req2 = ExtensionUIRequest(
             id: "ext2", sessionId: "s1", method: "confirm", title: "Second"
         )
-        conn.handleServerMessage(.extensionUIRequest(req2), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(req2), sessionId: "s1")
         #expect(conn.activeExtensionDialog?.id == "ext2", "New request should replace old")
     }
 
@@ -222,12 +222,12 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogClearedOnDisconnect() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "confirm", title: "Confirm?"
         )
-        conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog != nil)
 
         conn.disconnectSession()
@@ -238,12 +238,12 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogClearedOnSessionSwitch() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "Test"
         )
-        conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog != nil)
 
         // Simulate streamSession switching from s1 -> s2 without opening a real socket.
@@ -256,15 +256,15 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogSurvivedWhenStreamAlive() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "Test"
         )
-        conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
 
         // flushAndSuspend does NOT clear the dialog (background transition)
-        conn.flushAndSuspend()
+        pipe.flushNow()
 
         #expect(conn.activeExtensionDialog?.id == "ext1",
             "Dialog should survive background transition")
@@ -274,24 +274,24 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func stopConfirmedWithoutAgentEndFinalizesThinking() {
-        let conn = makeTestConnection()
-        conn.handleServerMessage(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
+        let (conn, pipe) = makeTestConnection()
+        pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
-        conn.handleServerMessage(
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
+        pipe.handle(
             .stopRequested(source: .user, reason: "Stopping current turn"),
             sessionId: "s1"
         )
-        conn.handleServerMessage(
+        pipe.handle(
             .stopConfirmed(source: .user, reason: nil),
             sessionId: "s1"
         )
 
         // Force flush in case the coalescer still has buffered deltas.
-        conn.coalescer.flushNow()
+        pipe.flushNow()
 
-        let thinkingStates = conn.reducer.items.compactMap { item -> Bool? in
+        let thinkingStates = pipe.reducer.items.compactMap { item -> Bool? in
             guard case .thinking(_, _, _, let isDone) = item else { return nil }
             return isDone
         }
@@ -302,16 +302,16 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func stateReadyWithoutAgentEndFinalizesThinking() {
-        let conn = makeTestConnection()
-        conn.handleServerMessage(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
+        let (conn, pipe) = makeTestConnection()
+        pipe.handle(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
-        conn.handleServerMessage(.state(session: makeTestSession(status: .ready)), sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
+        pipe.handle(.state(session: makeTestSession(status: .ready)), sessionId: "s1")
 
-        conn.coalescer.flushNow()
+        pipe.flushNow()
 
-        let thinkingStates = conn.reducer.items.compactMap { item -> Bool? in
+        let thinkingStates = pipe.reducer.items.compactMap { item -> Bool? in
             guard case .thinking(_, _, _, let isDone) = item else { return nil }
             return isDone
         }

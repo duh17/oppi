@@ -36,11 +36,12 @@ func makeTestSession(
 }
 
 @MainActor
-func makeTestConnection(sessionId: String = "s1") -> ServerConnection {
+func makeTestConnection(sessionId: String = "s1") -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()
     connection.configure(credentials: makeTestCredentials())
     connection._setActiveSessionIdForTesting(sessionId)
-    return connection
+    let pipeline = TestEventPipeline(sessionId: sessionId, connection: connection)
+    return (connection, pipeline)
 }
 
 func makeTestCredentials(

@@ -358,10 +358,6 @@ struct OppiApp: App {
 #if DEBUG
             mainThreadLagWatchdog.stop()
 #endif
-            // Flush all connections on background
-            for (_, conn) in coordinator.connections {
-                conn.flushAndSuspend()
-            }
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
 
             // Keep the WS alive while agents are working so we receive

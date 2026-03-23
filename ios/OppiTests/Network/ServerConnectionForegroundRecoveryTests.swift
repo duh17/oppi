@@ -189,16 +189,4 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(endLevel != nil)
     }
 
-    @MainActor
-    @Test func flushAndSuspendDoesNotDisconnect() {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test", name: "Test"
-        ))
-        conn._setActiveSessionIdForTesting("s1")
-
-        conn.flushAndSuspend()
-
-        #expect(conn.wsClient != nil, "WS client should not be nil after suspend")
-    }
 }

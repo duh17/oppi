@@ -41,18 +41,8 @@ final class ServerConnection {
     // Screen awake — injectable for tests; defaults to the process-wide singleton.
     var screenAwakeController: ScreenAwakeController = .shared
 
-    // Runtime pipeline — coalescer/reducer/correlator moved to per-session
-    // ChatSessionManager. Connection retains only connection-level state.
-    //
-    // The reducer/coalescer/correlator below exist solely for backward-compatible
-    // test support. Production code (ChatView, OppiApp) no longer references them.
-    // Tests that use ServerConnectionScenario get proper per-session pipelines.
-    // periphery:ignore - test seam used by OppiTests via @testable import
-    let reducer = TimelineReducer()
-    // periphery:ignore - test seam used by OppiTests via @testable import
-    let coalescer = DeltaCoalescer()
-    // periphery:ignore - test seam used by OppiTests via @testable import
-    let toolCallCorrelator = ToolCallCorrelator()
+    // Runtime pipeline — coalescer/reducer/correlator are per-session,
+    // owned by ChatSessionManager. Tests use TestEventPipeline instead.
 
     // Stream lifecycle
     var activeSessionId: String?
@@ -153,13 +143,6 @@ final class ServerConnection {
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
 
     init() {
-        // Wire test-compat coalescer → reducer for backward-compatible tests.
-        // Production code uses per-session pipelines on ChatSessionManager.
-        coalescer.onFlush = { [weak self] events in
-            guard let self else { return }
-            self.reducer.processBatch(events)
-        }
-
         // Wire silence watchdog probe to request a state refresh.
         silenceWatchdog.onProbe = { [weak self] in
             try? await self?.requestState()
@@ -655,14 +638,6 @@ final class ServerConnection {
         // Don't disconnect /stream WS — it stays open for other subscriptions.
     }
 
-    /// Background transition hook.
-    /// Production coalescers are per-session (on ChatSessionManager) — flushed
-    /// via ChatView's scenePhase handler. This flushes the test-compat coalescer
-    /// so tests using handleServerMessage() can verify timeline state.
-    func flushAndSuspend() {
-        coalescer.flushNow()
-    }
-
     // MARK: - Actions (delegated to MessageSender)
 
     func sendPrompt(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
@@ -744,7 +719,6 @@ final class ServerConnection {
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
         activeSessionId = sessionId
         sender.activeSessionId = sessionId
-        coalescer.sessionId = sessionId
     }
 
     func telemetryErrorKind(from error: Error) -> String {

@@ -164,7 +164,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func clearFileSuggestionsEmptiesItems() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.chatState.fileSuggestions = [
             FileSuggestion(path: "README.md", isDirectory: false),
         ]
@@ -174,7 +174,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func clearFileSuggestionsCancelsTask() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         let task = Task<Void, Never> { @MainActor in
             try? await Task.sleep(for: .seconds(60))
         }
@@ -186,7 +186,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchFileSuggestionsCancelsPreviousTask() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         let oldTask = Task<Void, Never> { @MainActor in
@@ -201,7 +201,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchFileSuggestionsReplacesTask() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "src/app.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "first")
@@ -218,7 +218,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchWithNoFileIndexReturnsEmpty() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         // fileIndex not loaded — search should return empty immediately
         conn.fetchFileSuggestions(query: "src")
         #expect(conn.chatState.fileSuggestions.isEmpty)
@@ -227,7 +227,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchPopulatesSuggestionsFromLocalIndex() async {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "ios/Oppi/Features/Chat/ChatView.swift",
             "ios/Oppi/Core/Models/FuzzyMatch.swift",
@@ -247,7 +247,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func fetchEmptyQueryReturnsFilesByLength() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([
             "ios/Oppi/Features/Chat/ChatView.swift",
             "README.md",
@@ -265,7 +265,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func invalidateMarksIndexDirty() {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["README.md"])
 
         // Index is loaded and clean
@@ -280,7 +280,7 @@ struct FileSuggestionInsertionTests {
 
     @MainActor
     @Test func clearAfterFetchDropsResults() async {
-        let conn = makeTestConnection()
+        let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["src/index.ts", "README.md"])
 
         conn.fetchFileSuggestions(query: "src")

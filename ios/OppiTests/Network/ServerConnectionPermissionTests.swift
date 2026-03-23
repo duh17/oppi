@@ -7,7 +7,7 @@ struct ServerConnectionPermissionTests {
 
     @MainActor
     @Test func routePermissionRequest() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: ["command": .string("rm -rf /")],
@@ -16,7 +16,7 @@ struct ServerConnectionPermissionTests {
             timeoutAt: Date().addingTimeInterval(120)
         )
 
-        conn.handleServerMessage(.permissionRequest(perm), sessionId: "s1")
+        pipe.handle(.permissionRequest(perm), sessionId: "s1")
 
         #expect(conn.permissionStore.count == 1)
         #expect(conn.permissionStore.pending[0].id == "p1")
@@ -24,7 +24,7 @@ struct ServerConnectionPermissionTests {
 
     @MainActor
     @Test func routePermissionRequestUsesActiveSessionForNotificationDecision() {
-        let conn = makeTestConnection(sessionId: "stream-s1")
+        let (conn, pipe) = makeTestConnection(sessionId: "stream-s1")
         conn.sessionStore.activeSessionId = "active-s1"
 
         let notificationService = PermissionNotificationService.shared
@@ -58,7 +58,7 @@ struct ServerConnectionPermissionTests {
             timeoutAt: Date().addingTimeInterval(120)
         )
 
-        conn.handleServerMessage(.permissionRequest(perm), sessionId: "stream-s1")
+        pipe.handle(.permissionRequest(perm), sessionId: "stream-s1")
 
         if ReleaseFeatures.pushNotificationsEnabled {
             #expect(capturedRequestSessionId == "other-s2")
@@ -73,7 +73,7 @@ struct ServerConnectionPermissionTests {
 
     @MainActor
     @Test func routePermissionExpired() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
@@ -82,14 +82,14 @@ struct ServerConnectionPermissionTests {
         )
         conn.permissionStore.add(perm)
 
-        conn.handleServerMessage(.permissionExpired(id: "p1", reason: "timeout"), sessionId: "s1")
+        pipe.handle(.permissionExpired(id: "p1", reason: "timeout"), sessionId: "s1")
 
         #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
     @Test func routePermissionCancelled() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
@@ -98,14 +98,14 @@ struct ServerConnectionPermissionTests {
         )
         conn.permissionStore.add(perm)
 
-        conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
+        pipe.handle(.permissionCancelled(id: "p1"), sessionId: "s1")
 
         #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
     @Test func crossSessionPermissionAddedToStore() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         let permRequest = PermissionRequest(
@@ -130,7 +130,7 @@ struct ServerConnectionPermissionTests {
 
     @MainActor
     @Test func respondToCrossSessionPermissionDoesNotPolluteActiveTimeline() async throws {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
@@ -144,7 +144,7 @@ struct ServerConnectionPermissionTests {
 
         try await conn.respondToPermission(id: "xp1", action: .allow)
 
-        let hasMarker = conn.reducer.items.contains {
+        let hasMarker = pipe.reducer.items.contains {
             if case .permissionResolved(let id, _, _, _) = $0 { return id == "xp1" }
             return false
         }
@@ -157,13 +157,13 @@ struct ServerConnectionPermissionTests {
 
     @MainActor
     @Test func respondToSameSessionPermissionInjectsMarker() async throws {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
         // Wire the permission callback to the test-compat reducer
         conn.onPermissionResolved = { id, outcome, tool, summary in
-            conn.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
+            pipe.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
         }
 
         let perm = PermissionRequest(
@@ -176,7 +176,7 @@ struct ServerConnectionPermissionTests {
 
         try await conn.respondToPermission(id: "sp1", action: .allow)
 
-        let hasMarker = conn.reducer.items.contains {
+        let hasMarker = pipe.reducer.items.contains {
             if case .permissionResolved(let id, _, _, _) = $0 { return id == "sp1" }
             return false
         }

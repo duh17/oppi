@@ -7,10 +7,10 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeConnected() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let session = makeTestSession(status: .ready)
 
-        conn.handleServerMessage(.connected(session: session), sessionId: "s1")
+        pipe.handle(.connected(session: session), sessionId: "s1")
 
         #expect(conn.sessionStore.sessions.count == 1)
         #expect(conn.sessionStore.sessions[0].status == .ready)
@@ -18,10 +18,10 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeState() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let session = makeTestSession(status: .busy)
 
-        conn.handleServerMessage(.state(session: session), sessionId: "s1")
+        pipe.handle(.state(session: session), sessionId: "s1")
 
         #expect(conn.sessionStore.sessions.count == 1)
         #expect(conn.sessionStore.sessions[0].status == .busy)
@@ -29,14 +29,14 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeQueueStateUpdatesQueueStore() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let state = MessageQueueState(
             version: 7,
             steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
             followUp: [MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2)]
         )
 
-        conn.handleServerMessage(.queueState(queue: state), sessionId: "s1")
+        pipe.handle(.queueState(queue: state), sessionId: "s1")
 
         let stored = conn.messageQueueStore.queue(for: "s1")
         #expect(stored.version == 7)
@@ -46,7 +46,7 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeQueueStateIgnoresStaleVersion() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 9,
@@ -56,7 +56,7 @@ struct ServerConnectionRoutingTests {
             for: "s1"
         )
 
-        conn.handleServerMessage(
+        pipe.handle(
             .queueState(
                 queue: MessageQueueState(
                     version: 8,
@@ -74,7 +74,7 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeQueueItemStartedRemovesItemAndAppendsUserMessage() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let initial = MessageQueueState(
             version: 2,
             steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
@@ -82,7 +82,7 @@ struct ServerConnectionRoutingTests {
         )
         conn.messageQueueStore.apply(initial, for: "s1")
 
-        conn.handleServerMessage(
+        pipe.handle(
             .queueItemStarted(
                 kind: .followUp,
                 item: MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2),
@@ -95,7 +95,7 @@ struct ServerConnectionRoutingTests {
         #expect(stored.version == 3)
         #expect(stored.followUp.isEmpty)
 
-        guard let first = conn.reducer.items.first,
+        guard let first = pipe.reducer.items.first,
               case .userMessage(_, let text, let images, _) = first else {
             Issue.record("Expected queue started user message")
             return
@@ -106,9 +106,9 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeGetQueueCommandResultUpdatesQueueStore() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "get_queue",
                 requestId: "req-1",
@@ -143,7 +143,7 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeGetQueueCommandResultIgnoresStaleVersion() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn.messageQueueStore.apply(
             MessageQueueState(
                 version: 12,
@@ -153,7 +153,7 @@ struct ServerConnectionRoutingTests {
             for: "s1"
         )
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "get_queue",
                 requestId: "req-stale",
@@ -181,9 +181,9 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeGetQueueFailureDoesNotProduceTimelineError() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "get_queue",
                 requestId: "req-fail",
@@ -194,8 +194,8 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        conn.flushAndSuspend()
-        let errors = conn.reducer.items.filter {
+        pipe.flushNow()
+        let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
             return false
         }
@@ -204,9 +204,9 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeSetQueueFailureDoesNotProduceTimelineError() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "set_queue",
                 requestId: "req-fail",
@@ -217,8 +217,8 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        conn.flushAndSuspend()
-        let errors = conn.reducer.items.filter {
+        pipe.flushNow()
+        let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
             return false
         }
@@ -227,9 +227,9 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeSubscribeFailureDoesNotProduceTimelineError() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "subscribe",
                 requestId: "req-sub",
@@ -240,8 +240,8 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        conn.flushAndSuspend()
-        let errors = conn.reducer.items.filter {
+        pipe.flushNow()
+        let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
             return false
         }
@@ -250,9 +250,9 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeUnsubscribeFailureDoesNotProduceTimelineError() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "unsubscribe",
                 requestId: "req-unsub",
@@ -263,8 +263,8 @@ struct ServerConnectionRoutingTests {
             sessionId: "s1"
         )
 
-        conn.flushAndSuspend()
-        let errors = conn.reducer.items.filter {
+        pipe.flushNow()
+        let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
             return false
         }
@@ -314,16 +314,16 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         #expect(conn.chatState.thinkingLevel == .medium)
 
-        conn.handleServerMessage(
+        pipe.handle(
             .connected(session: makeTestSession(status: .ready, thinkingLevel: "medium")),
             sessionId: "s1"
         )
         #expect(conn.chatState.thinkingLevel == .medium)
 
-        conn.handleServerMessage(
+        pipe.handle(
             .state(session: makeTestSession(status: .ready, thinkingLevel: "high")),
             sessionId: "s1"
         )
@@ -332,21 +332,21 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeConnectedRequestsSlashCommands() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
             await counter.record(message: message)
         }
 
-        conn.handleServerMessage(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
+        pipe.handle(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
 
         #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 1 })
     }
 
     @MainActor
     @Test func routeStateWorkspaceChangeRequestsSlashCommands() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
@@ -355,28 +355,28 @@ struct ServerConnectionRoutingTests {
 
         var initial = makeTestSession(status: .ready)
         initial.workspaceId = "w1"
-        conn.handleServerMessage(.connected(session: initial), sessionId: "s1")
+        pipe.handle(.connected(session: initial), sessionId: "s1")
         #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 1 })
 
         // Same workspace should not re-fetch.
-        conn.handleServerMessage(.state(session: initial), sessionId: "s1")
+        pipe.handle(.state(session: initial), sessionId: "s1")
         try? await Task.sleep(for: .milliseconds(50))
         #expect(await counter.count() == 1)
 
         // Workspace switch should refresh.
         var switched = initial
         switched.workspaceId = "w2"
-        conn.handleServerMessage(.state(session: switched), sessionId: "s1")
+        pipe.handle(.state(session: switched), sessionId: "s1")
         #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 2 })
     }
 
     @MainActor
     @Test func routeGetCommandsResultUpdatesSlashCommandCache() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let session = makeTestSession(status: .ready)
-        conn.handleServerMessage(.connected(session: session), sessionId: "s1")
+        pipe.handle(.connected(session: session), sessionId: "s1")
 
-        conn.handleServerMessage(
+        pipe.handle(
             .commandResult(
                 command: "get_commands",
                 requestId: nil,
@@ -419,20 +419,20 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .ready))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
 
         #expect(conn.sessionStore.sessions.first?.status == .busy)
     }
 
     @MainActor
     @Test func routeAgentEndSetsSessionReadyWithoutStateMessage() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(status: .busy))
 
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
+        pipe.handle(.agentEnd, sessionId: "s1")
 
         #expect(conn.sessionStore.sessions.first?.status == .ready)
     }
@@ -502,7 +502,7 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeMissingFullSubscriptionErrorTriggersAutoRecover() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         conn._sendMessageForTesting = { message in
@@ -511,7 +511,7 @@ struct ServerConnectionRoutingTests {
                 await subscribeCounter.increment()
                 #expect(sessionId == "s1")
                 #expect(level == .full)
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "subscribe",
                         requestId: requestId,
@@ -526,15 +526,15 @@ struct ServerConnectionRoutingTests {
             }
         }
 
-        conn.handleServerMessage(
+        pipe.handle(
             .error(message: "Session s1 is not subscribed at level=full", code: nil, fatal: false),
             sessionId: "s1"
         )
 
         #expect(await waitForTestCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
 
-        conn.flushAndSuspend()
-        let errors = conn.reducer.items.filter {
+        pipe.flushNow()
+        let errors = pipe.reducer.items.filter {
             if case .error = $0 { return true }
             return false
         }
@@ -543,7 +543,7 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeExtensionUIRequest() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
@@ -552,16 +552,16 @@ struct ServerConnectionRoutingTests {
             message: "Are you sure?"
         )
 
-        conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
 
         #expect(conn.activeExtensionDialog?.id == "ext1")
     }
 
     @MainActor
     @Test func routeExtensionUINotification() {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
-        conn.handleServerMessage(
+        pipe.handle(
             .extensionUINotification(method: "notify", message: "Task complete", notifyType: "info", statusKey: nil, statusText: nil),
             sessionId: "s1"
         )
@@ -571,21 +571,21 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeUnknownIsNoOp() {
-        let conn = makeTestConnection()
-        let preCount = conn.reducer.items.count
+        let (conn, pipe) = makeTestConnection()
+        let preCount = pipe.reducer.items.count
 
-        conn.handleServerMessage(.unknown(type: "future_type"), sessionId: "s1")
+        pipe.handle(.unknown(type: "future_type"), sessionId: "s1")
 
-        #expect(conn.reducer.items.count == preCount)
+        #expect(pipe.reducer.items.count == preCount)
     }
 
     @MainActor
     @Test func staleSessionMessageIgnored() {
-        let conn = makeTestConnection(sessionId: "s1")
+        let (conn, pipe) = makeTestConnection(sessionId: "s1")
 
         // Send message for a different session
         let session = makeTestSession(id: "s2", status: .busy)
-        conn.handleServerMessage(.connected(session: session), sessionId: "s2")
+        pipe.handle(.connected(session: session), sessionId: "s2")
 
         // Session store should NOT have s2 (message was for wrong active session)
         #expect(conn.sessionStore.sessions.isEmpty)
@@ -603,7 +603,7 @@ final class EventFlowServerConnectionScenario {
     let toolCallCorrelator = ToolCallCorrelator()
 
     init(sessionId: String = "s1") {
-        self.connection = makeTestConnection(sessionId: sessionId)
+        self.connection = makeTestConnection(sessionId: sessionId).conn
         self.activeSessionId = sessionId
 
         coalescer.onFlush = { [weak self] events in
@@ -773,13 +773,14 @@ func extractEventFlowAckRequest(from message: ClientMessage) -> EventFlowAckRequ
 func makeEventFlowAckTestConnection(
     sessionId: String = "s1",
     timeout: Duration? = nil
-) -> ServerConnection {
+) -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()
     connection._setActiveSessionIdForTesting(sessionId)
     if let timeout {
         connection._sendAckTimeoutForTesting = timeout
     }
-    return connection
+    let pipeline = TestEventPipeline(sessionId: sessionId, connection: connection)
+    return (connection, pipeline)
 }
 
 actor EventFlowAckStageRecorder {

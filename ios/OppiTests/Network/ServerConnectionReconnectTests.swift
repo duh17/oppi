@@ -14,7 +14,7 @@ struct ServerConnectionReconnectTests {
 
     @MainActor
     @Test func reconnectCancelsDeferredQueueSync() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
 
         // Plant a long-running deferred queue sync task and capture its identity
         let staleTask: Task<Void, Never> = Task {
@@ -55,7 +55,7 @@ struct ServerConnectionReconnectTests {
 
     @MainActor
     @Test func reconnectSchedulesQueueSyncAfterResubscription() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let getQueueCounter = MessageCounter()
 
         // Mock: ack subscribe, count get_queue sends
@@ -105,7 +105,7 @@ struct ServerConnectionReconnectTests {
 
     @MainActor
     @Test func recoverySchedulesQueueRefreshAfterSubscribe() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let getQueueCounter = MessageCounter()
         let subscribeCounter = MessageCounter()
 
@@ -113,7 +113,7 @@ struct ServerConnectionReconnectTests {
             switch message {
             case .subscribe(let sessionId, _, _, let requestId):
                 await subscribeCounter.increment()
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "subscribe", requestId: requestId,
                         success: true, data: nil, error: nil
@@ -158,7 +158,7 @@ struct ServerConnectionReconnectTests {
 
     @MainActor
     @Test func coordinatorAcceptsStreamConnectedWhileResubscribing() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         // Mock: ack subscribe commands
@@ -220,7 +220,7 @@ struct ServerConnectionReconnectTests {
     /// "not subscribed at level=full" error.
     @MainActor
     @Test func staleQueueSyncDoesNotRaceAheadOfResubscribe() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         let commandOrder = CommandOrderTracker()
 
         // Plant a deferred queue sync that would fire soon

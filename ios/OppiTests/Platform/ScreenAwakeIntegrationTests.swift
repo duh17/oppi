@@ -6,7 +6,7 @@ import Testing
 /// by session lifecycle signals in ServerConnection.
 ///
 /// These tests use a fully injectable ScreenAwakeController (no UIApplication
-/// dependency) and drive the message pipeline via handleServerMessage /
+/// dependency) and drive the message pipeline via TestEventPipeline.handle /
 /// routeStreamMessage — the same code paths used at runtime.
 @Suite("ScreenAwake integration", .serialized)
 @MainActor
@@ -38,12 +38,12 @@ struct ScreenAwakeIntegrationTests {
     func makeConnection(
         sessionId: String = "s1",
         screenAwakeController: ScreenAwakeController? = nil
-    ) -> ServerConnection {
-        let connection = makeTestConnection(sessionId: sessionId)
+    ) -> (conn: ServerConnection, pipe: TestEventPipeline) {
+        let (connection, pipeline) = makeTestConnection(sessionId: sessionId)
         if let screenAwakeController {
             connection.screenAwakeController = screenAwakeController
         }
-        return connection
+        return (connection, pipeline)
     }
 
     /// Convenience wrapper: create a StreamMessage for cross-session tests.
@@ -56,10 +56,10 @@ struct ScreenAwakeIntegrationTests {
     @Test("agentStart on active session prevents sleep immediately")
     func agentStartPreventsIdleTimer() {
         let (ctrl, updates) = makeController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
 
         #expect(ctrl.isPreventingSleep)
         #expect(updates().last == true)
@@ -68,11 +68,11 @@ struct ScreenAwakeIntegrationTests {
     @Test("agentEnd on active session releases idle timer immediately (Off preset)")
     func agentEndReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(.agentEnd, sessionId: "s1")
 
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().contains(true), "should have enabled sleep prevention first")
@@ -82,11 +82,11 @@ struct ScreenAwakeIntegrationTests {
     @Test("agentStart ignored for wrong sessionId")
     func agentStartIgnoredForWrongSession() {
         let (ctrl, updates) = makeController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
 
-        // Route for "s2" but active session is "s1" — handleServerMessage guards this
-        conn.handleServerMessage(.agentStart, sessionId: "s2")
+        // Route for "s2" but active session is "s1" — pipe.handle guards this
+        pipe.handle(.agentStart, sessionId: "s2")
 
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().isEmpty)
@@ -97,12 +97,12 @@ struct ScreenAwakeIntegrationTests {
     @Test("stopConfirmed on active session releases idle timer")
     func stopConfirmedReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
         let isStop = conn.isStopLifecycleMessage(.stopConfirmed(source: .user, reason: nil))
-        conn.handleServerMessage(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
+        pipe.handle(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
 
         #expect(isStop)
         #expect(!ctrl.isPreventingSleep)
@@ -113,11 +113,11 @@ struct ScreenAwakeIntegrationTests {
     @Test("stopFailed on active session keeps screen awake (agent still busy)")
     func stopFailedKeepsIdleTimerActive() {
         let (ctrl, _) = makeController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.stopFailed(source: .user, reason: "busy"), sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(.stopFailed(source: .user, reason: "busy"), sessionId: "s1")
 
         // stopFailed means the agent is still running — screen must stay awake
         #expect(ctrl.isPreventingSleep)
@@ -128,11 +128,11 @@ struct ScreenAwakeIntegrationTests {
     @Test("sessionEnded on active session clears activity completely")
     func sessionEndedClearsActivity() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.sessionEnded(reason: "done"), sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
+        pipe.handle(.sessionEnded(reason: "done"), sessionId: "s1")
 
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().last == false)
@@ -143,10 +143,10 @@ struct ScreenAwakeIntegrationTests {
     @Test("disconnectSession clears screen-awake for active session")
     func disconnectSessionClearsActivity() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
         #expect(ctrl.isPreventingSleep)
 
         conn.disconnectSession()
@@ -172,7 +172,7 @@ struct ScreenAwakeIntegrationTests {
     func crossSessionAgentStartPreventsIdleTimer() {
         let (ctrl, updates) = makeController()
         // Active = s1, cross-session = s2
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .ready))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
@@ -184,7 +184,7 @@ struct ScreenAwakeIntegrationTests {
     @Test("agentEnd on non-active session releases idle timer")
     func crossSessionAgentEndReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
@@ -197,7 +197,7 @@ struct ScreenAwakeIntegrationTests {
     @Test("cross-session stopConfirmed releases idle timer")
     func crossSessionStopConfirmedReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .stopping))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
@@ -212,7 +212,7 @@ struct ScreenAwakeIntegrationTests {
     @Test("cross-session sessionEnded clears activity")
     func crossSessionSessionEndedClearsActivity() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
@@ -225,7 +225,7 @@ struct ScreenAwakeIntegrationTests {
     @Test("sessionDeleted clears screen-awake for deleted session")
     func sessionDeletedClearsActivity() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
@@ -240,16 +240,16 @@ struct ScreenAwakeIntegrationTests {
     @Test("screen stays awake while any session is active")
     func multiSessionScreenStaysAwake() {
         let (ctrl, _) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .ready))
 
         // Both sessions start
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
 
         // s1 ends — s2 still active
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
+        pipe.handle(.agentEnd, sessionId: "s1")
         #expect(ctrl.isPreventingSleep, "s2 still active — screen must stay awake")
 
         // s2 ends — all done
@@ -260,11 +260,11 @@ struct ScreenAwakeIntegrationTests {
     @Test("active session disconnect does not clear cross-session tracking")
     func activeDisconnectDoesNotClearCrossSession() {
         let (ctrl, _) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .ready))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .agentStart))
 
         // Disconnect active session s1 — s2 still tracked
@@ -281,17 +281,17 @@ struct ScreenAwakeIntegrationTests {
     @Test("handleState recovery from busy to ready releases idle timer")
     func handleStateRecoveryReleasesIdleTimer() {
         let (ctrl, updates) = makeImmediateReleaseController()
-        let conn = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
+        let (conn, pipe) = makeConnection(sessionId: "s1", screenAwakeController: ctrl)
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        pipe.handle(.agentStart, sessionId: "s1")
         #expect(ctrl.isPreventingSleep)
 
         // Inject a .state event with status=.ready to trigger the recovery
         // hardening path in handleState (simulates reconnect gap where
         // agentEnd was never observed).
         let recoveredSession = makeTestSession(id: "s1", status: .ready)
-        conn.handleServerMessage(.state(session: recoveredSession), sessionId: "s1")
+        pipe.handle(.state(session: recoveredSession), sessionId: "s1")
 
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().last == false)

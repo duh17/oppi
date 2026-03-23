@@ -194,6 +194,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
             guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
@@ -203,7 +204,7 @@ struct ChatActionHandlerTests {
             }
 
             try await Task.sleep(for: .milliseconds(250))
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,
@@ -252,6 +253,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
         handler._sendStageDisplayDurationForTesting = .milliseconds(40)
 
         connection._sendMessageForTesting = { message in
@@ -262,7 +264,7 @@ struct ChatActionHandlerTests {
             }
 
             try await Task.sleep(for: .milliseconds(20))
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,
@@ -274,7 +276,7 @@ struct ChatActionHandlerTests {
             )
 
             try await Task.sleep(for: .milliseconds(40))
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,
@@ -286,7 +288,7 @@ struct ChatActionHandlerTests {
             )
 
             try await Task.sleep(for: .milliseconds(40))
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,
@@ -322,6 +324,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
             guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
@@ -330,7 +333,7 @@ struct ChatActionHandlerTests {
                 return
             }
 
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,
@@ -363,6 +366,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var sawSteer = false
 
@@ -374,7 +378,7 @@ struct ChatActionHandlerTests {
             }
 
             sawSteer = true
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "steer",
                     clientTurnId: clientTurnId,
@@ -419,6 +423,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var sawFollowUp = false
 
@@ -430,7 +435,7 @@ struct ChatActionHandlerTests {
             }
 
             sawFollowUp = true
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "follow_up",
                     clientTurnId: clientTurnId,
@@ -535,6 +540,7 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var sawSteer = false
         var sawQueueRefresh = false
@@ -544,7 +550,7 @@ struct ChatActionHandlerTests {
             case .steer(_, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
                 sawSteer = true
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "steer",
                         clientTurnId: clientTurnId,
@@ -557,7 +563,7 @@ struct ChatActionHandlerTests {
 
             case .getQueue(let requestId):
                 sawQueueRefresh = true
-                connection.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "get_queue",
                         requestId: requestId,
@@ -686,6 +692,7 @@ struct ChatActionHandlerTests {
             firstMessage: "please fix websocket reconnect state drift"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
         handler._generateSessionTitleForTesting = { _ in
             "Title: Fix websocket reconnect bug."
         }
@@ -696,7 +703,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -746,6 +753,7 @@ struct ChatActionHandlerTests {
             firstMessage: "debug reconnect flow"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
         handler._generateSessionTitleForTesting = { _ in
             "Title: Investigate websocket reconnect state drift after background foreground transitions now"
         }
@@ -756,7 +764,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -803,6 +811,7 @@ struct ChatActionHandlerTests {
 
         sessionStore.upsert(makeTestSession(id: "s1", name: "Manual name", messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var titleGenerationCalls = 0
         var setSessionNameCalls = 0
@@ -816,7 +825,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -864,6 +873,7 @@ struct ChatActionHandlerTests {
             firstMessage: "write migration plan"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var titleGenerationCalls = 0
         var setSessionNameCalls = 0
@@ -877,7 +887,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -929,6 +939,7 @@ struct ChatActionHandlerTests {
             firstMessage: "implement loopback bridge for local process"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         // Simulate the title generator being slow (the real on-device LLM takes ~1-2s)
         handler._generateSessionTitleForTesting = { _ in
@@ -942,7 +953,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1006,6 +1017,7 @@ struct ChatActionHandlerTests {
             firstMessage: "fix the websocket reconnect drift"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var generatedFromText: String?
         handler._generateSessionTitleForTesting = { text in
@@ -1018,7 +1030,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1070,6 +1082,7 @@ struct ChatActionHandlerTests {
 
         sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var titleGenerationCalls = 0
         handler._generateSessionTitleForTesting = { _ in
@@ -1081,7 +1094,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1128,12 +1141,13 @@ struct ChatActionHandlerTests {
             firstMessage: "in context view we shouldnt show these make sure add tests"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1182,7 +1196,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1236,6 +1250,7 @@ struct ChatActionHandlerTests {
             firstMessage: "fix timeline message ordering bug"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var setNameValue: String?
         let titleReady = AsyncStream.makeStream(of: Void.self)
@@ -1250,7 +1265,7 @@ struct ChatActionHandlerTests {
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -1308,12 +1323,13 @@ struct ChatActionHandlerTests {
             firstMessage: "fix timeline message ordering bug"
         ))
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
             switch message {
             case .prompt(_, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,

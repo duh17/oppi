@@ -8,7 +8,7 @@ struct ServerConnectionSendAckTests {
     @MainActor
     @Test func sendAckSuccessForPromptSteerAndFollowUp() async throws {
         for command in EventFlowAckCommand.allCases {
-            let conn = makeEventFlowAckTestConnection()
+            let (conn, pipe) = makeEventFlowAckTestConnection()
 
             var sentRequestId: String?
             conn._sendMessageForTesting = { message in
@@ -21,7 +21,7 @@ struct ServerConnectionSendAckTests {
                 sentRequestId = sent.requestId
 
                 if let requestId = sent.requestId {
-                    conn.handleServerMessage(
+                    pipe.handle(
                         .commandResult(
                             command: sent.command,
                             requestId: requestId,
@@ -41,7 +41,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckUsesTurnAckStages() async throws {
-        let conn = makeEventFlowAckTestConnection()
+        let (conn, pipe) = makeEventFlowAckTestConnection()
 
         conn._sendMessageForTesting = { message in
             guard let sent = extractEventFlowAckRequest(from: message),
@@ -50,7 +50,7 @@ struct ServerConnectionSendAckTests {
                 return
             }
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -61,7 +61,7 @@ struct ServerConnectionSendAckTests {
                 sessionId: "s1"
             )
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -78,7 +78,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckStageCallbackReceivesProgressStages() async throws {
-        let conn = makeEventFlowAckTestConnection()
+        let (conn, pipe) = makeEventFlowAckTestConnection()
 
         let stageRecorder = EventFlowAckStageRecorder()
 
@@ -90,7 +90,7 @@ struct ServerConnectionSendAckTests {
                 return
             }
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -101,7 +101,7 @@ struct ServerConnectionSendAckTests {
                 sessionId: "s1"
             )
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -112,7 +112,7 @@ struct ServerConnectionSendAckTests {
                 sessionId: "s1"
             )
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -135,7 +135,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendRetryReusesClientTurnId() async throws {
-        let conn = makeEventFlowAckTestConnection()
+        let (conn, pipe) = makeEventFlowAckTestConnection()
 
         var attempt = 0
         var seenTurnIds: [String] = []
@@ -157,7 +157,7 @@ struct ServerConnectionSendAckTests {
                 throw WebSocketError.notConnected
             }
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -180,7 +180,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendPromptChurnAlwaysResolvesWithoutSilentDrop() async {
-        let conn = makeEventFlowAckTestConnection(timeout: .milliseconds(160))
+        let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(160))
 
         var requestOrder: [String: Int] = [:]
         var attemptsByRequest: [String: Int] = [:]
@@ -214,7 +214,7 @@ struct ServerConnectionSendAckTests {
                 throw WebSocketError.notConnected
             }
 
-            conn.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: sent.command,
                     clientTurnId: clientTurnId,
@@ -272,7 +272,7 @@ struct ServerConnectionSendAckTests {
     @MainActor
     @Test func sendAckRejectedForPromptSteerAndFollowUp() async {
         for command in EventFlowAckCommand.allCases {
-            let conn = makeEventFlowAckTestConnection()
+            let (conn, pipe) = makeEventFlowAckTestConnection()
 
             conn._sendMessageForTesting = { message in
                 guard let sent = extractEventFlowAckRequest(from: message) else {
@@ -282,7 +282,7 @@ struct ServerConnectionSendAckTests {
                 #expect(sent.clientTurnId != nil)
 
                 if let requestId = sent.requestId {
-                    conn.handleServerMessage(
+                    pipe.handle(
                         .commandResult(
                             command: sent.command,
                             requestId: requestId,
@@ -315,7 +315,7 @@ struct ServerConnectionSendAckTests {
     @MainActor
     @Test func sendAckTimeoutForPromptSteerAndFollowUp() async {
         for command in EventFlowAckCommand.allCases {
-            let conn = makeEventFlowAckTestConnection(timeout: .milliseconds(120))
+            let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(120))
 
             conn._sendMessageForTesting = { _ in }
 
@@ -339,7 +339,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -347,7 +347,7 @@ struct ServerConnectionSendAckTests {
             switch message {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
@@ -368,7 +368,7 @@ struct ServerConnectionSendAckTests {
             case .fork(let entryId, let requestId):
                 sentTypes.append("fork")
                 forkEntryId = entryId
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "fork",
                         requestId: requestId,
@@ -392,7 +392,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func forkFromTimelineEntryParsesForkMessageIdField() async throws {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -400,7 +400,7 @@ struct ServerConnectionSendAckTests {
             switch message {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
@@ -421,7 +421,7 @@ struct ServerConnectionSendAckTests {
             case .fork(let entryId, let requestId):
                 sentTypes.append("fork")
                 forkEntryId = entryId
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "fork",
                         requestId: requestId,
@@ -445,7 +445,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func forkFromTimelineEntryNormalizesTraceSyntheticIDs() async throws {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -453,7 +453,7 @@ struct ServerConnectionSendAckTests {
             switch message {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
@@ -474,7 +474,7 @@ struct ServerConnectionSendAckTests {
             case .fork(let entryId, let requestId):
                 sentTypes.append("fork")
                 forkEntryId = entryId
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "fork",
                         requestId: requestId,
@@ -498,14 +498,14 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func forkFromTimelineEntryRejectsNonForkableEntry() async {
-        let conn = makeTestConnection()
+        let (conn, pipe) = makeTestConnection()
         var sentTypes: [String] = []
 
         conn._sendMessageForTesting = { message in
             switch message {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
-                conn.handleServerMessage(
+                pipe.handle(
                     .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,

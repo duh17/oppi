@@ -12,7 +12,7 @@ struct ServerConnectionNetworkPathChangeTests {
     // MARK: - Endpoint Clearing
 
     @Test func pathChangeClearsLANEndpointAndFallsToPaired() async {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         #expect(conn.transportPath == .lan)
 
         conn.handleNetworkPathChange()
@@ -34,7 +34,7 @@ struct ServerConnectionNetworkPathChangeTests {
     // MARK: - Reconnect Decisions by WS Status
 
     @Test func reconnecting_forcesImmediateReconnect() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.reconnecting(attempt: 5))
 
         conn.handleNetworkPathChange()
@@ -51,7 +51,7 @@ struct ServerConnectionNetworkPathChangeTests {
     }
 
     @Test func connectedViaLAN_forcesReconnect() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.connected)
         #expect(conn.transportPath == .lan)
 
@@ -78,7 +78,7 @@ struct ServerConnectionNetworkPathChangeTests {
     }
 
     @Test func disconnected_triggersReconnect() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.disconnected)
 
         conn.handleNetworkPathChange()
@@ -102,7 +102,7 @@ struct ServerConnectionNetworkPathChangeTests {
     // MARK: - Session Preservation
 
     @Test func pathChangePreservesActiveSessionId() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn._setActiveSessionIdForTesting("s1")
         conn.wsClient?._setStatusForTesting(.connected)
 
@@ -113,7 +113,7 @@ struct ServerConnectionNetworkPathChangeTests {
     }
 
     @Test func pathChangePreservesNotificationSubscriptions() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn._setActiveSessionIdForTesting("s1")
         conn.notificationSessionIds = ["s2", "s3"]
         conn.wsClient?._setStatusForTesting(.connected)
@@ -125,18 +125,18 @@ struct ServerConnectionNetworkPathChangeTests {
     }
 
     @Test func pathChangePreservesReducerTimeline() {
-        let conn = makeConnectionOnLAN()
+        let (conn, pipe) = makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.connected)
 
-        conn.reducer.process(.agentStart(sessionId: "s1"))
-        conn.reducer.process(.textDelta(sessionId: "s1", delta: "hello world"))
-        conn.reducer.process(.agentEnd(sessionId: "s1"))
-        let countBefore = conn.reducer.items.count
+        pipe.reducer.process(.agentStart(sessionId: "s1"))
+        pipe.reducer.process(.textDelta(sessionId: "s1", delta: "hello world"))
+        pipe.reducer.process(.agentEnd(sessionId: "s1"))
+        let countBefore = pipe.reducer.items.count
         #expect(countBefore > 0)
 
         conn.handleNetworkPathChange()
 
-        #expect(conn.reducer.items.count == countBefore,
+        #expect(pipe.reducer.items.count == countBefore,
                 "Timeline must not be cleared by network path change")
     }
 
@@ -164,10 +164,12 @@ struct ServerConnectionNetworkPathChangeTests {
         )
     }
 
-    private func makeConnectionOnLAN() -> ServerConnection {
+    private func makeConnectionOnLAN() -> (conn: ServerConnection, pipe: TestEventPipeline) {
         let conn = ServerConnection()
         let creds = makeLANCredentials()
         conn.configure(credentials: creds)
+        conn._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
         // Simulate Bonjour discovering a matching LAN endpoint
         conn.setDiscoveredLANEndpoint(
@@ -178,7 +180,7 @@ struct ServerConnectionNetworkPathChangeTests {
                 tlsCertFingerprintPrefix: "TLSFINGERPRINT"
             )
         )
-        return conn
+        return (conn, pipe)
     }
 
     private func makeConnectionPaired() -> ServerConnection {

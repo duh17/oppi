@@ -14,6 +14,7 @@ struct ChatActionHandlerRecoveryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
+        let pipe = TestEventPipeline(sessionId: sessionId, connection: connection)
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
@@ -50,7 +51,7 @@ struct ChatActionHandlerRecoveryTests {
                 throw WebSocketError.notConnected
             }
 
-            connection.handleServerMessage(
+            pipe.handle(
                 .turnAck(
                     command: "prompt",
                     clientTurnId: clientTurnId,

@@ -97,6 +97,7 @@ struct ChatActionHandlerReconnectTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
         connection._sendAckTimeoutForTesting = .milliseconds(200)
 
         var sendCount = 0
@@ -111,7 +112,7 @@ struct ChatActionHandlerReconnectTests {
             // Third attempt (user's retry after isSending clears): succeed
             if case .prompt(_, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -211,11 +212,12 @@ struct ChatActionHandlerReconnectTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
             if case .steer(_, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "steer",
                         clientTurnId: clientTurnId,
@@ -304,6 +306,7 @@ struct ChatActionHandlerReconnectTests {
         let connection = ServerConnection()
         connection.configure(credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var promptTexts: [String] = []
 
@@ -311,7 +314,7 @@ struct ChatActionHandlerReconnectTests {
             if case .prompt(let text, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
                 promptTexts.append(text)
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
@@ -355,6 +358,7 @@ struct ChatActionHandlerReconnectTests {
         let connection = ServerConnection()
         connection.configure(credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         var promptTexts: [String] = []
 
@@ -362,7 +366,7 @@ struct ChatActionHandlerReconnectTests {
             if case .prompt(let text, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
                 promptTexts.append(text)
-                connection.handleServerMessage(
+                pipe.handle(
                     .turnAck(
                         command: "prompt",
                         clientTurnId: clientTurnId,
