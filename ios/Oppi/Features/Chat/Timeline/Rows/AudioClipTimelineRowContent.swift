@@ -58,7 +58,7 @@ final class AudioClipTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer.cornerRadius = 8
+        containerView.layer.cornerRadius = TimelineBubbleStyle.chipCornerRadius
 
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         rootStack.axis = .horizontal

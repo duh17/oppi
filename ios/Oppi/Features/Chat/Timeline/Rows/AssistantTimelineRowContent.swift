@@ -115,7 +115,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         // Same bubble shape as user messages — just different tint color.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
-        bubbleContainer.layer.cornerRadius = 10
+        bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -158,7 +158,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.purple)
         // Purple tint — same pattern as user's blue tint (0.08 alpha).
-        bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(0.08)
+        bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
 
         // Trim leading/trailing whitespace so model output starting with \n
         // doesn't create visual gaps above the π icon.

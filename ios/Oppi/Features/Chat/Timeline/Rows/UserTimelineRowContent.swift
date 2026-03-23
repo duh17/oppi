@@ -29,7 +29,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let imageStack = UIStackView()
 
     private static let thumbnailSize: CGFloat = 80
-    private static let thumbnailCornerRadius: CGFloat = 8
+    private static let thumbnailCornerRadius: CGFloat = TimelineBubbleStyle.thumbnailCornerRadius
     private static let maxDisplayCharacters = 12_000
     private static let maxDisplayLines = 220
     private static let truncatedDisplaySuffix = "\n… message truncated for display. Use Copy for full content."
@@ -99,7 +99,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         // Bubble container — subtle accent-tinted background.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
-        bubbleContainer.layer.cornerRadius = 10
+        bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
         bubbleContainer.addGestureRecognizer(bubbleDoubleTapGesture)
 
@@ -287,7 +287,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         imageStrip.isHidden = images.isEmpty
         guard !images.isEmpty else { return }
 
-        let borderColor = UIColor(palette.comment).withAlphaComponent(0.3).cgColor
+        let borderColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.thumbnailBorderAlpha).cgColor
 
         for (index, attachment) in images.enumerated() {
             let container = UIView()

@@ -51,7 +51,7 @@ final class ErrorTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.layer.cornerRadius = 12
+        containerView.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
@@ -100,7 +100,7 @@ final class ErrorTimelineRowContentView: UIView, UIContentView {
         messageLabel.textColor = UIColor(palette.fg)
         messageLabel.text = configuration.message
 
-        containerView.backgroundColor = red.withAlphaComponent(0.18)
+        containerView.backgroundColor = red.withAlphaComponent(TimelineBubbleStyle.errorBgAlpha)
     }
 
     private func copyValue() -> String? {
