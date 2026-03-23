@@ -42,8 +42,8 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     defaultModel: "openai-codex/gpt-5.3-codex",
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
-    maxSessionsPerWorkspace: 3,
-    maxSessionsGlobal: 5,
+    maxSessionsPerWorkspace: 20,
+    maxSessionsGlobal: 40,
     approvalTimeoutMs: 120 * 1000,
     permissionGate: true,
 

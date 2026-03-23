@@ -667,7 +667,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
     // Non-interactive: use flags or defaults
     port = parseInt(flags.port || "7749") || 7749;
     defaultModel = flags.model || "openai-codex/gpt-5.3-codex";
-    maxSessionsGlobal = parseInt(flags["max-sessions"] || "5") || 5;
+    maxSessionsGlobal = parseInt(flags["max-sessions"] || "40") || 40;
 
     console.log(c.dim(`  Port:         ${port}`));
     console.log(c.dim(`  Model:        ${defaultModel}`));
@@ -686,8 +686,8 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
     console.log("");
     defaultModel = await prompt("Default model", "openai-codex/gpt-5.3-codex");
 
-    const maxSessionsStr = await prompt("Max concurrent sessions", "5");
-    maxSessionsGlobal = parseInt(maxSessionsStr) || 5;
+    const maxSessionsStr = await prompt("Max concurrent sessions", "40");
+    maxSessionsGlobal = parseInt(maxSessionsStr) || 40;
   }
 
   // Create storage (auto-creates dirs + default config)
