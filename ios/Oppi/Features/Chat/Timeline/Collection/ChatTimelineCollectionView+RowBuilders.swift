@@ -16,7 +16,7 @@ extension ChatTimelineCollectionHost.Controller {
             isStreaming: isStreaming,
             canFork: false,
             onFork: nil,
-            interactionContext: context.interactionContext,
+            interactionContext: interactionContext,
             workspaceID: workspaceId,
             serverBaseURL: connection?.apiClient?.baseURL,
             fetchWorkspaceFile: connection?.apiClient.map { client in
@@ -46,7 +46,7 @@ extension ChatTimelineCollectionHost.Controller {
             images: images,
             canFork: canFork,
             onFork: forkAction,
-            interactionContext: context.interactionContext
+            interactionContext: interactionContext
         )
     }
 
@@ -60,7 +60,7 @@ extension ChatTimelineCollectionHost.Controller {
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
             maxBubbleHeight: maxBubbleHeight,
-            interactionContext: context.interactionContext
+            interactionContext: interactionContext
         )
     }
 
@@ -145,7 +145,7 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
 
-        let interactionCtx = self.context.interactionContext
+        let interactionCtx = self.interactionContext
         return ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,

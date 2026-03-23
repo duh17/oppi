@@ -215,6 +215,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             set { context.currentModel = newValue }
         }
 
+        var interactionContext: TimelineInteractionContext {
+            context.interactionContext
+        }
+
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
         /// streaming text grows the tail between throttled auto-scroll pulses.
         let nearBottomEnterThreshold: CGFloat = 120

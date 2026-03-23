@@ -727,8 +727,7 @@ struct UIHangHarnessView: View {
                     toolSegmentStore: harnessReducer.toolSegmentStore,
                     toolDetailsStore: harnessReducer.toolDetailsStore,
                     connection: connection,
-                    audioPlayer: connection.audioPlayer,
-                    themeID: themeID
+                    audioPlayer: connection.audioPlayer
                 )
             )
             .accessibilityIdentifier("harness.timeline")
