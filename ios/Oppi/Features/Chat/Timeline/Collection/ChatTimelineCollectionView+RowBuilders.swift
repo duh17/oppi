@@ -16,11 +16,7 @@ extension ChatTimelineCollectionHost.Controller {
             isStreaming: isStreaming,
             canFork: false,
             onFork: nil,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: .init(
-                sessionId: sessionId,
-                surface: .assistantProse
-            ),
+            interactionContext: context.interactionContext,
             workspaceID: workspaceId,
             serverBaseURL: connection?.apiClient?.baseURL,
             fetchWorkspaceFile: connection?.apiClient.map { client in
@@ -50,11 +46,7 @@ extension ChatTimelineCollectionHost.Controller {
             images: images,
             canFork: canFork,
             onFork: forkAction,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: .init(
-                sessionId: sessionId,
-                surface: .userMessage
-            )
+            interactionContext: context.interactionContext
         )
     }
 
@@ -68,12 +60,7 @@ extension ChatTimelineCollectionHost.Controller {
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
             maxBubbleHeight: maxBubbleHeight,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: .init(
-                sessionId: sessionId,
-                surface: .thinking,
-                sourceLabel: "Thinking"
-            )
+            interactionContext: context.interactionContext
         )
     }
 
@@ -158,6 +145,7 @@ extension ChatTimelineCollectionHost.Controller {
             elapsedSeconds: reducer?.toolElapsed(for: itemID)
         )
 
+        let interactionCtx = self.context.interactionContext
         return ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -166,7 +154,7 @@ extension ChatTimelineCollectionHost.Controller {
             isError: isError,
             isDone: isDone,
             context: context
-        ).withSelectedTextPi(router: selectedTextPiRouter, sessionId: sessionId)
+        ).withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
     }
 }
 

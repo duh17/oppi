@@ -9,8 +9,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let isStreaming: Bool
     let canFork: Bool
     let onFork: (() -> Void)?
-    let selectedTextPiRouter: SelectedTextPiActionRouter?
-    let selectedTextSourceContext: SelectedTextSourceContext?
+    /// Shared interaction context for π text-selection actions.
+    let interactionContext: TimelineInteractionContext?
     /// Workspace context for resolving markdown image paths.
     let workspaceID: String?
     let serverBaseURL: URL?
@@ -23,8 +23,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         isStreaming: Bool,
         canFork: Bool,
         onFork: (() -> Void)?,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSourceContext: SelectedTextSourceContext? = nil,
+        interactionContext: TimelineInteractionContext? = nil,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
@@ -33,8 +32,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.isStreaming = isStreaming
         self.canFork = canFork
         self.onFork = onFork
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.interactionContext = interactionContext
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
@@ -166,8 +164,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
             content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
-            selectedTextPiRouter: configuration.selectedTextPiRouter,
-            selectedTextSourceContext: configuration.selectedTextSourceContext,
+            selectedTextPiRouter: configuration.interactionContext?.selectedTextPiRouter,
+            selectedTextSourceContext: configuration.interactionContext?.sourceContext(
+                surface: .assistantProse
+            ),
             workspaceID: configuration.workspaceID,
             serverBaseURL: configuration.serverBaseURL
         ))
