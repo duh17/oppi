@@ -110,13 +110,13 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
     func contextMenu(from view: UIView) -> UIMenu? {
         switch self {
         case .user:
-            return (view as? UserTimelineRowContentView)?.contextMenu()
+            return (view as? UserTimelineRowContentView)?.buildContextMenu()
         case .permission:
-            return (view as? PermissionTimelineRowContentView)?.contextMenu()
+            return (view as? PermissionTimelineRowContentView)?.buildContextMenu()
         case .error:
-            return (view as? ErrorTimelineRowContentView)?.contextMenu()
+            return (view as? ErrorTimelineRowContentView)?.buildContextMenu()
         case .compaction:
-            return (view as? CompactionTimelineRowContentView)?.contextMenu()
+            return (view as? CompactionTimelineRowContentView)?.buildContextMenu()
         }
     }
 
@@ -125,8 +125,7 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
             text: "hello",
             images: [],
             canFork: false,
-            onFork: nil,
-            themeID: .dark
+            onFork: nil
         )
     }
 
@@ -134,15 +133,13 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
         PermissionTimelineRowConfiguration(
             outcome: .allowed,
             tool: "bash",
-            summary: "command: ls",
-            themeID: .dark
+            summary: "command: ls"
         )
     }
 
     private var errorConfiguration: ErrorTimelineRowConfiguration {
         ErrorTimelineRowConfiguration(
-            message: "Permission denied",
-            themeID: .dark
+            message: "Permission denied"
         )
     }
 
@@ -153,8 +150,7 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
                 detail: "Summary",
                 tokensBefore: 12_345
             ),
-            isExpanded: false,
-            themeID: .dark
+            isExpanded: false
         )
     }
 }

@@ -16,7 +16,7 @@ struct StreamFinishFormattingTests {
 
     @Test func paragraphUsesUIKitForegroundColor() {
         let blocks: [MarkdownBlock] = [.paragraph([.text("hello")])]
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        let segments = FlatSegment.build(from: blocks)
         guard case .text(let attributed) = segments[0] else {
             Issue.record("Expected .text segment"); return
         }
@@ -30,7 +30,7 @@ struct StreamFinishFormattingTests {
 
     @Test func inlineCodeUsesUIKitColor() {
         let blocks: [MarkdownBlock] = [.paragraph([.text("Use "), .code("foo()"), .text(" here")])]
-        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        let segments = FlatSegment.build(from: blocks)
         guard case .text(let attributed) = segments[0] else {
             Issue.record("Expected .text segment"); return
         }

@@ -9,7 +9,7 @@ struct ThinkingRowContentViewTests {
         // Establish bounds first (mirrors real collection view lifecycle where
         // cells have valid frames before apply() runs on content updates).
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: false, previewText: "seed", fullText: nil, themeID: .dark
+            isDone: false, previewText: "seed", fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -17,8 +17,7 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n"),
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let scrollView = try #require(privateScrollView(in: view))
@@ -34,7 +33,6 @@ struct ThinkingRowContentViewTests {
             isDone: false,
             previewText: text,
             fullText: nil,
-            themeID: .dark,
             maxBubbleHeight: ThinkingRowHeightPolicy.defaultMaxBubbleHeight
         ))
         _ = fittedTimelineSize(for: view, width: 360)
@@ -48,14 +46,12 @@ struct ThinkingRowContentViewTests {
         let overflowConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
-            fullText: Array(repeating: "reasoning", count: 320).joined(separator: "\n"),
-            themeID: .dark
+            fullText: Array(repeating: "reasoning", count: 320).joined(separator: "\n")
         )
         let shortConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Short thought",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let overflowView = ThinkingTimelineRowContentView(configuration: overflowConfig)
@@ -72,8 +68,7 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n"),
-            themeID: .dark
+            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -89,8 +84,7 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n"),
-            themeID: .dark
+            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -115,13 +109,14 @@ struct ThinkingRowContentViewTests {
 
     @Test func selectedTextEditMenuPrependsPiSubmenu() throws {
         let router = SelectedTextPiActionRouter { _ in }
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
             fullText: "Alpha beta gamma",
-            themeID: .dark,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+            interactionContext: interactionCtx
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -144,13 +139,14 @@ struct ThinkingRowContentViewTests {
 
     @Test func selectedTextModeKeepsOverflowFullScreenGesturesAndDisablesInlineSelection() throws {
         let router = SelectedTextPiActionRouter { _ in }
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
             fullText: Array(repeating: "line", count: 320).joined(separator: "\n"),
-            themeID: .dark,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+            interactionContext: interactionCtx
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -176,13 +172,14 @@ struct ThinkingRowContentViewTests {
 
     @Test func selectedTextModeAllowsInlineSelectionWhenThinkingFitsBubble() throws {
         let router = SelectedTextPiActionRouter { _ in }
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = router
+        interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Short thought",
             fullText: nil,
-            themeID: .dark,
-            selectedTextPiRouter: router,
-            selectedTextSourceContext: .init(sessionId: "session-1", surface: .thinking, sourceLabel: "Thinking")
+            interactionContext: interactionCtx
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -208,8 +205,7 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Thinking about **bold** and `code`",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -227,8 +223,7 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
-            fullText: "Thinking about **bold** and `code`",
-            themeID: .dark
+            fullText: "Thinking about **bold** and `code`"
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -246,8 +241,7 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Initial thought",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -258,8 +252,7 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Initial thought",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
         let sig2 = try #require(privateRenderSignature(in: view))
         #expect(sig1 == sig2, "Render signature should not change for identical content")
@@ -270,8 +263,7 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Short",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -280,8 +272,7 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Short thought that grew longer",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
         let sig2 = try #require(privateRenderSignature(in: view))
         #expect(sig1 != sig2, "Render signature should change when text changes")
@@ -292,8 +283,7 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -307,8 +297,7 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
-            fullText: text,
-            themeID: .dark
+            fullText: text
         )
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(
@@ -324,8 +313,7 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: longText,
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)

@@ -390,7 +390,11 @@ struct TimelineReducerEdgeCaseTests {
         defer { cache.clearAll() }
 
         let content = "same-content"
+        cache.set(content, themeID: .dark, segments: [.text(AttributedString("dark"))])
+        cache.set(content, themeID: .light, segments: [.text(AttributedString("light"))])
 
+        #expect(cache.get(content, themeID: .dark) != nil)
+        #expect(cache.get(content, themeID: .light) != nil)
 
         let stats = cache.snapshot()
         #expect(stats.entries == 2)

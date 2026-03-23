@@ -273,15 +273,15 @@ struct MarkdownSegmentCacheTests {
 
     @Test func getMissReturnsNil() {
         let cache = MarkdownSegmentCache()
-        let result = cache.get("never-cached-content", themeID: .dark)
+        let result = cache.get("never-cached-content")
         #expect(result == nil)
     }
 
     @Test func setAndGetRoundTrip() {
         let cache = MarkdownSegmentCache()
         let segments: [FlatSegment] = [.thematicBreak]
-        cache.set("test-content", themeID: .dark, segments: segments)
-        let retrieved = cache.get("test-content", themeID: .dark)
+        cache.set("test-content", segments: segments)
+        let retrieved = cache.get("test-content")
         #expect(retrieved != nil)
         #expect(retrieved?.count == 1)
     }
@@ -295,13 +295,13 @@ struct MarkdownSegmentCacheTests {
 
     @Test func clearAllRemovesEverything() {
         let cache = MarkdownSegmentCache()
-        cache.set("a", themeID: .dark, segments: [.thematicBreak])
-        cache.set("b", themeID: .dark, segments: [.thematicBreak])
+        cache.set("a", segments: [.thematicBreak])
+        cache.set("b", segments: [.thematicBreak])
 
         cache.clearAll()
 
-        #expect(cache.get("a", themeID: .dark) == nil)
-        #expect(cache.get("b", themeID: .dark) == nil)
+        #expect(cache.get("a") == nil)
+        #expect(cache.get("b") == nil)
         let snapshot = cache.snapshot()
         #expect(snapshot.entries == 0)
         #expect(snapshot.totalSourceBytes == 0)
@@ -311,17 +311,17 @@ struct MarkdownSegmentCacheTests {
         let cache = MarkdownSegmentCache()
         #expect(cache.snapshot().entries == 0)
 
-        cache.set("x", themeID: .dark, segments: [])
+        cache.set("x", segments: [])
         #expect(cache.snapshot().entries == 1)
 
-        cache.set("y", themeID: .dark, segments: [])
+        cache.set("y", segments: [])
         #expect(cache.snapshot().entries == 2)
     }
 
     @Test func snapshotTracksSourceBytes() {
         let cache = MarkdownSegmentCache()
         let content = "Hello, world!" // 13 bytes UTF-8
-        cache.set(content, themeID: .dark, segments: [])
+        cache.set(content, segments: [])
         #expect(cache.snapshot().totalSourceBytes == content.utf8.count)
     }
 
@@ -338,12 +338,12 @@ struct MarkdownSegmentCacheTests {
 
     @Test func overwritingEntryUpdatesSourceBytes() {
         let cache = MarkdownSegmentCache()
-        cache.set("short", themeID: .dark, segments: [])
+        cache.set("short", segments: [])
         let before = cache.snapshot().totalSourceBytes
 
         // Overwrite with same key but content doesn't change key identity...
         // Actually the key is based on content hash, so same content = same key
-        cache.set("short", themeID: .dark, segments: [.thematicBreak])
+        cache.set("short", segments: [.thematicBreak])
         let after = cache.snapshot().totalSourceBytes
 
         // Same content, same key — bytes should remain the same
@@ -416,7 +416,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -455,7 +454,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -473,7 +471,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -490,7 +487,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -505,7 +501,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: "my-workspace",
             serverBaseURL: URL(string: "https://pi.local:8080")! // swiftlint:disable:this force_unwrapping
         )
@@ -524,7 +519,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -543,7 +537,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
@@ -565,7 +558,6 @@ struct FlatSegmentImageResolutionTests {
         ]
         let segments = FlatSegment.build(
             from: blocks,
-            themeID: .dark,
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
