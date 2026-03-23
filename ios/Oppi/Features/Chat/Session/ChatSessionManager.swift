@@ -334,18 +334,16 @@ final class ChatSessionManager {
     /// Load and apply cached timeline data for instant display before network.
     ///
     /// Returns the cached trace signature if data was loaded, nil otherwise.
-    /// Skips cache on re-entry to avoid a flash of stale data.
+    /// Always loads cache when available — even on re-entry. Showing slightly
+    /// stale cached content is strictly better than an empty timeline while
+    /// the background trace fetch runs. The fresh trace replaces the cache
+    /// data when it arrives (via `loadSession(preserveOrphans: false)`).
     private func loadCachedTimeline(
         reducer: TimelineReducer,
         sessionStore: SessionStore,
         isReentry: Bool
     ) async -> TraceSignature? {
         transitionTo(.loadingCache)
-
-        guard !isReentry else {
-            log.info("Re-entry for \(self.sessionId) — skipping stale cache, awaiting trace fetch")
-            return nil
-        }
 
         let cacheLoadStartMs = ChatSessionTelemetry.nowMs()
         let cached = await TimelineCache.shared.loadTrace(sessionId)

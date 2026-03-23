@@ -243,13 +243,13 @@ struct ParentChildNavigationTests {
         await parentTask2.value
     }
 
-    // MARK: - Re-entry skips stale cache
+    // MARK: - Re-entry loads cache for instant display
 
-    /// Verify that on re-entry (parent→child→parent), stale cache is NOT loaded
-    /// into the reducer. The reducer should stay empty until the background trace
-    /// fetch completes with fresh data — no 200-500ms flash of stale content.
+    /// Verify that on re-entry (parent→child→parent), cached content IS loaded
+    /// immediately for instant display. Showing slightly stale data is better
+    /// than an empty timeline while the trace fetch runs.
     @MainActor
-    @Test func reentrySkipsStaleCacheOnSessionSwitch() async {
+    @Test func reentryLoadsCacheForInstantDisplay() async {
         let parentId = "parent-nocache-\(UUID().uuidString)"
         let childId = "child-nocache-\(UUID().uuidString)"
 
@@ -263,9 +263,9 @@ struct ParentChildNavigationTests {
         childManager._loadHistoryForTesting = { _, _ in nil }
         parentManager._loadHistoryForTesting = { _, _ in nil }
 
-        // Stale cache for parent — should load on first connect but NOT on re-entry
+        // Cache for parent — should load on both first connect AND re-entry
         await TimelineCache.shared.saveTrace(parentId, events: [
-            makeTraceEvent(id: "stale-1", text: "STALE_CACHE_CONTENT"),
+            makeTraceEvent(id: "cached-1", text: "CACHED_CONTENT"),
         ])
 
         let connection = ServerConnection()
@@ -292,7 +292,7 @@ struct ParentChildNavigationTests {
         // First connect: cache IS loaded normally
         let hasCacheOnFirst = reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
-                return text.contains("STALE_CACHE_CONTENT")
+                return text.contains("CACHED_CONTENT")
             }
             return false
         }
@@ -334,17 +334,18 @@ struct ParentChildNavigationTests {
         // Let any pending tasks drain
         try? await Task.sleep(for: .milliseconds(100))
 
-        // KEY: Stale cache should NOT be in the reducer on re-entry
-        let hasStaleCacheOnReentry = reducer.items.contains { item in
+        // KEY: Cached content SHOULD be in the reducer on re-entry for instant display.
+        // The background trace fetch will update it with fresh data when it completes.
+        let hasCachedContentOnReentry = reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
-                return text.contains("STALE_CACHE_CONTENT")
+                return text.contains("CACHED_CONTENT")
             }
             return false
         }
-        #expect(!hasStaleCacheOnReentry, "Re-entry should NOT load stale cache — user sees loading state instead")
+        #expect(hasCachedContentOnReentry, "Re-entry should load cache for instant display — no empty timeline")
 
-        // Reducer should be empty (cache skipped, _loadHistoryForTesting returns nil)
-        #expect(reducer.items.isEmpty, "Reducer should stay empty when cache is skipped on re-entry")
+        // Reducer should NOT be empty
+        #expect(!reducer.items.isEmpty, "Reducer should have cached content on re-entry")
 
         parentStreams.finish(index: 1)
         await parentTask2.value
