@@ -99,7 +99,7 @@ struct ChatSessionReentryTests {
         #expect(!ringCatchUpCalled, "Re-entry with cache should skip ring catch-up")
 
         // Seq should be seeded from subscribe ack
-        let seededSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+        let seededSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         #expect(seededSeq == 42, "Seq should be seeded from subscribe ack currentSeq")
 
         streams.finish(index: 0)
@@ -176,7 +176,7 @@ struct ChatSessionReentryTests {
         try? await Task.sleep(for: .milliseconds(50))
 
         // The live event should be accepted (seq 11 > seeded 10)
-        let seededSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+        let seededSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         #expect(seededSeq >= 11, "Live events with seq > seeded currentSeq should be accepted")
 
         // Verify live content is in the timeline
@@ -243,7 +243,7 @@ struct ChatSessionReentryTests {
         })
 
         // Persisted seq should be reset to 0 after regression detection
-        let seededSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+        let seededSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         #expect(seededSeq == 0, "Coordinator seq should be reset to server's currentSeq after regression")
 
         streams.finish(index: 0)
@@ -381,7 +381,7 @@ struct ChatSessionReentryTests {
         let finalStatus = sessionStore.sessions.first(where: { $0.id == sessionId })?.status
         #expect(finalStatus == .ready, "Only seq > seeded should be processed; stale events should be dropped")
 
-        let trackedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+        let trackedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         #expect(trackedSeq == 11, "Last seen seq should reflect only the accepted event")
 
         streams.finish(index: 0)

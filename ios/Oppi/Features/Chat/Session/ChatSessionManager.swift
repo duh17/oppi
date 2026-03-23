@@ -67,7 +67,6 @@ final class ChatSessionManager {
     private var wantsAutoReconnect = true
     private let telemetry = ChatSessionTelemetryTracker()
 
-    private var hasConnectedBefore = false
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
 
@@ -239,7 +238,7 @@ final class ChatSessionManager {
         markSyncStarted()
 
         let persistedLastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
-        await connection.sessionStreamCoordinator.seedLastSeenSeq(
+        connection.sessionStreamCoordinator.seedLastSeenSeq(
             sessionId: sessionId,
             value: persistedLastSeenSeq
         )
@@ -247,9 +246,6 @@ final class ChatSessionManager {
         // Measure stale-cache window: from session entry until first confirmed fresh content.
         telemetry.updateTransportPath(connection.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
-
-        let isReentry = hasConnectedBefore
-        hasConnectedBefore = true
 
         latestTraceSignature = await loadCachedTimeline(
             sessionStore: sessionStore
@@ -317,7 +313,6 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 generation: generation,
                 wsOpenStartMs: wsOpenStartMs,
-                isReentry: isReentry,
                 hasReceivedConnected: &hasReceivedConnected
             )
             if case .disconnected = entryState { break }
@@ -421,7 +416,6 @@ final class ChatSessionManager {
         sessionStore: SessionStore,
         generation: Int,
         wsOpenStartMs: Int64,
-        isReentry: Bool,
         hasReceivedConnected: inout Bool
     ) async {
         if generation != connectionGeneration {
@@ -476,7 +470,7 @@ final class ChatSessionManager {
                 // Seed seq tracking from the server's current position.
                 // History reload runs independently — no catch-up interaction.
                 if let currentSeq = inboundMeta?.currentSeq {
-                    await connection.sessionStreamCoordinator.seedLastSeenSeq(
+                    connection.sessionStreamCoordinator.seedLastSeenSeq(
                         sessionId: sessionId,
                         value: currentSeq
                     )
@@ -492,12 +486,12 @@ final class ChatSessionManager {
                 unexpectedStreamExitCount = 0
                 transitionTo(.streaming)
 
-                // Start replay buffering if the session is busy and we have a
-                // pending trace rebuild (from cache or re-entry). This captures
-                // live WS events so they survive the loadHistory() rebuild.
+                // Start replay buffering if the session is busy and we loaded
+                // from cache (trace rebuild is pending). This captures live WS
+                // events so they survive the loadHistory() rebuild.
                 let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
                     || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
-                if sessionIsBusy, telemetry.loadedFromCacheAtConnect || isReentry {
+                if sessionIsBusy, telemetry.loadedFromCacheAtConnect {
                     reducer.startReplayBuffer()
                 }
             }
@@ -538,14 +532,14 @@ final class ChatSessionManager {
             }
 
             if let seq = inboundMeta?.seq {
-                let accepted = await connection.sessionStreamCoordinator.consumeLiveSeq(
+                let accepted = connection.sessionStreamCoordinator.consumeLiveSeq(
                     sessionId: sessionId,
                     seq: seq
                 )
                 guard accepted else { return }
 
                 telemetry.recordFreshContentLagIfNeeded(reason: "stream_seq", sessionId: sessionId)
-                let updatedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+                let updatedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
                 persistLastSeenSeq(updatedSeq)
             }
 
@@ -903,7 +897,7 @@ final class ChatSessionManager {
             ChatSessionTelemetry.recordCatchup(durationMs: durationMs, sessionId: self.sessionId, result: result)
         }
 
-        let decision = await connection.sessionStreamCoordinator.catchUpDecision(
+        let decision = connection.sessionStreamCoordinator.catchUpDecision(
             sessionId: sessionId,
             currentSeq: currentSeq
         )
@@ -963,7 +957,7 @@ final class ChatSessionManager {
 
             if !response.catchUpComplete {
                 log.warning("Ring miss for \(self.sessionId) since seq \(since) — scheduling history reload")
-                await connection.sessionStreamCoordinator.seedLastSeenSeq(
+                connection.sessionStreamCoordinator.seedLastSeenSeq(
                     sessionId: sessionId,
                     value: response.currentSeq
                 )
@@ -983,7 +977,7 @@ final class ChatSessionManager {
 
             var appliedCatchUp = false
             for event in response.events {
-                let accepted = await connection.sessionStreamCoordinator.consumeLiveSeq(
+                let accepted = connection.sessionStreamCoordinator.consumeLiveSeq(
                     sessionId: sessionId,
                     seq: event.seq
                 )
@@ -997,16 +991,16 @@ final class ChatSessionManager {
                 appliedCatchUp = true
             }
 
-            let trackedAfterEvents = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+            let trackedAfterEvents = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
             if response.currentSeq > trackedAfterEvents {
-                await connection.sessionStreamCoordinator.applyCatchUpProgress(
+                connection.sessionStreamCoordinator.applyCatchUpProgress(
                     sessionId: sessionId,
                     seq: response.currentSeq
                 )
                 appliedCatchUp = true
             }
 
-            let persistedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
+            let persistedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
             persistLastSeenSeq(persistedSeq)
 
             recordCatchupMs(appliedCatchUp ? "applied" : "no_gap")
