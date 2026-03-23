@@ -30,8 +30,6 @@ struct WorkspaceDetailView: View {
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
 
-
-
     private struct SessionLineageSummary {
         let parentSessionName: String?
         let parentSessionStatus: SessionStatus?
@@ -101,19 +99,6 @@ struct WorkspaceDetailView: View {
         return node.children.contains { treeMatchesSearch($0) }
     }
 
-    private var stoppedSessions: [Session] {
-        let stoppedTreeNodes = SessionTreeHelper.buildTree(
-            from: workspaceSessions.filter { $0.status == .stopped }
-        )
-        let matchingRoots = hasSessionSearchQuery
-            ? stoppedTreeNodes.filter { treeMatchesSearch($0) }
-            : stoppedTreeNodes
-
-        return matchingRoots
-            .map(\.session)
-            .sorted { $0.lastActivity > $1.lastActivity }
-    }
-
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
     ///
     /// The hostMount uses `~` (e.g. `~/workspace/oppi`) while CWD from the server
@@ -162,6 +147,7 @@ struct WorkspaceDetailView: View {
     private struct ViewData {
         let rootNodes: [SessionTreeHelper.TreeNode]
         let stopped: [Session]
+        let stoppedRootNodesById: [String: SessionTreeHelper.TreeNode]
         let localFiltered: [LocalSession]
         let wsEmpty: Bool
     }
@@ -187,9 +173,21 @@ struct WorkspaceDetailView: View {
             return lhsSort > rhsSort
         }
 
+        let allStoppedTreeNodes = SessionTreeHelper.buildTree(
+            from: workspaceSessions.filter { $0.status == .stopped }
+        )
+        let matchingStoppedTreeNodes = hasSessionSearchQuery
+            ? allStoppedTreeNodes.filter { treeMatchesSearch($0) }
+            : allStoppedTreeNodes
+
         return ViewData(
             rootNodes: rootNodes,
-            stopped: stoppedSessions,
+            stopped: matchingStoppedTreeNodes
+                .map(\.session)
+                .sorted { $0.lastActivity > $1.lastActivity },
+            stoppedRootNodesById: Dictionary(
+                uniqueKeysWithValues: allStoppedTreeNodes.map { ($0.session.id, $0) }
+            ),
             localFiltered: filteredLocalSessions,
             wsEmpty: workspaceSessions.isEmpty
         )
@@ -236,6 +234,16 @@ struct WorkspaceDetailView: View {
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
                 lineageHint: { session in lineageHint(for: session) },
+                childSummary: { session in
+                    guard let node = data.stoppedRootNodesById[session.id], node.hasChildren else {
+                        return nil
+                    }
+                    return .init(
+                        childCount: SessionTreeHelper.countAllChildren(node),
+                        statusCounts: SessionTreeHelper.childStatusCounts(node),
+                        aggregateCost: SessionTreeHelper.aggregateCost(node)
+                    )
+                },
                 onResumeSession: { session in
                     Task { await resumeSession(session) }
                 },
