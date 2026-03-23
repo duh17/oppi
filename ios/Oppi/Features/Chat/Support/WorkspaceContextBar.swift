@@ -88,6 +88,7 @@ struct WorkspaceContextBar: View {
     @State private var launchActionInFlight: WorkspaceReviewSessionAction?
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
+    @State private var stoppingAgentIds: Set<String> = []
 
     // Drag-select state
     @State private var rowFrames: [String: CGRect] = [:]
@@ -701,30 +702,53 @@ struct WorkspaceContextBar: View {
     private var agentStatusPills: some View {
         HStack(spacing: 4) {
             if agentWorkingCount > 0 {
-                Text("\(agentWorkingCount) working")
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(.themeOrange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                compactAgentStatusPill(
+                    count: agentWorkingCount,
+                    foreground: .themeOrange,
+                    background: Color.themeOrange.opacity(0.12),
+                    accessibilityLabel: "\(agentWorkingCount) working"
+                )
             }
             if agentDoneCount > 0 {
-                Text("\(agentDoneCount) done")
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(.themeGreen)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.themeGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                compactAgentStatusPill(
+                    count: agentDoneCount,
+                    foreground: .themeGreen,
+                    background: Color.themeGreen.opacity(0.12),
+                    accessibilityLabel: "\(agentDoneCount) done"
+                )
             }
             if agentErrorCount > 0 {
-                Text("\(agentErrorCount) error")
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(.themeRed)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.themeRed.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                compactAgentStatusPill(
+                    count: agentErrorCount,
+                    foreground: .themeRed,
+                    background: Color.themeRed.opacity(0.12),
+                    accessibilityLabel: "\(agentErrorCount) error"
+                )
             }
         }
+    }
+
+    private func compactAgentStatusPill(
+        count: Int,
+        foreground: Color,
+        background: Color,
+        accessibilityLabel: String
+    ) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(foreground)
+                .frame(width: 5, height: 5)
+
+            Text("\(count)")
+                .font(.appTagBold)
+                .foregroundStyle(foreground)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(background, in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     // MARK: - Agents Section (expanded)
@@ -746,52 +770,95 @@ struct WorkspaceContextBar: View {
         .padding(.bottom, 4)
     }
 
+    private var agentIsStoppable: (Session) -> Bool {
+        { child in
+            !stoppingAgentIds.contains(child.id)
+                && (child.status == .busy || child.status == .starting)
+        }
+    }
+
     private func agentRow(_ child: Session) -> some View {
-        Button {
-            onSelectChild?(child.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                // Top line: status pill + name + chevron
-                HStack(spacing: 8) {
-                    agentStatusLabel(for: child.status)
-                        .fixedSize()
+        HStack(spacing: 0) {
+            Button {
+                onSelectChild?(child.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    // Top line: status pill + name + chevron
+                    HStack(spacing: 8) {
+                        agentStatusLabel(for: child.status)
+                            .fixedSize()
 
-                    Text(child.displayTitle)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(child.status == .error ? .themeRed : .themeFg)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        Text(child.displayTitle)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(child.status == .error ? .themeRed : .themeFg)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                    Spacer(minLength: 4)
+                        Spacer(minLength: 4)
 
-                    Image(systemName: "chevron.right")
-                        .font(.appBadgeLight)
-                        .foregroundStyle(.themeComment.opacity(0.5))
-                }
-
-                // Bottom line: model, cost, duration (right-aligned under the name)
-                HStack(spacing: 6) {
-                    if let model = SessionFormatting.shortModelName(child.model) {
-                        Text(model)
-                    }
-                    if child.cost > 0 {
-                        Text(SessionFormatting.costString(child.cost))
-                    }
-                    if child.status == .busy || child.status == .starting || child.status == .stopping {
-                        TimelineView(.periodic(from: .now, by: 5)) { _ in
-                            Text(SessionFormatting.durationString(since: child.createdAt))
+                        if !agentIsStoppable(child) {
+                            Image(systemName: "chevron.right")
+                                .font(.appBadgeLight)
+                                .foregroundStyle(.themeComment.opacity(0.5))
                         }
                     }
+
+                    // Bottom line: model, cost, duration
+                    HStack(spacing: 6) {
+                        if let model = SessionFormatting.shortModelName(child.model) {
+                            Text(model)
+                        }
+                        if child.cost > 0 {
+                            Text(SessionFormatting.costString(child.cost))
+                        }
+                        if child.status == .busy || child.status == .starting || child.status == .stopping {
+                            TimelineView(.periodic(from: .now, by: 5)) { _ in
+                                Text(SessionFormatting.durationString(since: child.createdAt))
+                            }
+                        }
+                    }
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.themeComment)
+                    .padding(.leading, 2)
                 }
-                .font(.caption2.monospaced())
-                .foregroundStyle(.themeComment)
-                .padding(.leading, 2)
+                .padding(.leading, 12)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if agentIsStoppable(child) {
+                Button {
+                    Task { await stopAgent(child) }
+                } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(.themeRed)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else if stoppingAgentIds.contains(child.id) {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func stopAgent(_ child: Session) async {
+        guard let api = apiClient,
+              let workspaceId = child.workspaceId ?? workspaceId else { return }
+        stoppingAgentIds.insert(child.id)
+        defer { stoppingAgentIds.remove(child.id) }
+        do {
+            let updated = try await api.stopSession(workspaceId: workspaceId, id: child.id)
+            sessionStore.upsert(updated)
+        } catch {
+            launchError = "Stop failed: \(error.localizedDescription)"
+        }
     }
 
     private func agentStatusLabel(for status: SessionStatus) -> some View {
