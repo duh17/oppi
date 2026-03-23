@@ -23,12 +23,23 @@ private final class SafeSizingCell: UICollectionViewCell {
     private static let maxValidHeight: CGFloat = 10_000
     private static let fallbackHeight: CGFloat = 44
 
-    /// UIKit resets contentView.clipsToBounds when applying content
-    /// configurations. Override layoutSubviews — which fires after every
-    /// configuration change — to enforce clipping. Without this, cell
-    /// content overflows into adjacent cells when the compositional
-    /// layout hasn't resolved estimated heights to actual heights yet
-    /// (e.g., during streaming when layoutIfNeeded is skipped).
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // Cell-level clipping: UIKit resets contentView.clipsToBounds when
+        // applying content configurations, but does NOT reset the cell's own
+        // clipsToBounds. Setting it here provides persistent overflow
+        // protection even when layoutSubviews hasn't fired yet (e.g. during
+        // streaming when layoutIfNeeded is skipped and cells still have
+        // estimated heights from the compositional layout).
+        clipsToBounds = true
+        contentView.clipsToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// Safety net: re-enforce contentView clipping after UIKit resets it
+    /// during content configuration changes.
     override func layoutSubviews() {
         super.layoutSubviews()
         if !contentView.clipsToBounds {
@@ -192,6 +203,7 @@ extension ChatTimelineCollectionHost.Controller {
                 onTap: { [weak self] in self?.onShowEarlier?() }
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
             ChatTimelinePerf.recordCellConfigure(
                 rowType: "load_more",
                 durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
@@ -213,6 +225,7 @@ extension ChatTimelineCollectionHost.Controller {
                 modelId: modelId
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
             ChatTimelinePerf.recordCellConfigure(
                 rowType: "working_indicator",
                 durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
@@ -407,6 +420,11 @@ extension ChatTimelineCollectionHost.Controller {
     ) {
         cell.contentConfiguration = configuration
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        // Re-enforce clipping immediately — UIKit resets contentView.clipsToBounds
+        // when applying content configurations, and layoutSubviews won't fire until
+        // the next display link tick. Without this, cells overflow during streaming
+        // when layoutIfNeeded is skipped.
+        cell.contentView.clipsToBounds = true
         ChatTimelinePerf.recordCellConfigure(
             rowType: rowType,
             durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
@@ -430,6 +448,7 @@ extension ChatTimelineCollectionHost.Controller {
         fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
         cell.contentConfiguration = fallback
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        cell.contentView.clipsToBounds = true
         ChatTimelinePerf.recordCellConfigure(
             rowType: rowType,
             durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
