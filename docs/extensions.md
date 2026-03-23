@@ -273,7 +273,7 @@ The mobile renderer controls what appears in the **title bar** during streaming 
 
 For dynamic chart UI in chat, use the `plot` extension tool contract documented in:
 
-- [`docs/dynamic-ui-plot.md`](dynamic-ui-plot.md)
+- `.internal/docs-design/dynamic-ui-plot.md`
 
 Short version:
 - `plot` returns normal text in `content` (for LLM context and fallback)

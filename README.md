@@ -67,23 +67,44 @@ If the auto-detected hostname isn't reachable from your phone, pass one explicit
 npx oppi serve --host my-machine.local
 ```
 
+## What you can do
+
+**Supervise sessions.** Start, stop, fork, and resume pi coding sessions from your phone. Stream output in real time with full markdown and tool call rendering.
+
+**Approve tool calls.** The built-in policy engine catches dangerous operations (credential access, pipe-to-shell, sudo) and sends them to your phone. You choose allow or deny, with scope options (once, per-session, or globally).
+
+**Manage workspaces.** Map workspaces to directories on your machine. Each workspace gets its own session history, git status, and policy config.
+
+**Control models.** Switch LLM provider and model mid-session. Adjust thinking level. Queue steering messages while the agent is working, or follow-up messages for after it finishes.
+
+**Run multi-agent.** Agents can spawn child sessions. You see the full tree from your phone — check status, inspect traces, drill into individual turns.
+
+**Connect multiple servers.** The iOS app supports multiple oppi-server instances. Switch between them or receive permission notifications from all at once.
+
 ## Commands
 
 ```
-npx oppi serve [--host <h>]    start server (auto-inits on first run)
-npx oppi pair [--host <h>]     regenerate pairing QR
-npx oppi status                show running sessions
-npx oppi doctor                check setup
-npx oppi config show           show current config
-npx oppi config set <k> <v>    update config
+npx oppi serve [--host <h>]      start server (auto-inits on first run)
+npx oppi pair [--host <h>]       regenerate pairing QR
+npx oppi status                  server config and connection overview
+npx oppi doctor                  check prerequisites
+npx oppi init                    interactive first-time setup
+npx oppi config show             current config
+npx oppi config set <k> <v>      update config value
+npx oppi config get <k>          get single config value
+npx oppi config validate         validate config file
+npx oppi token rotate            rotate owner auth token
 ```
 
 ## Docs
 
-- [Server README](server/README.md)
-- [Config schema](server/docs/config-schema.md)
-- [Policy engine](server/docs/policy-engine.md)
-- [Custom themes](docs/theme-system.md)
+- [Server README](server/README.md) — server setup, Docker, development
+- [Config schema](server/docs/config-schema.md) — all config options
+- [Policy engine](server/docs/policy-engine.md) — permission rules and heuristics
+- [Extensions](docs/extensions.md) — writing and using pi extensions with Oppi
+- [Custom themes](docs/theme-system.md) — creating color themes for the iOS app
+- [Telemetry and privacy](docs/telemetry.md) — what data is collected (short answer: none)
+- [Security](SECURITY.md) — security model and privacy
 
 ## License
 

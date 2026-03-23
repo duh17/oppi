@@ -2,24 +2,38 @@
 
 Oppi runs a coding agent on your machine with filesystem and tool access. It is provided as-is with no warranty. Use at your own risk.
 
-There is a built-in policy engine that gates tool calls (allow, deny, or prompt for approval on phone). See [policy engine docs](server/docs/policy-engine.md) for details.
+## Permission gate
 
-For isolation, run the server in Docker:
+A built-in policy engine gates every tool call. For each call, the gate can allow it, send it to your phone for approval, or block it. By default, most operations auto-run, but built-in heuristics catch dangerous patterns:
 
-```bash
-cd server
-docker compose up
-```
+- **Pipe to shell** — commands piped from curl/wget into sh/bash
+- **Data egress** — curl/wget with POST data or upload flags
+- **Secret access** — reads of `.env`, credentials, private keys, `~/.ssh/`
+- **Secret in URL** — environment variables expanded inside URLs
+
+When a heuristic triggers, you get a push notification on your phone with the full command. You decide: allow or deny, scoped to once, this session, or globally.
+
+See [policy engine docs](server/docs/policy-engine.md) for rules, heuristics, and audit logging.
+
+## Authentication
+
+Pairing generates a shared bearer token via QR code scan. All HTTP and WebSocket connections require this token. The server generates an Ed25519 identity key pair on first run; the fingerprint is embedded in the pairing invite so the iOS app can verify it's connecting to the right server.
+
+Rotate the token with `npx oppi token rotate`.
+
+## Transport
+
+TLS is configurable: self-signed (with certificate pinning in the iOS app), Tailscale (Let's Encrypt via `tailscale cert`), Cloudflare, manual cert, or disabled. Self-signed mode auto-generates cert material and embeds the CA fingerprint in the pairing payload.
+
+For local network use without TLS, the connection is unencrypted. Use TLS for any network you don't fully trust.
 
 ## Privacy
 
-Oppi does not phone home. There are no accounts, no analytics, and no data sent to any external service.
+Oppi does not phone home. There are no accounts, no analytics, and no data sent to any external service. All session data stays on your machine.
 
-All telemetry (session metrics, performance data) is stored locally on your machine. A bundled Grafana dashboard is available if you want to visualize it — run `docker compose -f docker-compose.telemetry.yml up` in the server directory.
+Sentry crash reporting in the iOS app is opt-in and disabled by default. MetricKit performance telemetry is only collected in internal/TestFlight builds and stored locally on the server.
 
-Sentry crash reporting in the iOS app is disabled by default and only enabled in development builds. If you self-host your own Sentry instance, you can configure it yourself.
-
-See [`ios/Oppi/Resources/PrivacyInfo.xcprivacy`](ios/Oppi/Resources/PrivacyInfo.xcprivacy) for the Apple Privacy Manifest.
+See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
 
 ## Reporting issues
 

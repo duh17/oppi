@@ -14,8 +14,8 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
   "defaultModel": "openai-codex/gpt-5.3-codex",
   "sessionIdleTimeoutMs": 600000,
   "workspaceIdleTimeoutMs": 1800000,
-  "maxSessionsPerWorkspace": 3,
-  "maxSessionsGlobal": 5,
+  "maxSessionsPerWorkspace": 20,
+  "maxSessionsGlobal": 40,
   "approvalTimeoutMs": 120000,
   "permissionGate": true,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
@@ -40,13 +40,13 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
 | `defaultModel`            | string   | `openai-codex/gpt-5.3-codex` | Default model for new sessions                                                                    |
 | `sessionIdleTimeoutMs`    | number   | `600000`                     | Kill idle sessions after 10 min                                                                   |
 | `workspaceIdleTimeoutMs`  | number   | `1800000`                    | Stop idle workspaces after 30 min                                                                 |
-| `maxSessionsPerWorkspace` | number   | `3`                          | Max concurrent sessions per workspace                                                             |
-| `maxSessionsGlobal`       | number   | `5`                          | Max concurrent sessions total                                                                     |
+| `maxSessionsPerWorkspace` | number   | `20`                         | Max concurrent sessions per workspace                                                             |
+| `maxSessionsGlobal`       | number   | `40`                         | Max concurrent sessions total                                                                     |
 | `approvalTimeoutMs`       | number   | `120000`                     | Permission gate timeout; `0` = no expiry                                                          |
 | `permissionGate`          | boolean  | `true`                       | Gate on with `fallback: allow` — heuristics catch dangerous ops, everything else auto-runs        |
 | `runtimePathEntries`      | string[] | sane executable paths        | Runtime PATH entries used by tools (explicit, config-driven)                                      |
 | `runtimeEnv`              | object   | `{}`                         | Additional runtime env vars (string values)                                                       |
-| `tls.mode`                | string   | `"disabled"`                | Transport mode: `disabled`, `self-signed`, `tailscale`, or `manual` (future: `auto`, `cloudflare`) |
+| `tls.mode`                | string   | `"disabled"`                | Transport mode: `disabled`, `self-signed`, `tailscale`, `manual`, `auto`, or `cloudflare`          |
 | `tls.certPath`            | string   | self-signed default path     | PEM cert path used for HTTPS/WSS (`manual` requires explicit path)                                 |
 | `tls.keyPath`             | string   | self-signed default path     | PEM private key path used for HTTPS/WSS (`manual` requires explicit path)                          |
 | `tls.caPath`              | string   | self-signed default path     | Optional CA chain path (required in `self-signed` mode for client pinning)                         |
@@ -93,6 +93,13 @@ Heuristic settings (on/off toggles for structural detection) live under `policy.
   }
 }
 ```
+
+| Heuristic        | What it catches |
+| ---------------- | --------------- |
+| `pipeToShell`    | Commands that pipe data directly into a shell (`curl ... \| bash`, `wget ... \| sh`, etc.) |
+| `dataEgress`     | Outbound transfers that look like bulk data exfiltration (large `curl`/`wget` POSTs, `scp`, `rsync` to external hosts) |
+| `secretEnvInUrl` | URLs that embed env var values matching secret-name patterns (`$AWS_SECRET_ACCESS_KEY`, `$TOKEN`, etc.) |
+| `secretFileAccess` | Read/write access to credential files (`~/.ssh/id_*`, `~/.aws/credentials`, `.env` files with secret-like keys) |
 
 Set any heuristic to `false` to disable it. Decisions: `allow`, `ask`, `block`.
 

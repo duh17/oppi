@@ -27,8 +27,7 @@ This gate controls all diagnostics transports:
 3. Chat metrics upload (`POST /telemetry/chat-metrics`)
 4. Debug client-log upload (`POST /workspaces/:workspaceId/sessions/:sessionId/client-logs`)
 
-For the build-mode matrix, channel inventory, and full metric catalog, see:
-- [`docs/telemetry-catalog.md`](telemetry-catalog.md)
+For the build-mode matrix, channel inventory, and full metric catalog, see the internal telemetry catalog (`.internal/telemetry-catalog.md`).
 
 
 ## Explicit non-goals (what Oppi does not track)

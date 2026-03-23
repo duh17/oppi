@@ -52,6 +52,8 @@ A containerized setup is included in this directory:
 - `docker-compose.yml`
 - `docker/entrypoint.sh`
 
+The container runs `oppi serve`, persists state in Docker volumes, and seeds PI auth and skills from your host on first start. Mounting the Docker socket is optional — only needed for Docker-backed skill wrappers.
+
 Quick start:
 
 ```bash
@@ -117,10 +119,14 @@ docker compose start
 
 ```bash
 npx oppi serve [--host <h>]      # start server (auto-inits on first run)
+npx oppi init                    # interactive first-time setup
 npx oppi pair [name]             # regenerate pairing QR
-npx oppi status                  # show running sessions
+npx oppi status                  # show server config and connection overview
+npx oppi doctor                  # security + environment diagnostics
 npx oppi config show             # show config
+npx oppi config get <key>        # get a single config value
 npx oppi config set <key> <val>  # update config
+npx oppi config validate         # validate config file
 npx oppi token rotate            # rotate owner bearer token
 ```
 
