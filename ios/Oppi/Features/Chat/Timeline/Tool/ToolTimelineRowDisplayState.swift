@@ -132,16 +132,22 @@ enum ToolTimelineRowDisplayState {
 
     static func applyElapsed(
         startedAt: Date?,
+        elapsedSeconds: Int?,
         isDone: Bool,
         elapsedLabel: UILabel
     ) {
-        guard let startedAt else {
+        // Done tools use frozen value; running tools compute from startedAt.
+        let elapsed: Int
+        if let frozen = elapsedSeconds {
+            elapsed = frozen
+        } else if let startedAt {
+            elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+        } else {
             elapsedLabel.text = nil
             elapsedLabel.isHidden = true
             return
         }
 
-        let elapsed = Int(Date().timeIntervalSince(startedAt))
         // Don't show for sub-second completed tools — too noisy
         if isDone && elapsed < 1 {
             elapsedLabel.text = nil

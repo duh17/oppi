@@ -27,8 +27,10 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let isExpanded: Bool
     let isDone: Bool
     let isError: Bool
-    /// When the tool call started (live sessions only). Used to display elapsed time.
+    /// When the tool call started (live sessions only). Used to tick elapsed time while running.
     let startedAt: Date?
+    /// Frozen elapsed seconds for completed tool calls. Takes priority over startedAt.
+    let elapsedSeconds: Int?
     /// Pre-rendered attributed title from server segments. When set, takes
     /// priority over the plain `title` + `toolNamePrefix` + `toolNameColor` path.
     let segmentAttributedTitle: NSAttributedString?
@@ -909,6 +911,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
         ToolTimelineRowDisplayState.applyElapsed(
             startedAt: configuration.startedAt,
+            elapsedSeconds: configuration.elapsedSeconds,
             isDone: configuration.isDone,
             elapsedLabel: elapsedLabel
         )
@@ -1034,6 +1037,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 guard let self else { return }
                 ToolTimelineRowDisplayState.applyElapsed(
                     startedAt: startedAt,
+                    elapsedSeconds: nil,
                     isDone: false,
                     elapsedLabel: self.elapsedLabel
                 )

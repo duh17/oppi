@@ -92,9 +92,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Used by the UI to display elapsed time on tool rows.
     private var toolStartTimes: [String: Date] = [:]
 
-    /// Start time recorded when a tool call began, if available.
+    /// Frozen elapsed seconds for completed tool calls (keyed by tool event ID).
+    /// Computed once at tool_end so the displayed value doesn't drift on reconfiguration.
+    private var toolElapsedSeconds: [String: Int] = [:]
+
+    /// Start time recorded when a tool call began (running tools only).
     func toolStartTime(for id: String) -> Date? {
         toolStartTimes[id]
+    }
+
+    /// Frozen elapsed duration for a completed tool call.
+    func toolElapsed(for id: String) -> Int? {
+        toolElapsedSeconds[id]
     }
 
     /// Trace event IDs from the last successful history load.
@@ -186,6 +195,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolSegmentStore.clearAll()
         toolDetailsStore.clearAll()
         toolStartTimes.removeAll()
+        toolElapsedSeconds.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
@@ -893,6 +903,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let before = renderMutationCheckpoint()
         let previousDetails = toolDetailsStore.details(for: toolEventId)
         let previousResultSegments = toolSegmentStore.resultSegments(for: toolEventId)
+        // Freeze elapsed seconds so the value doesn't drift on later reconfigurations.
+        if let startedAt = toolStartTimes[toolEventId] {
+            toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
+        }
         if let details {
             toolDetailsStore.set(details, for: toolEventId)
         } else {
