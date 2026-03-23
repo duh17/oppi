@@ -72,8 +72,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -192,8 +192,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(100.0 * SUM(CASE WHEN value > 16 THEN 1 ELSE 0 END) / COUNT(*), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_apply_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(100.0 * SUM(CASE WHEN value > 16 THEN 1 ELSE 0 END) / COUNT(*), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_apply_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(value), 1) as value\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND build_number = (SELECT MAX(build_number) FROM chat_metric_samples)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -1420,6 +1420,130 @@
           "color": {
             "mode": "palette-classic"
           },
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n  value,\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS metric\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n  value,\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS metric\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": [
+            "time"
+          ],
+          "refId": "A"
+        }
+      ],
+      "title": "Jank Rate (chat.jank_pct, by phase)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 15
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "id": 31,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS phase,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_pct,\n  ROUND(MIN(value), 1) AS min_pct,\n  ROUND(MAX(value), 1) AS max_pct,\n  CAST(ROUND(AVG(CAST(json_extract(tags_json, '$.cycles') AS INTEGER))) AS INTEGER) AS avg_cycles,\n  CAST(ROUND(AVG(CAST(json_extract(tags_json, '$.hitches') AS INTEGER))) AS INTEGER) AS avg_hitches\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY phase\nORDER BY avg_pct DESC",
+          "queryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS phase,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_pct,\n  ROUND(MIN(value), 1) AS min_pct,\n  ROUND(MAX(value), 1) AS max_pct,\n  CAST(ROUND(AVG(CAST(json_extract(tags_json, '$.cycles') AS INTEGER))) AS INTEGER) AS avg_cycles,\n  CAST(ROUND(AVG(CAST(json_extract(tags_json, '$.hitches') AS INTEGER))) AS INTEGER) AS avg_hitches\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY phase\nORDER BY avg_pct DESC",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ],
+      "title": "Jank breakdown by phase",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "unit": "ms",
           "custom": {
             "drawStyle": "points",
@@ -1433,6 +1557,25 @@
             "matcher": {
               "id": "byFrameRefID",
               "options": "A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "session_load_ms (vital)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1451,7 +1594,7 @@
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "B"
+              "options": "C"
             },
             "properties": [
               {
@@ -1470,7 +1613,7 @@
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "C"
+              "options": "D"
             },
             "properties": [
               {
@@ -1516,12 +1659,25 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": [
+            "time"
+          ],
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": [
             "time"
           ],
-          "refId": "A"
+          "refId": "B"
         },
         {
           "datasource": {
@@ -1534,7 +1690,7 @@
           "timeColumns": [
             "time"
           ],
-          "refId": "B"
+          "refId": "C"
         },
         {
           "datasource": {
@@ -1547,7 +1703,7 @@
           "timeColumns": [
             "time"
           ],
-          "refId": "C"
+          "refId": "D"
         }
       ],
       "title": "Session Load Pipeline",
