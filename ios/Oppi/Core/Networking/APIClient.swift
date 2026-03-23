@@ -769,6 +769,15 @@ actor APIClient {
         return try await get("/workspaces/\(workspaceId)/files/\(path)?mode=browse")
     }
 
+    /// Build an authenticated URL for streaming media via AVPlayer.
+    ///
+    /// Uses query-param token auth so AVPlayer can stream directly from the
+    /// server without needing custom header injection. No data is downloaded
+    /// by this method — AVPlayer handles progressive download and buffering.
+    func browseFileStreamURL(workspaceId: String, path: String) throws -> URL {
+        return try makeURL(path: "/workspaces/\(workspaceId)/files/\(path)?mode=browse&token=\(token)")
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.

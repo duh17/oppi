@@ -1,3 +1,4 @@
+import AVKit
 import PDFKit
 import SwiftUI
 
@@ -8,6 +9,8 @@ import SwiftUI
 /// - Code: syntax-highlighted source with line numbers
 /// - JSON: pretty-printed with colored tokens
 /// - Images: inline preview
+/// - Video/Audio: native AVPlayer with playback controls
+/// - PDF: PDFKit with scroll, zoom, and text selection
 /// - Plain text: monospaced with line numbers
 struct FileBrowserContentView: View {
     let workspaceId: String
@@ -22,12 +25,20 @@ struct FileBrowserContentView: View {
         fileName.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
     }
 
-    private var isImage: Bool {
-        ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff"].contains(fileExtension)
-    }
-
-    private var isPDF: Bool {
-        fileExtension == "pdf"
+    /// Determine the media category for this file extension.
+    private var mediaCategory: MediaCategory {
+        switch fileExtension {
+        case "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff":
+            return .image
+        case "mp4", "mov", "m4v", "avi", "webm":
+            return .video
+        case "mp3", "m4a", "wav", "aac", "ogg", "flac", "opus":
+            return .audio
+        case "pdf":
+            return .pdf
+        default:
+            return .text
+        }
     }
 
     /// Router that triggers a quick session with the selected text.
@@ -61,6 +72,10 @@ struct FileBrowserContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             case .image(let data):
                 imageView(data)
+            case .video(let url):
+                VideoBrowserView(url: url)
+            case .audio(let url):
+                AudioBrowserView(url: url, fileName: fileName)
             case .pdf(let data):
                 PDFBrowserView(data: data)
             case .binary:
@@ -105,26 +120,166 @@ struct FileBrowserContentView: View {
             return
         }
         do {
-            let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
+            let category = mediaCategory
 
-            if isImage {
-                content = .image(data)
-                return
-            }
-
-            if isPDF {
-                content = .pdf(data)
-                return
-            }
-
-            if let text = String(data: data, encoding: .utf8) {
-                content = .text(text)
-            } else {
-                content = .binary
+            switch category {
+            case .video:
+                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
+                content = .video(url)
+            case .audio:
+                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
+                content = .audio(url)
+            case .image, .pdf, .text:
+                let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
+                switch category {
+                case .image: content = .image(data)
+                case .pdf: content = .pdf(data)
+                default:
+                    if let text = String(data: data, encoding: .utf8) {
+                        content = .text(text)
+                    } else {
+                        content = .binary
+                    }
+                }
             }
         } catch {
             content = .error(error.localizedDescription)
         }
+    }
+}
+
+// MARK: - Video View
+
+/// Full-featured video player with native AVKit controls.
+/// Streams directly from the server URL — no download or temp files.
+private struct VideoBrowserView: View {
+    let url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .ignoresSafeArea(edges: .bottom)
+            .onAppear {
+                player = AVPlayer(url: url)
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
+    }
+}
+
+// MARK: - Audio View
+
+/// Audio player with playback controls, centered in the view.
+private struct AudioBrowserView: View {
+    let url: URL
+    let fileName: String
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var currentTime: TimeInterval = 0
+    @State private var duration: TimeInterval = 0
+    @State private var timeObserver: Any?
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            // Album art placeholder
+            Image(systemName: "waveform")
+                .font(.system(size: 60))
+                .foregroundStyle(.themeComment)
+
+            Text(fileName)
+                .font(.headline)
+                .foregroundStyle(.themeFg)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+
+            // Progress bar
+            VStack(spacing: 4) {
+                ProgressView(value: duration > 0 ? currentTime / duration : 0)
+                    .tint(.themeSyntaxKeyword)
+
+                HStack {
+                    Text(formatTime(currentTime))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                    Spacer()
+                    Text(formatTime(duration))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .padding(.horizontal, 40)
+
+            // Play/pause button
+            Button {
+                togglePlayback()
+            } label: {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.themeSyntaxKeyword)
+            }
+
+            Spacer()
+        }
+        .padding()
+        .onAppear { setupPlayer() }
+        .onDisappear { teardownPlayer() }
+    }
+
+    private func setupPlayer() {
+        let avPlayer = AVPlayer(url: url)
+        player = avPlayer
+
+        // Observe playback time at 10Hz
+        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            currentTime = time.seconds
+            if let item = avPlayer.currentItem {
+                let dur = item.duration.seconds
+                if dur.isFinite { duration = dur }
+            }
+        }
+
+        // Observe when playback ends
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: avPlayer.currentItem,
+            queue: .main
+        ) { _ in
+            isPlaying = false
+        }
+    }
+
+    private func teardownPlayer() {
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
+        }
+        player?.pause()
+        player = nil
+    }
+
+    private func togglePlayback() {
+        guard let player else { return }
+        if isPlaying {
+            player.pause()
+        } else {
+            // If at end, seek to start
+            if currentTime >= duration - 0.1, duration > 0 {
+                player.seek(to: .zero)
+            }
+            player.play()
+        }
+        isPlaying.toggle()
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return "\(mins):\(String(format: "%02d", secs))"
     }
 }
 
@@ -165,6 +320,12 @@ private struct PDFKitView: UIViewRepresentable {
     func updateUIView(_ view: PDFView, context: Context) {}
 }
 
+// MARK: - Media Category
+
+private enum MediaCategory {
+    case image, video, audio, pdf, text
+}
+
 // MARK: - Phase
 
 private enum FileContentPhase: Equatable {
@@ -172,6 +333,8 @@ private enum FileContentPhase: Equatable {
     case error(String)
     case text(String)
     case image(Data)
+    case video(URL)
+    case audio(URL)
     case pdf(Data)
     case binary
 
@@ -181,6 +344,8 @@ private enum FileContentPhase: Equatable {
         case (.error(let a), .error(let b)): a == b
         case (.text(let a), .text(let b)): a == b
         case (.image(let a), .image(let b)): a == b
+        case (.video(let a), .video(let b)): a == b
+        case (.audio(let a), .audio(let b)): a == b
         case (.pdf(let a), .pdf(let b)): a == b
         case (.binary, .binary): true
         default: false

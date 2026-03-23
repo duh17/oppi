@@ -255,6 +255,24 @@ describe("getContentType", () => {
     expect(getContentType(".pdf", "doc.pdf")).toBe("application/pdf");
   });
 
+  test("returns video content types", () => {
+    expect(getContentType(".mp4", "clip.mp4")).toBe("video/mp4");
+    expect(getContentType(".mov", "recording.mov")).toBe("video/quicktime");
+    expect(getContentType(".m4v", "movie.m4v")).toBe("video/x-m4v");
+    expect(getContentType(".avi", "old.avi")).toBe("video/x-msvideo");
+    expect(getContentType(".webm", "web.webm")).toBe("video/webm");
+  });
+
+  test("returns audio content types", () => {
+    expect(getContentType(".mp3", "song.mp3")).toBe("audio/mpeg");
+    expect(getContentType(".m4a", "voice.m4a")).toBe("audio/mp4");
+    expect(getContentType(".wav", "sample.wav")).toBe("audio/wav");
+    expect(getContentType(".aac", "track.aac")).toBe("audio/aac");
+    expect(getContentType(".ogg", "podcast.ogg")).toBe("audio/ogg");
+    expect(getContentType(".flac", "lossless.flac")).toBe("audio/flac");
+    expect(getContentType(".opus", "voice.opus")).toBe("audio/opus");
+  });
+
   test("returns text/plain for code files", () => {
     expect(getContentType(".ts", "index.ts")).toBe("text/plain; charset=utf-8");
     expect(getContentType(".py", "script.py")).toBe("text/plain; charset=utf-8");

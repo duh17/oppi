@@ -27,6 +27,25 @@ const WALK_MAX_DEPTH = 12;
 
 export const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 
+/** Streaming media extensions — video/audio that AVPlayer streams progressively. */
+const STREAMING_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".m4v",
+  ".avi",
+  ".webm",
+  ".mp3",
+  ".m4a",
+  ".wav",
+  ".aac",
+  ".ogg",
+  ".flac",
+  ".opus",
+]);
+
+/** All binary media extensions (streaming + images + PDF) for browse-mode size gating. */
+const MEDIA_EXTENSIONS = new Set([...STREAMING_EXTENSIONS, ".pdf", ...ALLOWED_EXTENSIONS]);
+
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -44,6 +63,18 @@ const SPECIAL_CONTENT_TYPES: Record<string, string> = {
   ".xml": "text/xml; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
   ".pdf": "application/pdf",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".m4v": "video/x-m4v",
+  ".avi": "video/x-msvideo",
+  ".webm": "video/webm",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".flac": "audio/flac",
+  ".opus": "audio/opus",
 };
 
 export const TEXT_EXTENSIONS = new Set([
@@ -509,13 +540,17 @@ export function createWorkspaceFileRoutes(
     }
 
     const ext = extname(requestedPath).toLowerCase();
-    const isImage = ALLOWED_EXTENSIONS.has(ext);
-    const maxSize = isImage ? MAX_IMAGE_FILE_SIZE : MAX_TEXT_FILE_SIZE;
 
-    if (fileStat.size > maxSize) {
-      const limitMB = Math.round(maxSize / (1024 * 1024));
-      helpers.error(res, 413, `File too large (max ${limitMB}MB)`);
-      return;
+    // Streaming media (video/audio) has no size limit — served via createReadStream
+    // with no memory buffering. Images/PDF capped at 50MB, text at 1MB.
+    if (!STREAMING_EXTENSIONS.has(ext)) {
+      const isMedia = MEDIA_EXTENSIONS.has(ext);
+      const maxSize = isMedia ? MAX_IMAGE_FILE_SIZE : MAX_TEXT_FILE_SIZE;
+      if (fileStat.size > maxSize) {
+        const limitMB = Math.round(maxSize / (1024 * 1024));
+        helpers.error(res, 413, `File too large (max ${limitMB}MB)`);
+        return;
+      }
     }
 
     const filename = requestedPath.split("/").pop() ?? requestedPath;
