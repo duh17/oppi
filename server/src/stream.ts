@@ -46,43 +46,6 @@ const PING_INTERVAL_MS = 30_000;
 /** Typed stream error code: command sent for non-full subscription session. */
 export const STREAM_ERROR_NOT_SUBSCRIBED_FULL = "stream_not_subscribed_full";
 
-const KNOWN_CLIENT_MESSAGE_TYPES = new Set([
-  "subscribe",
-  "unsubscribe",
-  "prompt",
-  "steer",
-  "follow_up",
-  "abort",
-  "stop",
-  "stop_session",
-  "get_state",
-  "get_messages",
-  "get_session_stats",
-  "get_queue",
-  "set_queue",
-  "set_model",
-  "cycle_model",
-  "get_available_models",
-  "set_thinking_level",
-  "cycle_thinking_level",
-  "new_session",
-  "set_session_name",
-  "compact",
-  "set_auto_compaction",
-  "fork",
-  "get_fork_messages",
-  "switch_session",
-  "set_steering_mode",
-  "set_follow_up_mode",
-  "set_auto_retry",
-  "abort_retry",
-  "abort_bash",
-  "get_commands",
-  "get_file_suggestions",
-  "permission_response",
-  "extension_ui_response",
-]);
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
@@ -130,15 +93,8 @@ function parseIncomingClientMessage(
     return { ok: false, error: "Message type is required", requestId };
   }
 
-  if (!KNOWN_CLIENT_MESSAGE_TYPES.has(type)) {
-    return {
-      ok: false,
-      error: `Unsupported command type: ${type}`,
-      requestId,
-      command: type,
-    };
-  }
-
+  // Cast to ClientMessage — the exhaustive switch in WsMessageHandler
+  // sends a command_result error for any unknown type at runtime.
   return { ok: true, message: record as ClientMessage };
 }
 

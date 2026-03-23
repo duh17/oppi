@@ -394,24 +394,21 @@ describe("/stream websocket behavior", () => {
     expect(harness.handleClientMessage).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown inbound command types with command_result error", async () => {
+  it("rejects unknown inbound command types without sessionId", async () => {
     const harness = makeHarness();
     const ws = new FakeWebSocket();
 
     await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
+    // Unknown types without sessionId are rejected by the stream mux
+    // before reaching handleClientMessage.
     ws.emitMessage({ type: "future_command_v99", requestId: "req-unknown" });
     await flushQueue();
 
-    const result = requireMessageOfType(
-      ws.sent,
-      "command_result",
-      (msg) => msg.requestId === "req-unknown",
+    const error = requireMessageOfType(ws.sent, "error", (msg) =>
+      msg.error.includes("sessionId is required"),
     );
-
-    expect(result.success).toBe(false);
-    expect(result.command).toBe("future_command_v99");
-    expect(result.error).toContain("Unsupported command type");
+    expect(error.error).toContain("future_command_v99");
     expect(harness.handleClientMessage).not.toHaveBeenCalled();
   });
 });
