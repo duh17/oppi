@@ -99,6 +99,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -132,6 +133,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -153,6 +155,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 370
 
         let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -176,6 +179,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -208,8 +212,6 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func streamingTableUpdatesInPlace() throws {
         // Simulate streaming: table starts with header + separator, then rows arrive.
-        let mdView = AssistantMarkdownContentView()
-
         // Phase 1: header + separator only
         let phase1 = """
         Results:
@@ -217,6 +219,9 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableAfterPhase1 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -252,10 +257,11 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func streamingTableStructuralChangeRebuilds() throws {
         // When structure changes (text → text + table), a rebuild happens.
-        let mdView = AssistantMarkdownContentView()
-
         // Phase 1: just text, no table yet
         let phase1 = "Results:"
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: ThemeRuntimeState.currentThemeID()))
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableBeforeTable = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
