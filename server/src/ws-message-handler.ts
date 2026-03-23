@@ -223,8 +223,18 @@ export class WsMessageHandler {
       }
 
       default: {
-        const _exhaustiveCheck: never = msg;
-        return _exhaustiveCheck;
+        // Compile-time: ensures all ClientMessage cases are handled above.
+        // Runtime: unknown types (e.g. future protocol additions) get an error reply.
+        const unhandled: never = msg;
+        const raw = unhandled as unknown as { type?: string; requestId?: string };
+        send({
+          type: "command_result",
+          command: raw.type ?? "unknown",
+          requestId: raw.requestId ?? "",
+          success: false,
+          error: `Unsupported command type: ${raw.type ?? "unknown"}`,
+        });
+        return;
       }
     }
   }
