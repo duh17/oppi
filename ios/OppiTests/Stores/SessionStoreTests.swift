@@ -75,6 +75,24 @@ struct SessionStorePartitioningTests {
         #expect(store.upsert(s) == false)
     }
 
+    @MainActor
+    @Test func upsertPreservesContextUsageWhenIncomingUpdateOmitsIt() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var initial = makeTestSession(id: "s1", status: .busy, model: "anthropic/claude-sonnet-4-0")
+        initial.contextTokens = 123_000
+        initial.contextWindow = 200_000
+        store.upsert(initial)
+
+        let stopped = makeTestSession(id: "s1", status: .stopped, model: "anthropic/claude-sonnet-4-0")
+        store.upsert(stopped)
+
+        #expect(store.session(id: "s1")?.status == .stopped)
+        #expect(store.session(id: "s1")?.contextTokens == 123_000)
+        #expect(store.session(id: "s1")?.contextWindow == 200_000)
+    }
+
     // MARK: - Remove
 
     @MainActor

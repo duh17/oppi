@@ -187,13 +187,25 @@ final class SessionStore {
     func upsert(_ session: Session) -> Bool {
         var list = sessions
         if let idx = list.firstIndex(where: { $0.id == session.id }) {
-            guard list[idx] != session else { return false }
-            list[idx] = session
+            let merged = mergePreservingContext(existing: list[idx], incoming: session)
+            guard list[idx] != merged else { return false }
+            list[idx] = merged
         } else {
             list.insert(session, at: 0)
         }
         sessions = list
         return true
+    }
+
+    private func mergePreservingContext(existing: Session, incoming: Session) -> Session {
+        var merged = incoming
+        if merged.contextTokens == nil {
+            merged.contextTokens = existing.contextTokens
+        }
+        if merged.contextWindow == nil {
+            merged.contextWindow = existing.contextWindow
+        }
+        return merged
     }
 
     /// Clear persisted review context summary for a session.
