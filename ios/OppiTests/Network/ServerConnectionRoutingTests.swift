@@ -549,6 +549,78 @@ struct ServerConnectionRoutingTests {
         // Session store should NOT have s2 (message was for wrong active session)
         #expect(conn.sessionStore.sessions.isEmpty)
     }
+
+    @MainActor
+    @Test func notSubscribedErrorSuppressedFromStream() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+
+        // Track what gets yielded to the per-session continuation.
+        var yieldedCount = 0
+        let _ = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+            continuation.onTermination = { _ in }
+        }
+
+        // Patch: wrap the continuation to count yields.
+        let realCont = conn.sessionContinuations["s1"]!
+        let countingStream = AsyncStream<ServerMessage> { countingCont in
+            conn.sessionContinuations["s1"] = countingCont
+        }
+        // We won't consume countingStream — just check if yield was called
+        // by checking whether the error reached the pipeline's test reducer instead.
+
+        // Simpler approach: use the TestEventPipeline path to verify the error
+        // is suppressed at the routeStreamMessage level.
+        // routeStreamMessage only yields to sessionContinuations — if the continuation
+        // is nil, nothing is yielded. So we can remove it and check that the
+        // coordinator's silent resubscribe was triggered.
+        conn.sessionContinuations.removeAll()
+
+        let errorMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: nil,
+            seq: nil,
+            currentSeq: nil,
+            message: .error(
+                message: "Session s1 is not subscribed at level=full",
+                code: "stream_not_subscribed_full",
+                fatal: false
+            )
+        )
+        conn.routeStreamMessage(errorMsg)
+
+        // The coordinator should have kicked off a silent resubscribe task.
+        #expect(
+            conn.sessionStreamCoordinator.silentResubscribeTask != nil,
+            "Should trigger silent resubscribe"
+        )
+    }
+
+    @MainActor
+    @Test func regularErrorNotSuppressed() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+
+        // Regular errors should pass through routeStreamMessage normally.
+        // Verify by checking that the coordinator does NOT intercept them.
+        let errorMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: nil,
+            seq: nil,
+            currentSeq: nil,
+            message: .error(
+                message: "Something went wrong",
+                code: nil,
+                fatal: false
+            )
+        )
+        conn.routeStreamMessage(errorMsg)
+
+        // No silent resubscribe should be triggered for regular errors.
+        #expect(
+            conn.sessionStreamCoordinator.silentResubscribeTask == nil,
+            "Regular errors should not trigger silent resubscribe"
+        )
+    }
 }
 
 // MARK: - Shared scenario helpers

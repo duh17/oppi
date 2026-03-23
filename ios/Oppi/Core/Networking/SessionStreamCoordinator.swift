@@ -63,6 +63,8 @@ final class SessionStreamCoordinator {
 
     private(set) var state: StreamState = .idle
     private var lastSeenSeqBySession: [String: Int] = [:]
+    /// Coalesces multiple not-subscribed errors into a single resubscribe attempt.
+    private(set) var silentResubscribeTask: Task<Void, Never>?
     // MARK: - Command correlation
 
     nonisolated func shouldResolveEagerly(command: String) -> Bool {
@@ -191,6 +193,11 @@ final class SessionStreamCoordinator {
     func handleStreamReconnected(connection: ServerConnection) async {
         guard connection.wsClient != nil else { return }
 
+        // Cancel any in-flight silent resubscribe — the full reconnect flow
+        // will resubscribe all tracked sessions from scratch.
+        silentResubscribeTask?.cancel()
+        silentResubscribeTask = nil
+
         // Cancel any in-flight queue sync from the previous WS connection.
         connection.cancelDeferredQueueSync()
 
@@ -259,6 +266,8 @@ final class SessionStreamCoordinator {
     }
 
     func noteStreamDisconnected() {
+        silentResubscribeTask?.cancel()
+        silentResubscribeTask = nil
         transition(to: .idle, event: .disconnected)
     }
 
@@ -490,6 +499,65 @@ final class SessionStreamCoordinator {
         }
 
         return false
+    }
+
+    // MARK: - Silent resubscribe on not-subscribed errors
+
+    /// Silently resubscribe the active session when the server reports it is
+    /// not subscribed at `level=full`. Debounced so multiple rapid errors
+    /// (common after a reconnect) trigger only one resubscribe attempt.
+    ///
+    /// Returns `true` if the error was recognized and will be handled silently.
+    func handleNotSubscribedError(
+        connection: ServerConnection,
+        sessionId: String
+    ) -> Bool {
+        guard connection.activeSessionId == sessionId,
+              connection.wsClient != nil else {
+            return false
+        }
+
+        // Already resubscribing — suppress and let the in-flight attempt finish.
+        if silentResubscribeTask != nil { return true }
+
+        streamCoordinatorLogger.info(
+            "Silently resubscribing \(sessionId, privacy: .public) after not-subscribed error"
+        )
+
+        silentResubscribeTask = Task { [weak self, weak connection] in
+            guard let self, let connection else { return }
+
+            // Brief debounce: coalesce a burst of errors into one attempt.
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+
+            let ok = await self.resubscribeWithRetry(
+                connection: connection,
+                sessionId: sessionId,
+                level: .full,
+                maxAttempts: 2
+            )
+
+            if ok {
+                streamCoordinatorLogger.info(
+                    "Silent resubscribe succeeded for \(sessionId, privacy: .public)"
+                )
+                // Re-sync the message queue so we don't miss events.
+                self.scheduleQueueSync(
+                    connection: connection,
+                    sessionId: sessionId,
+                    transport: connection.transportPath.rawValue
+                )
+            } else {
+                streamCoordinatorLogger.error(
+                    "Silent resubscribe failed for \(sessionId, privacy: .public)"
+                )
+            }
+
+            self.silentResubscribeTask = nil
+        }
+
+        return true
     }
 
     private func desiredNotificationSessionIds(connection: ServerConnection) -> Set<String> {

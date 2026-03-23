@@ -392,6 +392,9 @@ final class ServerConnection {
     }
 
     /// Route a message from the multiplexed stream to the appropriate session.
+    /// Well-known server error code for "session not subscribed at full level".
+    private static let notSubscribedFullCode = "stream_not_subscribed_full"
+
     func routeStreamMessage(_ streamMessage: StreamMessage) {
         let sessionId = streamMessage.sessionId
         let message = streamMessage.message
@@ -399,6 +402,19 @@ final class ServerConnection {
         // Handle stream-level events (no sessionId)
         if case .streamConnected = message {
             handleStreamReconnected()
+            return
+        }
+
+        // Silently recover from not-subscribed errors instead of surfacing
+        // them to the chat timeline. These are transient — they occur when
+        // messages race against a WebSocket reconnect resubscribe.
+        if case .error(_, let code, _) = message,
+           code == Self.notSubscribedFullCode,
+           let sessionId,
+           sessionStreamCoordinator.handleNotSubscribedError(connection: self, sessionId: sessionId) {
+            // Still resolve eager commands (e.g. the paired command_result)
+            // so waiters don't time out, but don't yield to the per-session stream.
+            resolveEagerCommands(message)
             return
         }
 
