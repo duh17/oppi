@@ -60,6 +60,12 @@ struct FileContentView: View {
             ImageOutputView(content: content)
         case .audio:
             AudioOutputView(content: content)
+        case .video:
+            VideoFileView(content: content)
+        case .pdf:
+            PDFFileView(content: content)
+        case .binary:
+            BinaryFileView(filePath: filePath, contentLength: content.count)
         case .plain:
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
         }

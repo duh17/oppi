@@ -477,7 +477,7 @@ enum ToolPresentationBuilder {
             language = .json
         case .html:
             language = .html
-        case .markdown, .image, .audio, .plain, .none:
+        case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .none:
             language = nil
         }
 
@@ -496,13 +496,13 @@ enum ToolPresentationBuilder {
         switch metadata.fileType {
         case .markdown:
             return .markdown(text: text)
-        case .image, .audio:
+        case .image, .audio, .video:
             return .readMedia(
                 output: text,
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .html, .plain, .code, .json, .none:
+        case .html, .plain, .code, .json, .pdf, .binary, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -520,13 +520,13 @@ enum ToolPresentationBuilder {
         switch metadata.fileType {
         case .markdown:
             return .text(text: text, language: nil)
-        case .image, .audio:
+        case .image, .audio, .video:
             return .readMedia(
                 output: text,
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .html, .plain, .code, .json, .none:
+        case .html, .plain, .code, .json, .pdf, .binary, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -663,7 +663,7 @@ enum ToolPresentationBuilder {
         case .code(let language): return language
         case .json: return .json
         case .html: return .html
-        case .markdown, .image, .audio, .plain: return nil
+        case .markdown, .image, .audio, .video, .pdf, .binary, .plain: return nil
         }
     }
 }
