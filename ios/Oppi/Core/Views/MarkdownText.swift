@@ -367,15 +367,19 @@ enum FlatSegment: Sendable {
             return result
 
         case .orderedList(let start, let items):
+            let listFont = Self.listBodyFont()
             var result = AttributedString()
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
                 num.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                num.uiKit.font = listFont
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
-                    result.append(attributedString(for: block, palette: palette))
+                    var content = attributedString(for: block, palette: palette)
+                    Self.applyListFont(to: &content, listFont: listFont)
+                    result.append(content)
                 }
             }
             return result
@@ -667,5 +671,29 @@ enum FlatSegment: Sendable {
     private static func monospacedFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
         let size = UIFont.preferredFont(forTextStyle: style).pointSize
         return UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// Body font bumped one point for list items (Dynamic Type aware).
+    private static func listBodyFont() -> UIFont {
+        let bodySize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        return UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: .systemFont(ofSize: bodySize + 1)
+        )
+    }
+
+    /// Replace body-sized fonts in an attributed string with the list font.
+    /// Preserves monospace (inline code) and other special fonts.
+    private static func applyListFont(to content: inout AttributedString, listFont: UIFont) {
+        let bodySize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        for run in content.runs {
+            if let font = run.uiKit.font {
+                if font.pointSize == bodySize,
+                   !font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) {
+                    content[run.range].uiKit.font = listFont
+                }
+            } else {
+                content[run.range].uiKit.font = listFont
+            }
+        }
     }
 }
