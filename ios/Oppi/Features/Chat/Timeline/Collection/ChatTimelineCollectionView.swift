@@ -110,6 +110,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         tapGesture.delegate = context.coordinator
         collectionView.addGestureRecognizer(tapGesture)
 
+        collectionView.accessibilityIdentifier = "chat.timeline"
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
         context.coordinator.configureDataSource(collectionView: collectionView)

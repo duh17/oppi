@@ -280,6 +280,7 @@ struct WorkspaceDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier("workspace.sessionList")
         .listStyle(.insetGrouped)
         .themedListSurface()
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
@@ -320,6 +321,7 @@ struct WorkspaceDetailView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier("workspace.newSession")
                 .disabled(isCreating)
             }
             ToolbarItemGroup(placement: .bottomBar) {

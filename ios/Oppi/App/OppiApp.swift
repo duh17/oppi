@@ -162,6 +162,17 @@ struct OppiApp: App {
                 coordinator.startNetworkPathMonitor()
                 await setupNotifications()
                 await reconnectOnLaunch()
+#if DEBUG
+                // E2E test support: process invite URL from launch environment
+                if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
+                   let e2eURL = URL(string: e2eInvite) {
+                    os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
+                    await handleIncomingURL(e2eURL)
+                    os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
+                           navigation.showOnboarding ? 1 : 0,
+                           connection.workspaceStore.workspaces.count)
+                }
+#endif
             }
     }
 
@@ -278,7 +289,15 @@ struct OppiApp: App {
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
                 existingCredentials: existingCredentials
-            ) { reason in await BiometricService.shared.authenticate(reason: reason) }
+            ) { reason in
+#if DEBUG
+                // E2E test mode: auto-trust servers (biometrics unavailable in simulator)
+                if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+                    return true
+                }
+#endif
+                return await BiometricService.shared.authenticate(reason: reason)
+            }
 
             // Add to ServerStore via coordinator (creates connection + opens /stream)
             guard let pairedServer = PairedServer(

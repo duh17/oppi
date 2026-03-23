@@ -31,6 +31,7 @@ struct WorkspaceHomeView: View {
                 serverSection(for: server)
             }
         }
+        .accessibilityIdentifier("workspace.list")
         .listStyle(.insetGrouped)
         .themedListSurface()
         .navigationTitle("Workspaces")

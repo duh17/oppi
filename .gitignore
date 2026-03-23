@@ -26,6 +26,7 @@ ios/scripts/*
 !ios/scripts/SIGNING-SETUP.md
 !ios/scripts/appcast/
 !ios/scripts/appcast/appcast.xml
+!ios/scripts/e2e.sh
 !server/docker/entrypoint.sh
 !server/skills/agent-sessions/scripts/
 

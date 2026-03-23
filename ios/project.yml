@@ -239,6 +239,20 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_ALLOWED: "NO"
 
+  OppiE2ETests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: OppiE2ETests
+        type: group
+    dependencies:
+      - target: Oppi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiE2ETests
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_ALLOWED: "NO"
+
   OppiMacTests:
     type: bundle.unit-test
     platform: macOS
@@ -304,10 +318,12 @@ schemes:
         OppiControlWidget: all
         OppiTests: [test]
         OppiUITests: [test]
+        OppiE2ETests: [test]
     test:
       targets:
         - OppiTests
         - OppiUITests
+        - OppiE2ETests
 
   OppiMac:
     build:
