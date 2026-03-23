@@ -10,6 +10,7 @@ import {
   getActiveSessions,
   getMemoryStats,
   parseRange,
+  parseTzOffset,
 } from "./server-stats.js";
 
 const PAIRING_MAX_FAILURES = 5;
@@ -192,20 +193,22 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
-  function handleGetDailyDetail(date: string, res: ServerResponse): void {
+  function handleGetDailyDetail(date: string, url: URL, res: ServerResponse): void {
     const parsed = new Date(date + "T00:00:00Z");
     if (isNaN(parsed.getTime())) {
       helpers.json(res, { error: "Invalid date format. Use YYYY-MM-DD." }, 400);
       return;
     }
 
+    const tzOffsetMin = parseTzOffset(url.searchParams.get("tz"));
     const sessions = ctx.storage.listSessions();
-    const result = aggregateDailyDetail(sessions, date);
+    const result = aggregateDailyDetail(sessions, date, tzOffsetMin);
     helpers.json(res, result);
   }
 
   function handleGetServerStats(url: URL, res: ServerResponse): void {
     const rangeDays = parseRange(url.searchParams.get("range"));
+    const tzOffsetMin = parseTzOffset(url.searchParams.get("tz"));
     const sessions = ctx.storage.listSessions();
     const workspaces = ctx.storage.listWorkspaces();
 
@@ -215,6 +218,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       sessions,
       workspaces,
       rangeDays,
+      tzOffsetMin,
     });
 
     helpers.json(res, {
@@ -243,7 +247,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     // Match /server/stats/daily/YYYY-MM-DD (must come before /server/stats)
     const dailyDetailMatch = path.match(/^\/server\/stats\/daily\/(\d{4}-\d{2}-\d{2})$/);
     if (dailyDetailMatch && method === "GET") {
-      handleGetDailyDetail(dailyDetailMatch[1], res);
+      handleGetDailyDetail(dailyDetailMatch[1], url, res);
       return true;
     }
     if (path === "/server/stats" && method === "GET") {

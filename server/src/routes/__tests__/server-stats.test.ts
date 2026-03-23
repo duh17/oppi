@@ -6,6 +6,7 @@ import {
   aggregateStats,
   getActiveSessions,
   parseRange,
+  parseTzOffset,
   type AggregateInput,
 } from "../server-stats.js";
 
@@ -62,6 +63,39 @@ describe("parseRange", () => {
     expect(parseRange("14")).toBe(7);
     expect(parseRange("abc")).toBe(7);
     expect(parseRange("-1")).toBe(7);
+  });
+});
+
+// ─── parseTzOffset ───
+
+describe("parseTzOffset", () => {
+  test("defaults to 0 for null", () => {
+    expect(parseTzOffset(null)).toBe(0);
+  });
+
+  test("defaults to 0 for empty string", () => {
+    expect(parseTzOffset("")).toBe(0);
+  });
+
+  test("parses valid offsets", () => {
+    expect(parseTzOffset("-420")).toBe(-420); // PDT
+    expect(parseTzOffset("540")).toBe(540); // JST
+    expect(parseTzOffset("0")).toBe(0); // UTC
+    expect(parseTzOffset("330")).toBe(330); // IST (+5:30)
+  });
+
+  test("clamps to ±840", () => {
+    expect(parseTzOffset("1000")).toBe(840);
+    expect(parseTzOffset("-1000")).toBe(-840);
+  });
+
+  test("rounds fractional values", () => {
+    expect(parseTzOffset("-420.5")).toBe(-420);
+  });
+
+  test("rejects non-numeric", () => {
+    expect(parseTzOffset("abc")).toBe(0);
+    expect(parseTzOffset("NaN")).toBe(0);
   });
 });
 
@@ -383,6 +417,26 @@ describe("aggregateStats", () => {
     const result = aggregate({ sessions });
     expect(result.modelBreakdown[0].share).toBe(0);
   });
+
+  test("tzOffsetMin shifts daily bucketing to local time", () => {
+    // Session at Mar 20 00:30 UTC → still Mar 19 in PDT (UTC-7)
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: new Date("2026-03-20T00:30:00Z").getTime(),
+        cost: 5,
+        model: "sonnet",
+      }),
+    ];
+
+    // Without tz: bucketed as Mar 20
+    const utcResult = aggregate({ sessions });
+    expect(utcResult.daily[0].date).toBe("2026-03-20");
+
+    // With PDT offset: bucketed as Mar 19
+    const localResult = aggregate({ sessions, tzOffsetMin: -420 });
+    expect(localResult.daily[0].date).toBe("2026-03-19");
+  });
 });
 
 // ─── aggregateDailyDetail ───
@@ -572,5 +626,75 @@ describe("aggregateDailyDetail", () => {
       cost: 5,
       tokens: 1500,
     });
+  });
+
+  test("tzOffsetMin shifts day boundaries and hourly buckets", () => {
+    // Session at Mar 21 02:00 UTC = Mar 20 19:00 PDT (UTC-7)
+    // Should NOT appear in Mar 21 local day when using PDT offset.
+    const sessions = [
+      makeSession({
+        id: "s-utc-morning",
+        createdAt: new Date("2026-03-21T02:00:00Z").getTime(),
+        cost: 10,
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+      }),
+      // Session at Mar 21 10:00 UTC = Mar 21 03:00 PDT
+      // Should appear in Mar 21 local day at hour 3.
+      makeSession({
+        id: "s-local-morning",
+        createdAt: new Date("2026-03-21T10:00:00Z").getTime(),
+        cost: 20,
+        tokens: { input: 2000, output: 1000, cacheRead: 0, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21", -420);
+
+    // Only the 10:00 UTC session falls in Mar 21 PDT
+    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0].id).toBe("s-local-morning");
+    expect(result.totals.sessions).toBe(1);
+    expect(result.totals.cost).toBe(20);
+
+    // Hourly: should be bucketed at hour 3 (local)
+    expect(result.hourly).toHaveLength(1);
+    expect(result.hourly[0].hour).toBe(3);
+  });
+
+  test("tzOffsetMin=0 behaves like UTC (backward compat)", () => {
+    const sessions = [
+      makeSession({
+        id: "s-1",
+        createdAt: baseDate + 8 * HOUR_MS,
+        cost: 10,
+      }),
+    ];
+
+    const withZero = aggregateDailyDetail(sessions, "2026-03-21", 0);
+    const withoutArg = aggregateDailyDetail(sessions, "2026-03-21");
+
+    expect(withZero.sessions).toEqual(withoutArg.sessions);
+    expect(withZero.hourly).toEqual(withoutArg.hourly);
+    expect(withZero.totals).toEqual(withoutArg.totals);
+  });
+
+  test("positive tzOffsetMin works (e.g. JST UTC+9)", () => {
+    // Session at Mar 20 23:00 UTC = Mar 21 08:00 JST
+    // Should appear in Mar 21 JST day.
+    const sessions = [
+      makeSession({
+        id: "s-jst",
+        createdAt: new Date("2026-03-20T23:00:00Z").getTime(),
+        cost: 15,
+        tokens: { input: 3000, output: 1500, cacheRead: 0, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregateDailyDetail(sessions, "2026-03-21", 540);
+
+    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0].id).toBe("s-jst");
+    expect(result.hourly).toHaveLength(1);
+    expect(result.hourly[0].hour).toBe(8); // 23:00 UTC + 9h = 08:00 JST
   });
 });

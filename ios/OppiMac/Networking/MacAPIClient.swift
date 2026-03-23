@@ -103,7 +103,11 @@ final class MacAPIClient: Sendable {
     nonisolated func fetchStats(range: Int = 7) async -> ServerStats? {
         var components = URLComponents(url: baseURL.appendingPathComponent("server/stats"),
                                        resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "range", value: "\(range)")]
+        let tz = TimeZone.current.secondsFromGMT() / 60
+        components?.queryItems = [
+            URLQueryItem(name: "range", value: "\(range)"),
+            URLQueryItem(name: "tz", value: "\(tz)"),
+        ]
 
         guard let url = components?.url else { return nil }
         var request = URLRequest(url: url)

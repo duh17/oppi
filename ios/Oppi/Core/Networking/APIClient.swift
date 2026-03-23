@@ -79,15 +79,23 @@ actor APIClient {
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
+    /// Client timezone offset in minutes (e.g. PDT = -420).
+    /// Sent to the server so daily/hourly buckets align with the user's local time.
+    private static var tzOffsetMinutes: Int {
+        TimeZone.current.secondsFromGMT() / 60
+    }
+
     /// Fetch server stats for the given number of days.
     func fetchStats(range: Int = 7) async throws -> ServerStats {
-        let data = try await get("/server/stats?range=\(range)")
+        let tz = Self.tzOffsetMinutes
+        let data = try await get("/server/stats?range=\(range)&tz=\(tz)")
         return try JSONDecoder().decode(ServerStats.self, from: data)
     }
 
     /// Fetch hourly breakdown for a specific day.
     func fetchDailyDetail(date: String) async throws -> DailyDetail {
-        let data = try await get("/server/stats/daily/\(date)")
+        let tz = Self.tzOffsetMinutes
+        let data = try await get("/server/stats/daily/\(date)?tz=\(tz)")
         return try JSONDecoder().decode(DailyDetail.self, from: data)
     }
 

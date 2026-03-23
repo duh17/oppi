@@ -104,12 +104,30 @@ export function parseRange(raw: string | null): number {
   return VALID_RANGES.has(n) ? n : 7;
 }
 
-function toDateString(ts: number): string {
-  const d = new Date(ts);
+/**
+ * Convert epoch-ms to "YYYY-MM-DD" in the client's local timezone.
+ *
+ * `tzOffsetMin` = minutes to add to UTC to get local time
+ * (matches iOS `TimeZone.current.secondsFromGMT() / 60`).
+ * e.g. PDT (UTC-7) → -420.
+ */
+function toDateString(ts: number, tzOffsetMin: number = 0): string {
+  const d = new Date(ts + tzOffsetMin * 60_000);
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Parse the `tz` query parameter (minutes offset from UTC).
+ * Clamps to ±840 (UTC-14 … UTC+14). Defaults to 0 (UTC).
+ */
+export function parseTzOffset(raw: string | null): number {
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-840, Math.min(840, Math.round(n)));
 }
 
 function sessionTokens(s: Session): number {
@@ -181,6 +199,7 @@ export interface AggregateInput {
   workspaces: Workspace[];
   rangeDays: number;
   now?: number; // injectable for testing
+  tzOffsetMin?: number; // client timezone offset in minutes (default 0 = UTC)
 }
 
 export interface AggregateResult {
@@ -192,6 +211,7 @@ export interface AggregateResult {
 
 export function aggregateStats(input: AggregateInput): AggregateResult {
   const now = input.now ?? Date.now();
+  const tzOffsetMin = input.tzOffsetMin ?? 0;
   const cutoff = now - input.rangeDays * 24 * 60 * 60 * 1000;
 
   const inRange = input.sessions.filter((s) => s.createdAt >= cutoff);
@@ -223,7 +243,7 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
   let totalTokens = 0;
 
   for (const s of inRange) {
-    const date = toDateString(s.createdAt);
+    const date = toDateString(s.createdAt, tzOffsetMin);
     const model = s.model ?? "unknown";
     const cost = s.cost ?? 0;
     const tokens = sessionTokens(s);
@@ -327,9 +347,16 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
 
 // ─── Daily detail aggregation ───
 
-export function aggregateDailyDetail(sessions: Session[], date: string): DailyDetailResult {
-  const dayStart = new Date(date + "T00:00:00.000Z").getTime();
-  const dayEnd = new Date(date + "T23:59:59.999Z").getTime();
+export function aggregateDailyDetail(
+  sessions: Session[],
+  date: string,
+  tzOffsetMin: number = 0,
+): DailyDetailResult {
+  // Compute day boundaries in UTC for the given local date.
+  // Local midnight = UTC midnight - tzOffsetMin.
+  const baseUTC = new Date(date + "T00:00:00.000Z").getTime();
+  const dayStart = baseUTC - tzOffsetMin * 60_000;
+  const dayEnd = dayStart + 24 * 60 * 60 * 1000 - 1;
 
   const inDay = sessions.filter((s) => s.createdAt >= dayStart && s.createdAt <= dayEnd);
 
@@ -344,7 +371,8 @@ export function aggregateDailyDetail(sessions: Session[], date: string): DailyDe
   let totalTokens = 0;
 
   for (const s of inDay) {
-    const hour = new Date(s.createdAt).getUTCHours();
+    // Shift to local time, then extract hour via UTC methods
+    const hour = new Date(s.createdAt + tzOffsetMin * 60_000).getUTCHours();
     const model = s.model ?? "unknown";
     const cost = s.cost ?? 0;
     const tokens = sessionTokens(s);
