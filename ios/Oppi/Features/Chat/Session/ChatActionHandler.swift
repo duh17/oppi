@@ -52,9 +52,10 @@ final class ChatActionHandler {
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
     private static let autoTitleMaxLength = 48
-    static let autoTitleEnabledDefaultsKey = "\(AppIdentifiers.subsystem).session.autoTitle.enabled"
+    /// Backward-compat key reference for tests that set up UserDefaults directly.
+    static let autoTitleEnabledDefaultsKey = AppPreferences.Session.autoTitleEnabledKey
     private static var isAutoTitleEnabled: Bool {
-        UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? false
+        AppPreferences.Session.isAutoTitleEnabled
     }
     private static let autoTitleInstructions = """
         You generate concise coding session titles.

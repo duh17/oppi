@@ -23,11 +23,9 @@ struct SettingsView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ThemeStore.self) private var themeStore
 
-    @State private var spinnerStyleRaw = UserDefaults.standard.string(forKey: "spinnerStyle") ?? SpinnerStyle.brailleDots.rawValue
+    @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var biometricEnabled = BiometricService.shared.isEnabled
-    @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
-        forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
-    ) as? Bool ?? false
+    @State private var autoSessionTitleEnabled = AppPreferences.Session.isAutoTitleEnabled
     @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
     @State private var voiceEngineMode = VoiceInputPreferences.engineMode
     @State private var remoteASREndpointText = VoiceInputPreferences.remoteEndpoint?.absoluteString ?? ""
@@ -117,13 +115,13 @@ struct SettingsView: View {
                     ThemeImportView()
                 }
 
-                Picker("Spinner Style", selection: $spinnerStyleRaw) {
-                    ForEach(SpinnerStyle.allCases, id: \.rawValue) { style in
-                        Text(style.displayName).tag(style.rawValue)
+                Picker("Spinner Style", selection: $spinnerStyle) {
+                    ForEach(SpinnerStyle.allCases, id: \.self) { style in
+                        Text(style.displayName).tag(style)
                     }
                 }
-                .onChange(of: spinnerStyleRaw) { _, newValue in
-                    UserDefaults.standard.set(newValue, forKey: "spinnerStyle")
+                .onChange(of: spinnerStyle) { _, newValue in
+                    AppPreferences.Appearance.setSpinnerStyle(newValue)
                 }
             }
 
@@ -154,10 +152,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Auto-name new sessions", isOn: $autoSessionTitleEnabled)
                     .onChange(of: autoSessionTitleEnabled) { _, newValue in
-                        UserDefaults.standard.set(
-                            newValue,
-                            forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
-                        )
+                        AppPreferences.Session.setAutoTitleEnabled(newValue)
                     }
             } header: {
                 Text("Sessions")

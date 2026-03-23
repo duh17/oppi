@@ -12,11 +12,13 @@ enum SpinnerStyle: String, CaseIterable, Sendable {
         }
     }
 
+    /// Current spinner style from preferences.
     static var current: Self {
-        guard let raw = UserDefaults.standard.string(forKey: "spinnerStyle"),
-              let style = Self(rawValue: raw) else {
-            return .brailleDots
-        }
-        return style
+        AppPreferences.Appearance.spinnerStyle
+    }
+
+    /// Persist a new spinner style preference.
+    static func setCurrent(_ style: SpinnerStyle) {
+        AppPreferences.Appearance.setSpinnerStyle(style)
     }
 }

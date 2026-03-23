@@ -21,11 +21,9 @@ final class BiometricService {
     /// Whether biometric gating is enabled at all.
     /// When disabled, all permissions approve with a simple tap.
     var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey) }
+        get { AppPreferences.Biometric.isEnabled }
+        set { AppPreferences.Biometric.setEnabled(newValue) }
     }
-
-    private static let enabledKey = "\(AppIdentifiers.subsystem).biometric.enabled"
 
     // Cached once on init — biometry type doesn't change during app lifetime.
     private let cachedBiometricName: String
