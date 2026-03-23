@@ -745,7 +745,6 @@ final class ServerConnection {
         activeSessionId = sessionId
         sender.activeSessionId = sessionId
         coalescer.sessionId = sessionId
-        reducer.activeSessionId = sessionId
     }
 
     func telemetryErrorKind(from error: Error) -> String {

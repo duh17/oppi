@@ -345,14 +345,13 @@ struct ParentChildNavigationTests {
         await TimelineCache.shared.removeTrace(parentId)
     }
 
-    // MARK: - Session affinity gates stale items
+    // MARK: - Per-session reducer isolation
 
-    /// Verify that manager.reducer.activeSessionId prevents a child view from rendering
-    /// parent items. The shared reducer has parent items when the child ChatView
-    /// is pushed — visibleItems should return empty because activeSessionId
-    /// doesn't match the child's sessionId.
+    /// Verify that per-session reducers isolate parent and child items.
+    /// Each ChatSessionManager owns its own reducer — child items never
+    /// appear in the parent's reducer and vice versa.
     @MainActor
-    @Test func activeSessionIdGatesStaleParentItems() async {
+    @Test func perSessionReducerIsolatesParentChildItems() async {
         let parentId = "parent-gate-\(UUID().uuidString)"
         let childId = "child-gate-\(UUID().uuidString)"
 
@@ -389,12 +388,11 @@ struct ParentChildNavigationTests {
         try? await Task.sleep(for: .milliseconds(100))
 
         #expect(!parentManager.reducer.items.isEmpty, "Parent reducer should have parent items")
-        #expect(parentManager.reducer.activeSessionId == parentId, "activeSessionId should be parent")
 
-        // With per-session reducers, child's reducer starts empty — no gate needed.
+        // Per-session reducers: child's reducer starts empty.
         // Parent's reducer stays intact and independent.
 
-        // Step 3: Disconnect parent, connect child — verify gate lifts
+        // Step 3: Disconnect parent, connect child — verify isolation
         parentStreams.finish(index: 0)
         await parentTask.value
 
@@ -413,9 +411,6 @@ struct ParentChildNavigationTests {
         #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { childManager.entryState == .streaming }
         })
-
-        // After child's connect(), child's own reducer has child session ID
-        #expect(childManager.reducer.activeSessionId == childId, "child reducer activeSessionId should be child")
 
         // Child items accumulate in child's own reducer
         childStreams.yield(index: 0, message: .agentStart)
@@ -447,9 +442,9 @@ struct ParentChildNavigationTests {
         await childTask.value
     }
 
-    /// Verify that auto-reconnect doesn't hide items (activeSessionId stays stable).
+    /// Verify that stream end doesn't clear reducer items (they survive for reconnect).
     @MainActor
-    @Test func autoReconnectPreservesActiveSessionId() async {
+    @Test func streamEndPreservesReducerItems() async {
         let sessionId = "reconnect-\(UUID().uuidString)"
 
         let manager = ChatSessionManager(sessionId: sessionId)
@@ -480,17 +475,16 @@ struct ParentChildNavigationTests {
         streams.yield(index: 0, message: .agentEnd)
         try? await Task.sleep(for: .milliseconds(100))
 
-        // activeSessionId should be set and items visible
-        #expect(manager.reducer.activeSessionId == sessionId)
+        // Items should be present
         #expect(!manager.reducer.items.isEmpty)
 
         // Simulate WS drop → reconnect (stream ends, manager auto-reconnects)
         streams.finish(index: 0)
         await task.value
 
-        // After stream ends, activeSessionId should still be this session
-        // (not cleared). This ensures the view doesn't flash empty during reconnect.
-        #expect(manager.reducer.activeSessionId == sessionId, "activeSessionId should survive stream end for reconnect")
+        // After stream ends, items should still be present in the reducer.
+        // This ensures the view doesn't flash empty during reconnect.
+        #expect(!manager.reducer.items.isEmpty, "Items should survive stream end for reconnect")
     }
 
     // MARK: - Helpers

@@ -19,7 +19,6 @@ final class ServerConnectionScenario {
             self?.reducer.processBatch(events)
         }
         coalescer.sessionId = sessionId
-        reducer.activeSessionId = sessionId
     }
 
     @discardableResult
