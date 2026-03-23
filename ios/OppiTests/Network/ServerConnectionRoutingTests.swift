@@ -610,7 +610,6 @@ final class EventFlowServerConnectionScenario {
             self?.reducer.processBatch(events)
         }
         coalescer.sessionId = sessionId
-        reducer.activeSessionId = sessionId
     }
 
     @discardableResult

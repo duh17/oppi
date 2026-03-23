@@ -229,12 +229,6 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelStateSync()
         reducer.reset()
-        // Set session affinity after reset. ChatTimelineView gates rendering
-        // on reducer.activeSessionId == view.sessionId — prevents a flash of
-        // stale parent items during parent→child navigation. The previous
-        // session's activeSessionId naturally blocks the new view's first
-        // body evaluation; this line lifts the gate for subsequent renders.
-        reducer.activeSessionId = sessionId
         coalescer.sessionId = sessionId
         toolCallCorrelator.reset()
 
@@ -258,8 +252,7 @@ final class ChatSessionManager {
         hasConnectedBefore = true
 
         latestTraceSignature = await loadCachedTimeline(
-            sessionStore: sessionStore,
-            isReentry: isReentry
+            sessionStore: sessionStore
         )
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
@@ -348,8 +341,7 @@ final class ChatSessionManager {
     /// the background trace fetch runs. The fresh trace replaces the cache
     /// data when it arrives (via `loadSession(preserveOrphans: false)`).
     private func loadCachedTimeline(
-        sessionStore: SessionStore,
-        isReentry: Bool
+        sessionStore: SessionStore
     ) async -> TraceSignature? {
         transitionTo(.loadingCache)
 
@@ -601,18 +593,10 @@ final class ChatSessionManager {
         let shouldAutoReconnect: Bool
         switch entryState {
         case .disconnected(reason: .streamEnded):
-            // Don't reconnect if another session has taken over the active slot.
-            // During parent→child→parent navigation, the parent's connect() breaks
-            // the child's stream. Without this check, the child schedules an
-            // auto-reconnect that races with the parent's connect(), creating a
-            // ping-pong where both sessions fight over reducer.activeSessionId.
-            let anotherSessionTookOver = sessionStore.activeSessionId != sessionId
-                && sessionStore.activeSessionId != nil
             shouldAutoReconnect = hasReceivedConnected
                 && generation == connectionGeneration
                 && wantsAutoReconnect
                 && !connection.fatalSetupError
-                && !anotherSessionTookOver
                 && sessionStore.sessions.first(where: { $0.id == sessionId })?.status != .stopped
         default:
             shouldAutoReconnect = false
