@@ -50,6 +50,15 @@ export interface SpawnAgentContext {
   getAvailableModelIds(): string[];
   /** Stop a session by ID. Used by stop_agent to terminate child sessions. */
   stopSession(sessionId: string): Promise<void>;
+  /**
+   * Send a message to a session. Semantics depend on session state:
+   * - Idle session: sends as a prompt (starts a new turn).
+   * - Busy session + behavior="steer": injected mid-turn, delivered after
+   *   current tool calls finish, before the next LLM call.
+   * - Busy session + behavior="followUp" (default): queued, delivered after
+   *   the agent finishes its entire current turn.
+   */
+  sendMessage(sessionId: string, message: string, behavior?: "steer" | "followUp"): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,9 +231,36 @@ const inspectAgentParams = Type.Object({
   ),
 });
 
+const sendMessageParams = Type.Object({
+  id: Type.String({
+    description: "Session ID of the target agent.",
+  }),
+  message: Type.String({
+    description: "The message to send to the agent.",
+  }),
+  behavior: Type.Optional(
+    Type.Union([Type.Literal("steer"), Type.Literal("followUp")], {
+      description:
+        "How to deliver the message when the target is busy. " +
+        "'steer' (default): inject mid-turn — delivered after current tool calls " +
+        "finish, before the next LLM call. Use for course corrections. " +
+        "'followUp': queue until the agent finishes its entire current turn, " +
+        "then deliver as the next message. Use for 'do this next'. " +
+        "Ignored when the target is idle (always sends as a new prompt).",
+    }),
+  ),
+});
+
 // ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------
+
+interface SendMessageDetails {
+  agentId: string;
+  name?: string;
+  status: string;
+  deliveredAs: "prompt" | "steer" | "follow_up";
+}
 
 interface SpawnAgentDetails {
   agentId: string;
@@ -1076,6 +1112,135 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           return {
             content: [{ type: "text" as const, text: `Failed to stop agent: ${msg}` }],
             details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
+          };
+        }
+      },
+    });
+
+    // ─── send_message ───
+
+    pi.registerTool<typeof sendMessageParams, SendMessageDetails>({
+      name: "send_message",
+      label: "Send Message",
+      description:
+        "Send a message to a child agent session. " +
+        "If the target is idle, the message starts a new turn (prompt). " +
+        "If the target is busy, the message is delivered as a steer (mid-turn) " +
+        "or follow-up (after turn), controlled by the behavior parameter.",
+      promptSnippet:
+        "send_message(id, message, behavior?) — send a message to a child agent session",
+      promptGuidelines: [
+        "Use send_message to course-correct a running child or give it additional instructions.",
+        "behavior='steer' (default): injected after current tool calls finish, before the next LLM call. " +
+          "Use for course corrections like 'stop doing X, focus on Y instead'.",
+        "behavior='followUp': queued until the agent finishes its current turn. " +
+          "Use for non-urgent additions like 'when you're done, also check Z'.",
+        "If the target is idle (not busy), the message starts a new turn regardless of behavior.",
+        "Use check_agents first to find the session ID and confirm the child is running.",
+      ],
+      parameters: sendMessageParams,
+
+      async execute(_toolCallId: string, params: Static<typeof sendMessageParams>) {
+        // Look up the session
+        const session = ctx.getSession(params.id);
+        if (!session) {
+          return {
+            content: [{ type: "text" as const, text: `Session not found: ${params.id}` }],
+            details: { agentId: params.id, status: "not_found", deliveredAs: "prompt" as const },
+          };
+        }
+
+        // Verify the session is in this session's tree
+        const rootId = getRootSessionId(ctx);
+        const allSessions = ctx.listWorkspaceSessions();
+        const descendants = getDescendants(rootId, allSessions);
+        const isInTree =
+          session.parentSessionId === ctx.sessionId || descendants.some((d) => d.id === params.id);
+        if (!isInTree) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: "error",
+              deliveredAs: "prompt" as const,
+            },
+          };
+        }
+
+        // Check if session is terminal
+        if (isTerminal(session.status)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  `Agent "${session.name ?? params.id}" is ${session.status}. ` +
+                  `Cannot send messages to a terminated session.`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: session.status,
+              deliveredAs: "prompt" as const,
+            },
+          };
+        }
+
+        // Determine delivery mode based on session status
+        const isBusy = session.status === "busy";
+        const behavior = params.behavior ?? "steer";
+        const deliveredAs: "prompt" | "steer" | "follow_up" = isBusy
+          ? behavior === "followUp"
+            ? "follow_up"
+            : "steer"
+          : "prompt";
+
+        try {
+          await ctx.sendMessage(params.id, params.message, behavior);
+
+          const modeLabel =
+            deliveredAs === "prompt"
+              ? "as a new turn (prompt)"
+              : deliveredAs === "steer"
+                ? "as a steer (mid-turn, before next LLM call)"
+                : "as a follow-up (queued after current turn)";
+
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Message sent to "${session.name ?? params.id}" ${modeLabel}.`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: session.status,
+              deliveredAs,
+            },
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Failed to send message to "${session.name ?? params.id}": ${msg}`,
+              },
+            ],
+            details: {
+              agentId: params.id,
+              name: session.name ?? undefined,
+              status: "error",
+              deliveredAs,
+            },
           };
         }
       },

@@ -62,6 +62,8 @@ export interface SessionStartCoordinatorDeps {
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
   getAvailableModelIds: () => string[];
   stopSession: (sessionId: string) => Promise<void>;
+  /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
+  sendMessage: (sessionId: string, message: string, behavior?: "steer" | "followUp") => Promise<void>;
 }
 
 export class SessionStartCoordinator {
@@ -113,6 +115,8 @@ export class SessionStartCoordinator {
               subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
               getAvailableModelIds: () => this.deps.getAvailableModelIds(),
               stopSession: (id) => this.deps.stopSession(id),
+              sendMessage: (id, message, behavior) =>
+                this.deps.sendMessage(id, message, behavior),
             }),
           );
         }

@@ -92,6 +92,8 @@ export interface SessionCoordinatorBundleDeps {
   listChildSessions: (parentSessionId: string) => Session[];
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
   getAvailableModelIds: () => string[];
+  /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
+  sendMessage: (sessionId: string, message: string, behavior?: "steer" | "followUp") => Promise<void>;
 }
 
 export function createSessionCoordinatorBundle(
@@ -165,6 +167,7 @@ export function createSessionCoordinatorBundle(
     subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
     getAvailableModelIds: () => deps.getAvailableModelIds(),
     stopSession: (sessionId) => deps.stopSession(sessionId),
+    sendMessage: (sessionId, message, behavior) => deps.sendMessage(sessionId, message, behavior),
   });
 
   const activationCoordinator = new SessionActivationCoordinator({

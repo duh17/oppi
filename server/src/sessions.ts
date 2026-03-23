@@ -127,6 +127,8 @@ export class SessionManager extends EventEmitter {
       listChildSessions: (parentSessionId) => this.listChildSessions(parentSessionId),
       subscribeToSession: (sessionId, callback) => this.subscribe(sessionId, callback),
       getAvailableModelIds: () => this.getAvailableModelIds(),
+      sendMessage: (sessionId, message, behavior) =>
+        this.sendMessageToSession(sessionId, message, behavior),
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -273,6 +275,34 @@ export class SessionManager extends EventEmitter {
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
     await this.inputCoordinator.sendFollowUp(key, message, opts);
+  }
+
+  /**
+   * Send a message to a session with automatic dispatch based on session state.
+   *
+   * - Idle/ready → sendPrompt (starts a new turn)
+   * - Busy + behavior="steer" → sendSteer (injected mid-turn after current tool calls)
+   * - Busy + behavior="followUp" (default) → sendFollowUp (queued after current turn)
+   *
+   * Used by the send_message tool in the spawn_agent extension.
+   */
+  async sendMessageToSession(
+    sessionId: string,
+    message: string,
+    behavior?: "steer" | "followUp",
+  ): Promise<void> {
+    const session = this.storage.getSession(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+    if (session.status === "busy") {
+      if (behavior === "steer") {
+        await this.sendSteer(sessionId, message);
+      } else {
+        await this.sendFollowUp(sessionId, message);
+      }
+    } else {
+      await this.sendPrompt(sessionId, message);
+    }
   }
 
   getMessageQueue(sessionId: string): MessageQueueState {

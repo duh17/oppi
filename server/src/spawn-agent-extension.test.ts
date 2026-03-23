@@ -75,6 +75,11 @@ interface MockCtx extends SpawnAgentContext {
   sessions: Map<string, Session>;
   subscribers: Map<string, Set<(msg: ServerMessage) => void>>;
   stopSessionCalls: string[];
+  sendMessageCalls: Array<{
+    sessionId: string;
+    message: string;
+    behavior?: "steer" | "followUp";
+  }>;
   spawnChildCalls: Array<{
     name?: string;
     model?: string;
@@ -89,6 +94,8 @@ interface MockCtx extends SpawnAgentContext {
   }>;
   /** Set to throw on next spawnChild call */
   spawnChildError?: Error;
+  /** Set to throw on next sendMessage call */
+  sendMessageError?: Error;
 }
 
 function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
@@ -98,6 +105,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
     sessions: new Map(),
     subscribers: new Map(),
     stopSessionCalls: [],
+    sendMessageCalls: [],
     spawnChildCalls: [],
     spawnDetachedCalls: [],
     spawnChildError: undefined,
@@ -165,6 +173,11 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
           makeSession({ ...session, status: "stopped" }),
         );
       }
+    },
+
+    async sendMessage(sessionId: string, message: string, behavior?: "steer" | "followUp") {
+      if (ctx.sendMessageError) throw ctx.sendMessageError;
+      ctx.sendMessageCalls.push({ sessionId, message, behavior });
     },
   };
 
@@ -276,13 +289,14 @@ describe("spawn-agent-extension", () => {
   // -----------------------------------------------------------------------
 
   describe("tool registration", () => {
-    it("registers spawn_agent, stop_agent, check_agents, inspect_agent", () => {
+    it("registers spawn_agent, stop_agent, send_message, check_agents, inspect_agent", () => {
       const { api } = setup();
       expect(api.tools.has("spawn_agent")).toBe(true);
       expect(api.tools.has("stop_agent")).toBe(true);
+      expect(api.tools.has("send_message")).toBe(true);
       expect(api.tools.has("check_agents")).toBe(true);
       expect(api.tools.has("inspect_agent")).toBe(true);
-      expect(api.tools.size).toBe(4);
+      expect(api.tools.size).toBe(5);
     });
   });
 
@@ -731,6 +745,248 @@ describe("spawn-agent-extension", () => {
 
       const result = await tool("stop_agent").execute("tc1", { id: "unrelated" });
       expect(result.content[0].text).toContain("not in this session's tree");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // send_message
+  // -----------------------------------------------------------------------
+
+  describe("send_message", () => {
+    it("sends as prompt to idle child session", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "ready",
+          name: "Worker",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "do more work",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].sessionId).toBe("c1");
+      expect(ctx.sendMessageCalls[0].message).toBe("do more work");
+      expect(ctx.sendMessageCalls[0].behavior).toBe("steer");
+
+      const text = result.content[0].text;
+      expect(text).toContain("Worker");
+      expect(text).toContain("new turn (prompt)");
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.deliveredAs).toBe("prompt");
+    });
+
+    it("sends as steer to busy child (default behavior)", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "Worker",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "stop, focus on the bug instead",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].behavior).toBe("steer");
+
+      const text = result.content[0].text;
+      expect(text).toContain("steer");
+      expect(text).toContain("mid-turn");
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.deliveredAs).toBe("steer");
+    });
+
+    it("sends as follow-up to busy child (behavior='followUp')", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "Worker",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "also check tests",
+        behavior: "followUp",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].behavior).toBe("followUp");
+
+      const text = result.content[0].text;
+      expect(text).toContain("follow-up");
+      expect(text).toContain("after current turn");
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.deliveredAs).toBe("follow_up");
+    });
+
+    it("ignores behavior for idle session (always prompt)", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "ready",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "new task",
+        behavior: "steer",
+      });
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.deliveredAs).toBe("prompt");
+    });
+
+    it("returns error for unknown session ID", async () => {
+      const { tool } = setup();
+      const result = await tool("send_message").execute("tc1", {
+        id: "nonexistent",
+        message: "hello",
+      });
+      expect(result.content[0].text).toContain("Session not found");
+    });
+
+    it("rejects sessions outside the spawn tree", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "unrelated",
+        makeSession({ id: "unrelated", status: "busy" }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "unrelated",
+        message: "hello",
+      });
+      expect(result.content[0].text).toContain("not in this session's tree");
+    });
+
+    it("rejects messages to stopped sessions", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "stopped",
+          name: "Done Worker",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "hello",
+      });
+      expect(result.content[0].text).toContain("stopped");
+      expect(result.content[0].text).toContain("Cannot send messages");
+    });
+
+    it("rejects messages to errored sessions", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "error",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "hello",
+      });
+      expect(result.content[0].text).toContain("Cannot send messages");
+    });
+
+    it("handles sendMessage errors gracefully", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "Worker",
+        }),
+      );
+      ctx.sendMessageError = new Error("session not active");
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "hello",
+      });
+      expect(result.content[0].text).toContain("Failed to send message");
+      expect(result.content[0].text).toContain("session not active");
+    });
+
+    it("works with grandchild sessions (descendant in tree)", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({ id: "c1", parentSessionId: "parent-1" }),
+      );
+      ctx.sessions.set(
+        "gc1",
+        makeSession({
+          id: "gc1",
+          parentSessionId: "c1",
+          status: "busy",
+          name: "Grandchild",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "gc1",
+        message: "update on progress",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].sessionId).toBe("gc1");
+      expect(result.content[0].text).toContain("Grandchild");
+    });
+
+    it("sends to starting session as prompt", async () => {
+      const { ctx, tool } = setup();
+      ctx.sessions.set(
+        "c1",
+        makeSession({
+          id: "c1",
+          parentSessionId: "parent-1",
+          status: "starting",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "c1",
+        message: "early instructions",
+      });
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.deliveredAs).toBe("prompt");
     });
   });
 
