@@ -7,7 +7,6 @@ struct ChatView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
     @Environment(SessionStore.self) private var sessionStore
-    @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(FileIndexStore.self) private var fileIndexStore
@@ -63,6 +62,9 @@ struct ChatView: View {
     private struct ChildSessionRoute: Identifiable, Hashable {
         let id: String
     }
+
+    /// Per-session reducer, owned by sessionManager.
+    private var reducer: TimelineReducer { sessionManager.reducer }
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
@@ -127,6 +129,9 @@ struct ChatView: View {
 
     var body: some View {
         chatContent
+            .environment(sessionManager.reducer)
+            .environment(sessionManager.reducer.toolOutputStore)
+            .environment(sessionManager.reducer.toolArgsStore)
     }
 
     private var chatTimeline: some View {
@@ -229,7 +234,6 @@ struct ChatView: View {
                 voiceInputManager.activeSessionId = sessionId
                 await sessionManager.connect(
                     connection: connection,
-                    reducer: reducer,
                     sessionStore: sessionStore
                 )
             }
@@ -321,12 +325,12 @@ struct ChatView: View {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
-                    connection.coalescer.pause()
+                    sessionManager.coalescer.pause()
                     Task {
                         await sessionManager.flushSnapshotIfNeeded(connection: connection)
                     }
                 case .active:
-                    connection.coalescer.resume()
+                    sessionManager.coalescer.resume()
                 default:
                     break
                 }

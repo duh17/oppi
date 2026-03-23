@@ -16,29 +16,29 @@ struct BugBashTests {
 
     @MainActor
     @Test func permissionCancelledResolvesInTimeline() {
-        let conn = makeTestConnection()
+        let scenario = ServerConnectionScenario()
         let perm = makeTestPermission()
 
         // Route permission request — goes to store, NOT timeline
-        conn.handleServerMessage(.permissionRequest(perm), sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario.whenHandle(.permissionRequest(perm))
+        scenario.whenFlush()
 
         // Permission should be in store, not in timeline
-        #expect(conn.permissionStore.count == 1)
-        let inlinePerms = conn.reducer.items.filter {
+        #expect(scenario.connection.permissionStore.count == 1)
+        let inlinePerms = scenario.reducer.items.filter {
             if case .permission = $0 { return true }
             return false
         }
         #expect(inlinePerms.isEmpty, "Pending permissions should not appear in timeline")
 
         // Route permission cancelled
-        conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
+        scenario.whenHandle(.permissionCancelled(id: "p1"))
 
         // Store should be empty
-        #expect(conn.permissionStore.isEmpty)
+        #expect(scenario.connection.permissionStore.isEmpty)
 
         // Timeline should have a resolved marker
-        let resolved = conn.reducer.items.filter {
+        let resolved = scenario.reducer.items.filter {
             if case .permissionResolved = $0 { return true }
             return false
         }
@@ -55,25 +55,25 @@ struct BugBashTests {
 
     @MainActor
     @Test func permissionCancelledClearsFromStore() {
-        let conn = makeTestConnection()
+        let scenario = ServerConnectionScenario()
         let perm = makeTestPermission()
 
-        conn.handleServerMessage(.permissionRequest(perm), sessionId: "s1")
-        #expect(conn.permissionStore.count == 1)
+        scenario.whenHandle(.permissionRequest(perm))
+        #expect(scenario.connection.permissionStore.count == 1)
 
-        conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
-        #expect(conn.permissionStore.isEmpty)
+        scenario.whenHandle(.permissionCancelled(id: "p1"))
+        #expect(scenario.connection.permissionStore.isEmpty)
     }
 
     @MainActor
     @Test func permissionCancelledForUnknownIdIsNoOp() {
-        let conn = makeTestConnection()
+        let scenario = ServerConnectionScenario()
 
         // Cancel a permission that was never added
-        conn.handleServerMessage(.permissionCancelled(id: "nonexistent"), sessionId: "s1")
+        scenario.whenHandle(.permissionCancelled(id: "nonexistent"))
 
-        #expect(conn.permissionStore.isEmpty)
-        #expect(conn.reducer.items.isEmpty)
+        #expect(scenario.connection.permissionStore.isEmpty)
+        #expect(scenario.reducer.items.isEmpty)
     }
 
     // MARK: - Bug 4: No client-side permission timeout sweep
@@ -127,29 +127,29 @@ struct BugBashTests {
 
     @MainActor
     @Test func sweepExpiredResolvesInTimeline() {
-        let conn = makeTestConnection()
+        let scenario = ServerConnectionScenario()
         let expiredPerm = makeTestPermission(id: "p1", timeoutOffset: -30) // Already expired
 
         // Add permission to store (not timeline in new flow)
-        conn.handleServerMessage(.permissionRequest(expiredPerm), sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario.whenHandle(.permissionRequest(expiredPerm))
+        scenario.whenFlush()
 
-        #expect(conn.permissionStore.count == 1)
+        #expect(scenario.connection.permissionStore.count == 1)
 
         // Sweep expired (as reconnectIfNeeded would)
-        let expiredRequests = conn.permissionStore.sweepExpired()
+        let expiredRequests = scenario.connection.permissionStore.sweepExpired()
         for request in expiredRequests {
-            conn.reducer.resolvePermission(
+            scenario.reducer.resolvePermission(
                 id: request.id, outcome: .expired,
                 tool: request.tool, summary: request.displaySummary
             )
         }
 
         // Permission should be gone from store
-        #expect(conn.permissionStore.isEmpty)
+        #expect(scenario.connection.permissionStore.isEmpty)
 
         // Timeline should show resolved marker
-        let resolved = conn.reducer.items.filter {
+        let resolved = scenario.reducer.items.filter {
             if case .permissionResolved = $0 { return true }
             return false
         }

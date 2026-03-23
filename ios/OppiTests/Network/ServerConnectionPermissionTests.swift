@@ -161,6 +161,11 @@ struct ServerConnectionPermissionTests {
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
+        // Wire the permission callback to the test-compat reducer
+        conn.onPermissionResolved = { id, outcome, tool, summary in
+            conn.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
+        }
+
         let perm = PermissionRequest(
             id: "sp1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "same-session cmd", reason: "",

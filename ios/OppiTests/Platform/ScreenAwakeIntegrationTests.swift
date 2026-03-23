@@ -101,12 +101,10 @@ struct ScreenAwakeIntegrationTests {
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
-        let handled = conn.handleStopLifecycleMessage(
-            .stopConfirmed(source: .user, reason: nil),
-            sessionId: "s1"
-        )
+        let isStop = conn.isStopLifecycleMessage(.stopConfirmed(source: .user, reason: nil))
+        conn.handleServerMessage(.stopConfirmed(source: .user, reason: nil), sessionId: "s1")
 
-        #expect(handled)
+        #expect(isStop)
         #expect(!ctrl.isPreventingSleep)
         #expect(updates().contains(true))
         #expect(updates().last == false)
@@ -119,10 +117,7 @@ struct ScreenAwakeIntegrationTests {
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .stopping))
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
-        _ = conn.handleStopLifecycleMessage(
-            .stopFailed(source: .user, reason: "busy"),
-            sessionId: "s1"
-        )
+        conn.handleServerMessage(.stopFailed(source: .user, reason: "busy"), sessionId: "s1")
 
         // stopFailed means the agent is still running — screen must stay awake
         #expect(ctrl.isPreventingSleep)

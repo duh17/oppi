@@ -39,6 +39,13 @@ final class ChatSessionManager {
 
     let sessionId: String
 
+    /// Per-session timeline pipeline — each ChatSessionManager owns its own
+    /// reducer, coalescer, and correlator so parent/child sessions maintain
+    /// independent timeline state across NavigationStack back-navigation.
+    let reducer = TimelineReducer()
+    let coalescer = DeltaCoalescer()
+    let toolCallCorrelator = ToolCallCorrelator()
+
     /// Bumped to restart the `.task(id:)` connection loop.
     private(set) var connectionGeneration = 0
 
@@ -96,6 +103,12 @@ final class ChatSessionManager {
 
     init(sessionId: String) {
         self.sessionId = sessionId
+
+        // Wire per-session coalescer → reducer pipeline.
+        coalescer.onFlush = { [weak self] events in
+            guard let self else { return }
+            self.reducer.processBatch(events)
+        }
     }
 
     private static func reconnectDelay(for attempt: Int) -> (duration: Duration, delayMs: Int) {
@@ -203,26 +216,27 @@ final class ChatSessionManager {
     /// "Resume" button in the footer.
     func connect(
         connection: ServerConnection,
-        reducer: TimelineReducer,
         sessionStore: SessionStore
     ) async {
         let generation = connectionGeneration
-        let switchingSessions = sessionStore.activeSessionId != sessionId
 
         transitionTo(.idle)
-        connection.disconnectSession()
+        connection.focusSession(sessionId)
         connection.fatalSetupError = false
+        connection.onPermissionResolved = { [weak self] id, outcome, tool, summary in
+            self?.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
+        }
         cancelAutoReconnect()
         cancelStateSync()
-        if switchingSessions {
-            reducer.reset()
-        }
+        reducer.reset()
         // Set session affinity after reset. ChatTimelineView gates rendering
         // on reducer.activeSessionId == view.sessionId — prevents a flash of
         // stale parent items during parent→child navigation. The previous
         // session's activeSessionId naturally blocks the new view's first
         // body evaluation; this line lifts the gate for subsequent renders.
         reducer.activeSessionId = sessionId
+        coalescer.sessionId = sessionId
+        toolCallCorrelator.reset()
 
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId
@@ -240,11 +254,10 @@ final class ChatSessionManager {
         telemetry.updateTransportPath(connection.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
-        let isReentry = hasConnectedBefore && switchingSessions
+        let isReentry = hasConnectedBefore
         hasConnectedBefore = true
 
         latestTraceSignature = await loadCachedTimeline(
-            reducer: reducer,
             sessionStore: sessionStore,
             isReentry: isReentry
         )
@@ -259,7 +272,6 @@ final class ChatSessionManager {
             scheduleHistoryReload(
                 generation: generation,
                 connection: connection,
-                reducer: reducer,
                 sessionStore: sessionStore,
                 cachedSignature: latestTraceSignature
             )
@@ -281,7 +293,6 @@ final class ChatSessionManager {
         scheduleHistoryReload(
             generation: generation,
             connection: connection,
-            reducer: reducer,
             sessionStore: sessionStore,
             cachedSignature: latestTraceSignature
         )
@@ -310,7 +321,6 @@ final class ChatSessionManager {
                 message,
                 inboundMeta: inboundMeta,
                 connection: connection,
-                reducer: reducer,
                 sessionStore: sessionStore,
                 generation: generation,
                 wsOpenStartMs: wsOpenStartMs,
@@ -324,8 +334,7 @@ final class ChatSessionManager {
             hasReceivedConnected: hasReceivedConnected,
             generation: generation,
             connection: connection,
-            sessionStore: sessionStore,
-            reducer: reducer
+            sessionStore: sessionStore
         )
     }
 
@@ -339,7 +348,6 @@ final class ChatSessionManager {
     /// the background trace fetch runs. The fresh trace replaces the cache
     /// data when it arrives (via `loadSession(preserveOrphans: false)`).
     private func loadCachedTimeline(
-        reducer: TimelineReducer,
         sessionStore: SessionStore,
         isReentry: Bool
     ) async -> TraceSignature? {
@@ -395,7 +403,7 @@ final class ChatSessionManager {
 
                 log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
             } else {
-                log.info("Skipped cache load — reducer has \(reducer.items.count) live items for \(self.sessionId)")
+                log.info("Skipped cache load — reducer has \(self.reducer.items.count) live items for \(self.sessionId)")
             }
 
             needsInitialScroll = true
@@ -418,7 +426,6 @@ final class ChatSessionManager {
         _ message: ServerMessage,
         inboundMeta: WebSocketClient.InboundMeta?,
         connection: ServerConnection,
-        reducer: TimelineReducer,
         sessionStore: SessionStore,
         generation: Int,
         wsOpenStartMs: Int64,
@@ -513,7 +520,6 @@ final class ChatSessionManager {
                         currentSeq: currentSeq,
                         generation: generation,
                         connection: connection,
-                        reducer: reducer,
                         sessionStore: sessionStore
                     )
                     switch outcome {
@@ -530,7 +536,6 @@ final class ChatSessionManager {
                     scheduleHistoryReload(
                         generation: generation,
                         connection: connection,
-                        reducer: reducer,
                         sessionStore: sessionStore,
                         cachedSignature: latestTraceSignature
                     )
@@ -568,7 +573,11 @@ final class ChatSessionManager {
             log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
         }
 
-        connection.handleServerMessage(message, sessionId: sessionId)
+        let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sessionId)
+        routeToTimeline(message, connection: connection, storeResult: storeResult)
+        if connection.activeSessionId == sessionId {
+            connection.handleActiveSessionUI(message, sessionId: sessionId)
+        }
     }
 
     /// Handle post-stream cleanup: state transition, auto-reconnect, and teardown.
@@ -576,8 +585,7 @@ final class ChatSessionManager {
         hasReceivedConnected: Bool,
         generation: Int,
         connection: ServerConnection,
-        sessionStore: SessionStore,
-        reducer: TimelineReducer
+        sessionStore: SessionStore
     ) {
         if Task.isCancelled {
             transitionTo(.disconnected(reason: .cancelled))
@@ -731,8 +739,161 @@ final class ChatSessionManager {
         reconcileTask?.cancel()
         reconcileTask = nil
         cancelAutoReconnect()
+        coalescer.flushNow()
         transitionTo(.disconnected(reason: .cancelled))
         cancelStateSync()
+    }
+
+    // MARK: - Per-Session Timeline Routing
+
+    /// Route a server message to the per-session timeline pipeline.
+    ///
+    /// This handles all coalescer/reducer mutations that were previously in
+    /// `ServerConnection.handleServerMessage`. Each ChatSessionManager owns
+    /// its own coalescer + reducer, so parent/child sessions maintain
+    /// independent timelines across NavigationStack navigation.
+    private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
+        switch message {
+        case .agentStart:
+            coalescer.receive(.agentStart(sessionId: sessionId))
+
+        case .agentEnd:
+            coalescer.receive(.agentEnd(sessionId: sessionId))
+
+        case .textDelta(let delta):
+            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
+
+        case .thinkingDelta(let delta):
+            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
+
+        case .toolStart(let tool, let args, let toolCallId, let callSegments):
+            coalescer.receive(toolCallCorrelator.start(
+                sessionId: sessionId, tool: tool, args: args,
+                toolCallId: toolCallId, callSegments: callSegments
+            ))
+
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
+            coalescer.receive(toolCallCorrelator.output(
+                sessionId: sessionId, output: output, isError: isError,
+                toolCallId: toolCallId, mode: mode,
+                truncated: truncated, totalBytes: totalBytes
+            ))
+
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
+            coalescer.receive(toolCallCorrelator.end(
+                sessionId: sessionId, toolCallId: toolCallId,
+                details: details, isError: isError,
+                resultSegments: resultSegments
+            ))
+
+        case .messageEnd(let role, let content):
+            if role == "assistant" {
+                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
+            } else if role == "user", !content.isEmpty {
+                if !reducer.hasUserMessage(matching: content) {
+                    reducer.appendUserMessage(content)
+                }
+            }
+
+        case .error(let msg, let code, let fatal):
+            // The missingFullSubscriptionErrorCode path stays on connection
+            // (handled in handleActiveSessionUI). Only route non-recovery errors.
+            let isMissingSubscription = code == ServerConnection.missingFullSubscriptionErrorCode
+                || (code == nil && msg.contains("is not subscribed at level=full"))
+            if !isMissingSubscription {
+                coalescer.receive(.error(sessionId: sessionId, message: msg))
+            }
+            // Fatal setup errors — propagate to connection for auto-reconnect suppression.
+            if fatal {
+                connection.fatalSetupError = true
+            }
+
+        case .sessionEnded(let reason):
+            coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
+
+        case .compactionStart(let reason):
+            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
+
+        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
+            coalescer.receive(.compactionEnd(
+                sessionId: sessionId, aborted: aborted,
+                willRetry: willRetry, summary: summary,
+                tokensBefore: tokensBefore
+            ))
+
+        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
+            coalescer.receive(.retryStart(
+                sessionId: sessionId, attempt: attempt,
+                maxAttempts: maxAttempts, delayMs: delayMs,
+                errorMessage: errorMessage
+            ))
+
+        case .retryEnd(let success, let attempt, let finalError):
+            coalescer.receive(.retryEnd(
+                sessionId: sessionId, success: success,
+                attempt: attempt, finalError: finalError
+            ))
+
+        case .commandResult(let command, let requestId, let success, let data, let error):
+            let consumed = connection.handleCommandResult(
+                command: command, requestId: requestId,
+                success: success, data: data, error: error,
+                sessionId: sessionId
+            )
+            if !consumed {
+                coalescer.receive(.commandResult(
+                    sessionId: sessionId, command: command,
+                    requestId: requestId, success: success,
+                    data: data, error: error
+                ))
+            }
+
+        case .permissionExpired(let id, _):
+            if let request = storeResult.takenPermission {
+                reducer.resolvePermission(
+                    id: id, outcome: .expired,
+                    tool: request.tool, summary: request.displaySummary
+                )
+            }
+            coalescer.receive(.permissionExpired(id: id))
+
+        case .permissionCancelled(let id):
+            if let request = storeResult.takenPermission {
+                reducer.resolvePermission(
+                    id: id, outcome: .cancelled,
+                    tool: request.tool, summary: request.displaySummary
+                )
+            }
+
+        case .permissionRequest(let perm):
+            coalescer.receive(.permissionRequest(perm))
+
+        case .queueItemStarted(_, let item, _):
+            reducer.appendUserMessage(item.message, images: item.images ?? [])
+
+        case .stopRequested(_, let reason):
+            reducer.appendSystemEvent(reason ?? "Stopping…")
+
+        case .stopConfirmed(_, let reason):
+            coalescer.receive(.agentEnd(sessionId: sessionId))
+            reducer.appendSystemEvent(reason ?? "Stop confirmed")
+
+        case .stopFailed(_, let reason):
+            reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
+
+        case .state(let session):
+            // Recovery hardening: if server state says the session is no longer
+            // running but we never observed agentEnd/messageEnd, finalize artifacts.
+            let previousStatus = connection.sessionStore.sessions.first(where: { $0.id == session.id })?.status
+            if let previousStatus,
+               previousStatus == .busy || previousStatus == .stopping,
+               session.status == .ready || session.status == .stopped || session.status == .error {
+                coalescer.receive(.agentEnd(sessionId: session.id))
+            }
+
+        default:
+            break
+        }
     }
 
     /// Ring buffer catch-up for WS reconnection only.
@@ -747,7 +908,6 @@ final class ChatSessionManager {
         currentSeq: Int,
         generation: Int,
         connection: ServerConnection,
-        reducer: TimelineReducer,
         sessionStore: SessionStore
     ) async -> CatchUpOutcome {
         guard generation == connectionGeneration else { return .noGap }
@@ -771,7 +931,6 @@ final class ChatSessionManager {
             scheduleHistoryReload(
                 generation: generation,
                 connection: connection,
-                reducer: reducer,
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
@@ -808,7 +967,6 @@ final class ChatSessionManager {
                 scheduleHistoryReload(
                     generation: generation,
                     connection: connection,
-                    reducer: reducer,
                     sessionStore: sessionStore,
                     cachedSignature: nil
                 )
@@ -829,7 +987,6 @@ final class ChatSessionManager {
                 scheduleHistoryReload(
                     generation: generation,
                     connection: connection,
-                    reducer: reducer,
                     sessionStore: sessionStore,
                     cachedSignature: nil
                 )
@@ -848,7 +1005,11 @@ final class ChatSessionManager {
                 )
                 guard accepted else { continue }
 
-                connection.handleServerMessage(event.message, sessionId: sessionId)
+                let eventStoreResult = connection.applySharedStoreUpdate(for: event.message, sessionId: sessionId)
+                routeToTimeline(event.message, connection: connection, storeResult: eventStoreResult)
+                if connection.activeSessionId == sessionId {
+                    connection.handleActiveSessionUI(event.message, sessionId: sessionId)
+                }
                 appliedCatchUp = true
             }
 
@@ -884,7 +1045,6 @@ final class ChatSessionManager {
     @discardableResult
     private func loadHistory(
         api: APIClient,
-        reducer: TimelineReducer,
         sessionStore: SessionStore,
         cachedEventCount: Int?,
         cachedLastEventId: String?
@@ -957,11 +1117,11 @@ final class ChatSessionManager {
                         workspaceId: workspaceId
                     )
                     let footprint = SentryService.currentFootprintMB()
-                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count), replay=\(usedReplay)]")
+                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(self.reducer.items.count), replay=\(usedReplay)]")
                     ClientLog.info("Memory", "Session loaded", metadata: [
                         "footprintMB": footprint.map(String.init) ?? "n/a",
                         "traceEvents": String(trace.count),
-                        "timelineItems": String(reducer.items.count),
+                        "timelineItems": String(self.reducer.items.count),
                         "sessionId": self.sessionId,
                         "replay": usedReplay ? "1" : "0",
                     ])
@@ -996,7 +1156,6 @@ final class ChatSessionManager {
     private func scheduleHistoryReload(
         generation: Int,
         connection: ServerConnection,
-        reducer: TimelineReducer,
         sessionStore: SessionStore,
         cachedSignature: TraceSignature?
     ) {
@@ -1026,7 +1185,6 @@ final class ChatSessionManager {
             guard let api = connection?.apiClient else { return }
             if let freshSignature = await self.loadHistory(
                 api: api,
-                reducer: reducer,
                 sessionStore: sessionStore,
                 cachedEventCount: cachedEventCount,
                 cachedLastEventId: cachedLastEventId

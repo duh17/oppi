@@ -5,8 +5,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Conn
 
 /// Top-level connection coordinator.
 ///
-/// Owns the APIClient and WebSocketClient, manages the event pipeline,
-/// and routes server messages to stores and the timeline reducer.
+/// Owns the APIClient and WebSocketClient and shared stores.
+/// Timeline pipeline (coalescer/reducer/correlator) is per-session,
+/// owned by ChatSessionManager.
 @MainActor @Observable
 final class ServerConnection {
     // Public state
@@ -40,9 +41,17 @@ final class ServerConnection {
     // Screen awake — injectable for tests; defaults to the process-wide singleton.
     var screenAwakeController: ScreenAwakeController = .shared
 
-    // Runtime pipeline
+    // Runtime pipeline — coalescer/reducer/correlator moved to per-session
+    // ChatSessionManager. Connection retains only connection-level state.
+    //
+    // The reducer/coalescer/correlator below exist solely for backward-compatible
+    // test support. Production code (ChatView, OppiApp) no longer references them.
+    // Tests that use ServerConnectionScenario get proper per-session pipelines.
+    // periphery:ignore - test seam used by OppiTests via @testable import
     let reducer = TimelineReducer()
+    // periphery:ignore - test seam used by OppiTests via @testable import
     let coalescer = DeltaCoalescer()
+    // periphery:ignore - test seam used by OppiTests via @testable import
     let toolCallCorrelator = ToolCallCorrelator()
 
     // Stream lifecycle
@@ -111,6 +120,12 @@ final class ServerConnection {
     /// ChatSessionManager checks this to suppress auto-reconnect.
     var fatalSetupError = false
 
+    /// Callback for permission resolution UI feedback.
+    /// Set by the active ChatSessionManager so `respondToPermission` can
+    /// update the per-session reducer immediately (before the server echoes
+    /// the event back over WS).
+    var onPermissionResolved: ((_ id: String, _ outcome: PermissionOutcome, _ tool: String, _ summary: String) -> Void)?
+
     /// Tracked unsubscribe tasks — keyed by sessionId.
     /// Cancelled before resubscribing the same session to prevent the
     /// fire-and-forget unsubscribe from racing past the new subscribe.
@@ -138,12 +153,11 @@ final class ServerConnection {
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
 
     init() {
-        // Wire coalescer to reducer (batch) + Live Activity (throttled).
-        // Single renderVersion bump per flush, not per event.
+        // Wire test-compat coalescer → reducer for backward-compatible tests.
+        // Production code uses per-session pipelines on ChatSessionManager.
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
             self.reducer.processBatch(events)
-            self.handleLiveActivityFlush(events)
         }
 
         // Wire silence watchdog probe to request a state refresh.
@@ -172,7 +186,6 @@ final class ServerConnection {
         guard server.id != currentServerId else { return true } // Already targeting this server
         disconnectSession()
         disconnectStream()
-        reducer.reset()
         discoveredLANEndpoint = nil
         endpointSelection = nil
         transportPath = .paired
@@ -594,10 +607,24 @@ final class ServerConnection {
         }
     }
 
+    /// Focus the connection on a session for command routing (prompt/stop/etc).
+    ///
+    /// Unlike `disconnectSession`, this does NOT unsubscribe the previous session
+    /// or tear down streams. The previous session's ChatSessionManager keeps
+    /// receiving events via its per-session continuation and coalescer/reducer.
+    func focusSession(_ sessionId: String) {
+        activeSessionId = sessionId
+        sender.activeSessionId = sessionId
+        // Reset per-connection UI state for the new focused session
+        activeExtensionDialog = nil
+        extensionTimeoutTask?.cancel()
+        extensionTimeoutTask = nil
+        chatState.resetSessionState()
+    }
+
     /// Disconnect from the current session stream.
     func disconnectSession() {
         cancelDeferredQueueSync()
-        coalescer.flushNow()
         commands.failAllTurnSends(error: WebSocketError.notConnected)
         commands.failAllCommands(error: WebSocketError.notConnected)
 
@@ -610,7 +637,6 @@ final class ServerConnection {
 
         activeSessionId = nil
         sender.activeSessionId = nil
-        coalescer.sessionId = nil
         Task {
             await sessionStreamCoordinator.noteStreamDisconnected()
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
@@ -629,9 +655,10 @@ final class ServerConnection {
         // Don't disconnect /stream WS — it stays open for other subscriptions.
     }
 
-    /// Flush pending deltas on background transition.
-    /// Does NOT disconnect — the OS will suspend the stream, and
-    /// `reconnectIfNeeded` handles recovery on foreground.
+    /// Background transition hook.
+    /// Production coalescers are per-session (on ChatSessionManager) — flushed
+    /// via ChatView's scenePhase handler. This flushes the test-compat coalescer
+    /// so tests using handleServerMessage() can verify timeline state.
     func flushAndSuspend() {
         coalescer.flushNow()
     }
@@ -696,7 +723,7 @@ final class ServerConnection {
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
             if request.sessionId == activeSessionId {
-                reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
+                onPermissionResolved?(id, outcome, request.tool, request.displaySummary)
             }
         }
         if ReleaseFeatures.pushNotificationsEnabled {
@@ -718,6 +745,7 @@ final class ServerConnection {
         activeSessionId = sessionId
         sender.activeSessionId = sessionId
         coalescer.sessionId = sessionId
+        reducer.activeSessionId = sessionId
     }
 
     func telemetryErrorKind(from error: Error) -> String {

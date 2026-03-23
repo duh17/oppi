@@ -257,12 +257,9 @@ extension ServerConnection {
         // 2. Sweep expired permissions (safety net for missed WS messages)
         let expiredRequests = permissionStore.sweepExpired()
         for request in expiredRequests {
-            // Only inject expired marker for the active session's timeline
+            // Notify per-session reducer via callback
             if request.sessionId == activeSessionId {
-                reducer.resolvePermission(
-                    id: request.id, outcome: .expired,
-                    tool: request.tool, summary: request.displaySummary
-                )
+                onPermissionResolved?(request.id, .expired, request.tool, request.displaySummary)
             }
             if ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: request.id)

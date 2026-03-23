@@ -1672,6 +1672,11 @@ struct StreamLifecycleTests {
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
+        // Wire permission callback to test-compat reducer
+        conn.onPermissionResolved = { id, outcome, tool, summary in
+            conn.reducer.resolvePermission(id: id, outcome: outcome, tool: tool, summary: summary)
+        }
+
         // Add a permission for the ACTIVE session
         let perm = PermissionRequest(
             id: "sp1", sessionId: "s1", tool: "bash",

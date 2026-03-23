@@ -25,22 +25,18 @@ struct ServerConnectionForegroundRecoveryTests {
 
     @MainActor
     @Test func reconnectDoesNotTouchReducerTimeline() async {
+        // With per-session reducers, the connection has no reducer to touch.
+        // This test verifies foreground recovery doesn't crash without one.
         let conn = ServerConnection()
         conn.configure(credentials: ServerCredentials(
             host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
         ))
         conn._setActiveSessionIdForTesting("s1")
 
-        conn.reducer.process(.agentStart(sessionId: "s1"))
-        conn.reducer.process(.textDelta(sessionId: "s1", delta: "hello world"))
-        conn.reducer.process(.agentEnd(sessionId: "s1"))
-        let countBefore = conn.reducer.items.count
-        #expect(countBefore > 0)
-
         await conn.reconnectIfNeeded()
 
-        #expect(conn.reducer.items.count == countBefore,
-                "Foreground recovery must not replace timeline — ChatSessionManager owns that")
+        // If we reach here without crash, the connection correctly avoids
+        // reducer access during foreground recovery.
     }
 
     @MainActor

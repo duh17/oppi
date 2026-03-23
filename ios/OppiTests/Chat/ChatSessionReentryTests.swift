@@ -10,7 +10,7 @@ import Testing
 ///
 /// Strategy:
 ///   1. Subscribe WSS (get currentSeq from ack)
-///   2. Fetch JSONL trace via REST → reducer.loadSession(trace) [full rebuild]
+///   2. Fetch JSONL trace via REST → manager.reducer.loadSession(trace) [full rebuild]
 ///   3. Seed lastSeenSeq = currentSeq → skip ring catch-up
 ///   4. Live WSS events with seq > currentSeq append normally
 ///
@@ -81,12 +81,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -157,12 +156,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -182,7 +180,7 @@ struct ChatSessionReentryTests {
         #expect(seededSeq >= 11, "Live events with seq > seeded currentSeq should be accepted")
 
         // Verify live content is in the timeline
-        let hasLiveContent = reducer.items.contains { item in
+        let hasLiveContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("LIVE_CONTENT")
             }
@@ -227,11 +225,10 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -293,11 +290,10 @@ struct ChatSessionReentryTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -358,12 +354,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -429,12 +424,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -448,7 +442,7 @@ struct ChatSessionReentryTests {
         try? await Task.sleep(for: .milliseconds(200))
 
         // Timeline should have content from trace
-        let hasContent = reducer.items.contains { item in
+        let hasContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text == "4"
             }
@@ -476,12 +470,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         // First connect
         let firstConnect = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -504,7 +497,7 @@ struct ChatSessionReentryTests {
 
         // Second connect with the new generation
         let secondConnect = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(2))
@@ -553,12 +546,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -570,7 +562,7 @@ struct ChatSessionReentryTests {
         try? await Task.sleep(for: .milliseconds(200))
 
         // Timeline should still have cached content (not blank)
-        let hasCachedContent = reducer.items.contains { item in
+        let hasCachedContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("cached content survives")
             }
@@ -614,12 +606,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .stopped))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
         await connectTask.value
 
@@ -627,7 +618,7 @@ struct ChatSessionReentryTests {
         #expect(manager.entryState == .stopped(historyLoaded: true))
 
         // Timeline should be populated from trace
-        let hasContent = reducer.items.contains { item in
+        let hasContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text == "Done!"
             }
@@ -682,12 +673,11 @@ struct ChatSessionReentryTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -704,7 +694,7 @@ struct ChatSessionReentryTests {
 
         // The gap content MUST appear despite the session being busy.
         // Before the fix, this was deferred and the gap was never filled.
-        let hasGapContent = reducer.items.contains { item in
+        let hasGapContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("GAP_CONTENT_THAT_WAS_MISSING")
             }

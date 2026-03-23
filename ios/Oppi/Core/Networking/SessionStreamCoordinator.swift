@@ -95,12 +95,9 @@ actor SessionStreamCoordinator {
 
         let streamStart = ContinuousClock.now
 
-        let previousSessionId = await MainActor.run { connection.activeSessionId }
-        if let previousSessionId, previousSessionId != sessionId {
-            await MainActor.run {
-                connection.unsubscribeSession(previousSessionId)
-            }
-        }
+        // Previous session stays subscribed — its ChatSessionManager keeps
+        // receiving events via the per-session continuation and coalescer/reducer.
+        // Only cancel any pending unsubscribe for the session we're about to subscribe.
 
         if let pendingUnsub = await MainActor.run(body: {
             connection.pendingUnsubscribeTasks.removeValue(forKey: sessionId)
@@ -111,8 +108,6 @@ actor SessionStreamCoordinator {
         await MainActor.run {
             connection.activeSessionId = sessionId
             connection.sender.activeSessionId = sessionId
-            connection.coalescer.sessionId = sessionId
-            connection.toolCallCorrelator.reset()
             connection.chatState.thinkingLevel = .medium
             Task {
                 await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
@@ -381,7 +376,7 @@ actor SessionStreamCoordinator {
                 streamCoordinatorLogger.error(
                     "Auto-recover subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
-                connection.reducer.appendSystemEvent("Connection hiccup — trying to resync session")
+                ClientLog.error("StreamCoordinator", "Auto-recover subscribe failed — connection hiccup", metadata: ["sessionId": sessionId])
             }
         }
 
@@ -575,7 +570,7 @@ actor SessionStreamCoordinator {
                         "Resubscription failed for active session",
                         metadata: ["sessionId": activeSessionId]
                     )
-                    connection.reducer.appendSystemEvent("Connection recovered but session sync failed")
+                    ClientLog.error("StreamCoordinator", "Connection recovered but session sync failed", metadata: ["sessionId": activeSessionId])
                 }
             }
         }
