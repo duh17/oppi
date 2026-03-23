@@ -10,6 +10,9 @@ enum FileType: Equatable {
     case json
     case image
     case audio
+    case video
+    case pdf
+    case binary
     case plain
 
     /// Detect from file path extension (or well-known filenames), with
@@ -29,8 +32,24 @@ enum FileType: Equatable {
         switch filename {
         case "dockerfile", "containerfile", "makefile", "gnumakefile":
             return .code(language: .shell)
+        case ".gitignore", ".dockerignore", ".prettierignore", ".eslintignore",
+             ".npmignore", ".hgignore":
+            return .code(language: .shell)
+        case ".env", ".env.local", ".env.development", ".env.production",
+             ".env.test", ".env.staging":
+            return .code(language: .shell)
         default:
             break
+        }
+
+        // Dotfiles that are typically JSON
+        if filename.hasPrefix(".") && ext.isEmpty {
+            switch filename {
+            case ".prettierrc", ".eslintrc", ".babelrc", ".swcrc":
+                return .json
+            default:
+                break
+            }
         }
 
         if ext.isEmpty {
@@ -45,10 +64,22 @@ enum FileType: Equatable {
             return .markdown
         case "html", "htm":
             return .html
-        case "jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "tiff":
+        case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tiff":
+            return .image
+        case "svg":
             return .image
         case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "caf":
             return .audio
+        case "mp4", "mov", "m4v", "avi", "webm":
+            return .video
+        case "pdf":
+            return .pdf
+        case "gz", "zip", "tar", "bz2", "xz", "7z", "rar",
+             "dmg", "iso", "img",
+             "car", "nib", "mobileprovision", "p12", "cer",
+             "dylib", "so", "a", "o", "exe", "dll",
+             "woff", "woff2", "ttf", "otf", "eot":
+            return .binary
         default:
             let lang = SyntaxLanguage.detect(ext)
             if lang == .json { return .json }
@@ -108,6 +139,9 @@ enum FileType: Equatable {
         case .json: return "JSON"
         case .image: return "Image"
         case .audio: return "Audio"
+        case .video: return "Video"
+        case .pdf: return "PDF"
+        case .binary: return "Binary"
         case .plain: return "Text"
         }
     }

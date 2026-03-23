@@ -633,7 +633,7 @@ enum ToolRowTextRenderer {
             return .json
         case .html:
             return .html
-        case .plain, .markdown, .image, .audio:
+        case .plain, .markdown, .image, .audio, .video, .pdf, .binary:
             return nil
         }
     }

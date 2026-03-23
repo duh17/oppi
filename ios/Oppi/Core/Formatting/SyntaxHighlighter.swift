@@ -29,6 +29,10 @@ enum SyntaxLanguage: Sendable, Hashable {
     case java
     case kotlin
     case zig
+    case xml
+    case protobuf
+    case graphql
+    case diff
     case unknown
 
     /// Detect language from file extension or code fence name.
@@ -53,6 +57,11 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "java": return .java
         case "kt", "kts", "kotlin": return .kotlin
         case "zig": return .zig
+        case "xml", "xsl", "xslt", "xsd", "plist", "xcscheme", "xcworkspacedata",
+             "storyboard", "xib", "csproj", "vcxproj", "sln": return .xml
+        case "proto", "protobuf": return .protobuf
+        case "graphql", "gql": return .graphql
+        case "diff", "patch": return .diff
         default: return .unknown
         }
     }
@@ -78,27 +87,35 @@ enum SyntaxLanguage: Sendable, Hashable {
         case .java: return "Java"
         case .kotlin: return "Kotlin"
         case .zig: return "Zig"
+        case .xml: return "XML"
+        case .protobuf: return "Protobuf"
+        case .graphql: return "GraphQL"
+        case .diff: return "Diff"
         case .unknown: return "Text"
         }
     }
 
     var lineCommentPrefix: [Character]? {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css:
+        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
+             .protobuf, .graphql:
             return ["/", "/"]
         case .python, .ruby, .shell, .yaml, .toml:
             return ["#"]
         case .sql:
             return ["-", "-"]
-        case .html, .json, .unknown:
+        case .html, .json, .xml, .diff, .unknown:
             return nil
         }
     }
 
     var hasBlockComments: Bool {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css:
+        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
+             .protobuf, .graphql:
             return true
+        case .xml:
+            return true // <!-- --> handled by XML scanner
         default:
             return false
         }
@@ -130,7 +147,11 @@ enum SyntaxLanguage: Sendable, Hashable {
             return kotlinKeywords
         case .zig:
             return zigKeywords
-        case .html, .css, .json, .yaml, .toml, .unknown:
+        case .protobuf:
+            return protobufKeywords
+        case .graphql:
+            return graphqlKeywords
+        case .html, .css, .json, .yaml, .toml, .xml, .diff, .unknown:
             return []
         }
     }
@@ -349,6 +370,16 @@ enum SyntaxHighlighter {
 
         if language == .json {
             scanJSONRanges(allChars, ranges: &tokenRanges)
+            return tokenRanges
+        }
+
+        if language == .xml {
+            scanXMLRanges(allChars, ranges: &tokenRanges)
+            return tokenRanges
+        }
+
+        if language == .diff {
+            scanDiffRanges(allChars, ranges: &tokenRanges)
             return tokenRanges
         }
 
@@ -1227,6 +1258,187 @@ enum SyntaxHighlighter {
             return false
         }
         return true
+    }
+
+    // MARK: - XML Highlighting
+
+    private static func scanXMLRanges(
+        _ chars: [Character],
+        ranges: inout [TokenRange]
+    ) {
+        var i = 0
+
+        while i < chars.count {
+            let ch = chars[i]
+
+            // XML comment: <!-- ... -->
+            if ch == "<", i + 3 < chars.count,
+               chars[i + 1] == "!", chars[i + 2] == "-", chars[i + 3] == "-" {
+                let commentStart = i
+                i += 4
+                while i + 2 < chars.count {
+                    if chars[i] == "-", chars[i + 1] == "-", chars[i + 2] == ">" {
+                        i += 3
+                        break
+                    }
+                    i += 1
+                }
+                if i >= chars.count { i = chars.count }
+                ranges.append(TokenRange(location: commentStart, length: i - commentStart, kind: .comment))
+                continue
+            }
+
+            // CDATA: <![CDATA[ ... ]]>
+            if ch == "<", i + 8 < chars.count,
+               chars[i + 1] == "!", chars[i + 2] == "[",
+               chars[i + 3] == "C", chars[i + 4] == "D",
+               chars[i + 5] == "A", chars[i + 6] == "T",
+               chars[i + 7] == "A", chars[i + 8] == "[" {
+                let cdataStart = i
+                i += 9
+                while i + 2 < chars.count {
+                    if chars[i] == "]", chars[i + 1] == "]", chars[i + 2] == ">" {
+                        i += 3
+                        break
+                    }
+                    i += 1
+                }
+                if i >= chars.count { i = chars.count }
+                ranges.append(TokenRange(location: cdataStart, length: i - cdataStart, kind: .string))
+                continue
+            }
+
+            // Processing instruction: <? ... ?>
+            if ch == "<", i + 1 < chars.count, chars[i + 1] == "?" {
+                let piStart = i
+                i += 2
+                while i + 1 < chars.count {
+                    if chars[i] == "?", chars[i + 1] == ">" {
+                        i += 2
+                        break
+                    }
+                    i += 1
+                }
+                if i >= chars.count { i = chars.count }
+                ranges.append(TokenRange(location: piStart, length: i - piStart, kind: .keyword))
+                continue
+            }
+
+            // Tag: < ... >
+            if ch == "<" {
+                let tagStart = i
+                i += 1
+                // Skip / for closing tags
+                if i < chars.count, chars[i] == "/" { i += 1 }
+
+                // Tag name
+                let nameStart = i
+                while i < chars.count, isIdentChar(chars[i]) || chars[i] == ":" || chars[i] == "-" {
+                    i += 1
+                }
+                if i > nameStart {
+                    ranges.append(TokenRange(location: nameStart, length: i - nameStart, kind: .keyword))
+                }
+
+                // Attributes inside tag
+                while i < chars.count, chars[i] != ">" {
+                    if chars[i] == "\"" || chars[i] == "'" {
+                        let strEnd = scanStringEndPos(chars, from: i, quote: chars[i])
+                        ranges.append(TokenRange(location: i, length: strEnd - i, kind: .string))
+                        i = strEnd
+                        continue
+                    }
+
+                    // Attribute name
+                    if isIdentStart(chars[i]) {
+                        let attrStart = i
+                        while i < chars.count, isIdentChar(chars[i]) || chars[i] == ":" || chars[i] == "-" {
+                            i += 1
+                        }
+                        ranges.append(TokenRange(location: attrStart, length: i - attrStart, kind: .type))
+                        continue
+                    }
+
+                    // Skip / before >
+                    if chars[i] == "/" { i += 1; continue }
+
+                    i += 1
+                }
+
+                // Include the closing >
+                if i < chars.count, chars[i] == ">" {
+                    i += 1
+                }
+
+                // Record the < and > as punctuation
+                ranges.append(TokenRange(location: tagStart, length: 1, kind: .punctuation))
+                if i > tagStart + 1 {
+                    ranges.append(TokenRange(location: i - 1, length: 1, kind: .punctuation))
+                }
+                continue
+            }
+
+            // Entity reference: &name;
+            if ch == "&" {
+                let entityStart = i
+                i += 1
+                while i < chars.count, chars[i] != ";", chars[i] != "<", !chars[i].isWhitespace {
+                    i += 1
+                }
+                if i < chars.count, chars[i] == ";" { i += 1 }
+                ranges.append(TokenRange(location: entityStart, length: i - entityStart, kind: .number))
+                continue
+            }
+
+            i += 1
+        }
+    }
+
+    // MARK: - Diff Highlighting
+
+    private static func scanDiffRanges(
+        _ chars: [Character],
+        ranges: inout [TokenRange]
+    ) {
+        var i = 0
+
+        while i <= chars.count {
+            // Find line boundaries
+            var lineEnd = i
+            while lineEnd < chars.count, chars[lineEnd] != "\n" {
+                lineEnd += 1
+            }
+
+            if lineEnd > i {
+                let lineLen = lineEnd - i
+                let ch = chars[i]
+
+                if ch == "+" {
+                    // +++ header or added line
+                    if lineLen >= 3, chars[i + 1] == "+", chars[i + 2] == "+" {
+                        ranges.append(TokenRange(location: i, length: lineLen, kind: .keyword))
+                    } else {
+                        ranges.append(TokenRange(location: i, length: lineLen, kind: .string))
+                    }
+                } else if ch == "-" {
+                    // --- header or removed line
+                    if lineLen >= 3, chars[i + 1] == "-", chars[i + 2] == "-" {
+                        ranges.append(TokenRange(location: i, length: lineLen, kind: .keyword))
+                    } else {
+                        ranges.append(TokenRange(location: i, length: lineLen, kind: .comment))
+                    }
+                } else if ch == "@" {
+                    // @@ hunk header
+                    ranges.append(TokenRange(location: i, length: lineLen, kind: .type))
+                } else if ch == "d" || ch == "i" || ch == "n" || ch == "r" {
+                    // diff, index, new, rename headers
+                    ranges.append(TokenRange(location: i, length: lineLen, kind: .keyword))
+                }
+                // Context lines (space prefix) get default variable color
+            }
+
+            i = lineEnd + 1
+        }
     }
 
 }

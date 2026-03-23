@@ -147,6 +147,152 @@ struct FileTypeTests {
         #expect(FileType.plain.displayLabel == "Text")
         #expect(FileType.code(language: .swift).displayLabel == "Swift")
     }
+
+    // MARK: - New file types (XML, Protobuf, GraphQL, Diff)
+
+    @Test func detectXML() {
+        let ft = FileType.detect(from: "config.xml")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .xml, got \(ft)")
+            return
+        }
+        #expect(lang == .xml)
+    }
+
+    @Test func detectPlist() {
+        let ft = FileType.detect(from: "Info.plist")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .plist, got \(ft)")
+            return
+        }
+        #expect(lang == .xml)
+    }
+
+    @Test func detectProtobuf() {
+        let ft = FileType.detect(from: "schema.proto")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .proto, got \(ft)")
+            return
+        }
+        #expect(lang == .protobuf)
+    }
+
+    @Test func detectGraphQL() {
+        let ft = FileType.detect(from: "queries.graphql")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .graphql, got \(ft)")
+            return
+        }
+        #expect(lang == .graphql)
+    }
+
+    @Test func detectGQL() {
+        let ft = FileType.detect(from: "schema.gql")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .gql, got \(ft)")
+            return
+        }
+        #expect(lang == .graphql)
+    }
+
+    @Test func detectDiff() {
+        let ft = FileType.detect(from: "changes.diff")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .diff, got \(ft)")
+            return
+        }
+        #expect(lang == .diff)
+    }
+
+    @Test func detectPatch() {
+        let ft = FileType.detect(from: "fix.patch")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .patch, got \(ft)")
+            return
+        }
+        #expect(lang == .diff)
+    }
+
+    // MARK: - New non-code types (video, PDF, binary)
+
+    @Test func detectPDF() {
+        #expect(FileType.detect(from: "doc.pdf") == .pdf)
+    }
+
+    @Test func detectVideo() {
+        #expect(FileType.detect(from: "clip.mp4") == .video)
+        #expect(FileType.detect(from: "movie.mov") == .video)
+        #expect(FileType.detect(from: "video.webm") == .video)
+    }
+
+    @Test func detectBinary() {
+        #expect(FileType.detect(from: "archive.gz") == .binary)
+        #expect(FileType.detect(from: "bundle.zip") == .binary)
+        #expect(FileType.detect(from: "disk.dmg") == .binary)
+        #expect(FileType.detect(from: "assets.car") == .binary)
+        #expect(FileType.detect(from: "view.nib") == .binary)
+        #expect(FileType.detect(from: "cert.mobileprovision") == .binary)
+        #expect(FileType.detect(from: "lib.dylib") == .binary)
+        #expect(FileType.detect(from: "font.woff2") == .binary)
+    }
+
+    // MARK: - Dotfile detection
+
+    @Test func detectGitignore() {
+        let ft = FileType.detect(from: ".gitignore")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .gitignore, got \(ft)")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func detectDockerignore() {
+        let ft = FileType.detect(from: ".dockerignore")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .dockerignore, got \(ft)")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func detectEnvFile() {
+        let ft = FileType.detect(from: ".env")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .env, got \(ft)")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func detectEnvLocal() {
+        let ft = FileType.detect(from: ".env.local")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for .env.local, got \(ft)")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func detectPrettierrc() {
+        #expect(FileType.detect(from: ".prettierrc") == .json)
+    }
+
+    @Test func detectEslintrc() {
+        #expect(FileType.detect(from: ".eslintrc") == .json)
+    }
+
+    // MARK: - New display labels
+
+    @Test func newDisplayLabels() {
+        #expect(FileType.video.displayLabel == "Video")
+        #expect(FileType.pdf.displayLabel == "PDF")
+        #expect(FileType.binary.displayLabel == "Binary")
+        #expect(FileType.code(language: .xml).displayLabel == "XML")
+        #expect(FileType.code(language: .protobuf).displayLabel == "Protobuf")
+        #expect(FileType.code(language: .graphql).displayLabel == "GraphQL")
+        #expect(FileType.code(language: .diff).displayLabel == "Diff")
+    }
 }
 
 @Suite("File content presentation policy")

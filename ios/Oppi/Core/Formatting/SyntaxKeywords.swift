@@ -119,3 +119,20 @@ let zigKeywords: Set<String> = [
     "null", "true", "false", "orelse", "and", "or", "async", "await",
     "import", "usingnamespace", "threadlocal", "volatile",
 ]
+
+let protobufKeywords: Set<String> = [
+    "syntax", "package", "import", "option", "message", "enum",
+    "service", "rpc", "returns", "oneof", "map", "reserved",
+    "repeated", "optional", "required", "extend", "extensions",
+    "to", "max", "true", "false", "public", "weak",
+    "double", "float", "int32", "int64", "uint32", "uint64",
+    "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64",
+    "bool", "string", "bytes",
+]
+
+let graphqlKeywords: Set<String> = [
+    "type", "query", "mutation", "subscription", "input", "interface",
+    "union", "enum", "scalar", "schema", "extend", "implements",
+    "directive", "fragment", "on", "true", "false", "null",
+    "repeatable",
+]

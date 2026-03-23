@@ -95,6 +95,59 @@ struct SyntaxLanguageTests {
         #expect(SyntaxLanguage.json.keywords.isEmpty)
         #expect(SyntaxLanguage.unknown.keywords.isEmpty)
     }
+
+    // MARK: - New language detection (XML, Protobuf, GraphQL, Diff)
+
+    @Test func detectXML() {
+        #expect(SyntaxLanguage.detect("xml") == .xml)
+        #expect(SyntaxLanguage.detect("xsl") == .xml)
+        #expect(SyntaxLanguage.detect("xslt") == .xml)
+        #expect(SyntaxLanguage.detect("xsd") == .xml)
+        #expect(SyntaxLanguage.detect("plist") == .xml)
+    }
+
+    @Test func detectProtobuf() {
+        #expect(SyntaxLanguage.detect("proto") == .protobuf)
+        #expect(SyntaxLanguage.detect("protobuf") == .protobuf)
+    }
+
+    @Test func detectGraphQL() {
+        #expect(SyntaxLanguage.detect("graphql") == .graphql)
+        #expect(SyntaxLanguage.detect("gql") == .graphql)
+    }
+
+    @Test func detectDiff() {
+        #expect(SyntaxLanguage.detect("diff") == .diff)
+        #expect(SyntaxLanguage.detect("patch") == .diff)
+    }
+
+    @Test func newDisplayNames() {
+        #expect(SyntaxLanguage.xml.displayName == "XML")
+        #expect(SyntaxLanguage.protobuf.displayName == "Protobuf")
+        #expect(SyntaxLanguage.graphql.displayName == "GraphQL")
+        #expect(SyntaxLanguage.diff.displayName == "Diff")
+    }
+
+    @Test func newCommentPrefixes() {
+        #expect(SyntaxLanguage.protobuf.lineCommentPrefix == ["/", "/"])
+        #expect(SyntaxLanguage.graphql.lineCommentPrefix == ["/", "/"])
+        #expect(SyntaxLanguage.xml.lineCommentPrefix == nil)
+        #expect(SyntaxLanguage.diff.lineCommentPrefix == nil)
+    }
+
+    @Test func newBlockComments() {
+        #expect(SyntaxLanguage.protobuf.hasBlockComments == true)
+        #expect(SyntaxLanguage.graphql.hasBlockComments == true)
+        #expect(SyntaxLanguage.xml.hasBlockComments == true)
+        #expect(SyntaxLanguage.diff.hasBlockComments == false)
+    }
+
+    @Test func newKeywordSets() {
+        #expect(!SyntaxLanguage.protobuf.keywords.isEmpty)
+        #expect(!SyntaxLanguage.graphql.keywords.isEmpty)
+        #expect(SyntaxLanguage.xml.keywords.isEmpty)
+        #expect(SyntaxLanguage.diff.keywords.isEmpty)
+    }
 }
 
 @Suite("SyntaxHighlighter")
@@ -297,5 +350,173 @@ struct SyntaxHighlighterTests {
         guard let range = (text as NSString).range(of: substring) as NSRange?,
               range.location != NSNotFound else { return nil }
         return attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
+    }
+}
+
+// MARK: - XML Highlighting
+
+@Suite("XML Highlighting")
+struct XMLHighlightingTests {
+    @Test func xmlTagsHighlighted() {
+        let xml = "<root><child attr=\"value\"/></root>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        #expect(!ranges.isEmpty, "XML should produce token ranges")
+        let keywords = ranges.filter { $0.kind == .keyword }
+        #expect(!keywords.isEmpty, "XML tags should be highlighted as keywords")
+    }
+
+    @Test func xmlCommentHighlighted() {
+        let xml = "<!-- comment --><tag/>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "XML comments should be highlighted")
+    }
+
+    @Test func xmlAttributeValuesHighlighted() {
+        let xml = "<tag key=\"value\"/>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        let strings = ranges.filter { $0.kind == .string }
+        #expect(!strings.isEmpty, "XML attribute values should be highlighted as strings")
+    }
+
+    @Test func xmlEntityHighlighted() {
+        let xml = "&amp; &lt;"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        let numbers = ranges.filter { $0.kind == .number }
+        #expect(numbers.count == 2, "XML entities should be highlighted")
+    }
+
+    @Test func xmlProcessingInstruction() {
+        let xml = "<?xml version=\"1.0\"?>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        let keywords = ranges.filter { $0.kind == .keyword }
+        #expect(!keywords.isEmpty, "Processing instructions should be highlighted")
+    }
+
+    @Test func xmlAttributeNamesHighlighted() {
+        let xml = "<tag key=\"value\" id=\"1\"/>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(xml, language: .xml)
+        let types = ranges.filter { $0.kind == .type }
+        #expect(types.count >= 2, "XML attribute names should be highlighted as types")
+    }
+
+    @Test func xmlPreservesText() {
+        let xml = "<root><child/></root>"
+        let result = SyntaxHighlighter.highlight(xml, language: .xml)
+        #expect(result.string == xml)
+    }
+}
+
+// MARK: - Diff Highlighting
+
+@Suite("Diff Highlighting")
+struct DiffHighlightingTests {
+    @Test func addedLinesHighlighted() {
+        let diff = "+added line"
+        let ranges = SyntaxHighlighter.scanTokenRanges(diff, language: .diff)
+        let strings = ranges.filter { $0.kind == .string }
+        #expect(!strings.isEmpty, "Added lines should be highlighted as strings")
+    }
+
+    @Test func removedLinesHighlighted() {
+        let diff = "-removed line"
+        let ranges = SyntaxHighlighter.scanTokenRanges(diff, language: .diff)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "Removed lines should be highlighted as comments")
+    }
+
+    @Test func hunkHeaderHighlighted() {
+        let diff = "@@ -1,3 +1,4 @@"
+        let ranges = SyntaxHighlighter.scanTokenRanges(diff, language: .diff)
+        let types = ranges.filter { $0.kind == .type }
+        #expect(!types.isEmpty, "Hunk headers should be highlighted as types")
+    }
+
+    @Test func diffHeadersHighlighted() {
+        let diff = "--- a/file.txt\n+++ b/file.txt"
+        let ranges = SyntaxHighlighter.scanTokenRanges(diff, language: .diff)
+        let keywords = ranges.filter { $0.kind == .keyword }
+        #expect(keywords.count >= 2, "Diff headers should be highlighted as keywords")
+    }
+
+    @Test func contextLinesNotHighlighted() {
+        let diff = " context line"
+        let ranges = SyntaxHighlighter.scanTokenRanges(diff, language: .diff)
+        #expect(ranges.isEmpty, "Context lines should have no special highlighting")
+    }
+
+    @Test func diffPreservesText() {
+        let diff = "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-old\n+new"
+        let result = SyntaxHighlighter.highlight(diff, language: .diff)
+        #expect(result.string == diff)
+    }
+}
+
+// MARK: - Protobuf Highlighting
+
+@Suite("Protobuf Highlighting")
+struct ProtobufHighlightingTests {
+    @Test func protobufKeywordsHighlighted() {
+        let proto = "message User { string name = 1; }"
+        let ranges = SyntaxHighlighter.scanTokenRanges(proto, language: .protobuf)
+        let keywords = ranges.filter { $0.kind == .keyword }
+        let chars = Array(proto)
+        let keywordTexts = keywords.map { String(chars[$0.location..<($0.location + $0.length)]) }
+        #expect(keywordTexts.contains("message"), "message should be a keyword")
+        #expect(keywordTexts.contains("string"), "string should be a keyword")
+    }
+
+    @Test func protobufCommentHighlighted() {
+        let proto = "// comment\nmessage Foo {}"
+        let ranges = SyntaxHighlighter.scanTokenRanges(proto, language: .protobuf)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "Protobuf comments should be highlighted")
+    }
+
+    @Test func protobufBlockCommentHighlighted() {
+        let proto = "/* block comment */\nmessage Bar {}"
+        let ranges = SyntaxHighlighter.scanTokenRanges(proto, language: .protobuf)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "Protobuf block comments should be highlighted")
+    }
+
+    @Test func protobufPreservesText() {
+        let proto = "syntax = \"proto3\";\nmessage User { int32 id = 1; }"
+        let result = SyntaxHighlighter.highlight(proto, language: .protobuf)
+        #expect(result.string == proto)
+    }
+}
+
+// MARK: - GraphQL Highlighting
+
+@Suite("GraphQL Highlighting")
+struct GraphQLHighlightingTests {
+    @Test func graphqlKeywordsHighlighted() {
+        let gql = "type Query { users: [User] }"
+        let ranges = SyntaxHighlighter.scanTokenRanges(gql, language: .graphql)
+        let keywords = ranges.filter { $0.kind == .keyword }
+        let chars = Array(gql)
+        let keywordTexts = keywords.map { String(chars[$0.location..<($0.location + $0.length)]) }
+        #expect(keywordTexts.contains("type"), "type should be a keyword")
+    }
+
+    @Test func graphqlLineCommentHighlighted() {
+        let gql = "// comment\ntype Foo { id: ID }"
+        let ranges = SyntaxHighlighter.scanTokenRanges(gql, language: .graphql)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "GraphQL // comments should be highlighted")
+    }
+
+    @Test func graphqlBlockCommentHighlighted() {
+        let gql = "/* block */\ntype Bar { name: String }"
+        let ranges = SyntaxHighlighter.scanTokenRanges(gql, language: .graphql)
+        let comments = ranges.filter { $0.kind == .comment }
+        #expect(!comments.isEmpty, "GraphQL block comments should be highlighted")
+    }
+
+    @Test func graphqlPreservesText() {
+        let gql = "query { user(id: 1) { name email } }"
+        let result = SyntaxHighlighter.highlight(gql, language: .graphql)
+        #expect(result.string == gql)
     }
 }

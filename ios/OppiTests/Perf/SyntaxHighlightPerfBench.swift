@@ -98,4 +98,85 @@ struct SyntaxHighlightPerfBench {
         print("METRIC highlight_shell_100=\(us)")
         #expect(us < 500_000, "highlight Shell 100 lines: \(us)μs")
     }
+
+    // MARK: - New Language Benchmarks
+
+    @Test("Benchmark: highlight XML 500 lines")
+    func highlightXML500() {
+        let xml = (0..<500).map {
+            "  <item id=\"\($0)\" name=\"value\($0)\">content &amp; more</item>"
+        }.joined(separator: "\n")
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.highlight(xml, language: .xml)
+        }
+        print("METRIC highlight_xml_500=\(us)")
+        #expect(us < 500_000, "highlight XML 500 lines: \(us)μs")
+    }
+
+    @Test("Benchmark: highlight Diff 500 lines")
+    func highlightDiff500() {
+        var lines: [String] = [
+            "--- a/file.swift",
+            "+++ b/file.swift",
+            "@@ -1,250 +1,260 @@",
+        ]
+        for i in 0..<497 {
+            switch i % 4 {
+            case 0: lines.append("+let added\(i) = true")
+            case 1: lines.append("-let removed\(i) = false")
+            case 2: lines.append("@@ -\(i),10 +\(i),12 @@")
+            default: lines.append(" let context\(i) = 42")
+            }
+        }
+        let diff = lines.joined(separator: "\n")
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.highlight(diff, language: .diff)
+        }
+        print("METRIC highlight_diff_500=\(us)")
+        #expect(us < 500_000, "highlight Diff 500 lines: \(us)μs")
+    }
+
+    @Test("Benchmark: highlight Protobuf 200 lines")
+    func highlightProtobuf200() {
+        let proto = (0..<200).map {
+            "  message Item\($0) { repeated string field\($0) = \($0 + 1); }"
+        }.joined(separator: "\n")
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.highlight(proto, language: .protobuf)
+        }
+        print("METRIC highlight_proto_200=\(us)")
+        #expect(us < 500_000, "highlight Protobuf 200 lines: \(us)μs")
+    }
+
+    @Test("Benchmark: highlight GraphQL 200 lines")
+    func highlightGraphQL200() {
+        let gql = (0..<200).map {
+            "  type Query\($0) { user(id: ID!): User\($0) }"
+        }.joined(separator: "\n")
+        let us = Self.measureUs {
+            _ = SyntaxHighlighter.highlight(gql, language: .graphql)
+        }
+        print("METRIC highlight_graphql_200=\(us)")
+        #expect(us < 500_000, "highlight GraphQL 200 lines: \(us)μs")
+    }
+
+    @Test("Benchmark: FileType.detect 10K calls")
+    func fileTypeDetect10K() {
+        let paths = [
+            "main.swift", "index.ts", "app.py", "Makefile",
+            ".gitignore", ".env", "config.xml", "schema.proto",
+            "queries.graphql", "changes.diff", "doc.pdf", "archive.gz",
+            "video.mp4", "README.md", "style.css", "data.json",
+            "unknown.xyz", ".prettierrc", "Info.plist", "image.png",
+        ]
+        let us = Self.measureUs {
+            for _ in 0..<500 {
+                for path in paths {
+                    _ = FileType.detect(from: path)
+                }
+            }
+        }
+        print("METRIC filetype_detect_10K=\(us)")
+        #expect(us < 100_000, "FileType.detect 10K calls: \(us)μs — should be <100ms")
+    }
 }
