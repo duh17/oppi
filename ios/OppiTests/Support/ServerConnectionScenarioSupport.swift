@@ -122,12 +122,8 @@ final class ServerConnectionScenario {
                     reducer.appendUserMessage(content)
                 }
             }
-        case .error(let msg, let code, let fatal):
-            let isMissingSubscription = code == ServerConnection.missingFullSubscriptionErrorCode
-                || (code == nil && msg.contains("is not subscribed at level=full"))
-            if !isMissingSubscription {
-                coalescer.receive(.error(sessionId: sessionId, message: msg))
-            }
+        case .error(let msg, _, let fatal):
+            coalescer.receive(.error(sessionId: sessionId, message: msg))
             if fatal { connection.fatalSetupError = true }
         case .sessionEnded(let reason):
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))

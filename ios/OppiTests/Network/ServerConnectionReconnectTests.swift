@@ -101,59 +101,6 @@ struct ServerConnectionReconnectTests {
         #expect(sent, "After resubscription, a new queue sync should be scheduled and send get_queue")
     }
 
-    // MARK: - Recovery path includes queue refresh
-
-    @MainActor
-    @Test func recoverySchedulesQueueRefreshAfterSubscribe() async {
-        let (conn, pipe) = makeTestConnection()
-        let getQueueCounter = MessageCounter()
-        let subscribeCounter = MessageCounter()
-
-        conn._sendMessageForTesting = { message in
-            switch message {
-            case .subscribe(let sessionId, _, _, let requestId):
-                await subscribeCounter.increment()
-                pipe.handle(
-                    .commandResult(
-                        command: "subscribe", requestId: requestId,
-                        success: true, data: nil, error: nil
-                    ),
-                    sessionId: sessionId
-                )
-
-            case .getQueue:
-                await getQueueCounter.increment()
-
-            case .getState:
-                break // ignore state requests
-
-            default:
-                break
-            }
-        }
-
-        // Trigger recovery
-        conn.triggerFullSubscriptionRecovery(sessionId: "s1", serverError: "test error")
-
-        // Subscribe should fire
-        let subscribed = await waitForTestCondition(timeoutMs: 1_000) {
-            await subscribeCounter.count() >= 1
-        }
-        #expect(subscribed, "Recovery should send subscribe")
-
-        // Recovery task should clear promptly (subscribe ack resolves it)
-        let cleared = await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { conn.fullSubscriptionRecoveryTask == nil }
-        }
-        #expect(cleared, "Recovery task should complete after subscribe ack (queue refresh is fire-and-forget)")
-
-        // Queue refresh should fire in the background
-        let queueSynced = await waitForTestCondition(timeoutMs: 4_000) {
-            await getQueueCounter.count() >= 1
-        }
-        #expect(queueSynced, "Recovery should schedule a queue refresh after successful subscribe")
-    }
-
     // MARK: - Transition table: streamConnected accepted in resubscribing
 
     @MainActor

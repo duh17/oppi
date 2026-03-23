@@ -15,7 +15,6 @@ final class SessionStreamCoordinator {
         case queueSync(sessionId: String, phase: QueueSyncPhase)
         case streaming(sessionId: String)
         case resubscribing(sessionId: String)
-        case recoveringFullSubscription(sessionId: String)
     }
 
     enum QueueSyncPhase: String, Equatable {
@@ -36,7 +35,6 @@ final class SessionStreamCoordinator {
         case queueSync
         case streaming
         case resubscribing
-        case recoveringFullSubscription
     }
 
     private enum Event: String {
@@ -46,8 +44,6 @@ final class SessionStreamCoordinator {
         case queueSyncStarted
         case queueSyncFinished
         case streamConnected
-        case recoveryStarted
-        case recoveryFinished
         case disconnected
     }
 
@@ -56,22 +52,17 @@ final class SessionStreamCoordinator {
         .connectingTransport: [.transportReady, .disconnected],
         .awaitingSubscribeAck: [.subscribeAck, .disconnected],
         .queueSync: [.queueSyncStarted, .queueSyncFinished, .disconnected],
-        .streaming: [.beginSession, .streamConnected, .recoveryStarted, .disconnected],
-        .resubscribing: [.queueSyncFinished, .recoveryStarted, .streamConnected, .disconnected],
-        .recoveringFullSubscription: [.recoveryFinished, .streamConnected, .disconnected],
+        .streaming: [.beginSession, .streamConnected, .disconnected],
+        .resubscribing: [.queueSyncFinished, .streamConnected, .disconnected],
     ]
 
     // nonisolated(unsafe): immutable Set, safe to read from any context.
     nonisolated(unsafe) private static let eagerResolveCommands: Set<String> = ["subscribe", "unsubscribe", "get_queue"]
-    private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
-
     /// Maximum notification-level sessions to subscribe after reconnect.
     private static let maxNotificationSubscriptions = 20
 
     private(set) var state: StreamState = .idle
     private var lastSeenSeqBySession: [String: Int] = [:]
-    private var recoveryReservationSessionId: String?
-
     // MARK: - Command correlation
 
     nonisolated func shouldResolveEagerly(command: String) -> Bool {
@@ -267,82 +258,8 @@ final class SessionStreamCoordinator {
         }
     }
 
-    func triggerFullSubscriptionRecovery(
-        connection: ServerConnection,
-        sessionId: String,
-        serverError: String
-    ) {
-        guard recoveryReservationSessionId != sessionId else { return }
-        recoveryReservationSessionId = sessionId
-
-        guard connection.activeSessionId == sessionId else {
-            recoveryReservationSessionId = nil
-            return
-        }
-
-        if let inFlight = connection.fullSubscriptionRecoveryTask, !inFlight.isCancelled {
-            recoveryReservationSessionId = nil
-            return
-        }
-
-        if let lastAttempt = connection.lastFullSubscriptionRecoveryAt,
-           Date().timeIntervalSince(lastAttempt) < Self.fullSubscriptionRecoveryCooldown {
-            recoveryReservationSessionId = nil
-            return
-        }
-
-        transition(to: .recoveringFullSubscription(sessionId: sessionId), event: .recoveryStarted)
-
-        connection.fullSubscriptionRecoveryTask = Task { [weak self, weak connection] in
-            guard let connection else {
-                self?.finishRecoveryReservation(sessionId: sessionId)
-                return
-            }
-            defer {
-                connection.lastFullSubscriptionRecoveryAt = Date()
-                connection.fullSubscriptionRecoveryTask = nil
-                self?.transition(to: .streaming(sessionId: sessionId), event: .recoveryFinished)
-                self?.finishRecoveryReservation(sessionId: sessionId)
-            }
-
-            streamCoordinatorLogger.warning(
-                "Detected missing full subscription for \(sessionId, privacy: .public): \(serverError, privacy: .public). Attempting auto-recover"
-            )
-
-            do {
-                _ = try await connection.sendCommandAwaitingResult(
-                    command: "subscribe",
-                    timeout: .seconds(6)
-                ) { requestId in
-                    .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
-                }
-
-                try? await connection.requestState()
-                try? await connection.requestMessageQueue(
-                    timeout: ServerConnection.deferredQueueSyncTimeout
-                )
-                ClientLog.info(
-                    "WebSocket",
-                    "Recovered full subscription",
-                    metadata: ["sessionId": sessionId]
-                )
-            } catch {
-                streamCoordinatorLogger.error(
-                    "Auto-recover subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-                ClientLog.error("StreamCoordinator", "Auto-recover subscribe failed — connection hiccup", metadata: ["sessionId": sessionId])
-            }
-        }
-    }
-
     func noteStreamDisconnected() {
         transition(to: .idle, event: .disconnected)
-    }
-
-    private func finishRecoveryReservation(sessionId: String) {
-        if recoveryReservationSessionId == sessionId {
-            recoveryReservationSessionId = nil
-        }
     }
 
     // MARK: - Catch-up state
@@ -605,7 +522,6 @@ final class SessionStreamCoordinator {
         case .queueSync: .queueSync
         case .streaming: .streaming
         case .resubscribing: .resubscribing
-        case .recoveringFullSubscription: .recoveringFullSubscription
         }
     }
 }

@@ -104,11 +104,7 @@ final class TestEventPipeline {
             } else if role == "user", !content.isEmpty, !reducer.hasUserMessage(matching: content) {
                 reducer.appendUserMessage(content)
             }
-        case .error(let msg, let code, let fatal):
-            if code == ServerConnection.missingFullSubscriptionErrorCode || (code == nil && msg.contains("is not subscribed at level=full")) {
-                conn.triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
-                break
-            }
+        case .error(let msg, _, let fatal):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
             conn.fatalSetupError = conn.fatalSetupError || fatal
         case .sessionEnded(let reason):

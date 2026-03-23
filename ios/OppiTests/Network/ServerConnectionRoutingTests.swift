@@ -501,47 +501,6 @@ struct ServerConnectionRoutingTests {
     }
 
     @MainActor
-    @Test func routeMissingFullSubscriptionErrorTriggersAutoRecover() async {
-        let (conn, pipe) = makeTestConnection()
-        let subscribeCounter = MessageCounter()
-
-        conn._sendMessageForTesting = { message in
-            switch message {
-            case .subscribe(let sessionId, let level, _, let requestId):
-                await subscribeCounter.increment()
-                #expect(sessionId == "s1")
-                #expect(level == .full)
-                pipe.handle(
-                    .commandResult(
-                        command: "subscribe",
-                        requestId: requestId,
-                        success: true,
-                        data: nil,
-                        error: nil
-                    ),
-                    sessionId: "s1"
-                )
-            default:
-                break
-            }
-        }
-
-        pipe.handle(
-            .error(message: "Session s1 is not subscribed at level=full", code: nil, fatal: false),
-            sessionId: "s1"
-        )
-
-        #expect(await waitForTestCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
-
-        pipe.flushNow()
-        let errors = pipe.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.isEmpty)
-    }
-
-    @MainActor
     @Test func routeExtensionUIRequest() {
         let (conn, pipe) = makeTestConnection()
         let request = ExtensionUIRequest(
@@ -686,9 +645,8 @@ final class EventFlowServerConnectionScenario {
         case .messageEnd(let r, let c):
             if r == "assistant" { coalescer.receive(.messageEnd(sessionId: sessionId, content: c)) }
             else if r == "user", !c.isEmpty, !reducer.hasUserMessage(matching: c) { reducer.appendUserMessage(c) }
-        case .error(let msg, let code, let fatal):
-            let isMissingSub = code == ServerConnection.missingFullSubscriptionErrorCode || (code == nil && msg.contains("is not subscribed at level=full"))
-            if !isMissingSub { coalescer.receive(.error(sessionId: sessionId, message: msg)) }
+        case .error(let msg, _, let fatal):
+            coalescer.receive(.error(sessionId: sessionId, message: msg))
             if fatal { connection.fatalSetupError = true }
         case .sessionEnded(let r): coalescer.receive(.sessionEnded(sessionId: sessionId, reason: r))
         case .compactionStart(let r): coalescer.receive(.compactionStart(sessionId: sessionId, reason: r))
