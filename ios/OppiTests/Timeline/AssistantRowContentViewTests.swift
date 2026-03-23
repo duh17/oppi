@@ -72,7 +72,7 @@ struct AssistantTimelineRowContentViewTests {
         )
 
         let menu = try #require(view.buildContextMenu())
-        #expect(timelineActionTitles(in: menu) == ["Copy", "Copy as Markdown", "Fork from here"])
+        #expect(timelineActionTitles(in: menu) == ["Copy", "Fork from here", "Copy as Markdown"])
     }
 
     @MainActor

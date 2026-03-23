@@ -180,14 +180,17 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("user row selected text edit menu prepends π submenu")
     func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
-        let view = UserTimelineRowContentView(
-            configuration: UserTimelineRowConfiguration(
-                text: "Need help with this prompt",
-                images: [],
-                canFork: false,
-                onFork: nil
-            )
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.sessionId = "session-1"
+        var config = UserTimelineRowConfiguration(
+            text: "Need help with this prompt",
+            images: [],
+            canFork: false,
+            onFork: nil
         )
+        config.interactionContext = interactionCtx
+        let view = UserTimelineRowContentView(configuration: config)
 
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
         view.setNeedsLayout()
