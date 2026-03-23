@@ -391,21 +391,20 @@ final class BusyReentryBench {
         // 4. Connect
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
         let scrollController = ChatScrollController()
 
         advance(1) // t=1: entry
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         // Wait for stream creation
         _ = await streams.waitForCreated(1)
 
         advance(5) // t=6: cache loaded (fast path)
-        collector.observe(reducer: reducer, scrollController: scrollController, nowMs: now())
+        collector.observe(reducer: manager.reducer, scrollController: scrollController, nowMs: now())
 
         // 5. WS connected
         streams.yield(index: 0, message: .connected(
@@ -413,10 +412,10 @@ final class BusyReentryBench {
         ))
         try? await Task.sleep(for: .milliseconds(20))
         advance(20)
-        collector.observe(reducer: reducer, scrollController: scrollController, nowMs: now())
+        collector.observe(reducer: manager.reducer, scrollController: scrollController, nowMs: now())
 
         // 6. Live events arrive
-        collector.beginMergeWindow(reducer: reducer)
+        collector.beginMergeWindow(reducer: manager.reducer)
 
         for event in liveEvents {
             streams.yield(index: 0, message: event.message)
@@ -426,7 +425,7 @@ final class BusyReentryBench {
         // Let coalescer flush
         try? await Task.sleep(for: .milliseconds(50))
         advance(50)
-        collector.observe(reducer: reducer, scrollController: scrollController, isLiveEvent: true, nowMs: now())
+        collector.observe(reducer: manager.reducer, scrollController: scrollController, isLiveEvent: true, nowMs: now())
 
         // 7. Wait for trace fetch to complete
         let traceWaitMs = max(0, scenario.traceFetchDelayMs - 70) // account for time already elapsed
@@ -438,10 +437,10 @@ final class BusyReentryBench {
             advance(100)
         }
 
-        collector.observe(reducer: reducer, scrollController: scrollController, nowMs: now())
+        collector.observe(reducer: manager.reducer, scrollController: scrollController, nowMs: now())
 
         // 8. Check correctness
-        let timelineIDs = Set(reducer.items.map(\.id))
+        let timelineIDs = Set(manager.reducer.items.map(\.id))
         let traceIDs = Set(fullTrace.map(\.id))
         let missingCount = traceIDs.subtracting(timelineIDs).count
         if missingCount == 0 {
@@ -451,7 +450,7 @@ final class BusyReentryBench {
         collector.endMergeWindow()
 
         // 9. Finalize
-        let metrics = collector.finalize(reducer: reducer)
+        let metrics = collector.finalize(reducer: manager.reducer)
 
         // Cleanup
         streams.finish(index: 0)

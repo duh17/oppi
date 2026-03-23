@@ -113,9 +113,6 @@ struct OppiApp: App {
             .environment(coordinator.activeConnection.sessionStore)
             .environment(coordinator.activeConnection.workspaceStore)
             .environment(coordinator.activeConnection.permissionStore)
-            .environment(coordinator.activeConnection.reducer)
-            .environment(coordinator.activeConnection.reducer.toolOutputStore)
-            .environment(coordinator.activeConnection.reducer.toolArgsStore)
             .environment(coordinator.activeConnection.audioPlayer)
             .environment(coordinator.activeConnection.gitStatusStore)
             .environment(coordinator.activeConnection.fileIndexStore)
@@ -291,7 +288,6 @@ struct OppiApp: App {
 
             // Reset the new connection's state
             connection.disconnectSession()
-            connection.reducer.reset()
             connection.permissionStore.pending.removeAll()
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
@@ -388,23 +384,18 @@ struct OppiApp: App {
         let cacheStats = MarkdownSegmentCache.shared.snapshot()
         MarkdownSegmentCache.shared.clearAll()
 
-        let reducerStats = connection.reducer.handleMemoryWarning()
+        // Per-session reducer memory cleanup is handled by ChatView
+        // (reducer is now per-session, not on ServerConnection).
 
         let footprintAfter = SentryService.currentFootprintMB()
 
         let cacheEntries = cacheStats.entries
         let cacheBytes = cacheStats.totalSourceBytes
-        let toolOutputBytes = reducerStats.toolOutputBytesCleared
-        let collapsedExpandedItems = reducerStats.expandedItemsCollapsed
-        let imagesStripped = reducerStats.imagesStripped
 
         appLog.error(
             """
             MEM warning: footprint=\(footprintBefore ?? -1, privacy: .public)→\(footprintAfter ?? -1, privacy: .public)MB \
-            cache=\(cacheEntries, privacy: .public)/\(cacheBytes, privacy: .public)B \
-            toolOutput=\(toolOutputBytes, privacy: .public)B \
-            expanded=\(collapsedExpandedItems, privacy: .public) \
-            images=\(imagesStripped, privacy: .public)
+            cache=\(cacheEntries, privacy: .public)/\(cacheBytes, privacy: .public)B
             """
         )
 
@@ -413,8 +404,6 @@ struct OppiApp: App {
             "footprintAfterMB": footprintAfter.map(String.init) ?? "n/a",
             "cacheEntries": String(cacheEntries),
             "cacheBytes": String(cacheBytes),
-            "toolOutputBytes": String(toolOutputBytes),
-            "imagesStripped": String(imagesStripped),
         ])
     }
 
@@ -487,9 +476,9 @@ struct OppiApp: App {
 
         do {
             try await api.uploadClientLogs(workspaceId: workspaceId, sessionId: sessionId, request: request)
-            if connection.sessionStore.activeSessionId == sessionId {
-                connection.reducer.appendSystemEvent("Auto-uploaded \(entries.count) client log entries after stall")
-            }
+            ClientLog.info("Diagnostics", "Auto-uploaded \(entries.count) client log entries after stall", metadata: [
+                "sessionId": sessionId,
+            ])
         } catch {
             ClientLog.error(
                 "Diagnostics",

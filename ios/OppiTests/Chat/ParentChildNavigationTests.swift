@@ -13,7 +13,7 @@ struct ParentChildNavigationTests {
     // MARK: - Shared reducer reset on session switch
 
     /// Verify that connecting to a different session resets the reducer
-    /// (switchingSessions = true triggers reducer.reset()).
+    /// (switchingSessions = true triggers manager.reducer.reset()).
     @MainActor
     @Test func switchingSessionsResetsReducer() async {
         let parentId = "parent-\(UUID().uuidString)"
@@ -31,7 +31,6 @@ struct ParentChildNavigationTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
         var childSession = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
@@ -40,7 +39,7 @@ struct ParentChildNavigationTests {
 
         // Step 1: Connect parent
         let parentTask = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(1))
@@ -57,7 +56,7 @@ struct ParentChildNavigationTests {
         parentStreams.yield(index: 0, message: .agentEnd)
         try? await Task.sleep(for: .milliseconds(100))
 
-        let parentItemCount = reducer.items.count
+        let parentItemCount = parentManager.reducer.items.count
         #expect(parentItemCount > 0, "Reducer should have parent items")
         #expect(sessionStore.activeSessionId == parentId)
 
@@ -67,7 +66,7 @@ struct ParentChildNavigationTests {
 
         // Step 3: Connect child (simulates child ChatView appearing)
         let childTask = Task { @MainActor in
-            await childManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await childManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await childStreams.waitForCreated(1))
@@ -89,7 +88,7 @@ struct ParentChildNavigationTests {
         try? await Task.sleep(for: .milliseconds(100))
 
         // Reducer should now have only child items, not parent items
-        let hasChildContent = reducer.items.contains { item in
+        let hasChildContent = childManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("Child response")
             }
@@ -97,13 +96,15 @@ struct ParentChildNavigationTests {
         }
         #expect(hasChildContent, "Reducer should have child content after session switch")
 
-        let hasParentContent = reducer.items.contains { item in
+        // With per-session reducers, parent's reducer retains its items
+        // independently — child navigation doesn't destroy parent state.
+        let parentStillHasContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("Parent response")
             }
             return false
         }
-        #expect(!hasParentContent, "Reducer should NOT have parent content after reset")
+        #expect(parentStillHasContent, "Parent reducer should retain items (per-session ownership)")
 
         // Step 4: Disconnect child
         childStreams.finish(index: 0)
@@ -150,7 +151,6 @@ struct ParentChildNavigationTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
         var childSession2 = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
@@ -159,7 +159,7 @@ struct ParentChildNavigationTests {
 
         // Step 1: Parent connects
         let parentTask1 = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(1))
@@ -176,7 +176,7 @@ struct ParentChildNavigationTests {
 
         // Step 3: Child connects
         let childTask = Task { @MainActor in
-            await childManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await childManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await childStreams.waitForCreated(1))
@@ -193,7 +193,7 @@ struct ParentChildNavigationTests {
         try? await Task.sleep(for: .milliseconds(100))
 
         // Verify child content is in reducer
-        let hasChildBefore = reducer.items.contains { item in
+        let hasChildBefore = childManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("CHILD_CONTENT")
             }
@@ -208,7 +208,7 @@ struct ParentChildNavigationTests {
         // Step 5: Parent re-connects (simulates markAppeared → generation bump)
         parentManager.reconnect()
         let parentTask2 = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(2))
@@ -222,7 +222,7 @@ struct ParentChildNavigationTests {
         try? await Task.sleep(for: .milliseconds(300))
 
         // Parent content should be restored from trace
-        let hasParentContent = reducer.items.contains { item in
+        let hasParentContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_TRACE_CONTENT")
             }
@@ -230,14 +230,8 @@ struct ParentChildNavigationTests {
         }
         #expect(hasParentContent, "Parent content should be restored from trace after re-entry")
 
-        // Child content should NOT be present
-        let hasChildAfter = reducer.items.contains { item in
-            if case .assistantMessage(_, let text, _) = item {
-                return text.contains("CHILD_CONTENT")
-            }
-            return false
-        }
-        #expect(!hasChildAfter, "Child content should NOT remain in reducer after parent re-entry")
+        // With per-session reducers, child keeps its own items — independent of parent.
+        // The important invariant: parent's reducer has parent content.
 
         parentStreams.finish(index: 1)
         await parentTask2.value
@@ -270,7 +264,6 @@ struct ParentChildNavigationTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
         var childSession = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
@@ -279,7 +272,7 @@ struct ParentChildNavigationTests {
 
         // Step 1: Parent connects for the first time
         let parentTask1 = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(1))
@@ -290,7 +283,7 @@ struct ParentChildNavigationTests {
         })
 
         // First connect: cache IS loaded normally
-        let hasCacheOnFirst = reducer.items.contains { item in
+        let hasCacheOnFirst = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("CACHED_CONTENT")
             }
@@ -304,7 +297,7 @@ struct ParentChildNavigationTests {
 
         // Step 3: Child connects (sets activeSessionId to child)
         let childTask = Task { @MainActor in
-            await childManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await childManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await childStreams.waitForCreated(1))
@@ -321,7 +314,7 @@ struct ParentChildNavigationTests {
         // Step 5: Parent re-connects
         parentManager.reconnect()
         let parentTask2 = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(2))
@@ -336,7 +329,7 @@ struct ParentChildNavigationTests {
 
         // KEY: Cached content SHOULD be in the reducer on re-entry for instant display.
         // The background trace fetch will update it with fresh data when it completes.
-        let hasCachedContentOnReentry = reducer.items.contains { item in
+        let hasCachedContentOnReentry = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("CACHED_CONTENT")
             }
@@ -345,7 +338,7 @@ struct ParentChildNavigationTests {
         #expect(hasCachedContentOnReentry, "Re-entry should load cache for instant display — no empty timeline")
 
         // Reducer should NOT be empty
-        #expect(!reducer.items.isEmpty, "Reducer should have cached content on re-entry")
+        #expect(!parentManager.reducer.items.isEmpty, "Reducer should have cached content on re-entry")
 
         parentStreams.finish(index: 1)
         await parentTask2.value
@@ -354,7 +347,7 @@ struct ParentChildNavigationTests {
 
     // MARK: - Session affinity gates stale items
 
-    /// Verify that reducer.activeSessionId prevents a child view from rendering
+    /// Verify that manager.reducer.activeSessionId prevents a child view from rendering
     /// parent items. The shared reducer has parent items when the child ChatView
     /// is pushed — visibleItems should return empty because activeSessionId
     /// doesn't match the child's sessionId.
@@ -371,7 +364,6 @@ struct ParentChildNavigationTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
         var childSession = makeTestSession(id: childId, workspaceId: "w1", status: .busy)
@@ -380,7 +372,7 @@ struct ParentChildNavigationTests {
 
         // Step 1: Parent connects and produces items
         let parentTask = Task { @MainActor in
-            await parentManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await parentManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await parentStreams.waitForCreated(1))
@@ -396,23 +388,11 @@ struct ParentChildNavigationTests {
         parentStreams.yield(index: 0, message: .agentEnd)
         try? await Task.sleep(for: .milliseconds(100))
 
-        #expect(!reducer.items.isEmpty, "Reducer should have parent items")
-        #expect(reducer.activeSessionId == parentId, "activeSessionId should be parent")
+        #expect(!parentManager.reducer.items.isEmpty, "Parent reducer should have parent items")
+        #expect(parentManager.reducer.activeSessionId == parentId, "activeSessionId should be parent")
 
-        // Step 2: Simulate what ChatTimelineView sees when child is pushed.
-        // Before child's connect() runs, the reducer still has parent items
-        // and activeSessionId is the parent. The child view's gate should
-        // return empty because activeSessionId (parentId) != childId.
-        let childVisibleItems = reducer.activeSessionId == childId
-            ? reducer.items.suffix(80)
-            : ArraySlice<ChatItem>()
-        #expect(childVisibleItems.isEmpty, "Child view should NOT see parent items — activeSessionId gate must block")
-
-        // Parent view should still see items (activeSessionId == parentId)
-        let parentVisibleItems = reducer.activeSessionId == parentId
-            ? reducer.items.suffix(80)
-            : ArraySlice<ChatItem>()
-        #expect(!parentVisibleItems.isEmpty, "Parent view should still see its own items during animation")
+        // With per-session reducers, child's reducer starts empty — no gate needed.
+        // Parent's reducer stays intact and independent.
 
         // Step 3: Disconnect parent, connect child — verify gate lifts
         parentStreams.finish(index: 0)
@@ -424,7 +404,7 @@ struct ParentChildNavigationTests {
         childManager._loadHistoryForTesting = { _, _ in nil }
 
         let childTask = Task { @MainActor in
-            await childManager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await childManager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await childStreams.waitForCreated(1))
@@ -434,36 +414,34 @@ struct ParentChildNavigationTests {
             await MainActor.run { childManager.entryState == .streaming }
         })
 
-        // After child's connect(), activeSessionId should be childId
-        #expect(reducer.activeSessionId == childId, "activeSessionId should be child after connect()")
+        // After child's connect(), child's own reducer has child session ID
+        #expect(childManager.reducer.activeSessionId == childId, "child reducer activeSessionId should be child")
 
-        // Child items should now be gated correctly
+        // Child items accumulate in child's own reducer
         childStreams.yield(index: 0, message: .agentStart)
         childStreams.yield(index: 0, message: .textDelta(delta: "CHILD_VISIBLE"))
         childStreams.yield(index: 0, message: .messageEnd(role: "assistant", content: ""))
         childStreams.yield(index: 0, message: .agentEnd)
         try? await Task.sleep(for: .milliseconds(100))
 
-        let childAfterConnect = reducer.activeSessionId == childId
-            ? reducer.items.suffix(80)
-            : ArraySlice<ChatItem>()
-        #expect(!childAfterConnect.isEmpty, "Child items should be visible after connect()")
+        let childItems = childManager.reducer.items
+        #expect(!childItems.isEmpty, "Child reducer should have items")
 
-        let hasChildContent = childAfterConnect.contains { item in
+        let hasChildContent = childItems.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("CHILD_VISIBLE")
             }
             return false
         }
-        #expect(hasChildContent, "Gate should now pass and show child content")
+        #expect(hasChildContent, "Child reducer should have child content")
 
-        let hasParentContent = childAfterConnect.contains { item in
+        let hasParentContentInChild = childItems.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_VISIBLE")
             }
             return false
         }
-        #expect(!hasParentContent, "Parent content should be gone after child connect reset")
+        #expect(!hasParentContentInChild, "Child reducer should NOT have parent content")
 
         childStreams.finish(index: 0)
         await childTask.value
@@ -482,12 +460,11 @@ struct ParentChildNavigationTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
 
         let task = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -504,8 +481,8 @@ struct ParentChildNavigationTests {
         try? await Task.sleep(for: .milliseconds(100))
 
         // activeSessionId should be set and items visible
-        #expect(reducer.activeSessionId == sessionId)
-        #expect(!reducer.items.isEmpty)
+        #expect(manager.reducer.activeSessionId == sessionId)
+        #expect(!manager.reducer.items.isEmpty)
 
         // Simulate WS drop → reconnect (stream ends, manager auto-reconnects)
         streams.finish(index: 0)
@@ -513,7 +490,7 @@ struct ParentChildNavigationTests {
 
         // After stream ends, activeSessionId should still be this session
         // (not cleared). This ensures the view doesn't flash empty during reconnect.
-        #expect(reducer.activeSessionId == sessionId, "activeSessionId should survive stream end for reconnect")
+        #expect(manager.reducer.activeSessionId == sessionId, "activeSessionId should survive stream end for reconnect")
     }
 
     // MARK: - Helpers

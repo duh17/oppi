@@ -7,28 +7,24 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Conn
 
 extension ServerConnection {
 
-    /// Route a ServerMessage to the appropriate store or pipeline.
-    /// Ignores messages for non-active sessions (stale stream race).
-    func handleServerMessage(_ message: ServerMessage, sessionId: String) {
-        guard sessionId == activeSessionId else {
-            return
-        }
-
-        if handleStopLifecycleMessage(message, sessionId: sessionId) {
-            return
-        }
+    /// Handle active-session UI concerns for the focused session.
+    ///
+    /// Processes connection-level effects (silence watchdog, extension dialogs,
+    /// message queue, connected/state handling) that only apply to the session
+    /// currently focused by the user.
+    ///
+    /// Timeline mutations (coalescer/reducer) are handled by the per-session
+    /// ChatSessionManager.routeToTimeline() instead.
+    func handleActiveSessionUI(_ message: ServerMessage, sessionId: String) {
+        guard sessionId == activeSessionId else { return }
 
         switch message {
-        // Stream lifecycle (handled at WebSocket level, not per-session)
-        case .streamConnected:
-            break
-
-        // Direct state updates (not timeline events)
         case .connected(let session):
             handleConnected(session)
 
         case .state(let session):
-            handleState(session)
+            let prevWsId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
+            handleState(session, previousWorkspaceId: prevWsId)
 
         case .queueState(let queue):
             messageQueueStore.apply(queue, for: sessionId)
@@ -40,7 +36,6 @@ extension ServerConnection {
                 item: item,
                 queueVersion: queueVersion
             )
-            reducer.appendUserMessage(item.message, images: item.images ?? [])
 
         case .extensionUIRequest(let request):
             extensionTimeoutTask?.cancel()
@@ -57,132 +52,33 @@ extension ServerConnection {
             gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)
             fileIndexStore.invalidate()
 
-        case .unknown, .stopRequested, .stopConfirmed, .stopFailed:
-            break  // Already logged in WebSocketClient / handled earlier
-
-        // Permission events → shared store update + coalescer/reducer (active only)
-        case .permissionRequest(let perm):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
-            coalescer.receive(.permissionRequest(perm))
-
-        case .permissionExpired(let id, _):
-            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
-            if let request = result.takenPermission {
-                reducer.resolvePermission(
-                    id: id, outcome: .expired,
-                    tool: request.tool, summary: request.displaySummary
-                )
-            }
-            coalescer.receive(.permissionExpired(id: id))
-
-        case .permissionCancelled(let id):
-            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
-            if let request = result.takenPermission {
-                reducer.resolvePermission(
-                    id: id, outcome: .cancelled,
-                    tool: request.tool, summary: request.displaySummary
-                )
-            }
-
-        // Agent events → shared store update + pipeline (active only)
         case .agentStart:
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            coalescer.receive(.agentStart(sessionId: sessionId))
             silenceWatchdog.start()
 
         case .agentEnd:
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
 
-        case .messageEnd(let role, let content):
-            if role == "assistant" {
-                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
-            } else if role == "user", !content.isEmpty {
-                // Server-initiated prompts (e.g. quick session) — the client
-                // didn't send the message locally, so no optimistic bubble exists.
-                // Insert one now if the timeline doesn't already have it.
-                if !reducer.hasUserMessage(matching: content) {
-                    reducer.appendUserMessage(content)
-                }
-            }
-
-        case .textDelta(let delta):
+        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd:
             silenceWatchdog.recordEvent()
-            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
 
-        case .thinkingDelta(let delta):
-            silenceWatchdog.recordEvent()
-            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
-
-        case .toolStart(let tool, let args, let toolCallId, let callSegments):
-            silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
-
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
-            silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes))
-
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
-            silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
-
-        case .sessionEnded(let reason):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            silenceWatchdog.stop()
-            messageQueueStore.clear(sessionId: sessionId)
-            coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
-
-        case .sessionDeleted(let deletedId):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            messageQueueStore.clear(sessionId: deletedId)
-
-        case .error(let msg, let code, let fatal):
+        case .error(let msg, let code, _):
             if code == Self.missingFullSubscriptionErrorCode
-                // Backward compatibility for older servers that don't emit code yet.
                 || (code == nil && msg.contains("is not subscribed at level=full")) {
                 triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
-                break
             }
 
-            coalescer.receive(.error(sessionId: sessionId, message: msg))
-            // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
-            // The server closed the WS after this; retrying would just loop.
-            fatalSetupError = fatalSetupError || fatal
+        case .sessionEnded:
+            silenceWatchdog.stop()
+            messageQueueStore.clear(sessionId: sessionId)
 
-        // Compaction events → pipeline
-        case .compactionStart(let reason):
-            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
+        case .sessionDeleted(let deletedId):
+            messageQueueStore.clear(sessionId: deletedId)
 
-        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
-            coalescer.receive(
-                .compactionEnd(
-                    sessionId: sessionId,
-                    aborted: aborted,
-                    willRetry: willRetry,
-                    summary: summary,
-                    tokensBefore: tokensBefore
-                )
-            )
+        case .stopConfirmed:
+            silenceWatchdog.stop()
 
-        // Retry events → pipeline
-        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
-            coalescer.receive(.retryStart(sessionId: sessionId, attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage))
-
-        case .retryEnd(let success, let attempt, let finalError):
-            coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
-
-        // Command results → pipeline (for model changes, stats, etc.)
-        case .commandResult(let command, let requestId, let success, let data, let error):
-            handleCommandResult(
-                command: command,
-                requestId: requestId,
-                success: success,
-                data: data,
-                error: error,
-                sessionId: sessionId
-            )
+        default:
+            break
         }
     }
 
@@ -197,18 +93,13 @@ extension ServerConnection {
         prefetchModelsIfNeeded()
     }
 
-    func handleState(_ session: Session) {
-        let previous = sessionStore.sessions.first(where: { $0.id == session.id })
-        let previousWorkspaceId = previous?.workspaceId
-        let previousStatus = previous?.status
-
-        // Shared store mutations (upsert + metrics + live activity sync).
-        // This also handles child session state messages broadcast to the parent's
-        // key by spawn_agent — they get upserted into sessionStore so the unified
-        // session bar discovers them immediately.
-        applySharedStoreUpdate(for: .state(session: session), sessionId: session.id)
-
-        // Active-session-only: thinking level, slash commands, recovery hardening.
+    /// Handle active-session UI state updates from `.state` messages.
+    ///
+    /// **Important:** `previousWorkspaceId` must be captured BEFORE
+    /// `applySharedStoreUpdate` upserts the session into the store.
+    /// The caller passes it in to ensure correct ordering.
+    func handleState(_ session: Session, previousWorkspaceId: String? = nil) {
+        // Active-session-only: thinking level, slash commands.
         // Skip for child sessions whose state arrives via the parent's broadcast key —
         // they should not overwrite the active session's UI state.
         guard session.id == activeSessionId else { return }
@@ -216,17 +107,6 @@ extension ServerConnection {
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
-        }
-
-        // Recovery hardening: if server state says the session is no longer
-        // running but we never observed agentEnd/messageEnd (reconnect gap,
-        // stop lifecycle path), finalize in-flight timeline artifacts.
-        if let previousStatus,
-           previousStatus == .busy || previousStatus == .stopping,
-           session.status == .ready || session.status == .stopped || session.status == .error {
-            screenAwakeController.setSessionActivity(false, sessionId: session.id)
-            coalescer.receive(.agentEnd(sessionId: session.id))
-            silenceWatchdog.stop()
         }
     }
 
@@ -360,23 +240,12 @@ extension ServerConnection {
 
     // MARK: - Stop Lifecycle
 
-    func handleStopLifecycleMessage(_ message: ServerMessage, sessionId: String) -> Bool {
+    /// Returns true if the message is a stop lifecycle event.
+    /// Timeline effects (system events, coalescer agentEnd) are now handled
+    /// by ChatSessionManager.routeToTimeline(). This only checks the type.
+    func isStopLifecycleMessage(_ message: ServerMessage) -> Bool {
         switch message {
-        case .stopRequested(_, let reason):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            reducer.appendSystemEvent(reason ?? "Stopping…")
-            return true
-        case .stopConfirmed(_, let reason):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            // Match TUI behavior: stop-confirmed without agentEnd should still
-            // close any in-flight thinking/tool state.
-            coalescer.receive(.agentEnd(sessionId: sessionId))
-            silenceWatchdog.stop()
-            reducer.appendSystemEvent(reason ?? "Stop confirmed")
-            return true
-        case .stopFailed(_, let reason):
-            applySharedStoreUpdate(for: message, sessionId: sessionId)
-            reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
+        case .stopRequested, .stopConfirmed, .stopFailed:
             return true
         default:
             return false
@@ -397,6 +266,10 @@ extension ServerConnection {
 
     // MARK: - Command Result Routing
 
+    /// Handle command result: resolve waiters, sync UI state, and return
+    /// whether the event should be forwarded to the per-session timeline.
+    ///
+    /// Returns `true` if the command was consumed internally (not a timeline event).
     func handleCommandResult(
         command: String,
         requestId: String?,
@@ -404,38 +277,28 @@ extension ServerConnection {
         data: JSONValue?,
         error: String?,
         sessionId: String
-    ) {
+    ) -> Bool {
         // Resolve prompt/steer/follow-up acceptance acks first.
         // These are local send-path control messages, not timeline events.
         if let requestId,
            command == "prompt" || command == "steer" || command == "follow_up",
            commands.resolveTurnCommandResult(command: command, requestId: requestId, success: success, error: error) {
-            return
+            return true
         }
 
         if command == "get_queue" || command == "set_queue" {
             if success, let queue = decodeQueueStateFromCommandData(data) {
                 messageQueueStore.apply(queue, for: sessionId)
             }
-            // Resolve the pending command waiter (set_queue isn't eagerly
-            // resolved, so the waiter may still be waiting).
             if let requestId {
                 _ = commands.resolveCommandResult(
                     command: command, requestId: requestId,
                     success: success, data: data, error: error
                 )
             }
-            // Queue sync is internal plumbing — never surface in the timeline.
-            // Failures are already handled by the stream_not_subscribed_full
-            // recovery path (triggerFullSubscriptionRecovery).
-            return
+            return true
         }
 
-        // Subscribe/unsubscribe are stream plumbing — never surface in timeline.
-        // Failures are already handled by SessionStreamCoordinator catch blocks.
-        // Without this guard, eagerly-resolved command_results that also flow
-        // through the per-session AsyncStream fall through to the coalescer
-        // and render as error banners (e.g. "subscribe failed: rate limit").
         if command == "subscribe" || command == "unsubscribe" {
             if let requestId {
                 _ = commands.resolveCommandResult(
@@ -443,7 +306,7 @@ extension ServerConnection {
                     success: success, data: data, error: error
                 )
             }
-            return
+            return true
         }
 
         if command == "get_commands" {
@@ -454,7 +317,7 @@ extension ServerConnection {
                 error: error,
                 sessionId: sessionId
             )
-            return
+            return true
         }
 
         if let requestId,
@@ -465,21 +328,13 @@ extension ServerConnection {
             data: data,
             error: error
            ) {
-            return
+            return true
         }
 
         syncThinkingLevelFromCommand(command: command, success: success, data: data)
 
-        coalescer.receive(
-            .commandResult(
-                sessionId: sessionId,
-                command: command,
-                requestId: requestId,
-                success: success,
-                data: data,
-                error: error
-            )
-        )
+        // Not consumed — caller should forward to per-session coalescer.
+        return false
     }
 
     func syncThinkingLevelFromCommand(command: String, success: Bool, data: JSONValue?) {
@@ -605,6 +460,131 @@ extension ServerConnection {
             guard let self, self.activeExtensionDialog?.id == request.id else { return }
             self.activeExtensionDialog = nil
             self.extensionToast = "Extension request timed out"
+        }
+    }
+
+    // MARK: - Test Compatibility
+
+    // periphery:ignore - test seam used by OppiTests via @testable import
+    /// Backwards-compatible routing for tests that don't use per-session pipeline.
+    /// In production, ChatSessionManager.handleStreamMessage() calls
+    /// applySharedStoreUpdate + routeToTimeline + handleActiveSessionUI.
+    ///
+    /// This routes through the test-compat coalescer/reducer/correlator on
+    /// ServerConnection (which are NOT used in production).
+    func handleServerMessage(_ message: ServerMessage, sessionId: String) {
+        guard sessionId == activeSessionId else { return }
+
+        if isStopLifecycleMessage(message) {
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            handleActiveSessionUI(message, sessionId: sessionId)
+            // Stop lifecycle timeline effects for test compat
+            switch message {
+            case .stopRequested(_, let reason):
+                reducer.appendSystemEvent(reason ?? "Stopping…")
+            case .stopConfirmed(_, let reason):
+                coalescer.receive(.agentEnd(sessionId: sessionId))
+                reducer.appendSystemEvent(reason ?? "Stop confirmed")
+            case .stopFailed(_, let reason):
+                reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
+            default: break
+            }
+            return
+        }
+
+        switch message {
+        case .permissionRequest(let perm):
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            coalescer.receive(.permissionRequest(perm))
+        case .permissionExpired(let id, _):
+            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+            if let request = result.takenPermission {
+                reducer.resolvePermission(id: id, outcome: .expired, tool: request.tool, summary: request.displaySummary)
+            }
+            coalescer.receive(.permissionExpired(id: id))
+        case .permissionCancelled(let id):
+            let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+            if let request = result.takenPermission {
+                reducer.resolvePermission(id: id, outcome: .cancelled, tool: request.tool, summary: request.displaySummary)
+            }
+        case .agentStart:
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            coalescer.receive(.agentStart(sessionId: sessionId))
+            silenceWatchdog.start()
+        case .agentEnd:
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            coalescer.receive(.agentEnd(sessionId: sessionId))
+            silenceWatchdog.stop()
+        case .textDelta(let delta):
+            silenceWatchdog.recordEvent()
+            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
+        case .thinkingDelta(let delta):
+            silenceWatchdog.recordEvent()
+            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
+        case .toolStart(let tool, let args, let toolCallId, let callSegments):
+            silenceWatchdog.recordEvent()
+            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
+            silenceWatchdog.recordEvent()
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes))
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
+            silenceWatchdog.recordEvent()
+            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
+        case .messageEnd(let role, let content):
+            if role == "assistant" {
+                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
+            } else if role == "user", !content.isEmpty, !reducer.hasUserMessage(matching: content) {
+                reducer.appendUserMessage(content)
+            }
+        case .error(let msg, let code, let fatal):
+            if code == Self.missingFullSubscriptionErrorCode || (code == nil && msg.contains("is not subscribed at level=full")) {
+                triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
+                break
+            }
+            coalescer.receive(.error(sessionId: sessionId, message: msg))
+            fatalSetupError = fatalSetupError || fatal
+        case .sessionEnded(let reason):
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            silenceWatchdog.stop()
+            messageQueueStore.clear(sessionId: sessionId)
+            coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
+        case .sessionDeleted(let deletedId):
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            messageQueueStore.clear(sessionId: deletedId)
+        case .compactionStart(let reason):
+            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
+        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
+            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore))
+        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
+            coalescer.receive(.retryStart(sessionId: sessionId, attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage))
+        case .retryEnd(let success, let attempt, let finalError):
+            coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
+        case .commandResult(let command, let requestId, let success, let data, let error):
+            let consumed = handleCommandResult(command: command, requestId: requestId, success: success, data: data, error: error, sessionId: sessionId)
+            if !consumed {
+                coalescer.receive(.commandResult(sessionId: sessionId, command: command, requestId: requestId, success: success, data: data, error: error))
+            }
+        case .connected(let session):
+            handleConnected(session)
+        case .queueState(let queue):
+            messageQueueStore.apply(queue, for: sessionId)
+        case .queueItemStarted(let kind, let item, let queueVersion):
+            messageQueueStore.applyQueueItemStarted(for: sessionId, kind: kind, item: item, queueVersion: queueVersion)
+            reducer.appendUserMessage(item.message, images: item.images ?? [])
+        case .state(let session):
+            let previousStatus = sessionStore.sessions.first(where: { $0.id == session.id })?.status
+            let prevWsId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            handleState(session, previousWorkspaceId: prevWsId)
+            if let previousStatus, previousStatus == .busy || previousStatus == .stopping,
+               session.status == .ready || session.status == .stopped || session.status == .error {
+                screenAwakeController.setSessionActivity(false, sessionId: session.id)
+                coalescer.receive(.agentEnd(sessionId: session.id))
+                silenceWatchdog.stop()
+            }
+        default:
+            applySharedStoreUpdate(for: message, sessionId: sessionId)
+            handleActiveSessionUI(message, sessionId: sessionId)
         }
     }
 }

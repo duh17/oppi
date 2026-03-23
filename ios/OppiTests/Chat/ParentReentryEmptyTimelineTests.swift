@@ -68,7 +68,6 @@ struct ParentReentryEmptyTimelineTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: workspaceId, status: .ready))
         var childSession = makeTestSession(id: childId, workspaceId: workspaceId, status: .busy)
@@ -78,7 +77,7 @@ struct ParentReentryEmptyTimelineTests {
         // --- Step 1: Parent connects (first time) ---
         let parentTask1 = Task { @MainActor in
             await parentManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
 
@@ -92,7 +91,7 @@ struct ParentReentryEmptyTimelineTests {
         })
 
         // First connect loads cache normally (isReentry = false)
-        let hasContentOnFirst = reducer.items.contains { item in
+        let hasContentOnFirst = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_CACHED_CONTENT")
             }
@@ -110,7 +109,7 @@ struct ParentReentryEmptyTimelineTests {
         // --- Step 3: Child connects ---
         let childTask = Task { @MainActor in
             await childManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
 
@@ -138,7 +137,7 @@ struct ParentReentryEmptyTimelineTests {
         parentManager.reconnect()
         let parentTask2 = Task { @MainActor in
             await parentManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
 
@@ -160,7 +159,7 @@ struct ParentReentryEmptyTimelineTests {
         //
         // EXPECTED: The cached content should be loaded immediately for instant
         // display, providing a seamless experience when navigating back.
-        let hasContentBeforeTraceFetch = !reducer.items.isEmpty
+        let hasContentBeforeTraceFetch = !parentManager.reducer.items.isEmpty
         #expect(
             hasContentBeforeTraceFetch,
             "Parent timeline must NOT be empty on re-entry — cache should provide instant display"
@@ -169,7 +168,7 @@ struct ParentReentryEmptyTimelineTests {
         // Additional: verify it's actually parent content (not child leftovers).
         // The cache was updated with fresh trace data during the first connect,
         // so it now contains "PARENT_FRESH_CONTENT" (from the first trace fetch).
-        let hasParentContent = reducer.items.contains { item in
+        let hasParentContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_FRESH_CONTENT") || text.contains("PARENT_CACHED_CONTENT")
             }
@@ -181,7 +180,7 @@ struct ParentReentryEmptyTimelineTests {
         )
 
         // No child content should leak through
-        let hasChildContent = reducer.items.contains { item in
+        let hasChildContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("CHILD_CONTENT")
             }
@@ -194,7 +193,7 @@ struct ParentReentryEmptyTimelineTests {
         try await Task.sleep(for: .milliseconds(200))
 
         // After trace fetch, content should be updated to fresh version
-        let hasFreshContent = reducer.items.contains { item in
+        let hasFreshContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_FRESH_CONTENT")
             }
@@ -251,7 +250,6 @@ struct ParentReentryEmptyTimelineTests {
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: parentId, workspaceId: workspaceId, status: .ready))
         var childSession = makeTestSession(id: childId, workspaceId: workspaceId, status: .busy)
@@ -261,7 +259,7 @@ struct ParentReentryEmptyTimelineTests {
         // --- Step 1: Parent connects first time ---
         let parentTask1 = Task { @MainActor in
             await parentManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
 
@@ -280,7 +278,7 @@ struct ParentReentryEmptyTimelineTests {
 
         let childTask = Task { @MainActor in
             await childManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
         #expect(await childStreams.waitForCreated(1))
@@ -298,7 +296,7 @@ struct ParentReentryEmptyTimelineTests {
         parentManager.reconnect()
         let parentTask2 = Task { @MainActor in
             await parentManager.connect(
-                connection: connection, reducer: reducer, sessionStore: sessionStore
+                connection: connection, sessionStore: sessionStore
             )
         }
 
@@ -318,13 +316,13 @@ struct ParentReentryEmptyTimelineTests {
         // = permanently empty timeline. The user is stuck.
         //
         // Expected: cache should have been loaded on re-entry as a fallback.
-        let hasContent = !reducer.items.isEmpty
+        let hasContent = !parentManager.reducer.items.isEmpty
         #expect(
             hasContent,
             "Re-entry with failed trace fetch must show cached content — not a blank timeline"
         )
 
-        let hasParentContent = reducer.items.contains { item in
+        let hasParentContent = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_CONTENT_SURVIVES_FAILURE")
             }

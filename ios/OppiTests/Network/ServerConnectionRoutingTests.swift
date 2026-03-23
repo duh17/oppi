@@ -405,7 +405,7 @@ struct ServerConnectionRoutingTests {
             .whenHandle(.agentEnd)
             .whenFlush()
 
-        let assistants = scenario.connection.reducer.items.filter {
+        let assistants = scenario.reducer.items.filter {
             if case .assistantMessage = $0 { return true }
             return false
         }
@@ -465,7 +465,7 @@ struct ServerConnectionRoutingTests {
             .whenHandle(.agentEnd)
             .whenFlush()
 
-        let tools = scenario.connection.reducer.items.filter {
+        let tools = scenario.reducer.items.filter {
             if case .toolCall = $0 { return true }
             return false
         }
@@ -598,10 +598,19 @@ struct ServerConnectionRoutingTests {
 final class EventFlowServerConnectionScenario {
     let connection: ServerConnection
     let activeSessionId: String
+    let reducer = TimelineReducer()
+    let coalescer = DeltaCoalescer()
+    let toolCallCorrelator = ToolCallCorrelator()
 
     init(sessionId: String = "s1") {
         self.connection = makeTestConnection(sessionId: sessionId)
         self.activeSessionId = sessionId
+
+        coalescer.onFlush = { [weak self] events in
+            self?.reducer.processBatch(events)
+        }
+        coalescer.sessionId = sessionId
+        reducer.activeSessionId = sessionId
     }
 
     @discardableResult
@@ -628,16 +637,19 @@ final class EventFlowServerConnectionScenario {
         sessionId: String? = nil,
         flushAfter: Bool = false
     ) -> Self {
-        connection.handleServerMessage(message, sessionId: sessionId ?? activeSessionId)
+        let sid = sessionId ?? activeSessionId
+        let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sid)
+        routeToTimeline(message, sessionId: sid, storeResult: storeResult)
+        connection.handleActiveSessionUI(message, sessionId: sid)
         if flushAfter {
-            connection.flushAndSuspend()
+            coalescer.flushNow()
         }
         return self
     }
 
     @discardableResult
     func whenFlush() -> Self {
-        connection.flushAndSuspend()
+        coalescer.flushNow()
         return self
     }
 
@@ -646,7 +658,7 @@ final class EventFlowServerConnectionScenario {
     }
 
     func timelineItemCount(of kind: EventFlowTimelineItemKind) -> Int {
-        connection.reducer.items.filter { item in
+        reducer.items.filter { item in
             switch kind {
             case .assistantMessage:
                 if case .assistantMessage = item { return true }
@@ -661,6 +673,47 @@ final class EventFlowServerConnectionScenario {
             }
             return false
         }.count
+    }
+
+    private func routeToTimeline(_ message: ServerMessage, sessionId: String, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
+        switch message {
+        case .agentStart: coalescer.receive(.agentStart(sessionId: sessionId))
+        case .agentEnd: coalescer.receive(.agentEnd(sessionId: sessionId))
+        case .textDelta(let d): coalescer.receive(.textDelta(sessionId: sessionId, delta: d))
+        case .thinkingDelta(let d): coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: d))
+        case .toolStart(let t, let a, let id, let s): coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: t, args: a, toolCallId: id, callSegments: s))
+        case .toolOutput(let o, let e, let id, let m, let tr, let tb): coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: o, isError: e, toolCallId: id, mode: m, truncated: tr, totalBytes: tb))
+        case .toolEnd(_, let id, let d, let e, let s): coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: id, details: d, isError: e, resultSegments: s))
+        case .messageEnd(let r, let c):
+            if r == "assistant" { coalescer.receive(.messageEnd(sessionId: sessionId, content: c)) }
+            else if r == "user", !c.isEmpty, !reducer.hasUserMessage(matching: c) { reducer.appendUserMessage(c) }
+        case .error(let msg, let code, let fatal):
+            let isMissingSub = code == ServerConnection.missingFullSubscriptionErrorCode || (code == nil && msg.contains("is not subscribed at level=full"))
+            if !isMissingSub { coalescer.receive(.error(sessionId: sessionId, message: msg)) }
+            if fatal { connection.fatalSetupError = true }
+        case .sessionEnded(let r): coalescer.receive(.sessionEnded(sessionId: sessionId, reason: r))
+        case .compactionStart(let r): coalescer.receive(.compactionStart(sessionId: sessionId, reason: r))
+        case .compactionEnd(let a, let w, let s, let t): coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: a, willRetry: w, summary: s, tokensBefore: t))
+        case .retryStart(let a, let m, let d, let e): coalescer.receive(.retryStart(sessionId: sessionId, attempt: a, maxAttempts: m, delayMs: d, errorMessage: e))
+        case .retryEnd(let s, let a, let f): coalescer.receive(.retryEnd(sessionId: sessionId, success: s, attempt: a, finalError: f))
+        case .commandResult(let cmd, let rid, let ok, let data, let err):
+            let consumed = connection.handleCommandResult(command: cmd, requestId: rid, success: ok, data: data, error: err, sessionId: sessionId)
+            if !consumed { coalescer.receive(.commandResult(sessionId: sessionId, command: cmd, requestId: rid, success: ok, data: data, error: err)) }
+        case .permissionExpired(let id, _):
+            if let req = storeResult.takenPermission { reducer.resolvePermission(id: id, outcome: .expired, tool: req.tool, summary: req.displaySummary) }
+            coalescer.receive(.permissionExpired(id: id))
+        case .permissionCancelled(let id):
+            if let req = storeResult.takenPermission { reducer.resolvePermission(id: id, outcome: .cancelled, tool: req.tool, summary: req.displaySummary) }
+        case .permissionRequest(let p): coalescer.receive(.permissionRequest(p))
+        case .queueItemStarted(_, let item, _): reducer.appendUserMessage(item.message, images: item.images ?? [])
+        case .stopRequested(_, let r): reducer.appendSystemEvent(r ?? "Stopping…")
+        case .stopConfirmed(_, let r): coalescer.receive(.agentEnd(sessionId: sessionId)); reducer.appendSystemEvent(r ?? "Stop confirmed")
+        case .stopFailed(_, let r): reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(r)"))
+        case .state(let session):
+            let prev = connection.sessionStore.sessions.first(where: { $0.id == session.id })?.status
+            if let prev, prev == .busy || prev == .stopping, session.status == .ready || session.status == .stopped || session.status == .error { coalescer.receive(.agentEnd(sessionId: session.id)) }
+        default: break
+        }
     }
 }
 

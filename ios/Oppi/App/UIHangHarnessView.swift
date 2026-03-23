@@ -510,6 +510,7 @@ struct UIHangHarnessView: View {
     }()
 
     @State private var connection = ServerConnection()
+    @State private var harnessReducer = TimelineReducer()
     @State private var scrollController = ChatScrollController()
 
     @State private var selectedSession: HarnessSession = .alpha
@@ -658,11 +659,11 @@ struct UIHangHarnessView: View {
     }
 
     private var extensionMarkdownIsExpandedValue: Int {
-        connection.reducer.expandedItemIDs.contains(extensionMarkdownToolID) ? 1 : 0
+        harnessReducer.expandedItemIDs.contains(extensionMarkdownToolID) ? 1 : 0
     }
 
     private var extensionTextIsExpandedValue: Int {
-        connection.reducer.expandedItemIDs.contains(extensionTextToolID) ? 1 : 0
+        harnessReducer.expandedItemIDs.contains(extensionTextToolID) ? 1 : 0
     }
 
     private var extensionMarkdownIsTopVisibleValue: Int {
@@ -670,11 +671,11 @@ struct UIHangHarnessView: View {
     }
 
     private var writeMarkdownIsExpandedValue: Int {
-        connection.reducer.expandedItemIDs.contains(writeMarkdownToolID) ? 1 : 0
+        harnessReducer.expandedItemIDs.contains(writeMarkdownToolID) ? 1 : 0
     }
 
     private var readMarkdownIsExpandedValue: Int {
-        connection.reducer.expandedItemIDs.contains(readMarkdownToolID) ? 1 : 0
+        harnessReducer.expandedItemIDs.contains(readMarkdownToolID) ? 1 : 0
     }
 
     private var offsetYValue: Int {
@@ -720,11 +721,11 @@ struct UIHangHarnessView: View {
                     },
                     scrollCommand: pendingScrollCommand,
                     scrollController: scrollController,
-                    reducer: connection.reducer,
-                    toolOutputStore: connection.reducer.toolOutputStore,
-                    toolArgsStore: connection.reducer.toolArgsStore,
-                    toolSegmentStore: connection.reducer.toolSegmentStore,
-                    toolDetailsStore: connection.reducer.toolDetailsStore,
+                    reducer: harnessReducer,
+                    toolOutputStore: harnessReducer.toolOutputStore,
+                    toolArgsStore: harnessReducer.toolArgsStore,
+                    toolSegmentStore: harnessReducer.toolSegmentStore,
+                    toolDetailsStore: harnessReducer.toolDetailsStore,
                     connection: connection,
                     audioPlayer: connection.audioPlayer,
                     themeID: themeID
@@ -1178,13 +1179,13 @@ struct UIHangHarnessView: View {
 
     private func seedExtensionMarkdownFixtures() {
         let extensionIDs = Set(HarnessSession.allCases.map(extensionMarkdownToolItemID(for:)))
-        connection.reducer.toolOutputStore.clear(itemIDs: extensionIDs)
+        harnessReducer.toolOutputStore.clear(itemIDs: extensionIDs)
 
         for session in HarnessSession.allCases {
             let extensionID = extensionMarkdownToolItemID(for: session)
             let markdown = visualExtensionMarkdown(for: session)
 
-            connection.reducer.toolArgsStore.set([
+            harnessReducer.toolArgsStore.set([
                 "text": .string(markdown),
                 "tags": .array([
                     .string("harness"),
@@ -1192,36 +1193,36 @@ struct UIHangHarnessView: View {
                     .string(session.rawValue),
                 ]),
             ], for: extensionID)
-            _ = connection.reducer.toolOutputStore.append(markdown, to: extensionID)
+            _ = harnessReducer.toolOutputStore.append(markdown, to: extensionID)
         }
     }
 
     private func seedExtensionTextFixtures() {
         let extensionIDs = Set(HarnessSession.allCases.map(extensionTextToolItemID(for:)))
-        connection.reducer.toolOutputStore.clear(itemIDs: extensionIDs)
+        harnessReducer.toolOutputStore.clear(itemIDs: extensionIDs)
 
         for session in HarnessSession.allCases {
             let extensionID = extensionTextToolItemID(for: session)
             let output = visualExtensionTextOutput(for: session)
-            _ = connection.reducer.toolOutputStore.append(output, to: extensionID)
+            _ = harnessReducer.toolOutputStore.append(output, to: extensionID)
         }
     }
 
     private func seedReadMarkdownFixtures() {
         let readIDs = Set(HarnessSession.allCases.map(readMarkdownToolItemID(for:)))
-        connection.reducer.toolOutputStore.clear(itemIDs: readIDs)
+        harnessReducer.toolOutputStore.clear(itemIDs: readIDs)
 
         for session in HarnessSession.allCases {
             let readID = readMarkdownToolItemID(for: session)
             let markdown = visualReadMarkdownContent(for: session)
 
-            connection.reducer.toolArgsStore.set([
+            harnessReducer.toolArgsStore.set([
                 "path": .string("design/read-harness-markdown.md"),
                 "offset": .number(1),
                 "limit": .number(800),
             ], for: readID)
 
-            _ = connection.reducer.toolOutputStore.append(markdown, to: readID)
+            _ = harnessReducer.toolOutputStore.append(markdown, to: readID)
         }
     }
 
@@ -1230,12 +1231,12 @@ struct UIHangHarnessView: View {
             let writeID = writeMarkdownToolItemID(for: session)
             let markdown = visualWriteMarkdownContent(for: session)
 
-            connection.reducer.toolArgsStore.set([
+            harnessReducer.toolArgsStore.set([
                 "path": .string("design/chat-timeline-code-paths.md"),
                 "content": .string(markdown),
             ], for: writeID)
 
-            connection.reducer.toolOutputStore.clear(itemIDs: Set([writeID]))
+            harnessReducer.toolOutputStore.clear(itemIDs: Set([writeID]))
         }
     }
 
@@ -1248,7 +1249,7 @@ struct UIHangHarnessView: View {
         guard !ids.isEmpty else { return }
 
         for id in ids {
-            connection.reducer.expandedItemIDs.insert(id)
+            harnessReducer.expandedItemIDs.insert(id)
         }
 
         heartbeat &+= 1
@@ -1275,7 +1276,7 @@ struct UIHangHarnessView: View {
         guard currentItems.contains(where: { $0.id == itemID }) else { return }
 
         renderWindow = currentItems.count
-        connection.reducer.expandedItemIDs.insert(itemID)
+        harnessReducer.expandedItemIDs.insert(itemID)
         heartbeat &+= 1
         issueScrollCommand(id: itemID, anchor: .top, animated: false)
     }

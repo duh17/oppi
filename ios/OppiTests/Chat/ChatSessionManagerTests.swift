@@ -63,11 +63,10 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -92,11 +91,10 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -129,12 +127,11 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         await connectTask.value
@@ -170,11 +167,10 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -194,67 +190,36 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
-    /// Same-session re-entry must NOT rebuild from stale cache when the
-    /// reducer already has items. Loading a stale cache triggers orphan
-    /// detection that preserves user messages but drops their corresponding
-    /// assistant responses — producing a wall of user-only messages.
+    /// With per-session reducers, each connect() resets the reducer and
+    /// loads from cache. Verify that cache loads correctly on reconnect.
     @MainActor
-    @Test func sameSessionReentrySkipsCacheLoadWhenReducerHasItems() async {
-        let sessionId = "reentry-skip-cache-\(UUID().uuidString)"
+    @Test func reconnectLoadsFromCache() async {
+        let sessionId = "reentry-cache-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
 
-        // Stale cache with only 1 event (simulating cache that predates
-        // the user's recent messages during the live session).
+        // Cache with 2 events (user + assistant).
         await TimelineCache.shared.saveTrace(sessionId, events: [
-            makeTraceEvent(id: "old-user-1", type: .user, text: "first message"),
+            makeTraceEvent(id: "u1", type: .user, text: "first message"),
+            makeTraceEvent(id: "a1", type: .assistant, text: "first response"),
         ])
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
-
-        // Pre-populate reducer with live session items (as if user just
-        // had a conversation and is re-entering the same session).
-        reducer.loadSession([
-            TraceEvent(id: "u1", type: .user, timestamp: "2026-03-17T10:00:00Z",
-                       text: "first message", tool: nil, args: nil, output: nil,
-                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
-            TraceEvent(id: "a1", type: .assistant, timestamp: "2026-03-17T10:00:01Z",
-                       text: "first response", tool: nil, args: nil, output: nil,
-                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
-            TraceEvent(id: "u2", type: .user, timestamp: "2026-03-17T10:01:00Z",
-                       text: "second message", tool: nil, args: nil, output: nil,
-                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
-            TraceEvent(id: "a2", type: .assistant, timestamp: "2026-03-17T10:01:01Z",
-                       text: "second response", tool: nil, args: nil, output: nil,
-                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
-        ])
-        #expect(reducer.items.count == 4, "Precondition: reducer has 4 items")
-
-        // Simulate same-session re-entry: set activeSessionId so
-        // switchingSessions == false → reset() is NOT called.
         sessionStore.activeSessionId = sessionId
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
         try? await Task.sleep(for: .milliseconds(120))
 
-        // The reducer should still have all 4 items — cache load was skipped.
-        #expect(reducer.items.count == 4, "Same-session re-entry must preserve existing items, not rebuild from stale cache")
-
-        // Verify assistant messages survived (the bug would drop them).
-        let assistantCount = reducer.items.filter {
-            if case .assistantMessage = $0 { return true }
-            return false
-        }.count
-        #expect(assistantCount == 2, "Both assistant messages must survive re-entry")
+        // Reducer should have loaded from cache
+        #expect(manager.reducer.items.count == 2, "Cache should be loaded on connect")
 
         streams.finish(index: 0)
         await connectTask.value
@@ -274,11 +239,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -306,11 +270,10 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -359,11 +322,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -408,11 +370,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -457,11 +418,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -492,11 +452,10 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let firstConnect = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         let firstReady = await streams.waitForCreated(1)
@@ -507,7 +466,7 @@ struct ChatSessionManagerTests {
         #expect(manager.connectionGeneration == 1)
 
         let secondConnect = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         let secondReady = await streams.waitForCreated(2)
@@ -541,11 +500,10 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         let ready = await streams.waitForCreated(1)
@@ -584,11 +542,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -651,11 +608,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -703,11 +659,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -746,11 +701,10 @@ struct ChatSessionManagerTests {
             await counter.record(message: message)
         }
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -800,12 +754,11 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -817,7 +770,7 @@ struct ChatSessionManagerTests {
 
         #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
-                reducer.items.contains { item in
+                manager.reducer.items.contains { item in
                     if case .toolCall(let id, _, _, _, _, _, _) = item {
                         return id == "tc-live"
                     }
@@ -830,7 +783,7 @@ struct ChatSessionManagerTests {
         try? await Task.sleep(for: .milliseconds(220))
 
         // Live tool call preserved via replay buffer
-        #expect(reducer.items.contains { item in
+        #expect(manager.reducer.items.contains { item in
             if case .toolCall(let id, _, _, _, _, _, _) = item {
                 return id == "tc-live"
             }
@@ -838,7 +791,7 @@ struct ChatSessionManagerTests {
         })
 
         // Trace content now appears (was previously deferred)
-        #expect(reducer.items.contains { item in
+        #expect(manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("TRACE_RELOAD_MARKER")
             }
@@ -884,12 +837,11 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -949,12 +901,11 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, status: .stopping))
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -1017,11 +968,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -1067,11 +1017,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -1098,7 +1047,7 @@ struct ChatSessionManagerTests {
     ///
     /// Scenario: no cache, session is busy, live stream populates a few reducer
     /// items before the history trace fetch completes. The old code deferred the
-    /// trace rebuild because `session.status == .busy && !reducer.items.isEmpty`,
+    /// trace rebuild because `session.status == .busy && !manager.reducer.items.isEmpty`,
     /// leaving only the last streamed message visible.
     ///
     /// Fix: only defer when the reducer was previously loaded from cache — live
@@ -1136,13 +1085,12 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = connection.reducer
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         // No cache → scheduleHistoryReload fires before WS
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -1154,7 +1102,7 @@ struct ChatSessionManagerTests {
 
         // Wait for reducer to have live items
         #expect(await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run { !reducer.items.isEmpty }
+            await MainActor.run { !manager.reducer.items.isEmpty }
         })
 
         // Wait for history trace fetch to complete (150ms delay + margin)
@@ -1162,7 +1110,7 @@ struct ChatSessionManagerTests {
 
         // History MUST be applied despite busy status + non-empty reducer,
         // because there was no cache — only live stream items.
-        let hasHistoryContent = reducer.items.contains { item in
+        let hasHistoryContent = manager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("HISTORY_ASSISTANT_MSG")
             }
@@ -1320,13 +1268,12 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
 
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectStartMs = ChatMetricsService.nowMs()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         // Wait for stream to be created
@@ -1400,11 +1347,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
@@ -1449,11 +1395,10 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        let reducer = TimelineReducer()
         let sessionStore = SessionStore()
 
         let connectTask = Task { @MainActor in
-            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+            await manager.connect(connection: connection, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
