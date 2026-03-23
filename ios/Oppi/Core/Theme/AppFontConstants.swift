@@ -7,32 +7,40 @@ import UIKit
 /// SwiftUI code uses `Font.app*` constants (defined in extension below).
 /// Tool-specific code can continue using `ToolFont.*` which delegates here.
 ///
-/// All monospaced font sizes are defined once so that a future user-preference
-/// or Dynamic Type scaling change is a single-point edit.
+/// Monospaced fonts are dynamic — rebuilt when the user changes font preferences.
+/// System fonts remain static.
 enum AppFont {
-    // MARK: - Monospaced (UIKit)
+    // MARK: - Monospaced (dynamic, based on FontPreferences)
+    //
+    // `nonisolated(unsafe)` because these are written only from @MainActor
+    // (rebuild()) and read from @MainActor UI code. UIFont is immutable once
+    // created, so a stale read during a font-preference transition is harmless.
 
     /// 10pt — line numbers, counters, secondary labels
-    static let monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-    static let monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+    nonisolated(unsafe) static private(set) var monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    nonisolated(unsafe) static private(set) var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
 
     /// 11pt — code content, output text, ANSI terminal, language labels
-    static let mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    static let monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+    nonisolated(unsafe) static private(set) var mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    nonisolated(unsafe) static private(set) var monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
 
     /// 12pt — code blocks, diff content, file paths, section headers
-    static let monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    static let monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
-    static let monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    nonisolated(unsafe) static private(set) var monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    nonisolated(unsafe) static private(set) var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
+    nonisolated(unsafe) static private(set) var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
 
     /// 15pt — prompt icons, spinner characters
-    static let monoLarge = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
-    static let monoLargeSemibold = UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
+    nonisolated(unsafe) static private(set) var monoLarge = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+    nonisolated(unsafe) static private(set) var monoLargeSemibold = UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
 
     /// 17pt — assistant icon
-    static let monoXL = UIFont.monospacedSystemFont(ofSize: 17, weight: .semibold)
+    nonisolated(unsafe) static private(set) var monoXL = UIFont.monospacedSystemFont(ofSize: 17, weight: .semibold)
 
-    // MARK: - System (UIKit, non-monospaced)
+    /// Message body font — system body by default, or the selected mono font
+    /// when `FontPreferences.useMonoForMessages` is enabled.
+    nonisolated(unsafe) static private(set) var messageBody: UIFont = .preferredFont(forTextStyle: .body)
+
+    // MARK: - System (UIKit, non-monospaced) — these don't change
 
     /// 11pt — metadata labels, line counts
     static let systemSmall = UIFont.systemFont(ofSize: 11)
@@ -42,6 +50,40 @@ enum AppFont {
 
     /// 14pt medium — toast feedback ("Saved")
     static let systemFeedbackMedium = UIFont.systemFont(ofSize: 14, weight: .medium)
+
+    // MARK: - Rebuild
+
+    /// Rebuild all dynamic font constants from current preferences.
+    /// Called on startup and when font preferences change.
+    @MainActor
+    static func rebuild() {
+        let family = FontPreferences.codeFont
+
+        monoSmall = family.font(size: 10, weight: .regular)
+        monoSmallSemibold = family.font(size: 10, weight: .semibold)
+
+        mono = family.font(size: 11, weight: .regular)
+        monoBold = family.font(size: 11, weight: .bold)
+
+        monoMedium = family.font(size: 12, weight: .regular)
+        monoMediumBold = family.font(size: 12, weight: .bold)
+        monoMediumSemibold = family.font(size: 12, weight: .semibold)
+
+        monoLarge = family.font(size: 15, weight: .regular)
+        monoLargeSemibold = family.font(size: 15, weight: .semibold)
+
+        monoXL = family.font(size: 17, weight: .semibold)
+
+        // Message body
+        if FontPreferences.useMonoForMessages {
+            messageBody = family.font(
+                size: UIFont.preferredFont(forTextStyle: .body).pointSize,
+                weight: .regular
+            )
+        } else {
+            messageBody = .preferredFont(forTextStyle: .body)
+        }
+    }
 }
 
 // MARK: - SwiftUI Font Constants

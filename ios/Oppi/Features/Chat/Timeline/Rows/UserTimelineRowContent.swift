@@ -125,7 +125,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         messageTextView.textContainer.lineFragmentPadding = 0
         messageTextView.textContainer.lineBreakMode = .byWordWrapping
         messageTextView.adjustsFontForContentSizeCategory = true
-        messageTextView.font = .preferredFont(forTextStyle: .body)
+        messageTextView.font = AppFont.messageBody
 
         textRow.addArrangedSubview(iconLabel)
         textRow.addArrangedSubview(messageTextView)
@@ -161,11 +161,12 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.blue)
-        messageTextView.textColor = UIColor(palette.fg)
+        messageTextView.textColor = UIColor(palette.userMessageText)
+        messageTextView.font = AppFont.messageBody
 
-        // Subtle blue-tinted background — distinct from bgDark/bgHighlight
-        // used by thinking traces and tool rows.
-        bubbleContainer.backgroundColor = UIColor(palette.blue).withAlphaComponent(0.08)
+        // User bubbles get their own semantic surface so theme authors can
+        // push them warmer/cooler than the rest of the chrome.
+        bubbleContainer.backgroundColor = UIColor(palette.userMessageBg)
 
         let displayText = Self.displayText(for: configuration.text)
         messageTextView.text = displayText.text

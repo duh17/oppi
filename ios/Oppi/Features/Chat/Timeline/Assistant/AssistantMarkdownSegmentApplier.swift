@@ -224,7 +224,7 @@ final class AssistantMarkdownSegmentApplier {
         textView.adjustsFontForContentSizeCategory = true
         textView.dataDetectorTypes = [.link]
         textView.textColor = UIColor(palette.fg)
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = AppFont.messageBody
         textView.tintColor = UIColor(palette.blue)
         textView.linkTextAttributes = [
             .foregroundColor: UIColor(palette.blue),

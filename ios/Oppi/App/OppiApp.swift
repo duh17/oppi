@@ -123,12 +123,17 @@ struct OppiApp: App {
             .environment(piQuickActionStore)
             .environment(\.piQuickActionStore, piQuickActionStore)
             .environment(\.theme, themeStore.appTheme)
+            .tint(.themeBlue)
             .preferredColorScheme(themeStore.preferredColorScheme)
             .onChange(of: scenePhase) { _, phase in
                 handleScenePhase(phase)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                 handleMemoryWarning()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: FontPreferences.didChangeNotification)) { _ in
+                MarkdownSegmentCache.shared.clearAll()
+                ToolRowRenderCache.evictAll()
             }
             .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
@@ -146,6 +151,7 @@ struct OppiApp: App {
                 InAppBrowserView(url: destination.url)
             }
             .task {
+                AppFont.rebuild()
                 await SentryService.shared.configure()
                 MetricKitService.shared.configure()
 #if DEBUG

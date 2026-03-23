@@ -75,6 +75,24 @@
 	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>SentryDSN</key>
 	<string>$(SENTRY_DSN)</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>FiraCode-Regular.ttf</string>
+		<string>FiraCode-SemiBold.ttf</string>
+		<string>FiraCode-Bold.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-SemiBold.ttf</string>
+		<string>JetBrainsMono-Bold.ttf</string>
+		<string>CascadiaCode-Regular.ttf</string>
+		<string>CascadiaCode-SemiBold.ttf</string>
+		<string>CascadiaCode-Bold.ttf</string>
+		<string>SourceCodePro-Regular.otf</string>
+		<string>SourceCodePro-Semibold.otf</string>
+		<string>SourceCodePro-Bold.otf</string>
+		<string>MonaspaceNeon-Regular.otf</string>
+		<string>MonaspaceNeon-SemiBold.otf</string>
+		<string>MonaspaceNeon-Bold.otf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

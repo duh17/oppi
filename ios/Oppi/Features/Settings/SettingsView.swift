@@ -39,6 +39,8 @@ struct SettingsView: View {
     @State private var renameServerText = ""
     @State private var showRemoveConfirmation: PairedServer?
     @State private var runtimeUpdateBadgesByServerId: [String: RuntimeUpdateBadgeState] = [:]
+    @State private var selectedCodeFont = FontPreferences.codeFont
+    @State private var useMonoMessages = FontPreferences.useMonoForMessages
 
     var body: some View {
         List {
@@ -123,6 +125,30 @@ struct SettingsView: View {
                 .onChange(of: spinnerStyleRaw) { _, newValue in
                     UserDefaults.standard.set(newValue, forKey: "spinnerStyle")
                 }
+            }
+
+            Section {
+                Picker("Code Font", selection: $selectedCodeFont) {
+                    ForEach(FontPreferences.CodeFontFamily.allCases) { family in
+                        Text(family.displayName)
+                            .tag(family)
+                    }
+                }
+                .onChange(of: selectedCodeFont) { _, newValue in
+                    FontPreferences.setCodeFont(newValue)
+                }
+
+                Toggle("Monospaced messages", isOn: $useMonoMessages)
+                    .onChange(of: useMonoMessages) { _, newValue in
+                        FontPreferences.setUseMonoForMessages(newValue)
+                    }
+            } header: {
+                Text("Typography")
+            } footer: {
+                Text(
+                    "Code Font applies to code blocks, tool output, and diffs. "
+                        + "Monospaced messages uses the selected code font for all message text."
+                )
             }
 
             Section {
@@ -309,6 +335,7 @@ struct SettingsView: View {
         .task(id: runtimeBadgeRefreshKey) {
             await refreshRuntimeUpdateBadges()
         }
+        .themedListSurface()
         .navigationTitle("Settings")
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)

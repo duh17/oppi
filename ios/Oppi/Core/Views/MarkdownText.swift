@@ -322,7 +322,7 @@ enum FlatSegment: Sendable {
             return result
 
         case .paragraph(let inlines):
-            let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+            let bodyFont = AppFont.messageBody
             // Fast path: single text inline (most common paragraph shape).
             if inlines.count == 1, case .text(let string) = inlines[0] {
                 var container = AttributeContainer()
@@ -670,12 +670,16 @@ enum FlatSegment: Sendable {
 
     private static func monospacedFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
         let size = UIFont.preferredFont(forTextStyle: style).pointSize
-        return UIFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return FontPreferences.codeFont.font(size: size, weight: .regular)
     }
 
     /// Body font bumped one point for list items (Dynamic Type aware).
     private static func listBodyFont() -> UIFont {
-        let bodySize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let bodySize = AppFont.messageBody.pointSize
+        // If using mono for messages, return the mono font at body+1 size
+        if FontPreferences.useMonoForMessages {
+            return FontPreferences.codeFont.font(size: bodySize + 1, weight: .regular)
+        }
         return UIFontMetrics(forTextStyle: .body).scaledFont(
             for: .systemFont(ofSize: bodySize + 1)
         )
@@ -684,7 +688,7 @@ enum FlatSegment: Sendable {
     /// Replace body-sized fonts in an attributed string with the list font.
     /// Preserves monospace (inline code) and other special fonts.
     private static func applyListFont(to content: inout AttributedString, listFont: UIFont) {
-        let bodySize = UIFont.preferredFont(forTextStyle: .body).pointSize
+        let bodySize = AppFont.messageBody.pointSize
         for run in content.runs {
             if let font = run.uiKit.font {
                 if font.pointSize == bodySize,

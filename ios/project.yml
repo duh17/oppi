@@ -97,6 +97,22 @@ targets:
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UIAppFonts:
+          - FiraCode-Regular.ttf
+          - FiraCode-SemiBold.ttf
+          - FiraCode-Bold.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-SemiBold.ttf
+          - JetBrainsMono-Bold.ttf
+          - CascadiaCode-Regular.ttf
+          - CascadiaCode-SemiBold.ttf
+          - CascadiaCode-Bold.ttf
+          - SourceCodePro-Regular.otf
+          - SourceCodePro-Semibold.otf
+          - SourceCodePro-Bold.otf
+          - MonaspaceNeon-Regular.otf
+          - MonaspaceNeon-SemiBold.otf
+          - MonaspaceNeon-Bold.otf
         ITSAppUsesNonExemptEncryption: false
         SentryDSN: "$(SENTRY_DSN)"
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
