@@ -7,7 +7,7 @@ Oppi monorepo — iOS app + self-hosted server for mobile-supervised [pi](https:
 If no concrete task given, read this file and `README.md`, then ask what to work on.
 For context on specific areas, read the relevant docs:
 - Root: `README.md`
-- Architecture map: `ARCHITECTURE.md`
+- Architecture map: `.internal/ARCHITECTURE.md`
 - Server: `server/README.md`
 
 ## Structure
@@ -44,7 +44,7 @@ cd ios && bash scripts/install.sh -d DEVICE_UDID --launch
 
 After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
 
-See [`docs/testing/`](docs/testing/) for full test strategy, pyramid, and required gates by change type.
+See [`.internal/testing/`](.internal/testing/) for full test strategy, pyramid, and required gates by change type.
 
 The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.
 
@@ -97,7 +97,7 @@ No partial protocol updates.
 - Liquid Glass for navigation chrome only. Never for scrollable content.
 
 ### Rendering Performance (iOS)
-- See [`docs/golden-principles.md`](docs/golden-principles.md) (Rendering section) for enforced invariants.
+- See [`.internal/golden-principles.md`](.internal/golden-principles.md) (Rendering section) for enforced invariants.
 
 ### Testing (iOS)
 - Use Swift Testing (`import Testing`, `@Test`, `#expect`) for all unit tests. No XCTest for unit tests.
@@ -130,7 +130,7 @@ ServerMessage (WebSocket)
 - `SessionStreamCoordinator` — stream lifecycle state machine
 - Stores (SessionStore, WorkspaceStore, etc.) — injected into SwiftUI environment separately
 
-Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-only, `@Environment(ChatSessionState.self)` for UI state, `@Environment(ServerConnection.self)` only when transport/send/cross-store coordination is needed. See `ARCHITECTURE.md` for the full environment injection table.
+Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-only, `@Environment(ChatSessionState.self)` for UI state, `@Environment(ServerConnection.self)` only when transport/send/cross-store coordination is needed. See `.internal/ARCHITECTURE.md` for the full environment injection table.
 
 **Forward-compatible decoding.** `ServerMessage` has `.unknown(type:)`. Unknown server types are logged and skipped.
 

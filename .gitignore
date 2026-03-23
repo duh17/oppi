@@ -60,15 +60,7 @@ server/coverage/
 # Screen recordings (large, accidental commits)
 ScreenRecording_*.mov
 
-docs/research/
-docs/review/
-
-docs/**/*.md
-!docs/designs/onboarding-v3-macos.md
-!docs/testing/extraction-opportunities.md
-
 server/extensions/
-docs/design/mocks/
 
 # Internal tooling (private skills, build scripts)
 server/skills/
