@@ -202,7 +202,7 @@ struct ServerConnectionReconnectTests {
 
         // Coordinator should end in streaming or queueSync (queue sync is
         // the final async step after resubscription succeeds)
-        let state = await conn.sessionStreamCoordinator.state
+        let state = conn.sessionStreamCoordinator.state
         switch state {
         case .streaming(sessionId: "s1"),
              .queueSync(sessionId: "s1", phase: _):

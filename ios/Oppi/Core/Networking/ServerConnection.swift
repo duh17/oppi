@@ -373,9 +373,7 @@ final class ServerConnection {
     /// Disconnect the persistent `/stream` WebSocket.
     func disconnectStream() {
         cancelDeferredQueueSync()
-        Task {
-            await sessionStreamCoordinator.noteStreamDisconnected()
-        }
+        sessionStreamCoordinator.noteStreamDisconnected()
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         for (_, cont) in sessionContinuations {
@@ -449,7 +447,7 @@ final class ServerConnection {
     private func handleStreamReconnected() {
         Task { [weak self] in
             guard let self else { return }
-            await self.sessionStreamCoordinator.handleStreamReconnected(connection: self)
+            await sessionStreamCoordinator.handleStreamReconnected(connection: self)
         }
     }
 
@@ -476,14 +474,11 @@ final class ServerConnection {
     }
 
     func triggerFullSubscriptionRecovery(sessionId: String, serverError: String) {
-        Task { [weak self] in
-            guard let self else { return }
-            await self.sessionStreamCoordinator.triggerFullSubscriptionRecovery(
-                connection: self,
-                sessionId: sessionId,
-                serverError: serverError
-            )
-        }
+        sessionStreamCoordinator.triggerFullSubscriptionRecovery(
+            connection: self,
+            sessionId: sessionId,
+            serverError: serverError
+        )
     }
 
     /// Handle notification-level events from non-active sessions
@@ -620,8 +615,8 @@ final class ServerConnection {
 
         activeSessionId = nil
         sender.activeSessionId = nil
+        sessionStreamCoordinator.noteStreamDisconnected()
         Task {
-            await sessionStreamCoordinator.noteStreamDisconnected()
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
         }
         // Clear stale extension dialog — it's tied to the active session stream

@@ -2,27 +2,19 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Red test for: returning to parent session from child shows an empty timeline.
+/// Regression tests: returning to parent session from child must show cached timeline
+/// instantly while the fresh trace fetch runs in background.
 ///
-/// Reproduces the bug: when navigating parent→child→parent, the parent's
-/// timeline is empty because `isReentry = true` skips the cache load.
-/// The background trace fetch eventually fills it, but there's a visible
-/// gap where the user sees nothing — or worse, if the fetch is slow/fails,
-/// the timeline stays empty permanently.
-///
-/// The fix: on re-entry, load from cache immediately for instant display,
-/// then update with fresh trace data when the fetch completes. Showing
-/// slightly stale data is strictly better than showing nothing.
+/// Each ChatSessionManager loads its cache on connect via `loadCachedTimeline()`.
+/// The background trace fetch updates it when complete. Showing slightly stale
+/// data is strictly better than showing nothing.
 @Suite("Parent re-entry empty timeline")
 @MainActor
 struct ParentReentryEmptyTimelineTests {
 
-    /// Core bug: parent→child→parent leaves timeline empty until trace fetch
-    /// completes. The cache is skipped because `isReentry = true`.
-    ///
-    /// This test gates the trace fetch behind a continuation so we can
-    /// check timeline state BEFORE the fetch completes. The current code
-    /// will fail because the cache is skipped on re-entry.
+    /// Parent→child→parent must show cached content immediately while the
+    /// trace fetch runs. Gates the trace fetch to verify timeline state
+    /// before the fetch completes.
     @Test func parentReentryShowsCachedContentImmediately() async throws {
         let parentId = "parent-empty-\(UUID().uuidString)"
         let childId = "child-empty-\(UUID().uuidString)"
@@ -90,7 +82,7 @@ struct ParentReentryEmptyTimelineTests {
             await MainActor.run { parentManager.entryState == .streaming }
         })
 
-        // First connect loads cache normally (isReentry = false)
+        // First connect loads cache normally
         let hasContentOnFirst = parentManager.reducer.items.contains { item in
             if case .assistantMessage(_, let text, _) = item {
                 return text.contains("PARENT_CACHED_CONTENT")
@@ -154,11 +146,7 @@ struct ParentReentryEmptyTimelineTests {
         try await Task.sleep(for: .milliseconds(100))
 
         // --- KEY ASSERTION ---
-        // BUG: The timeline is EMPTY here because isReentry=true skips the cache.
-        // The trace fetch hasn't completed yet (gated), so the user sees nothing.
-        //
-        // EXPECTED: The cached content should be loaded immediately for instant
-        // display, providing a seamless experience when navigating back.
+        // Cached content must be visible before the trace fetch completes.
         let hasContentBeforeTraceFetch = !parentManager.reducer.items.isEmpty
         #expect(
             hasContentBeforeTraceFetch,
@@ -312,10 +300,7 @@ struct ParentReentryEmptyTimelineTests {
         try await Task.sleep(for: .milliseconds(300))
 
         // --- KEY ASSERTION ---
-        // With the current code: cache skipped (isReentry) + trace fetch failed
-        // = permanently empty timeline. The user is stuck.
-        //
-        // Expected: cache should have been loaded on re-entry as a fallback.
+        // Even when the trace fetch fails, cached content must still be visible.
         let hasContent = !parentManager.reducer.items.isEmpty
         #expect(
             hasContent,
