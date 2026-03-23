@@ -281,6 +281,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .themedListSurface()
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {

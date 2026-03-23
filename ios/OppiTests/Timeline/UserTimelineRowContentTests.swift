@@ -213,6 +213,32 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row uses semantic user bubble colors from the theme")
+    func userRowUsesSemanticUserBubbleColors() throws {
+        let themeID: ThemeID = .light
+        let palette = themeID.palette
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello from the dog-color bubble",
+                images: [],
+                canFork: false,
+                onFork: nil,
+                themeID: themeID
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        let textView = try #require(userMessageTextView(in: view))
+
+        #expect(color(bubble.backgroundColor, approximatelyEquals: UIColor(palette.userMessageBg)))
+        #expect(color(textView.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+    }
+
+    @MainActor
     @Test("user row reconfigure keeps thumbnail view identity for same images")
     func userRowReconfigureKeepsThumbnailViewIdentityForSameImages() throws {
         let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
@@ -258,6 +284,11 @@ struct UserTimelineRowContentTests {
 @MainActor
 private func userMessageTextView(in view: UserTimelineRowContentView) -> UITextView? {
     Mirror(reflecting: view).children.first { $0.label == "messageTextView" }?.value as? UITextView
+}
+
+@MainActor
+private func userMessageBubbleContainer(in view: UserTimelineRowContentView) -> UIView? {
+    Mirror(reflecting: view).children.first { $0.label == "bubbleContainer" }?.value as? UIView
 }
 
 @MainActor

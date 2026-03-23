@@ -154,6 +154,7 @@ struct ServerDetailView: View {
                 Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
             }
         }
+        .themedListSurface()
         .navigationTitle(pairedServer.name)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {

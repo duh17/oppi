@@ -109,3 +109,22 @@ extension ShapeStyle where Self == Color {
     static var themeDiffRemoved: Color { Color.themeDiffRemoved }
     static var themeDiffContext: Color { Color.themeDiffContext }
 }
+
+// MARK: - Themed Surface Modifiers
+
+extension View {
+    /// Use for List/Form screens. Replaces native list chrome with theme background.
+    /// Section "cards" keep their system appearance (matches Dark/Light perfectly,
+    /// near-match for Night/custom).
+    func themedListSurface() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .background(Color.themeBg.ignoresSafeArea())
+    }
+
+    /// Use for custom ScrollView/VStack screens (dashboards, charts).
+    func themedScrollSurface() -> some View {
+        self
+            .background(Color.themeBg.ignoresSafeArea())
+    }
+}

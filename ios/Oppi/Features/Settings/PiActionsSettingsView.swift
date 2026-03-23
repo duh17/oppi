@@ -50,6 +50,7 @@ struct PiActionsSettingsView: View {
                 }
             }
         }
+        .themedListSurface()
         .navigationTitle("Pi Actions")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -206,6 +207,7 @@ struct PiActionEditorView: View {
                 Text("Preview")
             }
         }
+        .themedListSurface()
         .navigationTitle(isNew ? "New Action" : "Edit Action")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

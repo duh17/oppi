@@ -49,6 +49,7 @@ struct WorkspaceCreateView: View {
                     configureView
                 }
             }
+            .themedListSurface()
             .navigationTitle(step == .pickProject ? "Pick a Project" : "New Workspace")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -87,7 +88,7 @@ struct WorkspaceCreateView: View {
                         .foregroundStyle(.themeComment)
                     Text("Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.themeComment)
                     Button("Enter path manually") {
                         selectManual()
                     }
@@ -377,8 +378,7 @@ private struct ProjectRow: View {
                             .font(.caption2)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(.quaternary)
-                            .clipShape(Capsule())
+                            .background(.themeComment.opacity(0.18), in: Capsule())
                     }
                 }
             }

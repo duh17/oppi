@@ -32,6 +32,7 @@ struct WorkspaceListView: View {
                 Task { await deleteWorkspaces(at: offsets) }
             }
         }
+        .themedListSurface()
         .navigationTitle("Workspaces")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -112,7 +113,7 @@ private struct WorkspaceRowView: View {
 
                 Text("\(workspace.skills.count) skills")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.themeComment)
             }
         }
         .padding(.vertical, 2)

@@ -62,6 +62,7 @@ struct SkillPanelView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .themedListSurface()
         .navigationDestination(for: SkillDetailDestination.self) { dest in
             SkillDetailView(skillName: dest.skillName)
         }
