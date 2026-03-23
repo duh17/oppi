@@ -23,7 +23,6 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
     let fullText: String?
-    let themeID: ThemeID
     let maxBubbleHeight: CGFloat
     var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
     var selectedTextSourceContext: SelectedTextSourceContext? = nil
@@ -32,7 +31,6 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         isDone: Bool,
         previewText: String,
         fullText: String?,
-        themeID: ThemeID,
         maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSourceContext: SelectedTextSourceContext? = nil
@@ -40,7 +38,6 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
         self.isDone = isDone
         self.previewText = previewText
         self.fullText = fullText
-        self.themeID = themeID
         self.maxBubbleHeight = maxBubbleHeight
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
@@ -278,7 +275,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             scrollView.contentOffset = .zero
         }
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)

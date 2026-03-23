@@ -5,7 +5,6 @@ struct PermissionTimelineRowConfiguration: UIContentConfiguration {
     let outcome: PermissionOutcome
     let tool: String
     let summary: String
-    let themeID: ThemeID
 
     func makeContentView() -> any UIView & UIContentView {
         PermissionTimelineRowContentView(configuration: self)
@@ -109,7 +108,7 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: PermissionTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let style = Self.style(for: configuration.outcome, palette: palette)
 
         iconImageView.image = UIImage(systemName: style.icon)

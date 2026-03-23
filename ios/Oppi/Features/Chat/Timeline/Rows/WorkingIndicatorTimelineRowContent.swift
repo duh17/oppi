@@ -1,7 +1,6 @@
 import UIKit
 
 struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
-    let themeID: ThemeID
     let modelId: String?
 
     func makeContentView() -> any UIView & UIContentView {
@@ -86,7 +85,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         brailleView.isHidden = style != .brailleDots
         golView.isHidden = style != .gameOfLife
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let providerColor = UIColor(ProviderColor.color(for: configuration.modelId, palette: palette))
 
         brailleView.tintUIColor = providerColor

@@ -16,7 +16,6 @@ extension ChatTimelineCollectionHost.Controller {
             isStreaming: isStreaming,
             canFork: false,
             onFork: nil,
-            themeID: currentThemeID,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: .init(
                 sessionId: sessionId,
@@ -51,7 +50,6 @@ extension ChatTimelineCollectionHost.Controller {
             images: images,
             canFork: canFork,
             onFork: forkAction,
-            themeID: currentThemeID,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: .init(
                 sessionId: sessionId,
@@ -69,7 +67,6 @@ extension ChatTimelineCollectionHost.Controller {
             isDone: isDone,
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
-            themeID: currentThemeID,
             maxBubbleHeight: maxBubbleHeight,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: .init(
@@ -90,8 +87,7 @@ extension ChatTimelineCollectionHost.Controller {
             id: id,
             title: title,
             fileURL: fileURL,
-            audioPlayer: audioPlayer,
-            themeID: currentThemeID
+            audioPlayer: audioPlayer
         )
     }
 
@@ -101,16 +97,14 @@ extension ChatTimelineCollectionHost.Controller {
             return PermissionTimelineRowConfiguration(
                 outcome: .expired,
                 tool: request.tool,
-                summary: request.displaySummary,
-                themeID: currentThemeID
+                summary: request.displaySummary
             )
 
         case .permissionResolved(_, let outcome, let tool, let summary):
             return PermissionTimelineRowConfiguration(
                 outcome: outcome,
                 tool: tool,
-                summary: summary,
-                themeID: currentThemeID
+                summary: summary
             )
 
         default:
@@ -135,17 +129,16 @@ extension ChatTimelineCollectionHost.Controller {
             return CompactionTimelineRowConfiguration(
                 presentation: compaction,
                 isExpanded: isExpanded,
-                themeID: currentThemeID,
                 onToggleExpand: onToggleExpand
             )
         }
 
-        return SystemTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        return SystemTimelineRowConfiguration(message: message)
     }
 
     func errorRowConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
         guard case .error(_, let message) = item else { return nil }
-        return ErrorTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        return ErrorTimelineRowConfiguration(message: message)
     }
 
     func toolRowConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {

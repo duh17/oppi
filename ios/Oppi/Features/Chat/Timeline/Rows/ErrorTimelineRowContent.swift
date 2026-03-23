@@ -3,7 +3,6 @@ import UIKit
 
 struct ErrorTimelineRowConfiguration: UIContentConfiguration {
     let message: String
-    let themeID: ThemeID
 
     func makeContentView() -> any UIView & UIContentView {
         ErrorTimelineRowContentView(configuration: self)
@@ -93,7 +92,7 @@ final class ErrorTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: ErrorTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let red = UIColor(palette.red)
 
         iconImageView.tintColor = red

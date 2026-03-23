@@ -4,7 +4,6 @@ struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
     let hiddenCount: Int
     let renderWindowStep: Int
     let onTap: () -> Void
-    let themeID: ThemeID
 
     func makeContentView() -> any UIView & UIContentView {
         LoadMoreTimelineRowContentView(configuration: self)
@@ -67,7 +66,7 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
             "Show \(revealCount) earlier messages (\(configuration.hiddenCount) hidden)",
             for: .normal
         )
-        button.setTitleColor(UIColor(configuration.themeID.palette.blue), for: .normal)
+        button.setTitleColor(UIColor(ThemeRuntimeState.currentPalette().blue), for: .normal)
     }
 
     @objc

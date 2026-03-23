@@ -5,7 +5,6 @@ struct AudioClipTimelineRowConfiguration: UIContentConfiguration {
     let title: String
     let fileURL: URL
     let audioPlayer: AudioPlayerService
-    let themeID: ThemeID
 
     func makeContentView() -> any UIView & UIContentView {
         AudioClipTimelineRowContentView(configuration: self)
@@ -130,7 +129,7 @@ final class AudioClipTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: AudioClipTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         containerView.backgroundColor = UIColor(palette.bgDark)
 
         iconImageView.tintColor = UIColor(palette.purple)

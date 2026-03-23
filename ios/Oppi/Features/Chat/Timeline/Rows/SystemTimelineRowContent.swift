@@ -3,7 +3,6 @@ import UIKit
 
 struct SystemTimelineRowConfiguration: UIContentConfiguration {
     let message: String
-    let themeID: ThemeID
 
     func makeContentView() -> any UIView & UIContentView {
         SystemTimelineRowContentView(configuration: self)
@@ -77,7 +76,7 @@ final class SystemTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: SystemTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         iconImageView.tintColor = UIColor(palette.comment)
         messageLabel.textColor = UIColor(palette.comment)
         messageLabel.text = configuration.message

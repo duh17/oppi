@@ -189,8 +189,7 @@ extension ChatTimelineCollectionHost.Controller {
             cell.contentConfiguration = LoadMoreTimelineRowConfiguration(
                 hiddenCount: self.hiddenCount,
                 renderWindowStep: self.renderWindowStep,
-                onTap: { [weak self] in self?.onShowEarlier?() },
-                themeID: self.currentThemeID
+                onTap: { [weak self] in self?.onShowEarlier?() }
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             ChatTimelinePerf.recordCellConfigure(
@@ -211,7 +210,6 @@ extension ChatTimelineCollectionHost.Controller {
 
             let modelId = self.currentModel
             cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
-                themeID: self.currentThemeID,
                 modelId: modelId
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()

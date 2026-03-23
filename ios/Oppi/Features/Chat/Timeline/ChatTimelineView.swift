@@ -103,7 +103,6 @@ struct ChatTimelineView: View {
                 connection: connection,
                 currentModel: currentModel,
                 audioPlayer: audioPlayer,
-                themeID: ThemeRuntimeState.currentThemeID(),
                 selectedTextPiRouter: selectedTextPiRouter,
                 piQuickActionStore: piQuickActionStore,
                 topOverlap: topOverlap,

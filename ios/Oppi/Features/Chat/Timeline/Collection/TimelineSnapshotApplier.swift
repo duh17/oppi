@@ -14,8 +14,7 @@ enum TimelineSnapshotApplier {
         previousHiddenCount: Int,
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?,
-        themeID: ThemeID,
-        previousThemeID: ThemeID?,
+        themeChanged: Bool = false,
         isBusy: Bool = false
     ) {
         // Fast path: when no previous items exist (cold start), skip change
@@ -47,7 +46,7 @@ enum TimelineSnapshotApplier {
         // rebuild. Compare previousIDs (caller-supplied) instead of querying
         // UIKit's snapshot which allocates an array copy.
         let idsUnchanged = previousIDs.count == nextIDs.count && previousIDs == nextIDs
-            && previousThemeID == themeID
+            && !themeChanged
 
         if idsUnchanged {
             // Minimal perf tracking for the streaming fast path.
@@ -94,7 +93,7 @@ enum TimelineSnapshotApplier {
                 previousHiddenCount: previousHiddenCount,
                 streamingAssistantID: streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
-                themeChanged: previousThemeID != themeID
+                themeChanged: themeChanged
             )
         }
 

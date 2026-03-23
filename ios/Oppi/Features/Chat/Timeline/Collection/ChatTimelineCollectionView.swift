@@ -38,7 +38,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let connection: ServerConnection
         let currentModel: String?
         let audioPlayer: AudioPlayerService
-        let themeID: ThemeID
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let piQuickActionStore: PiQuickActionStore?
         let topOverlap: CGFloat
@@ -64,7 +63,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             connection: ServerConnection,
             currentModel: String? = nil,
             audioPlayer: AudioPlayerService,
-            themeID: ThemeID,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             piQuickActionStore: PiQuickActionStore? = nil,
             topOverlap: CGFloat = 0,
@@ -89,7 +87,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.connection = connection
             self.currentModel = currentModel
             self.audioPlayer = audioPlayer
-            self.themeID = themeID
             self.selectedTextPiRouter = selectedTextPiRouter
             self.piQuickActionStore = piQuickActionStore
             self.topOverlap = topOverlap
@@ -216,11 +213,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var currentModel: String? {
             get { context.currentModel }
             set { context.currentModel = newValue }
-        }
-
-        var currentThemeID: ThemeID {
-            get { context.currentThemeID }
-            set { context.currentThemeID = newValue }
         }
 
         var selectedTextPiRouter: SelectedTextPiActionRouter? {
@@ -482,8 +474,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.collectionView = collectionView
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
 
+            // Detect theme change from runtime state instead of threaded param.
+            let currentThemeID = ThemeRuntimeState.currentThemeID()
+            let themeChanged = previousThemeID != currentThemeID || previousThemeID == nil
+
             // Only update backgroundColor when theme changed or on first apply.
-            if previousThemeID != configuration.themeID || previousThemeID == nil {
+            if themeChanged {
                 collectionView.backgroundColor = UIColor(Color.themeBg)
             }
 
@@ -551,15 +547,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount: previousHiddenCount,
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
-                themeID: configuration.themeID,
-                previousThemeID: previousThemeID,
+                themeChanged: themeChanged,
                 isBusy: configuration.isBusy
             )
 
             previousItemByID = applyPlan.nextItemByID
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
-            previousThemeID = configuration.themeID
+            previousThemeID = currentThemeID
 
             // Note: detached anchor is NOT cleared here. It persists until
             // the next snapshot apply, where captureDetachedAnchor() replaces

@@ -6,7 +6,6 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let images: [ImageAttachment]
     let canFork: Bool
     let onFork: (() -> Void)?
-    let themeID: ThemeID
     var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
     var selectedTextSourceContext: SelectedTextSourceContext? = nil
 
@@ -39,6 +38,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
     private var hasAppliedConfiguration = false
+    private var previousThemeID: ThemeID?
 
     private lazy var bubbleDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
         target: self,
@@ -159,7 +159,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let previousConfiguration = currentConfiguration
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = UIColor(palette.blue)
         messageTextView.textColor = UIColor(palette.userMessageText)
         messageTextView.font = AppFont.messageBody
@@ -182,13 +182,15 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         updateSelectedTextInteractionPolicy()
 
+        let currentThemeID = ThemeRuntimeState.currentThemeID()
         let imagesChanged = previousConfiguration.images != configuration.images
-        let paletteChanged = previousConfiguration.themeID != configuration.themeID
+        let paletteChanged = previousThemeID != currentThemeID
         let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || paletteChanged
         if shouldRefreshImages {
             updateImageStrip(images: configuration.images, palette: palette)
         }
 
+        previousThemeID = currentThemeID
         hasAppliedConfiguration = true
 
         let durationMs = ChatTimelinePerf.elapsedMs(since: applyStartNs)

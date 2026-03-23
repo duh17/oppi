@@ -9,7 +9,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let isStreaming: Bool
     let canFork: Bool
     let onFork: (() -> Void)?
-    let themeID: ThemeID
     let selectedTextPiRouter: SelectedTextPiActionRouter?
     let selectedTextSourceContext: SelectedTextSourceContext?
     /// Workspace context for resolving markdown image paths.
@@ -24,7 +23,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         isStreaming: Bool,
         canFork: Bool,
         onFork: (() -> Void)?,
-        themeID: ThemeID,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSourceContext: SelectedTextSourceContext? = nil,
         workspaceID: String? = nil,
@@ -35,7 +33,6 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.isStreaming = isStreaming
         self.canFork = canFork
         self.onFork = onFork
-        self.themeID = themeID
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
         self.workspaceID = workspaceID
@@ -155,7 +152,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: AssistantTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = UIColor(palette.purple)
         // Purple tint — same pattern as user's blue tint (0.08 alpha).
         bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
@@ -168,7 +165,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         markdownView.apply(configuration: .init(
             content: trimmedText,
             isStreaming: configuration.isStreaming,
-            themeID: configuration.themeID,
+            themeID: ThemeRuntimeState.currentThemeID(),
             selectedTextPiRouter: configuration.selectedTextPiRouter,
             selectedTextSourceContext: configuration.selectedTextSourceContext,
             workspaceID: configuration.workspaceID,

@@ -4,18 +4,15 @@ import UIKit
 struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     let presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation
     let isExpanded: Bool
-    let themeID: ThemeID
     let onToggleExpand: (() -> Void)?
 
     init(
         presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
         isExpanded: Bool,
-        themeID: ThemeID,
         onToggleExpand: (() -> Void)? = nil
     ) {
         self.presentation = presentation
         self.isExpanded = isExpanded
-        self.themeID = themeID
         self.onToggleExpand = onToggleExpand
     }
 
@@ -183,7 +180,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     private func apply(configuration: CompactionTimelineRowConfiguration) {
         currentConfiguration = configuration
 
-        let palette = configuration.themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let style = Self.style(for: configuration.presentation.phase, palette: palette)
 
         iconImageView.image = UIImage(systemName: style.icon)
@@ -227,7 +224,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
                     configuration: .init(
                         content: trimmedDetail,
                         isStreaming: false,
-                        themeID: configuration.themeID
+                        themeID: ThemeRuntimeState.currentThemeID()
                     )
                 )
             } else {
