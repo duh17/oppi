@@ -584,6 +584,7 @@ func makeTimelineToolConfiguration(
         isDone: isDone,
         isError: isError,
         startedAt: nil,
+        elapsedSeconds: nil,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil,
         selectedTextPiRouter: selectedTextPiRouter,

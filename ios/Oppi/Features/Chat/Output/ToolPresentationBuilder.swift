@@ -18,6 +18,7 @@ enum ToolPresentationBuilder {
         let callSegments: [StyledSegment]?
         let resultSegments: [StyledSegment]?
         let startedAt: Date?
+        let elapsedSeconds: Int?
 
         init(
             args: [String: JSONValue]?,
@@ -27,7 +28,8 @@ enum ToolPresentationBuilder {
             isLoadingOutput: Bool,
             callSegments: [StyledSegment]? = nil,
             resultSegments: [StyledSegment]? = nil,
-            startedAt: Date? = nil
+            startedAt: Date? = nil,
+            elapsedSeconds: Int? = nil
         ) {
             self.args = args
             self.details = details
@@ -37,6 +39,7 @@ enum ToolPresentationBuilder {
             self.callSegments = callSegments
             self.resultSegments = resultSegments
             self.startedAt = startedAt
+            self.elapsedSeconds = elapsedSeconds
         }
     }
 
@@ -176,6 +179,7 @@ enum ToolPresentationBuilder {
             isDone: isDone,
             isError: isError,
             startedAt: context.startedAt,
+            elapsedSeconds: context.elapsedSeconds,
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
