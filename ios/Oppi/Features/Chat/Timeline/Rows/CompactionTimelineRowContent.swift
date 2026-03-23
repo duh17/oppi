@@ -27,7 +27,7 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class CompactionTimelineRowContentView: UIView, UIContentView {
+final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
     private struct Style {
         let icon: String
         let title: String
@@ -49,15 +49,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     private var detailMarkdownBottom: NSLayoutConstraint?
 
     private var currentConfiguration: CompactionTimelineRowConfiguration
-
-    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
-        let gesture = DoubleTapCopyGesture.makeGesture(
-            target: self,
-            action: #selector(handleContainerDoubleTapCopy)
-        )
-        gesture.delegate = self
-        return gesture
-    }()
+    private var interactionHandlers: TimelineRowInteractionHandlers?
 
     init(configuration: CompactionTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -84,7 +76,6 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
-        containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
@@ -141,7 +132,12 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         headerStackView.addArrangedSubview(tokensLabel)
         headerStackView.addArrangedSubview(expandButton)
 
-        addInteraction(UIContextMenuInteraction(delegate: self))
+        interactionHandlers = TimelineRowInteractionInstaller.install(
+            on: containerView,
+            provider: self
+        )
+        // Exclude expand button from double-tap gesture.
+        interactionHandlers?.gesture.delegate = self
 
         NSLayoutConstraint.activate([
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -305,7 +301,9 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
     }
 
-    private func copyValue() -> String? {
+    // MARK: - TimelineRowInteractionProvider
+
+    var copyableText: String? {
         let title = titleLabel.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let detail = currentConfiguration.presentation.detail?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -321,45 +319,14 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         return "\(title): \(detail)"
     }
 
+    var interactionFeedbackView: UIView { containerView }
+
     @objc private func handleExpandButtonTap() {
         currentConfiguration.onToggleExpand?()
     }
-
-    @objc private func handleContainerDoubleTapCopy() {
-        guard let value = copyValue() else {
-            return
-        }
-
-        TimelineCopyFeedback.copy(value, feedbackView: containerView)
-    }
-
-    func contextMenu() -> UIMenu? {
-        guard let value = copyValue() else {
-            return nil
-        }
-
-        return UIMenu(title: "", children: [
-            UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                TimelineCopyFeedback.copy(value, feedbackView: self?.containerView)
-            },
-        ])
-    }
 }
 
-extension CompactionTimelineRowContentView: UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard contextMenu() != nil else {
-            return nil
-        }
-
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            self?.contextMenu()
-        }
-    }
-
+extension CompactionTimelineRowContentView: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var current: UIView? = touch.view
         while let view = current {

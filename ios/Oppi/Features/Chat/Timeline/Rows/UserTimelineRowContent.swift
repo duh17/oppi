@@ -17,7 +17,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class UserTimelineRowContentView: UIView, UIContentView {
+final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
     private let outerStack = UIStackView()
     private let bubbleContainer = UIView()
     private let textRow = UIStackView()
@@ -38,11 +38,23 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var thumbnailViews: [UIView] = []
     private var hasAppliedConfiguration = false
     private var previousThemeID: ThemeID?
+    private var interactionHandlers: TimelineRowInteractionHandlers?
 
-    private lazy var bubbleDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
-        target: self,
-        action: #selector(handleBubbleDoubleTapCopy)
-    )
+    // MARK: - TimelineRowInteractionProvider
+
+    var copyableText: String? {
+        let text = currentConfiguration.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+
+    var interactionFeedbackView: UIView { bubbleContainer }
+
+    var supportsFork: Bool {
+        currentConfiguration.canFork && currentConfiguration.onFork != nil
+    }
+
+    var forkAction: (() -> Void)? { currentConfiguration.onFork }
 
     private var isSelectedTextPiEnabled: Bool {
         currentConfiguration.interactionContext?.selectedTextPiRouter != nil
@@ -99,7 +111,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
-        bubbleContainer.addGestureRecognizer(bubbleDoubleTapGesture)
 
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
@@ -140,7 +151,28 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         outerStack.addArrangedSubview(bubbleContainer)
 
         addSubview(outerStack)
+
+        // User row uses manual interaction wiring (not the shared installer)
+        // because it needs custom context menu filtering for the selectable
+        // text area. The protocol's buildContextMenu() is still used.
+        let doubleTapHandler = TimelineRowDoubleTapHandler()
+        doubleTapHandler.provider = self
+        let gesture = DoubleTapCopyGesture.makeGesture(
+            target: doubleTapHandler,
+            action: #selector(TimelineRowDoubleTapHandler.handleDoubleTap)
+        )
+        bubbleContainer.addGestureRecognizer(gesture)
         addInteraction(UIContextMenuInteraction(delegate: self))
+
+        // Store a placeholder handlers struct to keep the doubleTapHandler alive
+        // and provide gesture access for selection policy updates.
+        let contextMenuHandler = TimelineRowContextMenuHandler()
+        contextMenuHandler.provider = self
+        interactionHandlers = TimelineRowInteractionHandlers(
+            doubleTapHandler: doubleTapHandler,
+            contextMenuHandler: contextMenuHandler,
+            gesture: gesture
+        )
 
         NSLayoutConstraint.activate([
             outerStack.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -267,7 +299,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private func updateSelectedTextInteractionPolicy() {
         let selectionEnabled = isSelectedTextPiEnabled && !messageTextView.isHidden
         messageTextView.isSelectable = selectionEnabled
-        bubbleDoubleTapGesture.isEnabled = !selectionEnabled
+        interactionHandlers?.gesture.isEnabled = !selectionEnabled
     }
 
     // MARK: - Image strip
@@ -351,53 +383,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
     }
 
-    @objc private func handleBubbleDoubleTapCopy() {
-        let text = currentConfiguration.text
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-
-        copyToPasteboard(text)
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        TimelineCopyFeedback.copy(
-            text,
-            feedbackView: bubbleContainer,
-            trimWhitespaceAndNewlines: true
-        )
-    }
-
-    func contextMenu() -> UIMenu? {
-        let text = currentConfiguration.text
-        let images = currentConfiguration.images
-        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
-
-        guard hasCopyText || hasForkAction || !images.isEmpty else {
-            return nil
-        }
-
-        var actions: [UIMenuElement] = []
-
-        if hasCopyText {
-            actions.append(
-                UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                    self?.copyToPasteboard(text)
-                }
-            )
-        }
-
-        if hasForkAction, let onFork = currentConfiguration.onFork {
-            actions.append(
-                UIAction(title: String(localized: "Fork from here"), image: UIImage(systemName: "arrow.triangle.branch")) { _ in
-                    onFork()
-                }
-            )
-        }
-
-        return UIMenu(title: "", children: actions)
-    }
+    // Note: double-tap copy and context menu are handled by
+    // TimelineRowInteractionProvider + TimelineRowInteractionInstaller.
+    // The UIContextMenuInteractionDelegate override below filters out
+    // taps inside the selectable text area.
 }
 
 // MARK: - Context Menu
@@ -425,6 +414,7 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
+        // Don't show context menu when tapping inside the selectable text area.
         if messageTextView.isSelectable {
             let pointInMessageText = messageTextView.convert(location, from: self)
             if messageTextView.bounds.contains(pointInMessageText) {
@@ -432,12 +422,10 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
             }
         }
 
-        guard contextMenu() != nil else {
-            return nil
-        }
+        guard let menu = buildContextMenu() else { return nil }
 
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            self?.contextMenu()
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
+            menu
         }
     }
 }

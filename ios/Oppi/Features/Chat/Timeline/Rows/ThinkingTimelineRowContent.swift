@@ -55,7 +55,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class ThinkingTimelineRowContentView: UIView, UIContentView {
+final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
     private static let bubblePadding: CGFloat = 10
     private static let brainIndent: CGFloat = 14 + 6 // icon width + spacing
     /// Fraction of the bubble height where the fade begins (bottom 30%).
@@ -85,6 +85,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
     private let fullScreenThinkingStream: ThinkingTraceStream
+
+    // MARK: - TimelineRowInteractionProvider
+
+    var copyableText: String? {
+        let text = trimmedDisplayText
+        return text.isEmpty ? nil : text
+    }
+
+    var interactionFeedbackView: UIView { bubbleView }
 
     private lazy var bubbleDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
         target: self,
