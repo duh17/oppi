@@ -279,7 +279,6 @@ export class UserStreamMux {
     let msgSent = 0;
     let msgRecv = 0;
     const subscriptions = new Map<string, UserStreamSubscription>();
-    let fullSessionId: string | null = null;
     let queue: Promise<void> = Promise.resolve();
 
     const send = (msg: ServerMessage): void => {
@@ -305,17 +304,11 @@ export class UserStreamMux {
       if (!sub) return;
       sub.unsubscribe();
       subscriptions.delete(sessionId);
-      if (fullSessionId === sessionId) {
-        fullSessionId = null;
-      }
     };
 
     const clearAllSubscriptions = (): void => {
-      for (const [sessionId, sub] of subscriptions) {
+      for (const [, sub] of subscriptions) {
         sub.unsubscribe();
-        if (fullSessionId === sessionId) {
-          fullSessionId = null;
-        }
       }
       subscriptions.clear();
     };
@@ -374,13 +367,6 @@ export class UserStreamMux {
         return;
       }
 
-      if (level === "full" && fullSessionId && fullSessionId !== sessionId) {
-        const prior = subscriptions.get(fullSessionId);
-        if (prior) {
-          prior.level = "notifications";
-        }
-      }
-
       clearSubscription(sessionId);
 
       try {
@@ -391,8 +377,6 @@ export class UserStreamMux {
           const started = await this.ctx.sessions.startSession(sessionId, workspace);
           const startSessionMs = Date.now() - subStartMs;
           hydratedSession = this.ctx.ensureSessionContextWindow(started);
-          fullSessionId = sessionId;
-
           sendForSession(sessionId, {
             type: "connected",
             session: hydratedSession,

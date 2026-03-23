@@ -238,7 +238,7 @@ describe("/stream websocket behavior", () => {
     expect(unsubscribeResults.every((msg) => msg.success)).toBe(true);
   });
 
-  it("auto-downgrades old full subscription when a new full session is selected", async () => {
+  it("allows multiple full subscriptions without downgrading", async () => {
     const harness = makeHarness({ sessions: [makeSession("s1"), makeSession("s2")] });
     const ws = new FakeWebSocket();
 
@@ -259,36 +259,38 @@ describe("/stream websocket behavior", () => {
     });
     await flushQueue();
 
-    const beforeOldFullPrompt = ws.sent.length;
+    // Both sessions should accept commands — no auto-downgrade
+    const beforeS1Prompt = ws.sent.length;
     ws.emitClientMessage({
       type: "prompt",
       sessionId: "s1",
-      message: "should fail",
-      requestId: "old-full-1",
+      message: "should succeed",
+      requestId: "prompt-s1",
     });
     await flushQueue();
 
-    const oldFullError = requireMessageOfType(ws.sent.slice(beforeOldFullPrompt), "error");
-    expect(oldFullError.error).toContain("not subscribed at level=full");
+    // No "not subscribed at level=full" error for s1
+    const s1Errors = ws.sent
+      .slice(beforeS1Prompt)
+      .filter((msg) => msg.type === "error" && msg.sessionId === "s1");
+    expect(s1Errors).toHaveLength(0);
 
-    const oldFullResult = requireMessageOfType(
-      ws.sent.slice(beforeOldFullPrompt),
-      "command_result",
-      (msg) => msg.command === "prompt" && msg.requestId === "old-full-1",
-    );
-    expect(oldFullResult.success).toBe(false);
-    expect(oldFullResult.error).toContain("not subscribed at level=full");
-
-    const beforeNewFullPrompt = ws.sent.length;
-    ws.emitClientMessage({ type: "prompt", sessionId: "s2", message: "should pass" });
+    const beforeS2Prompt = ws.sent.length;
+    ws.emitClientMessage({
+      type: "prompt",
+      sessionId: "s2",
+      message: "should also succeed",
+      requestId: "prompt-s2",
+    });
     await flushQueue();
 
-    expect(harness.handleClientMessage).toHaveBeenCalledTimes(1);
-    expect(
-      ws.sent
-        .slice(beforeNewFullPrompt)
-        .find((msg) => msg.type === "agent_start" && msg.sessionId === "s2"),
-    ).toBeTruthy();
+    const s2Errors = ws.sent
+      .slice(beforeS2Prompt)
+      .filter((msg) => msg.type === "error" && msg.sessionId === "s2");
+    expect(s2Errors).toHaveLength(0);
+
+    // handleClientMessage should have been called for both sessions
+    expect(harness.handleClientMessage).toHaveBeenCalledTimes(2);
   });
 
   // Backpressure dropping was intentionally removed — it was dropping tool output

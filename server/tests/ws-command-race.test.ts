@@ -71,7 +71,12 @@ function makeHarness(options?: {
     async (_session: Session, msg: ClientMessage, send: (msg: ServerMessage) => void) => {
       // Default: echo back a command_result for prompt
       if (msg.type === "prompt") {
-        send({ type: "command_result", command: "prompt", requestId: msg.requestId, success: true });
+        send({
+          type: "command_result",
+          command: "prompt",
+          requestId: msg.requestId,
+          success: true,
+        });
       }
     },
   );
@@ -194,15 +199,11 @@ describe("A: queue ordering on a single socket", () => {
     // Subscribe command_result must appear before prompt result
     const subResult = ws.sent.find(
       (msg) =>
-        msg.type === "command_result" &&
-        msg.command === "subscribe" &&
-        msg.requestId === "sub-1",
+        msg.type === "command_result" && msg.command === "subscribe" && msg.requestId === "sub-1",
     );
     const promptResult = ws.sent.find(
       (msg) =>
-        msg.type === "command_result" &&
-        msg.command === "prompt" &&
-        msg.requestId === "prompt-1",
+        msg.type === "command_result" && msg.command === "prompt" && msg.requestId === "prompt-1",
     );
 
     expect(subResult).toBeDefined();
@@ -263,9 +264,7 @@ describe("A: queue ordering on a single socket", () => {
     expect(unsubResult!.success).toBe(true);
 
     // Prompt should be rejected with not-subscribed error
-    const promptError = newMessages.find(
-      (msg) => msg.type === "error" && msg.sessionId === "s1",
-    );
+    const promptError = newMessages.find((msg) => msg.type === "error" && msg.sessionId === "s1");
     expect(promptError).toBeDefined();
     if (promptError?.type === "error") {
       expect(promptError.error).toContain("not subscribed");
@@ -276,7 +275,7 @@ describe("A: queue ordering on a single socket", () => {
     expect(harness.handleClientMessage).not.toHaveBeenCalled();
   });
 
-  it("subscribe(A full) -> subscribe(B full) demotes A to notifications", async () => {
+  it("subscribe(A full) -> subscribe(B full) keeps both at full level", async () => {
     const harness = makeHarness({
       sessions: [makeSession("s1"), makeSession("s2")],
     });
@@ -292,7 +291,7 @@ describe("A: queue ordering on a single socket", () => {
     });
     await drainQueue(ws);
 
-    // Subscribe to B as full (should demote A)
+    // Subscribe to B as full — A should NOT be demoted
     ws.emitMessage({
       type: "subscribe",
       sessionId: "s2",
@@ -303,27 +302,22 @@ describe("A: queue ordering on a single socket", () => {
 
     const baseline = ws.sent.length;
 
-    // Now try to send a prompt to A — should be rejected (demoted to notifications)
+    // Prompt to A should succeed (still full)
     ws.emitMessage({
       type: "prompt",
       sessionId: "s1",
-      message: "demoted session",
+      message: "still full",
       requestId: "prompt-a",
     });
     await drainQueue(ws);
 
     const afterPromptA = ws.sent.slice(baseline);
-    const errorA = afterPromptA.find(
-      (msg) => msg.type === "error" && msg.sessionId === "s1",
-    );
-    expect(errorA).toBeDefined();
-    if (errorA?.type === "error") {
-      expect(errorA.error).toContain("not subscribed at level=full");
-    }
+    const errorA = afterPromptA.find((msg) => msg.type === "error" && msg.sessionId === "s1");
+    expect(errorA).toBeUndefined();
 
     const baseline2 = ws.sent.length;
 
-    // Prompt to B should succeed
+    // Prompt to B should also succeed
     ws.emitMessage({
       type: "prompt",
       sessionId: "s2",
@@ -335,15 +329,13 @@ describe("A: queue ordering on a single socket", () => {
     const afterPromptB = ws.sent.slice(baseline2);
     const promptResult = afterPromptB.find(
       (msg) =>
-        msg.type === "command_result" &&
-        msg.command === "prompt" &&
-        msg.requestId === "prompt-b",
+        msg.type === "command_result" && msg.command === "prompt" && msg.requestId === "prompt-b",
     );
     expect(promptResult).toBeDefined();
     expect(promptResult!.success).toBe(true);
   });
 
-  it("subscribe(A full) -> subscribe(B full): A still receives notification-level events", async () => {
+  it("subscribe(A full) -> subscribe(B full): both receive all events", async () => {
     const harness = makeHarness({
       sessions: [makeSession("s1"), makeSession("s2")],
     });
@@ -357,19 +349,21 @@ describe("A: queue ordering on a single socket", () => {
 
     const baseline = ws.sent.length;
 
-    // Emit notification-level event (agent_end) for demoted session A
+    // Emit notification-level event (agent_end) for session A
     harness.sessionCallbacks.get("s1")?.({ type: "agent_end" });
-    // Emit streaming event (text_delta) for demoted session A — should be filtered
-    harness.sessionCallbacks.get("s1")?.({ type: "text_delta", delta: "filtered" });
+    // Emit streaming event (text_delta) for session A — both should be delivered (A is full)
+    harness.sessionCallbacks.get("s1")?.({ type: "text_delta", delta: "not filtered" });
 
     const newMessages = ws.sent.slice(baseline);
 
-    // agent_end (notification level) should be delivered
-    expect(newMessages.find((msg) => msg.type === "agent_end" && msg.sessionId === "s1")).toBeDefined();
-    // text_delta (full level) should be filtered out
+    // agent_end should be delivered
+    expect(
+      newMessages.find((msg) => msg.type === "agent_end" && msg.sessionId === "s1"),
+    ).toBeDefined();
+    // text_delta should also be delivered (A is still full, not downgraded)
     expect(
       newMessages.find((msg) => msg.type === "text_delta" && msg.sessionId === "s1"),
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 });
 
@@ -400,9 +394,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
     await drainQueue(ws);
 
     // Should still get a state event (current session state)
-    const stateMsg = ws.sent.find(
-      (msg) => msg.type === "state" && msg.sessionId === "s1",
-    );
+    const stateMsg = ws.sent.find((msg) => msg.type === "state" && msg.sessionId === "s1");
     expect(stateMsg).toBeDefined();
 
     // command_result should indicate catchUpComplete:false
@@ -527,8 +519,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-        msg.type === "command_result" &&
-        msg.requestId === "sub-neg",
+        msg.type === "command_result" && msg.requestId === "sub-neg",
     );
     expect(result).toBeDefined();
     expect(result!.success).toBe(false);
@@ -551,8 +542,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-        msg.type === "command_result" &&
-        msg.requestId === "sub-float",
+        msg.type === "command_result" && msg.requestId === "sub-float",
     );
     expect(result).toBeDefined();
     expect(result!.success).toBe(false);
