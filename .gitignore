@@ -66,8 +66,8 @@ server/extensions/
 server/skills/
 
 # Autoresearch session artifacts (regenerated each run)
-autoresearch.md
-autoresearch.jsonl
-autoresearch.sh
-autoresearch.checks.sh
-autoresearch.ideas.md
+**/autoresearch.md
+**/autoresearch.jsonl
+**/autoresearch.sh
+**/autoresearch.checks.sh
+**/autoresearch.ideas.md
