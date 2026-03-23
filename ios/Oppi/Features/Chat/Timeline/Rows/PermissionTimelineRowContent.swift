@@ -15,7 +15,7 @@ struct PermissionTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class PermissionTimelineRowContentView: UIView, UIContentView {
+final class PermissionTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
     private struct Style {
         let icon: String
         let label: String
@@ -29,11 +29,21 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
     private let summaryLabel = UILabel()
 
     private var currentConfiguration: PermissionTimelineRowConfiguration
+    private var interactionHandlers: TimelineRowInteractionHandlers?
 
-    private lazy var copyDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
-        target: self,
-        action: #selector(handleContainerDoubleTapCopy)
-    )
+    // MARK: - TimelineRowInteractionProvider
+
+    var copyableText: String? {
+        let value = "\(currentConfiguration.tool): \(currentConfiguration.summary)"
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    var interactionFeedbackView: UIView { containerView }
+
+    // MARK: - Init
 
     init(configuration: PermissionTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -60,7 +70,6 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer.cornerRadius = TimelineBubbleStyle.chipCornerRadius
-        containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .horizontal
@@ -87,7 +96,10 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(summaryLabel)
 
-        addInteraction(UIContextMenuInteraction(delegate: self))
+        interactionHandlers = TimelineRowInteractionInstaller.install(
+            on: containerView,
+            provider: self
+        )
 
         NSLayoutConstraint.activate([
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -139,49 +151,6 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
     private static func truncatedSummary(_ summary: String) -> String {
         let cleaned = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.count <= 60 { return cleaned }
-        return String(cleaned.prefix(59)) + "…"
-    }
-
-    private func copyValue() -> String? {
-        let value = "\(currentConfiguration.tool): \(currentConfiguration.summary)"
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return value
-    }
-
-    @objc private func handleContainerDoubleTapCopy() {
-        guard let value = copyValue() else {
-            return
-        }
-
-        TimelineCopyFeedback.copy(value, feedbackView: containerView)
-    }
-
-    func contextMenu() -> UIMenu? {
-        guard let value = copyValue() else {
-            return nil
-        }
-
-        return UIMenu(title: "", children: [
-            UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                TimelineCopyFeedback.copy(value, feedbackView: self?.containerView)
-            },
-        ])
-    }
-}
-
-extension PermissionTimelineRowContentView: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard contextMenu() != nil else {
-            return nil
-        }
-
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            self?.contextMenu()
-        }
+        return String(cleaned.prefix(59)) + "\u{2026}"
     }
 }
