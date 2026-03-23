@@ -382,47 +382,6 @@ struct ServerConnectionTests {
     }
 
     @MainActor
-    @Test func routeMissingFullSubscriptionErrorTriggersAutoRecover() async {
-        let (conn, pipe) = makeTestConnection()
-        let subscribeCounter = MessageCounter()
-
-        conn._sendMessageForTesting = { message in
-            switch message {
-            case .subscribe(let sessionId, let level, _, let requestId):
-                await subscribeCounter.increment()
-                #expect(sessionId == "s1")
-                #expect(level == .full)
-                pipe.handle(
-                    .commandResult(
-                        command: "subscribe",
-                        requestId: requestId,
-                        success: true,
-                        data: nil,
-                        error: nil
-                    ),
-                    sessionId: "s1"
-                )
-            default:
-                break
-            }
-        }
-
-        pipe.handle(
-            .error(message: "Session s1 is not subscribed at level=full", code: nil, fatal: false),
-            sessionId: "s1"
-        )
-
-        #expect(await waitForTestCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
-
-        pipe.flushNow()
-        let errors = pipe.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.isEmpty)
-    }
-
-    @MainActor
     @Test func routeExtensionUIRequest() {
         let (conn, pipe) = makeTestConnection()
         let request = ExtensionUIRequest(

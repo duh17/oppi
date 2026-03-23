@@ -274,6 +274,8 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
+        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: ThemeRuntimeState.currentThemeID()))
+        _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableAfterHeader = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterHeader != nil, "Table view should appear after structural rebuild")

@@ -61,11 +61,8 @@ extension ServerConnection {
         case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd:
             silenceWatchdog.recordEvent()
 
-        case .error(let msg, let code, _):
-            if code == Self.missingFullSubscriptionErrorCode
-                || (code == nil && msg.contains("is not subscribed at level=full")) {
-                triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
-            }
+        case .error(_, _, _):
+            break
 
         case .sessionEnded:
             silenceWatchdog.stop()

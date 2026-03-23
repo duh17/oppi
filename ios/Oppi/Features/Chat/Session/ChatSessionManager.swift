@@ -773,14 +773,8 @@ final class ChatSessionManager {
                 }
             }
 
-        case .error(let msg, let code, let fatal):
-            // The missingFullSubscriptionErrorCode path stays on connection
-            // (handled in handleActiveSessionUI). Only route non-recovery errors.
-            let isMissingSubscription = code == ServerConnection.missingFullSubscriptionErrorCode
-                || (code == nil && msg.contains("is not subscribed at level=full"))
-            if !isMissingSubscription {
-                coalescer.receive(.error(sessionId: sessionId, message: msg))
-            }
+        case .error(let msg, _, let fatal):
+            coalescer.receive(.error(sessionId: sessionId, message: msg))
             // Fatal setup errors — propagate to connection for auto-reconnect suppression.
             if fatal {
                 connection.fatalSetupError = true

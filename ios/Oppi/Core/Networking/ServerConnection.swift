@@ -134,11 +134,6 @@ final class ServerConnection {
     /// syncLiveActivityPermissions) into a single WS subscribe batch.
     var pendingNotificationSyncTask: Task<Void, Never>?
 
-    /// In-flight auto-recovery when server rejects a command because the
-    /// session lost full subscription level on `/stream`.
-    var fullSubscriptionRecoveryTask: Task<Void, Never>?
-    var lastFullSubscriptionRecoveryAt: Date?
-
     /// Last emitted per-session usage snapshot to avoid duplicate metric spam.
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
 
@@ -453,10 +448,6 @@ final class ServerConnection {
 
     static let resubscribeMaxAttempts = 3
     static let resubscribeAckTimeout: Duration = .seconds(6)
-    /// Typed stream error code emitted by server/src/stream.ts when a command
-    /// arrives for a session without full-level subscription.
-    static let missingFullSubscriptionErrorCode = "stream_not_subscribed_full"
-
     /// Keep non-active sessions subscribed at notification level so cross-session
     /// state transitions (agent_start/agent_end/permissions) continue flowing.
     ///
@@ -471,14 +462,6 @@ final class ServerConnection {
             guard !Task.isCancelled, let self else { return }
             await self.sessionStreamCoordinator.syncNotificationSubscriptions(connection: self)
         }
-    }
-
-    func triggerFullSubscriptionRecovery(sessionId: String, serverError: String) {
-        sessionStreamCoordinator.triggerFullSubscriptionRecovery(
-            connection: self,
-            sessionId: sessionId,
-            serverError: serverError
-        )
     }
 
     /// Handle notification-level events from non-active sessions
