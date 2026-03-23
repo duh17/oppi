@@ -583,6 +583,7 @@ func makeTimelineToolConfiguration(
         isExpanded: isExpanded,
         isDone: isDone,
         isError: isError,
+        startedAt: nil,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil,
         selectedTextPiRouter: selectedTextPiRouter,

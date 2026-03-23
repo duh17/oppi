@@ -1542,6 +1542,7 @@ private func makeToolConfiguration(
         isExpanded: isExpanded,
         isDone: isDone,
         isError: false,
+        startedAt: nil,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil
     )

@@ -27,6 +27,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let isExpanded: Bool
     let isDone: Bool
     let isError: Bool
+    /// When the tool call started (live sessions only). Used to display elapsed time.
+    let startedAt: Date?
     /// Pre-rendered attributed title from server segments. When set, takes
     /// priority over the plain `title` + `toolNamePrefix` + `toolNameColor` path.
     let segmentAttributedTitle: NSAttributedString?
@@ -93,6 +95,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
     private let trailingLabel = UILabel()
+    private let elapsedLabel = UILabel()
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
     let bashToolRowView = BashToolRowView()
@@ -147,6 +150,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
     private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
+    private var elapsedTimer: Timer?
     private let fullScreenTerminalStream: TerminalTraceStream
     private let fullScreenSourceStream: SourceTraceStream
 
@@ -647,7 +651,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             languageBadgeIconView: languageBadgeIconView,
             addedLabel: addedLabel,
             removedLabel: removedLabel,
-            trailingLabel: trailingLabel
+            trailingLabel: trailingLabel,
+            elapsedLabel: elapsedLabel
         )
         ToolTimelineRowViewStyler.stylePreviewLabel(previewLabel)
         ToolTimelineRowViewStyler.styleExpanded(
@@ -677,6 +682,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
+        trailingStack.addArrangedSubview(elapsedLabel)
         trailingStack.addArrangedSubview(addedLabel)
         trailingStack.addArrangedSubview(removedLabel)
         trailingStack.addArrangedSubview(trailingLabel)
@@ -871,6 +877,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             statusImageView: statusImageView,
             borderView: borderView
         )
+
+        // 7. Elapsed timer
+        updateElapsedTimer(configuration: configuration)
     }
 
     // MARK: - apply() decomposition
@@ -898,12 +907,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             removedLabel: removedLabel,
             trailingLabel: trailingLabel
         )
+        ToolTimelineRowDisplayState.applyElapsed(
+            startedAt: configuration.startedAt,
+            isDone: configuration.isDone,
+            elapsedLabel: elapsedLabel
+        )
         ToolTimelineRowDisplayState.updateTrailingVisibility(
             trailingStack: trailingStack,
             languageBadgeIconView: languageBadgeIconView,
             addedLabel: addedLabel,
             removedLabel: removedLabel,
-            trailingLabel: trailingLabel
+            trailingLabel: trailingLabel,
+            elapsedLabel: elapsedLabel
         )
 
         return ToolTimelineRowDisplayState.applyPreview(
@@ -1001,6 +1016,32 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         flushPendingFollowTail()
+    }
+
+    // MARK: - Elapsed Timer
+
+    private func updateElapsedTimer(configuration: ToolTimelineRowConfiguration) {
+        let needsTimer = configuration.startedAt != nil && !configuration.isDone
+
+        if needsTimer, let startedAt = configuration.startedAt {
+            // Timer already running — just update the label (apply already called applyElapsed)
+            if elapsedTimer != nil { return }
+
+            // Start a 1s timer to tick the elapsed label while the tool runs.
+            // Captures startedAt by value — stable for the lifetime of this tool call.
+            // Timer fires on main RunLoop; [weak self] ensures no work after dealloc.
+            elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                ToolTimelineRowDisplayState.applyElapsed(
+                    startedAt: startedAt,
+                    isDone: false,
+                    elapsedLabel: self.elapsedLabel
+                )
+            }
+        } else {
+            elapsedTimer?.invalidate()
+            elapsedTimer = nil
+        }
     }
 
     // MARK: - Expanded render dispatch + apply

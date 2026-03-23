@@ -17,7 +17,8 @@ enum ToolTimelineRowViewStyler {
         languageBadgeIconView: UIImageView,
         addedLabel: UILabel,
         removedLabel: UILabel,
-        trailingLabel: UILabel
+        trailingLabel: UILabel,
+        elapsedLabel: UILabel
     ) {
         statusImageView.translatesAutoresizingMaskIntoConstraints = false
         statusImageView.contentMode = .scaleAspectFit
@@ -66,6 +67,13 @@ enum ToolTimelineRowViewStyler {
         trailingLabel.lineBreakMode = .byTruncatingTail
         trailingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        elapsedLabel.font = ToolFont.small
+        elapsedLabel.textColor = UIColor(Color.themeComment)
+        elapsedLabel.numberOfLines = 1
+        elapsedLabel.isHidden = true
+        elapsedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        elapsedLabel.setContentHuggingPriority(.required, for: .horizontal)
     }
 
     static func stylePreviewLabel(_ previewLabel: UILabel) {

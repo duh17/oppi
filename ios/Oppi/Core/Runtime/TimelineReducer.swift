@@ -88,6 +88,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Separate store for structured tool result details (`tool_end.details`).
     let toolDetailsStore = ToolDetailsStore()
 
+    /// Start timestamps for in-progress tool calls (keyed by tool event ID).
+    /// Used by the UI to display elapsed time on tool rows.
+    private var toolStartTimes: [String: Date] = [:]
+
+    /// Start time recorded when a tool call began, if available.
+    func toolStartTime(for id: String) -> Date? {
+        toolStartTimes[id]
+    }
+
     /// Trace event IDs from the last successful history load.
     /// Used to detect append-only reloads and avoid full rebuilds.
     private var loadedTraceEventIDs: [String] = []
@@ -176,6 +185,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
         toolDetailsStore.clearAll()
+        toolStartTimes.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
@@ -820,6 +830,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
         finalizeAssistantMessage()
+        // Record start time for elapsed display (only if not already set — replay/reconnect
+        // can deliver duplicate tool_start for the same ID).
+        if toolStartTimes[toolEventId] == nil {
+            toolStartTimes[toolEventId] = Date()
+        }
         let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
             .joined(separator: ", ")
         let fullOutput = toolOutputStore.fullOutput(for: toolEventId)

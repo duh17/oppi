@@ -160,7 +160,8 @@ extension ChatTimelineCollectionHost.Controller {
             fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),
             callSegments: toolSegmentStore?.callSegments(for: itemID),
-            resultSegments: toolSegmentStore?.resultSegments(for: itemID)
+            resultSegments: toolSegmentStore?.resultSegments(for: itemID),
+            startedAt: reducer?.toolStartTime(for: itemID)
         )
 
         return ToolPresentationBuilder.build(
