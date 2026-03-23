@@ -485,8 +485,7 @@ struct ChatTimelineCoordinatorTests {
         let config = PermissionTimelineRowConfiguration(
             outcome: .allowed,
             tool: "bash",
-            summary: "command: rm -rf /tmp/demo",
-            themeID: .dark
+            summary: "command: rm -rf /tmp/demo"
         )
 
         let view = PermissionTimelineRowContentView(configuration: config)
@@ -509,8 +508,7 @@ struct ChatTimelineCoordinatorTests {
                 detail: "## Goal\n1. Continue migration\n2. Keep animations subtle",
                 tokensBefore: 98_765
             ),
-            isExpanded: false,
-            themeID: .dark
+            isExpanded: false
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -529,8 +527,7 @@ struct ChatTimelineCoordinatorTests {
                 detail: "## Goal\n1. Continue migration\n2. Keep animations subtle",
                 tokensBefore: 98_765
             ),
-            isExpanded: false,
-            themeID: .dark
+            isExpanded: false
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -551,8 +548,7 @@ struct ChatTimelineCoordinatorTests {
                 detail: "## Goal\n1. Continue migration\n2. Keep animations subtle",
                 tokensBefore: 98_765
             ),
-            isExpanded: true,
-            themeID: .dark
+            isExpanded: true
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -574,8 +570,7 @@ struct ChatTimelineCoordinatorTests {
         // Expand first: markdown view renders fully.
         let expandedConfig = CompactionTimelineRowConfiguration(
             presentation: .init(phase: .completed, detail: detail, tokensBefore: 42_000),
-            isExpanded: true,
-            themeID: .dark
+            isExpanded: true
         )
         let view = CompactionTimelineRowContentView(configuration: expandedConfig)
         let expandedSize = fittedTimelineSize(for: view, width: 338)
@@ -583,8 +578,7 @@ struct ChatTimelineCoordinatorTests {
         // Collapse: reconfigure with isExpanded = false.
         let collapsedConfig = CompactionTimelineRowConfiguration(
             presentation: .init(phase: .completed, detail: detail, tokensBefore: 42_000),
-            isExpanded: false,
-            themeID: .dark
+            isExpanded: false
         )
         view.configuration = collapsedConfig
         let collapsedSize = fittedTimelineSize(for: view, width: 338)
@@ -616,8 +610,7 @@ struct ChatTimelineCoordinatorTests {
             text: markdown,
             isStreaming: false,
             canFork: false,
-            onFork: nil,
-            themeID: .dark
+            onFork: nil
         )
 
         let view = AssistantTimelineRowContentView(configuration: config)
@@ -634,8 +627,7 @@ struct ChatTimelineCoordinatorTests {
             id: "audio-1",
             title: "Harness Clip",
             fileURL: URL(fileURLWithPath: "/tmp/harness-audio.wav"),
-            audioPlayer: AudioPlayerService(),
-            themeID: .dark
+            audioPlayer: AudioPlayerService()
         )
 
         let view = AudioClipTimelineRowContentView(configuration: config)
@@ -651,8 +643,7 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 500),
-            themeID: .dark
+            fullText: String(repeating: "reasoning line\n", count: 500)
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -668,8 +659,7 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 900),
-            themeID: .dark
+            fullText: String(repeating: "reasoning line\n", count: 900)
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -684,14 +674,12 @@ struct ChatTimelineCoordinatorTests {
         let short = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "preview",
-            fullText: "short thought",
-            themeID: .dark
+            fullText: "short thought"
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 900),
-            themeID: .dark
+            fullText: String(repeating: "reasoning line\n", count: 900)
         )
 
         let shortView = ThinkingTimelineRowContentView(configuration: short)
@@ -708,8 +696,7 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Reviewing checklist for updates",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -726,8 +713,7 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Let me analyze this step by step",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -748,8 +734,7 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "",
-            fullText: nil,
-            themeID: .dark
+            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -770,13 +755,11 @@ struct ChatTimelineCoordinatorTests {
             isDone: false,
             previewText: "hmm",
             fullText: nil,
-            themeID: .dark
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: String(repeating: "thinking about this problem ", count: 15),
             fullText: nil,
-            themeID: .dark
         )
 
         let shortView = ThinkingTimelineRowContentView(configuration: short)

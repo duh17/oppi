@@ -160,7 +160,6 @@ struct UserTimelineRowContentTests {
                 images: [],
                 canFork: false,
                 onFork: nil,
-                themeID: .dark
             )
         )
 
@@ -174,23 +173,19 @@ struct UserTimelineRowContentTests {
         #expect(renderedText.contains("message truncated for display"))
         #expect(renderedText.count < longText.count)
 
-        let menu = try #require(view.contextMenu())
+        let menu = try #require(view.buildContextMenu())
         #expect(timelineActionTitles(in: menu) == ["Copy"])
     }
 
     @MainActor
     @Test("user row selected text edit menu prepends π submenu")
     func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
-        let router = SelectedTextPiActionRouter { _ in }
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
                 text: "Need help with this prompt",
                 images: [],
                 canFork: false,
-                onFork: nil,
-                themeID: .dark,
-                selectedTextPiRouter: router,
-                selectedTextSourceContext: .init(sessionId: "session-1", surface: .userMessage)
+                onFork: nil
             )
         )
 
@@ -215,15 +210,13 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("user row uses semantic user bubble colors from the theme")
     func userRowUsesSemanticUserBubbleColors() throws {
-        let themeID: ThemeID = .light
-        let palette = themeID.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
                 text: "Hello from the dog-color bubble",
                 images: [],
                 canFork: false,
-                onFork: nil,
-                themeID: themeID
+                onFork: nil
             )
         )
 
@@ -247,7 +240,6 @@ struct UserTimelineRowContentTests {
             images: [image],
             canFork: false,
             onFork: nil,
-            themeID: .dark
         )
 
         let view = UserTimelineRowContentView(configuration: configuration)

@@ -56,7 +56,7 @@ struct AssistantTimelineRowContentViewTests {
         let text = "Assistant answer"
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
 
-        let menu = try #require(view.contextMenu())
+        let menu = try #require(view.buildContextMenu())
         #expect(timelineActionTitles(in: menu) == ["Copy", "Copy as Markdown"])
     }
 
@@ -71,7 +71,7 @@ struct AssistantTimelineRowContentViewTests {
             )
         )
 
-        let menu = try #require(view.contextMenu())
+        let menu = try #require(view.buildContextMenu())
         #expect(timelineActionTitles(in: menu) == ["Copy", "Copy as Markdown", "Fork from here"])
     }
 
@@ -99,7 +99,6 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -133,7 +132,6 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -155,7 +153,6 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 370
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -179,7 +176,6 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: true, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -221,7 +217,6 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
-        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableAfterPhase1 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -235,7 +230,6 @@ struct AssistantTimelineRowContentViewTests {
         | --- | --- |
         | alpha | 100 |
         """
-        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .dark))
 
         // Same NativeTableBlockView instance should be reused (in-place update, not rebuild)
         let tableAfterPhase2 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -250,7 +244,6 @@ struct AssistantTimelineRowContentViewTests {
         | alpha | 100 |
         | beta | 20
         """
-        mdView.apply(configuration: .init(content: phase3, isStreaming: true, themeID: .dark))
 
         let tableAfterPhase3 = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterPhase3 === tableAfterPhase1, "Table view should still be the same instance")
@@ -263,7 +256,6 @@ struct AssistantTimelineRowContentViewTests {
 
         // Phase 1: just text, no table yet
         let phase1 = "Results:"
-        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .dark))
         _ = fittedTimelineSize(for: mdView, width: 370)
 
         let tableBeforeTable = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -276,7 +268,6 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
-        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .dark))
 
         let tableAfterHeader = timelineFirstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterHeader != nil, "Table view should appear after structural rebuild")
@@ -337,7 +328,7 @@ struct AssistantTimelineRowContentViewTests {
         markdownView.apply(configuration: .init(
             content: "Alpha beta gamma",
             isStreaming: false,
-            themeID: .dark,
+            themeID: .light,
             selectedTextPiRouter: router,
             selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
@@ -365,7 +356,7 @@ struct AssistantTimelineRowContentViewTests {
         markdownView.apply(configuration: .init(
             content: "```swift\nlet answer = 42\n```",
             isStreaming: false,
-            themeID: .dark,
+            themeID: .light,
             selectedTextPiRouter: router,
             selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
@@ -390,7 +381,7 @@ struct AssistantTimelineRowContentViewTests {
         markdownView.apply(configuration: .init(
             content: "| A | B |\n| --- | --- |\n| 1 | 2 |",
             isStreaming: false,
-            themeID: .dark,
+            themeID: .light,
             selectedTextPiRouter: router,
             selectedTextSourceContext: .init(sessionId: "session-1", surface: .assistantProse)
         ))
@@ -414,7 +405,7 @@ struct AssistantTimelineRowContentViewTests {
         markdownView.apply(configuration: .init(
             content: "Alpha beta gamma",
             isStreaming: false,
-            themeID: .dark
+            themeID: .light,
         ))
 
         let textView = try #require(timelineFirstTextView(in: markdownView))
@@ -436,7 +427,7 @@ struct AssistantTimelineRowContentViewTests {
         mdView.apply(configuration: .init(
             content: "Test content",
             isStreaming: false,
-            themeID: .dark
+            themeID: .light,
         ))
         return mdView
     }

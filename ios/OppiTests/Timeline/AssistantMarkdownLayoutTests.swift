@@ -36,7 +36,6 @@ struct AssistantMarkdownLayoutTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            themeID: .dark
         )
         let cell = AssistantTimelineRowContentView(configuration: config)
 
@@ -67,7 +66,7 @@ struct AssistantMarkdownLayoutTests {
         let reg = UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, itemID in
             guard let text = items.first(where: { $0.0 == itemID })?.1 else { return }
             cell.contentConfiguration = AssistantTimelineRowConfiguration(
-                text: text, isStreaming: false, canFork: false, onFork: nil, themeID: .dark
+                text: text, isStreaming: false, canFork: false, onFork: nil
             )
         }
 
@@ -133,9 +132,7 @@ struct AssistantMarkdownLayoutTests {
             hiddenCount: 0,
             previousHiddenCount: 0,
             streamingAssistantID: nil,
-            previousStreamingAssistantID: nil,
-            themeID: .dark,
-            previousThemeID: nil
+            previousStreamingAssistantID: nil
         )
         collectionView.layoutIfNeeded()
 

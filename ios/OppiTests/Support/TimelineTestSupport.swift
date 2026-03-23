@@ -460,7 +460,6 @@ func makeTimelineConfiguration(
         toolSegmentStore: toolSegmentStore,
         connection: connection,
         audioPlayer: audioPlayer,
-        themeID: .dark,
         topOverlap: topOverlap,
         bottomOverlap: bottomOverlap
     )
@@ -601,8 +600,7 @@ func makeTimelineAssistantConfiguration(
         text: text,
         isStreaming: false,
         canFork: canFork,
-        onFork: onFork,
-        themeID: .dark
+        onFork: onFork
     )
 }
 
