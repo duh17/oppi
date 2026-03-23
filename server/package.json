@@ -53,6 +53,9 @@
     "dead-code": "knip",
     "test:gate:pr-fast": "node scripts/testing-gates.mjs pr-fast",
     "test:gate:nightly-deep": "node scripts/testing-gates.mjs nightly-deep",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
+    "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {

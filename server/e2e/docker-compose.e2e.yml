@@ -1,0 +1,41 @@
+# E2E test server — ephemeral, no persistent volumes, no host mounts.
+# Expects the server image to be pre-built: docker compose build
+#
+# Usage:
+#   docker compose -f e2e/docker-compose.e2e.yml up -d
+#   docker compose -f e2e/docker-compose.e2e.yml down -v
+#
+# The test harness manages lifecycle automatically.
+
+services:
+  oppi-e2e:
+    container_name: oppi-e2e
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "${E2E_PORT:-17760}:${E2E_PORT:-17760}"
+    environment:
+      OPPI_DATA_DIR: /data/oppi
+      PI_CODING_AGENT_DIR: /data/pi-agent
+      # No seed — ephemeral test server
+      PI_AGENT_SYNC_MODE: skip
+      OPPI_PORT: ${E2E_PORT:-17760}
+      OPPI_PAIR_HOST: ${E2E_PAIR_HOST:-host.docker.internal}
+      # Fake pi binary for Docker mode (real sessions use native mode)
+      OPPI_PI_BIN: /e2e-fakepi/fake-pi.sh
+      # LM Studio runs on the host — route via Docker bridge
+      LMSTUDIO_API_URL: http://host.docker.internal:1234
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${E2E_FAKE_PI_DIR:-.}:/e2e-fakepi:ro
+    tmpfs:
+      - /data/oppi
+      - /data/pi-agent
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:${E2E_PORT:-17760}/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
