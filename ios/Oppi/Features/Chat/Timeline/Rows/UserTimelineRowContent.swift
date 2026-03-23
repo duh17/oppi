@@ -6,8 +6,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let images: [ImageAttachment]
     let canFork: Bool
     let onFork: (() -> Void)?
-    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
-    var selectedTextSourceContext: SelectedTextSourceContext? = nil
+    var interactionContext: TimelineInteractionContext? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -46,8 +45,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     )
 
     private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.selectedTextPiRouter != nil
-            && currentConfiguration.selectedTextSourceContext != nil
+        currentConfiguration.interactionContext?.selectedTextPiRouter != nil
     }
 
     init(configuration: UserTimelineRowConfiguration) {
@@ -414,8 +412,10 @@ extension UserTimelineRowContentView: UITextViewDelegate {
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.selectedTextPiRouter,
-            sourceContext: currentConfiguration.selectedTextSourceContext
+            router: currentConfiguration.interactionContext?.selectedTextPiRouter,
+            sourceContext: currentConfiguration.interactionContext?.sourceContext(
+                surface: .userMessage
+            )
         )
     }
 }

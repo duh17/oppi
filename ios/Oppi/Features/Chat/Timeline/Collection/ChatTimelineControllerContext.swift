@@ -14,7 +14,7 @@ final class ChatTimelineControllerContext {
     var toolDetailsStore: ToolDetailsStore?
     var connection: ServerConnection?
     var currentModel: String?
-    var selectedTextPiRouter: SelectedTextPiActionRouter?
+    let interactionContext = TimelineInteractionContext()
     var piQuickActionStore: PiQuickActionStore?
 
     func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
@@ -34,7 +34,8 @@ final class ChatTimelineControllerContext {
         toolDetailsStore = configuration.toolDetailsStore
         connection = configuration.connection
         currentModel = configuration.currentModel
-        selectedTextPiRouter = configuration.selectedTextPiRouter
+        interactionContext.selectedTextPiRouter = configuration.selectedTextPiRouter
+        interactionContext.sessionId = configuration.sessionId
         piQuickActionStore = configuration.piQuickActionStore
     }
 }

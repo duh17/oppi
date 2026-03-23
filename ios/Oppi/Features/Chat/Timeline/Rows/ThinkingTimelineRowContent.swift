@@ -24,23 +24,20 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let previewText: String
     let fullText: String?
     let maxBubbleHeight: CGFloat
-    var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
-    var selectedTextSourceContext: SelectedTextSourceContext? = nil
+    var interactionContext: TimelineInteractionContext? = nil
 
     init(
         isDone: Bool,
         previewText: String,
         fullText: String?,
         maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
-        selectedTextSourceContext: SelectedTextSourceContext? = nil
+        interactionContext: TimelineInteractionContext? = nil
     ) {
         self.isDone = isDone
         self.previewText = previewText
         self.fullText = fullText
         self.maxBubbleHeight = maxBubbleHeight
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSourceContext = selectedTextSourceContext
+        self.interactionContext = interactionContext
     }
 
     /// Best available text for display.
@@ -125,8 +122,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     }
 
     private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.selectedTextPiRouter != nil
-            && currentConfiguration.selectedTextSourceContext != nil
+        currentConfiguration.interactionContext?.selectedTextPiRouter != nil
     }
 
     private var currentInteractionSpec: TimelineExpandableTextInteractionSpec {
@@ -533,12 +529,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             content: trimmedDisplayText,
             stream: fullScreenThinkingStream
         )
+        let ctx = currentConfiguration.interactionContext
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextPiRouter: currentConfiguration.selectedTextPiRouter,
-            selectedTextSessionId: currentConfiguration.selectedTextSourceContext?.sessionId,
-            selectedTextSourceLabel: currentConfiguration.selectedTextSourceContext?.sourceLabel
+            selectedTextPiRouter: ctx?.selectedTextPiRouter,
+            selectedTextSessionId: ctx?.sessionId,
+            selectedTextSourceLabel: "Thinking"
         )
     }
 
@@ -612,8 +609,11 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.selectedTextPiRouter,
-            sourceContext: currentConfiguration.selectedTextSourceContext
+            router: currentConfiguration.interactionContext?.selectedTextPiRouter,
+            sourceContext: currentConfiguration.interactionContext?.sourceContext(
+                surface: .thinking,
+                sourceLabel: "Thinking"
+            )
         )
     }
 }
