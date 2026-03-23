@@ -32,6 +32,7 @@ struct WorkspaceHomeView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .themedListSurface()
         .navigationTitle("Workspaces")
         .navigationDestination(for: WorkspaceNavTarget.self) { target in
             WorkspaceDetailView(workspace: target.workspace)
@@ -85,7 +86,7 @@ struct WorkspaceHomeView: View {
                 if workspaces.isEmpty {
                     Text(isUnreachable ? "Offline — cached workspaces unavailable" : "No workspaces")
                         .font(.subheadline)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.themeComment)
                 } else {
                     ForEach(workspaces) { workspace in
                         NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
@@ -123,9 +124,9 @@ struct WorkspaceHomeView: View {
                 NavigationLink(value: server) {
                     Image(systemName: "chevron.right")
                         .font(.appCaption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.themeComment)
                         .frame(width: 30, height: 30)
-                        .background(.quaternary.opacity(0.45), in: Circle())
+                        .background(.themeComment.opacity(0.15), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Server settings for \(server.name)")
@@ -137,7 +138,7 @@ struct WorkspaceHomeView: View {
                         .font(.appButton)
                         .foregroundStyle(.themeBlue)
                         .frame(width: 32, height: 32)
-                        .background(.quaternary.opacity(0.55), in: Circle())
+                        .background(.themeComment.opacity(0.18), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Create workspace on \(server.name)")
@@ -265,7 +266,7 @@ private struct ServerSectionHeader: View {
         HStack(spacing: 8) {
             Image(systemName: "chevron.right")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.themeComment)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 .animation(.easeInOut(duration: 0.2), value: isCollapsed)
 
@@ -341,14 +342,14 @@ private struct WorkspaceHomeRow: View {
                     if !isUnreachable && activeCount == 0 && stoppedCount == 0 {
                         Text("No sessions")
                             .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.themeComment)
                     }
                 }
 
                 if let desc = workspace.description, !desc.isEmpty {
                     Text(desc)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(1)
                 }
             }

@@ -277,6 +277,7 @@ struct WorkspaceEditView: View {
                 }
             }
         }
+        .themedListSurface()
         .navigationTitle("Edit Workspace")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

@@ -31,6 +31,7 @@ struct ThemeImportView: View {
                 themeList
             }
         }
+        .themedListSurface()
         .navigationTitle("Import Theme")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadThemes() }

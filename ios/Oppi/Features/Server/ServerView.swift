@@ -44,6 +44,7 @@ struct ServerView: View {
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
+        .themedScrollSurface()
         .navigationTitle(activeServer?.name ?? "Server")
         .task(id: selectedRange) {
             dailyDetail = nil

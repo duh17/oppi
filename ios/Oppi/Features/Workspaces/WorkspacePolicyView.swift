@@ -89,7 +89,7 @@ struct WorkspacePolicyView: View {
                                 Spacer()
                                 Text(entry.timestamp, style: .relative)
                                     .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.themeComment)
                             }
                         }
                         .padding(.vertical, 2)
@@ -97,6 +97,7 @@ struct WorkspacePolicyView: View {
                 }
             }
         }
+        .themedListSurface()
         .navigationTitle("Safety Rules")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -171,7 +172,7 @@ struct WorkspacePolicyView: View {
             if let expiresAt = rule.expiresAt {
                 Text("Expires \(expiresAt, style: .relative)")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.themeComment)
             }
         }
         .padding(.vertical, 2)
@@ -387,6 +388,7 @@ private struct RememberedRuleEditorView: View {
                     .autocorrectionDisabled(true)
             }
         }
+        .themedListSurface()
         .navigationTitle(draft.ruleId == nil ? "Add Remembered Rule" : "Edit Remembered Rule")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

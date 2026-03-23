@@ -36,7 +36,7 @@ struct StatsHeroRow: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Hero box

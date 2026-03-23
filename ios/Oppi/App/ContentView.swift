@@ -57,6 +57,7 @@ struct ContentView: View {
                     }
                 }
                 .tabBarMinimizeBehavior(.onScrollDown)
+                .toolbarBackground(Color.themeBg, for: .tabBar)
                 .ignoresSafeArea(.container, edges: .bottom)
             }
         }
