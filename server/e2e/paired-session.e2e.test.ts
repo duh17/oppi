@@ -11,7 +11,7 @@
  *   7. Verifies tool_start → tool_output → tool_end lifecycle
  *   8. Reconnects /stream and verifies catch-up replay
  *
- * Requires: Docker, LM Studio on localhost:1234 with a loaded model
+ * Requires: Docker, MLX server on localhost:9847 with a loaded model
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
@@ -24,17 +24,16 @@ import {
   subscribeSession,
   sendPromptAndWait,
   autoApprovePermissions,
-  supportsRealSessions,
-  E2E_MODEL,
 } from "./harness.js";
 
 declare module "vitest" {
   export interface ProvidedContext {
     e2eLmsReady: boolean;
+    e2eModel: string;
   }
 }
 
-describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
+describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
   // Server is started by globalSetup (e2e/setup.ts)
   const lmsReady = () => inject("e2eLmsReady");
   let deviceToken = "";
@@ -75,7 +74,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-session-workspace",
       skills: [],
-      defaultModel: E2E_MODEL,
+      defaultModel: inject("e2eModel"),
     });
 
     expect(res.status).toBe(201);
@@ -101,7 +100,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
     if (!lmsReady()) return;
 
     const res = await api("POST", `/workspaces/${workspaceId}/sessions`, deviceToken, {
-      model: E2E_MODEL,
+      model: inject("e2eModel"),
     });
 
     expect(res.status).toBe(201);
@@ -110,7 +109,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
     expect(sessionId).toBeTruthy();
 
     const model = (res.json!.session as Record<string, unknown>).model as string;
-    expect(model).toBe(E2E_MODEL);
+    expect(model).toBe(inject("e2eModel"));
   });
 
   it("session appears in list", async () => {
@@ -142,7 +141,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
   // ── 4. Simple prompt → response (requires real LLM) ──
 
   it("sends a prompt and receives assistant response", async () => {
-    if (!lmsReady() || !supportsRealSessions()) return;
+    if (!lmsReady()) return;
 
     const stream = await openStream(deviceToken);
     const approver = autoApprovePermissions(stream, sessionId);
@@ -157,7 +156,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
         sessionId,
         "Reply with exactly: E2E_SIMPLE_OK. Do not use any tools.",
         "req-e2e-simple-prompt",
-        { timeoutMs: 120_000 },
+        { timeoutMs: 300_000 },
       );
 
       // Verify we got text content
@@ -190,7 +189,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
   // ── 5. Tool use prompt → bash tool lifecycle (requires real LLM) ──
 
   it("sends a prompt requiring bash tool and verifies tool lifecycle", async () => {
-    if (!lmsReady() || !supportsRealSessions()) return;
+    if (!lmsReady()) return;
 
     const stream = await openStream(deviceToken);
     const approver = autoApprovePermissions(stream, sessionId);
@@ -205,7 +204,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
         sessionId,
         'Use exactly one bash tool call with this command: echo E2E_TOOL_OK. After the tool finishes, reply with: "Tool executed successfully."',
         "req-e2e-tool-prompt",
-        { timeoutMs: 120_000 },
+        { timeoutMs: 300_000 },
       );
 
       const sessionEvents = stream.events
@@ -236,7 +235,7 @@ describe("E2E: Paired Session Flow", { timeout: 300_000 }, () => {
   // ── 6. Reconnect and catch-up replay (requires real LLM for events to exist) ──
 
   it("reconnects to /stream and replays missed events", async () => {
-    if (!lmsReady() || !supportsRealSessions()) return;
+    if (!lmsReady()) return;
 
     // First connection: subscribe and capture baseline seq
     const stream1 = await openStream(deviceToken);

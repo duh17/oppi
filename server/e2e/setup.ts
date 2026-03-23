@@ -6,19 +6,21 @@
  */
 
 import type { GlobalSetupContext } from "vitest/node";
-import { startServer, stopServer, ensureLMStudioReady } from "./harness.js";
+import { startServer, stopServer, ensureMLXServerReady, E2E_MODEL } from "./harness.js";
 
-let lmsReady = false;
+let mlxReady = false;
 
 export default async function setup({ provide }: GlobalSetupContext): Promise<() => Promise<void>> {
-  lmsReady = await ensureLMStudioReady();
-  if (!lmsReady) {
-    console.warn("[e2e] Skipping E2E suite — LM Studio not available");
+  mlxReady = await ensureMLXServerReady();
+  if (!mlxReady) {
+    console.warn("[e2e] Skipping E2E suite — MLX server not available on :9847");
     provide("e2eLmsReady", false);
+    provide("e2eModel", "");
     return async () => {};
   }
 
   provide("e2eLmsReady", true);
+  provide("e2eModel", E2E_MODEL);
   await startServer();
 
   return async () => {

@@ -19,12 +19,12 @@ import {
   openStream,
   closeStream,
   E2E_PORT,
-  E2E_MODEL,
 } from "./harness.js";
 
 declare module "vitest" {
   export interface ProvidedContext {
     e2eLmsReady: boolean;
+    e2eModel: string;
   }
 }
 
@@ -172,7 +172,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
       const res = await api("POST", "/workspaces", deviceToken, {
         name: "e2e-pairing-workspace",
         skills: [],
-        defaultModel: E2E_MODEL,
+        defaultModel: inject("e2eModel"),
       });
 
       expect(res.status).toBe(201);

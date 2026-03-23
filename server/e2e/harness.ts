@@ -22,9 +22,13 @@ const SERVER_DIR = join(__dirname, "..");
 // ── Configuration ──
 
 export const E2E_PORT = Number(process.env.E2E_PORT || 17760);
-export const E2E_MODEL = process.env.E2E_MODEL || "lmstudio/glm-4.7-flash-mlx";
-export const LMS_URL = process.env.LMSTUDIO_API_URL || "http://localhost:1234";
+export const MLX_PORT = Number(process.env.E2E_MLX_PORT || 9847);
+export const MLX_HOST_URL = `http://localhost:${MLX_PORT}`;
+export const MLX_DOCKER_URL = `http://host.docker.internal:${MLX_PORT}`;
 export const ADMIN_TOKEN = "e2e-admin-token";
+
+// Resolved after MLX server probe
+export let E2E_MODEL = "";
 
 const BOOT_TIMEOUT_MS = 120_000;
 const HEALTH_POLL_MS = 500;
@@ -32,22 +36,26 @@ const HEALTH_POLL_MS = 500;
 export const BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
 export const STREAM_WS_URL = `ws://127.0.0.1:${E2E_PORT}/stream`;
 
-// ── LM Studio check ──
+// ── MLX server check ──
 
-export async function ensureLMStudioReady(): Promise<boolean> {
+export async function ensureMLXServerReady(): Promise<boolean> {
   try {
-    const res = await fetch(`${LMS_URL}/v1/models`);
+    const res = await fetch(`${MLX_HOST_URL}/v1/models`);
     if (!res.ok) return false;
     const data = (await res.json()) as { data?: { id: string }[] };
     const models = data.data || [];
     if (models.length === 0) {
-      console.warn("[e2e] LM Studio is running but no models loaded");
+      console.warn("[e2e] MLX server is running but no models loaded");
       return false;
     }
-    console.log(`[e2e] LM Studio ready with ${models.length} model(s)`);
+
+    // Use the first loaded model
+    const modelId = models[0].id;
+    E2E_MODEL = `mlx-server/${modelId}`;
+    console.log(`[e2e] MLX server ready on :${MLX_PORT}, model: ${modelId}`);
     return true;
   } catch {
-    console.warn("[e2e] LM Studio not reachable at", LMS_URL);
+    console.warn("[e2e] MLX server not reachable at", MLX_HOST_URL);
     return false;
   }
 }
@@ -56,15 +64,6 @@ export async function ensureLMStudioReady(): Promise<boolean> {
 
 let serverProcess: ChildProcess | null = null;
 let nativeDataDir: string | null = null;
-let dockerFakePiDir: string | null = null;
-
-/**
- * Whether the current server supports real LLM sessions.
- * Docker mode uses fake-pi (no real LLM). Native mode uses LM Studio.
- */
-export function supportsRealSessions(): boolean {
-  return process.env.E2E_NATIVE === "1";
-}
 
 export async function startServer(): Promise<void> {
   if (process.env.E2E_NATIVE === "1") {
@@ -82,39 +81,45 @@ export async function stopServer(): Promise<void> {
   }
 }
 
+let dockerModelsJson: string | null = null;
+
 async function startDockerServer(): Promise<void> {
   console.log("[e2e] Building and starting Docker server...");
 
   const composeFile = join(__dirname, "docker-compose.e2e.yml");
 
-  // Create a fake-pi script that responds to prompts minimally.
-  // This allows session creation and basic lifecycle without a real LLM.
-  const fakePiDir = mkdtempSync(join(tmpdir(), "oppi-e2e-fakepi-"));
-  const fakePiPath = join(fakePiDir, "fake-pi.sh");
-  writeFileSync(
-    fakePiPath,
-    `#!/usr/bin/env bash
-set -euo pipefail
-echo '{"type":"agent_start"}'
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  case "$line" in
-    *'"type":"prompt"'*)
-      echo '{"type":"message_start","message":{"role":"assistant"}}'
-      echo '{"type":"message_delta","delta":"E2E_DOCKER_OK"}'
-      echo '{"type":"message_end","message":{"role":"assistant","content":"E2E_DOCKER_OK"},"usage":{"input_tokens":1,"output_tokens":1}}'
-      echo '{"type":"agent_end"}'
-      ;;
-    *'"type":"abort"'*)
-      echo '{"type":"agent_end"}'
-      ;;
-  esac
-done
-`,
-    { mode: 0o755 },
-  );
+  // Probe the MLX server for its loaded model and generate a container-compatible
+  // models.json that routes mlx-server/* to host.docker.internal:<port>.
+  const res = await fetch(`${MLX_HOST_URL}/v1/models`);
+  const data = (await res.json()) as { data?: { id: string }[] };
+  const modelId = data.data?.[0]?.id;
+  if (!modelId) throw new Error("[e2e] MLX server has no models loaded");
 
-  dockerFakePiDir = fakePiDir;
+  const modelsConfig = {
+    providers: {
+      "mlx-server": {
+        baseUrl: `${MLX_DOCKER_URL}/v1`,
+        apiKey: "DUMMY",
+        api: "openai-completions",
+        models: [
+          {
+            id: modelId,
+            name: "E2E MLX Model",
+            contextWindow: 32768,
+            maxTokens: 8192,
+            input: ["text"],
+            reasoning: true,
+            compat: { thinkingFormat: "qwen" },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      },
+    },
+  };
+
+  const tmpModels = join(tmpdir(), `oppi-e2e-models-${Date.now()}.json`);
+  writeFileSync(tmpModels, JSON.stringify(modelsConfig, null, 2));
+  dockerModelsJson = tmpModels;
 
   execSync(
     `docker compose -f ${composeFile} up -d --build --wait --wait-timeout 120`,
@@ -124,13 +129,19 @@ done
       env: {
         ...process.env,
         E2E_PORT: String(E2E_PORT),
-        E2E_FAKE_PI_DIR: fakePiDir,
+        E2E_MODELS_JSON: tmpModels,
       },
     },
   );
 
   await waitForHealth();
-  console.log("[e2e] Docker server healthy (fake-pi mode — pairing/API tests only)");
+
+  // Set the server's defaultModel to the MLX model (replaces the Dockerfile default)
+  execSync(
+    `docker exec oppi-e2e node dist/cli.js config set defaultModel "${E2E_MODEL}"`,
+    { stdio: "pipe" },
+  );
+  console.log(`[e2e] Docker server healthy, defaultModel=${E2E_MODEL}`);
 }
 
 async function stopDockerServer(): Promise<void> {
@@ -145,9 +156,9 @@ async function stopDockerServer(): Promise<void> {
     console.warn("[e2e] Docker compose down failed (may already be stopped)");
   }
 
-  if (dockerFakePiDir) {
-    rmSync(dockerFakePiDir, { recursive: true, force: true });
-    dockerFakePiDir = null;
+  if (dockerModelsJson) {
+    rmSync(dockerModelsJson, { force: true });
+    dockerModelsJson = null;
   }
 }
 
@@ -168,6 +179,15 @@ async function startNativeServer(): Promise<void> {
     token: ADMIN_TOKEN,
     defaultModel: E2E_MODEL,
   });
+
+  // Copy host models.json so pi can resolve the mlx-server provider
+  const hostModels = join(process.env.HOME || "", ".pi/agent/models.json");
+  const piDir = join(nativeDataDir, "pi-agent");
+  const { existsSync: exists, mkdirSync: mkdir, copyFileSync: cpFile } = await import("node:fs");
+  if (exists(hostModels)) {
+    mkdir(piDir, { recursive: true });
+    cpFile(hostModels, join(piDir, "models.json"));
+  }
 
   const logPath = join(nativeDataDir, "server.log");
   const logFd = openSync(logPath, "w");

@@ -22,17 +22,15 @@ services:
       PI_AGENT_SYNC_MODE: skip
       OPPI_PORT: ${E2E_PORT:-17760}
       OPPI_PAIR_HOST: ${E2E_PAIR_HOST:-host.docker.internal}
-      # Fake pi binary for Docker mode (real sessions use native mode)
-      OPPI_PI_BIN: /e2e-fakepi/fake-pi.sh
-      # LM Studio runs on the host — route via Docker bridge
-      LMSTUDIO_API_URL: http://host.docker.internal:1234
+      # Use the real pi binary from node_modules (installed via npm ci in Dockerfile)
+      OPPI_PI_BIN: /opt/oppi-server/node_modules/.bin/pi
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ${E2E_FAKE_PI_DIR:-.}:/e2e-fakepi:ro
+      # Mount e2e models.json so pi can resolve the mlx-server provider
+      - ${E2E_MODELS_JSON:-/dev/null}:/data/pi-agent/models.json:ro
     tmpfs:
       - /data/oppi
-      - /data/pi-agent
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:${E2E_PORT:-17760}/health"]
       interval: 2s
