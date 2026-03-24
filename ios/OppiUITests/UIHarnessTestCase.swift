@@ -83,12 +83,12 @@ class UIHarnessTestCase: XCTestCase {
             }
 
             let element = app.descendants(matching: .any)[id]
-            if element.waitForExistence(timeout: 0.35),
+            if element.waitForExistence(timeout: 0.15),
                let value = parseDiagnosticValue(element) {
                 return value
             }
 
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
 
         return nil
@@ -127,13 +127,13 @@ class UIHarnessTestCase: XCTestCase {
         var lastValue: Int?
 
         while Date() < deadline {
-            if let value = tryPollDiagnostic(id, timeout: 0.7) {
+            if let value = tryPollDiagnostic(id, timeout: 0.3) {
                 lastValue = value
                 if value == expected {
                     return value
                 }
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
 
         XCTFail(
@@ -148,13 +148,13 @@ class UIHarnessTestCase: XCTestCase {
         var lastValue: Int?
 
         while Date() < deadline {
-            if let value = tryPollDiagnostic(id, timeout: 0.7) {
+            if let value = tryPollDiagnostic(id, timeout: 0.3) {
                 lastValue = value
                 if value >= minimum {
                     return value
                 }
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
 
         XCTFail(
@@ -172,10 +172,10 @@ class UIHarnessTestCase: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
-            if let value = tryPollDiagnostic(id, timeout: 0.7), value <= maximum {
+            if let value = tryPollDiagnostic(id, timeout: 0.3), value <= maximum {
                 return value
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
 
         return nil
