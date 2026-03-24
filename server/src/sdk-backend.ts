@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
@@ -70,10 +71,17 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
-      throw new Error(
-        "Sandbox workspaces require a hostMount directory. " +
-          "Set a project path to limit what the VM can access.",
-      );
+      // Auto-create a dedicated sandbox directory. Permanent, per-workspace.
+      // Slug the name to a safe directory name, fall back to id.
+      const slug = (workspace.name || workspace.id)
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        || workspace.id;
+      const sandboxDir = join(homedir(), "sandbox", slug);
+      mkdirSync(sandboxDir, { recursive: true });
+      return sandboxDir;
     }
     return homedir();
   }
