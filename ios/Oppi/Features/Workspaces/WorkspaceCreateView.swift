@@ -184,20 +184,15 @@ struct WorkspaceCreateView: View {
 
             Section {
                 Toggle("Git status bar", isOn: $gitStatusEnabled)
+                Toggle("Sandbox mode", isOn: $sandboxMode)
+                if sandboxMode {
+                    Text("Runs in an isolated micro-VM. Files are shared, but secrets and network access are controlled by the host.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
             }
 
             if showAdvanced {
-                Section {
-                    Toggle("Sandbox mode", isOn: $sandboxMode)
-                    if sandboxMode {
-                        Text("Agent runs in an isolated micro-VM. Files are shared, but secrets and network access are controlled by the host.")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                } header: {
-                    Text("Runtime")
-                }
-
                 Section("Optional") {
                     TextField("Description", text: $description)
                     TextField("Icon (SF Symbol or emoji)", text: $icon)
