@@ -1,13 +1,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    private enum VoiceEndpointProbeState: Equatable {
-        case idle
-        case probing
-        case reachable(Int)
-        case unreachable
-    }
-
     private enum RuntimeUpdateBadgeState: Equatable {
         case updateAvailable
         case restartRequired
@@ -15,8 +8,6 @@ struct SettingsView: View {
         case unavailable
         case unknown
     }
-
-    private static let remoteVoiceInputSettingsEnabled = false
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -27,10 +18,6 @@ struct SettingsView: View {
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoSessionTitleEnabled = AppPreferences.Session.isAutoTitleEnabled
     @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
-    @State private var voiceEngineMode = VoiceInputPreferences.engineMode
-    @State private var remoteASREndpointText = VoiceInputPreferences.remoteEndpoint?.absoluteString ?? ""
-    @State private var voiceEndpointError: String?
-    @State private var voiceEndpointProbeState: VoiceEndpointProbeState = .idle
     @State private var cacheSizeText: String?
     @State private var showAddServer = false
     @State private var renameServerId: String?
@@ -91,7 +78,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Appearance") {
+            Section {
                 Picker("Theme", selection: Binding(
                     get: { themeStore.selectedThemeID },
                     set: { themeStore.selectedThemeID = $0 }
@@ -131,6 +118,25 @@ struct SettingsView: View {
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
                 }
+
+                Toggle("Auto-name new sessions", isOn: $autoSessionTitleEnabled)
+                    .onChange(of: autoSessionTitleEnabled) { _, newValue in
+                        AppPreferences.Session.setAutoTitleEnabled(newValue)
+                    }
+
+                Picker("Keep screen awake", selection: $screenAwakePreset) {
+                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .onChange(of: screenAwakePreset) { _, newValue in
+                    ScreenAwakePreferences.setTimeoutPreset(newValue)
+                    ScreenAwakeController.shared.refreshFromPreferences()
+                }
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text(screenAwakeFooter)
             }
 
             Section {
@@ -157,136 +163,11 @@ struct SettingsView: View {
                 )
             }
 
-            Section {
-                Toggle("Auto-name new sessions", isOn: $autoSessionTitleEnabled)
-                    .onChange(of: autoSessionTitleEnabled) { _, newValue in
-                        AppPreferences.Session.setAutoTitleEnabled(newValue)
-                    }
-            } header: {
-                Text("Sessions")
-            } footer: {
-                Text(
-                    "Uses the on-device model to generate a short title from the first prompt. "
-                        + "When off, the first message is shown instead."
-                )
-            }
-
-            Section("Pi Actions") {
+            Section("Quick Actions") {
                 NavigationLink {
                     PiActionsSettingsView()
                 } label: {
                     Label("Text Selection Actions", systemImage: "contextualmenu.and.cursorarrow")
-                }
-            }
-
-            Section {
-                Picker("Keep screen awake", selection: $screenAwakePreset) {
-                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
-                        Text(preset.label).tag(preset)
-                    }
-                }
-                .onChange(of: screenAwakePreset) { _, newValue in
-                    ScreenAwakePreferences.setTimeoutPreset(newValue)
-                    ScreenAwakeController.shared.refreshFromPreferences()
-                }
-            } header: {
-                Text("Display")
-            } footer: {
-                Text(screenAwakeFooter)
-            }
-
-            if ReleaseFeatures.voiceInputEnabled {
-                Section {
-                    if Self.remoteVoiceInputSettingsEnabled {
-                        Picker("Transcription engine", selection: $voiceEngineMode) {
-                            ForEach(VoiceInputPreferences.EngineMode.allCases) { mode in
-                                Text(mode.label)
-                                    .foregroundStyle(voiceModeTint(mode))
-                                    .tag(mode)
-                            }
-                        }
-                        .onChange(of: voiceEngineMode) { _, newValue in
-                            VoiceInputPreferences.setEngineMode(newValue)
-                            voiceEndpointProbeState = .idle
-
-                            let trimmed = remoteASREndpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if newValue == .remote, trimmed.isEmpty {
-                                voiceEndpointError = "Remote mode requires a valid endpoint URL."
-                            } else if trimmed.isEmpty || VoiceInputPreferences.normalizedEndpointURL(from: trimmed) != nil {
-                                voiceEndpointError = nil
-                            }
-                        }
-
-                        LabeledContent("Dictation route") {
-                            HStack(spacing: 6) {
-                                if shouldShowCloudForRoute {
-                                    Image(systemName: "cloud.fill")
-                                }
-                                Text(dictationRouteLabel)
-                            }
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(dictationRouteColor)
-                        }
-
-                        if voiceEngineMode != .onDevice {
-                            TextField("http://mac-studio.local:9847", text: $remoteASREndpointText)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled(true)
-                                .keyboardType(.URL)
-                                .submitLabel(.done)
-                                .onSubmit {
-                                    applyVoiceEndpoint(remoteASREndpointText, canonicalizeInput: true)
-                                    testVoiceEndpoint()
-                                }
-                                .onChange(of: remoteASREndpointText) { _, newValue in
-                                    applyVoiceEndpoint(newValue)
-                                    voiceEndpointProbeState = .idle
-                                }
-
-                            HStack(spacing: 10) {
-                                Button {
-                                    testVoiceEndpoint()
-                                } label: {
-                                    if voiceEndpointProbeState == .probing {
-                                        HStack(spacing: 6) {
-                                            ProgressView()
-                                                .controlSize(.mini)
-                                            Text("Testing…")
-                                        }
-                                    } else {
-                                        Label("Test connection", systemImage: "network")
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(voiceEndpointProbeState == .probing)
-
-                                Spacer(minLength: 8)
-                                voiceEndpointProbeLabel
-                            }
-                        }
-
-                        if let voiceEndpointError {
-                            Text(voiceEndpointError)
-                                .font(.caption)
-                                .foregroundStyle(.themeRed)
-                        }
-                    } else {
-                        LabeledContent("Transcription engine") {
-                            Text(VoiceInputPreferences.EngineMode.onDevice.label)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(voiceModeTint(.onDevice))
-                        }
-
-                        LabeledContent("Dictation route") {
-                            Text("On-device")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(voiceModeTint(.onDevice))
-                        }
-                    }
-                } header: {
-                    Text("Voice Input")
-                } footer: {
-                    Text(voiceInputFooter)
                 }
             }
 
@@ -301,14 +182,11 @@ struct SettingsView: View {
                 } header: {
                     Text("Experiments")
                 } footer: {
-                    Text(
-                        "These features are under active development and off by default. "
-                            + "Enable them to try early builds — expect rough edges."
-                    )
+                    Text("Early builds — expect rough edges.")
                 }
             }
 
-            biometricSection
+            securitySection
 
             Section("Cache") {
                 if let cacheSizeText {
@@ -326,11 +204,9 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Version", value: "1.0.0")
-                LabeledContent("Build", value: "Phase 1")
             }
         }
         .onAppear {
-            enforceVoiceInputAvailability()
             Task {
                 await refreshRuntimeUpdateBadges()
             }
@@ -411,216 +287,16 @@ struct SettingsView: View {
     private var screenAwakeFooter: String {
         switch screenAwakePreset {
         case .off:
-            return "Prevents auto-lock only while voice input is active or the agent is working. Screen sleep returns immediately when activity ends."
+            return "Keeps the screen on while voice input is active or the agent is working."
         default:
-            return "Prevents auto-lock while voice input is active or the agent is working. After activity ends, keeps the screen awake for \(screenAwakePreset.label)."
+            return "Keeps the screen on while active, plus \(screenAwakePreset.label) after activity ends."
         }
     }
 
-    private func enforceVoiceInputAvailability() {
-        guard !Self.remoteVoiceInputSettingsEnabled else { return }
-
-        if voiceEngineMode != .onDevice || VoiceInputPreferences.engineMode != .onDevice {
-            voiceEngineMode = .onDevice
-            VoiceInputPreferences.setEngineMode(.onDevice)
-        }
-
-        voiceEndpointError = nil
-        voiceEndpointProbeState = .idle
-    }
-
-    private var voiceInputFooter: String {
-        guard Self.remoteVoiceInputSettingsEnabled else {
-            return "Remote transcription is temporarily disabled. Oppi currently uses Apple's on-device transcription."
-        }
-
-        switch voiceEngineMode {
-        case .auto:
-            return "Automatic probes your remote endpoint first, then falls back to on-device transcription if unreachable."
-        case .onDevice:
-            return "Always uses Apple's on-device transcription (locale-aware Speech/Dictation routing)."
-        case .remote:
-            if remoteASREndpointText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Remote mode requires an endpoint URL below before recording can start."
-            }
-            return "Always uses the remote OpenAI-compatible /v1/audio/transcriptions endpoint."
-        }
-    }
-
-    private var dictationRouteLabel: String {
-        switch voiceEngineMode {
-        case .onDevice:
-            return "On-device"
-        case .remote:
-            return "Remote"
-        case .auto:
-            switch voiceEndpointProbeState {
-            case .reachable:
-                return "Remote"
-            case .unreachable:
-                return "On-device"
-            case .idle:
-                return "Automatic"
-            case .probing:
-                return "Checking…"
-            }
-        }
-    }
-
-    private var shouldShowCloudForRoute: Bool {
-        switch voiceEngineMode {
-        case .remote:
-            return true
-        case .auto:
-            if case .reachable = voiceEndpointProbeState {
-                return true
-            }
-            return false
-        case .onDevice:
-            return false
-        }
-    }
-
-    private var dictationRouteColor: Color {
-        switch voiceEngineMode {
-        case .onDevice:
-            return voiceModeTint(.onDevice)
-        case .remote:
-            return voiceModeTint(.remote)
-        case .auto:
-            switch voiceEndpointProbeState {
-            case .reachable:
-                return voiceModeTint(.remote)
-            case .unreachable:
-                return voiceModeTint(.onDevice)
-            case .idle, .probing:
-                return voiceModeTint(.auto)
-            }
-        }
-    }
-
-    private func voiceModeTint(_ mode: VoiceInputPreferences.EngineMode) -> Color {
-        switch mode {
-        case .auto:
-            return .themeComment
-        case .onDevice:
-            return .themeBlue
-        case .remote:
-            return .themeCyan
-        }
-    }
+    // MARK: - Security Section
 
     @ViewBuilder
-    private var voiceEndpointProbeLabel: some View {
-        switch voiceEndpointProbeState {
-        case .idle:
-            EmptyView()
-
-        case .probing:
-            Text("Checking…")
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-
-        case .reachable(let latencyMs):
-            Label("Reachable (\(latencyMs) ms)", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.themeGreen)
-
-        case .unreachable:
-            Label("Unreachable", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.themeOrange)
-        }
-    }
-
-    func testVoiceEndpoint() {
-        let trimmed = remoteASREndpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let endpoint = VoiceInputPreferences.normalizedEndpointURL(from: trimmed) else {
-            voiceEndpointProbeState = .unreachable
-            voiceEndpointError = "Enter a valid http:// or https:// URL."
-            return
-        }
-
-        voiceEndpointProbeState = .probing
-
-        Task {
-            let start = ContinuousClock.now
-            let reachable = await Self.probeVoiceEndpoint(endpoint)
-            let elapsed = ContinuousClock.now - start
-            let latencyMs = Int(
-                elapsed.components.seconds * 1000
-                    + elapsed.components.attoseconds / 1_000_000_000_000_000
-            )
-
-            await MainActor.run {
-                if reachable {
-                    voiceEndpointProbeState = .reachable(max(0, latencyMs))
-                    if voiceEndpointError == "Can’t reach endpoint. Check server and network." {
-                        voiceEndpointError = nil
-                    }
-                } else {
-                    voiceEndpointProbeState = .unreachable
-                    voiceEndpointError = "Can’t reach endpoint. Check server and network."
-                }
-            }
-        }
-    }
-
-    private static func probeVoiceEndpoint(_ endpoint: URL) async -> Bool {
-        let healthURL = endpoint.appendingPathComponent("health")
-        var request = URLRequest(url: healthURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 2.0
-
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 2.0
-        config.timeoutIntervalForResource = 3.0
-        config.waitsForConnectivity = false
-
-        let session = URLSession(configuration: config)
-        defer { session.invalidateAndCancel() }
-
-        do {
-            let (_, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return false
-            }
-            return (200..<500).contains(http.statusCode)
-        } catch {
-            return false
-        }
-    }
-
-    private func applyVoiceEndpoint(_ raw: String, canonicalizeInput: Bool = false) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmed.isEmpty else {
-            VoiceInputPreferences.setRemoteEndpoint(nil)
-            if voiceEngineMode == .remote {
-                voiceEndpointError = "Remote mode requires a valid endpoint URL."
-            } else {
-                voiceEndpointError = nil
-            }
-            return
-        }
-
-        guard let normalized = VoiceInputPreferences.normalizedEndpointURL(from: trimmed) else {
-            voiceEndpointError = "Enter a valid http:// or https:// URL."
-            return
-        }
-
-        VoiceInputPreferences.setRemoteEndpoint(normalized)
-        voiceEndpointError = nil
-
-        if canonicalizeInput {
-            remoteASREndpointText = normalized.absoluteString
-        }
-    }
-
-    // MARK: - Biometric Section
-
-    @ViewBuilder
-    private var biometricSection: some View {
+    private var securitySection: some View {
         let bio = BiometricService.shared
 
         Section {
@@ -634,12 +310,12 @@ struct SettingsView: View {
                 bio.isEnabled = newValue
             }
         } header: {
-            Text("Biometric Approval")
+            Text("Security")
         } footer: {
             if biometricEnabled {
-                Text("All permission approvals require \(bio.biometricName). Deny is always one tap.")
+                Text("Permission approvals require \(bio.biometricName). Deny is always one tap.")
             } else {
-                Text("All permissions can be approved with a simple tap.")
+                Text("Permissions can be approved with a simple tap.")
             }
         }
     }
