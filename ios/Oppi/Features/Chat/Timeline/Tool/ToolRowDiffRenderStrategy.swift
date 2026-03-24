@@ -12,7 +12,8 @@ struct ToolRowDiffRenderStrategy {
         previousRenderedText: String?,
         previousAutoFollow: Bool,
         isCurrentModeDiff: Bool,
-        wasExpandedVisible: Bool
+        wasExpandedVisible: Bool,
+        sessionId: String? = nil
     ) -> ExpandedRenderOutput {
         let signature = ToolTimelineRowRenderMetrics.diffSignature(
             lines: lines, path: path, isStreaming: isStreaming
@@ -74,7 +75,8 @@ struct ToolRowDiffRenderStrategy {
                 mode: tier == .cheap ? "diff.stream" : "diff.highlight",
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: inputBytes,
-                language: path.flatMap { ToolRowTextRenderer.diffLanguage(for: $0)?.displayName }
+                language: path.flatMap { ToolRowTextRenderer.diffLanguage(for: $0)?.displayName },
+                sessionId: sessionId
             )
         }
 

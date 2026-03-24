@@ -228,6 +228,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         currentConfiguration.selectedTextSessionId
     }
 
+    private var perfSessionId: String? {
+        currentConfiguration.selectedTextSessionId
+    }
+
     override func systemLayoutSizeFitting(
         _ targetSize: CGSize,
         withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
@@ -287,7 +291,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     mode: mode,
                     inputBytes: bashToolRowView.outputRenderedText?.utf8.count ?? 0,
                     profile: currentOutputViewportProfile,
-                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry)
+                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry),
+                    sessionId: perfSessionId
                 ) {
                     ToolRowViewportCalculator.preferredViewportHeight(
                         for: self.bashToolRowView.outputLabel,
@@ -328,7 +333,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     mode: mode,
                     inputBytes: expandedRenderedText?.utf8.count ?? 0,
                     profile: currentExpandedViewportProfile,
-                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry)
+                    availableHeight: ToolRowViewportCalculator.availableViewportHeight(for: mode, geometry: geometry),
+                    sessionId: perfSessionId
                 ) {
                     ToolRowViewportCalculator.preferredViewportHeight(
                         for: expandedContentView,
@@ -376,7 +382,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             frameWidth: max(1, expandedScrollView.bounds.width),
             renderedText: renderedText,
             cache: &expandedWidthEstimateCache,
-            metricMode: metricMode
+            metricMode: metricMode,
+            sessionId: perfSessionId
         )
     }
 
@@ -818,7 +825,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     output: output,
                     unwrapped: unwrapped,
                     isError: configuration.isError,
-                    isStreaming: !configuration.isDone
+                    isStreaming: !configuration.isDone,
+                    sessionId: perfSessionId
                 )
                 let result = bashToolRowView.apply(
                     input: input,
@@ -1075,7 +1083,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousRenderedText: expandedRenderedText,
                 previousAutoFollow: expandedShouldAutoFollow,
                 isCurrentModeDiff: expandedViewportMode == .diff,
-                wasExpandedVisible: wasExpandedVisible
+                wasExpandedVisible: wasExpandedVisible,
+                sessionId: perfSessionId
             )
 
         case .code(let text, let language, let startLine, _):
@@ -1090,7 +1099,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 previousRenderedText: expandedRenderedText,
                 previousAutoFollow: expandedShouldAutoFollow,
                 isCurrentModeCode: expandedViewportMode == .code,
-                wasExpandedVisible: wasExpandedVisible
+                wasExpandedVisible: wasExpandedVisible,
+                sessionId: perfSessionId
             )
 
         case .markdown(let text):
@@ -1146,7 +1156,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                sessionId: perfSessionId
             )
 
         case .text(let text, let language):
@@ -1164,7 +1175,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 wasExpandedVisible: wasExpandedVisible,
                 isCurrentModeText: expandedViewportMode == .text,
                 isUsingMarkdownLayout: expandedUsesMarkdownLayout,
-                isUsingReadMediaLayout: expandedUsesReadMediaLayout
+                isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+                sessionId: perfSessionId
             )
         }
     }
@@ -1199,7 +1211,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showExpandedViewport()
 
         if let deferred = output.deferredHighlight {
-            scheduleDeferredCodeHighlightIfNeeded(deferred)
+            scheduleDeferredCodeHighlightIfNeeded(deferred, sessionId: perfSessionId)
         } else {
             cancelDeferredCodeHighlight()
         }

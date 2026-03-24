@@ -34,6 +34,7 @@ enum ChatTimelinePerf {
         let startNs: UInt64
         let itemCount: Int
         let changedCount: Int
+        let sessionId: String?
     }
 
     private static let signposter = OSSignposter(
@@ -75,7 +76,10 @@ enum ChatTimelinePerf {
     /// Total collection apply cycles counted since last jank rate emission.
     private static var totalApplyCycles = 0
 
-    /// Active session ID for metric attribution. Set by ChatSessionManager on connect.
+    /// Legacy fallback for metric attribution when a call site hasn't been
+    /// updated to pass an explicit `sessionId`. New instrumentation should
+    /// prefer explicit session IDs so multiplexed/offscreen work is attributed
+    /// correctly.
     static var activeSessionId: String?
 
     private static var lastSlowMetricLogNs: UInt64 = 0
@@ -146,6 +150,10 @@ enum ChatTimelinePerf {
         Int((DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000)
     }
 
+    private static func resolvedSessionId(_ sessionId: String?) -> String? {
+        sessionId ?? activeSessionId
+    }
+
     static func beginTimelineApplyCycle(itemCount: Int, changedCount: Int) {
 #if canImport(Sentry)
         guard SentrySDK.isEnabled else { return }
@@ -209,7 +217,11 @@ enum ChatTimelinePerf {
 #endif
     }
 
-    static func beginCollectionApply(itemCount: Int, changedCount: Int) -> IntervalToken {
+    static func beginCollectionApply(
+        itemCount: Int,
+        changedCount: Int,
+        sessionId: String? = nil
+    ) -> IntervalToken {
         let startNs = timestampNs()
         let state = signposter.beginInterval("collection.apply")
 
@@ -230,7 +242,8 @@ enum ChatTimelinePerf {
             state: state,
             startNs: startNs,
             itemCount: itemCount,
-            changedCount: changedCount
+            changedCount: changedCount,
+            sessionId: sessionId
         )
     }
 
@@ -265,7 +278,7 @@ enum ChatTimelinePerf {
 
         // Emit to telemetry only when above noise floor (skip the 99% that are 0-1ms).
         if durationMs >= 4 {
-            let applySid = activeSessionId
+            let applySid = resolvedSessionId(token.sessionId)
             Task.detached(priority: .utility) {
                 await ChatMetricsService.shared.record(
                     metric: .timelineApplyMs,
@@ -294,7 +307,7 @@ enum ChatTimelinePerf {
         )
     }
 
-    static func beginLayoutPass(itemCount: Int) -> IntervalToken {
+    static func beginLayoutPass(itemCount: Int, sessionId: String? = nil) -> IntervalToken {
         let startNs = timestampNs()
         let state = signposter.beginInterval("collection.layout")
 
@@ -314,7 +327,8 @@ enum ChatTimelinePerf {
             state: state,
             startNs: startNs,
             itemCount: itemCount,
-            changedCount: 0
+            changedCount: 0,
+            sessionId: sessionId
         )
     }
 
@@ -340,7 +354,7 @@ enum ChatTimelinePerf {
 
         // Emit to telemetry only when above noise floor.
         if durationMs >= 2 {
-            let layoutSid = activeSessionId
+            let layoutSid = resolvedSessionId(token.sessionId)
             Task.detached(priority: .utility) {
                 await ChatMetricsService.shared.record(
                     metric: .timelineLayoutMs,
@@ -373,7 +387,12 @@ enum ChatTimelinePerf {
         let outputBytes: Int
     }
 
-    static func recordCellConfigure(rowType: String, durationMs: Int, toolContext: ToolCellContext? = nil) {
+    static func recordCellConfigure(
+        rowType: String,
+        durationMs: Int,
+        sessionId: String? = nil,
+        toolContext: ToolCellContext? = nil
+    ) {
         cellConfigureLastMs = durationMs
         cellConfigureMaxMs = max(cellConfigureMaxMs, durationMs)
 
@@ -393,7 +412,7 @@ enum ChatTimelinePerf {
         // allocation adds overhead that exceeds the measurement itself.
         guard durationMs >= 1 else { return }
 
-        let sid = activeSessionId
+        let sid = resolvedSessionId(sessionId)
         Task.detached(priority: .utility) {
             var tags: [String: String] = ["row_type": rowType]
             if let ctx = toolContext {
@@ -457,14 +476,15 @@ enum ChatTimelinePerf {
         mode: String,
         durationMs: Int,
         inputBytes: Int,
-        language: String? = nil
+        language: String? = nil,
+        sessionId: String? = nil
     ) {
         signposter.emitEvent("render.strategy")
 
         // Discard suspension-inflated samples.
         guard durationMs < suspensionCeilingMs else { return }
 
-        let sid = activeSessionId
+        let sid = resolvedSessionId(sessionId)
         Task.detached(priority: .utility) {
             var tags = [
                 "mode": mode,
@@ -501,13 +521,14 @@ enum ChatTimelinePerf {
     static func recordToolRowMeasurement(
         name: String,
         durationMs: Int,
-        inputBytes: Int
+        inputBytes: Int,
+        sessionId: String? = nil
     ) {
         signposter.emitEvent("toolrow.measure")
 
         guard durationMs > 0 else { return }
 
-        let sid = activeSessionId
+        let sid = resolvedSessionId(sessionId)
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: .renderStrategyMs,
@@ -545,7 +566,11 @@ enum ChatTimelinePerf {
         }
     }
 
-    static func recordScrollCommand(anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {
+    static func recordScrollCommand(
+        anchor: ChatTimelineScrollCommand.Anchor,
+        animated: Bool,
+        sessionId: String? = nil
+    ) {
         signposter.emitEvent("scroll.command")
 
 #if canImport(Sentry)
@@ -570,14 +595,18 @@ enum ChatTimelinePerf {
 
             if scrollCommandsPerSecond >= slowScrollRateThresholdPerSecond,
                shouldEmitSlowLog(nowNs: nowNs) {
+                var metadata: [String: String] = [
+                    "commandsPerSecond": String(scrollCommandsPerSecond),
+                    "anchor": String(describing: anchor),
+                    "animated": animated ? "true" : "false",
+                ]
+                if let sid = resolvedSessionId(sessionId) {
+                    metadata["sessionId"] = sid
+                }
                 ClientLog.error(
                     "ChatPerf",
                     "High scroll command rate",
-                    metadata: [
-                        "commandsPerSecond": String(scrollCommandsPerSecond),
-                        "anchor": String(describing: anchor),
-                        "animated": animated ? "true" : "false",
-                    ]
+                    metadata: metadata
                 )
             }
         }

@@ -47,6 +47,7 @@ final class FrameBudgetMonitor {
     private var displayLink: CADisplayLink?
     private var timestamps: [CFTimeInterval] = []
     private var sectionName: String?
+    private var sectionSessionId: String?
     private var sectionStartTime: CFTimeInterval = 0
     private var expectedInterval: CFTimeInterval = 0
     private var signpostState: OSSignpostIntervalState?
@@ -57,11 +58,13 @@ final class FrameBudgetMonitor {
 
     /// Start recording frame timestamps for a named section.
     /// If a section is already active, it is silently discarded.
-    func beginSection(_ name: String) {
+    func beginSection(_ name: String, sessionId: String? = nil) {
         guard sectionName == nil else { return }
 
         sectionName = name
+        sectionSessionId = sessionId
         timestamps.removeAll(keepingCapacity: true)
+        expectedInterval = 0
         sectionStartTime = CACurrentMediaTime()
 
         let state = Self.signposter.beginInterval("frame_budget")
@@ -90,7 +93,9 @@ final class FrameBudgetMonitor {
         }
 
         let report = buildReport(section: name)
+        let sessionId = sectionSessionId
         sectionName = nil
+        sectionSessionId = nil
         timestamps.removeAll(keepingCapacity: true)
 
         // Emit telemetry for hitches
@@ -107,13 +112,12 @@ final class FrameBudgetMonitor {
                 ]
             )
 
-            let sid = ChatTimelinePerf.activeSessionId
             Task.detached(priority: .utility) {
                 await ChatMetricsService.shared.record(
                     metric: .timelineHitch,
                     value: report.worstFrameMs,
                     unit: .ms,
-                    sessionId: sid,
+                    sessionId: sessionId,
                     tags: [
                         "section": name,
                         "hitch_count": String(report.hitchCount),

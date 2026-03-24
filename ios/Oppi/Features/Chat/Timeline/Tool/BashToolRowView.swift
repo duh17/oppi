@@ -9,6 +9,23 @@ struct BashRenderInput {
     let unwrapped: Bool
     let isError: Bool
     let isStreaming: Bool
+    let sessionId: String?
+
+    init(
+        command: String?,
+        output: String?,
+        unwrapped: Bool,
+        isError: Bool,
+        isStreaming: Bool,
+        sessionId: String? = nil
+    ) {
+        self.command = command
+        self.output = output
+        self.unwrapped = unwrapped
+        self.isError = isError
+        self.isStreaming = isStreaming
+        self.sessionId = sessionId
+    }
 }
 
 // MARK: - BashRenderResult
@@ -71,6 +88,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     private var commandRenderSignature: Int?
     private var pendingFollowTail = false
+    private var perfSessionId: String?
 
     // MARK: - Streaming append state (step 7)
 
@@ -113,6 +131,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputColor: UIColor,
         wasOutputVisible: Bool
     ) -> BashRenderResult {
+        perfSessionId = input.sessionId
         var showCommand = false
         var showOutput = false
 
@@ -137,7 +156,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 ChatTimelinePerf.recordRenderStrategy(
                     mode: "bash.command",
                     durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
-                    inputBytes: displayCmd.utf8.count
+                    inputBytes: displayCmd.utf8.count,
+                    sessionId: input.sessionId
                 )
                 commandRenderSignature = signature
             }
@@ -199,7 +219,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
                 ChatTimelinePerf.recordRenderStrategy(
                     mode: tier == .cheap ? "bash.output.stream" : "bash.output.ansi",
                     durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
-                    inputBytes: displayOutput.utf8.count
+                    inputBytes: displayOutput.utf8.count,
+                    sessionId: input.sessionId
                 )
 
                 outputRenderSignature = signature
@@ -408,7 +429,8 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
             frameWidth: max(1, outputScrollView.bounds.width),
             renderedText: renderedText,
             cache: &outputWidthEstimateCache,
-            metricMode: "output"
+            metricMode: "output",
+            sessionId: perfSessionId
         )
     }
 

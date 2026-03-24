@@ -383,6 +383,74 @@ struct CollectionRenderPerfBench {
         print("METRIC reconfigure_detect_us=\(String(format: "%.1f", us))")
     }
 
+    // MARK: - Benchmark: Multiplex Visible + Hidden Session
+
+    /// Measures visible streaming apply cost while a hidden sibling session
+    /// still processes coalesced deltas through its own reducer pipeline.
+    @Test("Multiplex: visible stream + hidden sibling reducer")
+    func multiplexVisibleStreamingWithHiddenSibling() {
+        let (baseItems, streamingID) = Self.streamingTimeline(existingTurns: 10, streamingTextLength: 200)
+        let hiddenSessionID = "bench-hidden-sibling"
+
+        var visibleHarness: WindowedTimelineHarness!
+        var hiddenReducer: TimelineReducer!
+        var hiddenCoalescer: DeltaCoalescer!
+        var tickCount = 0
+
+        let us = Self.measureMedianUs(
+            setup: {
+                visibleHarness = makeWindowedTimelineHarness(sessionId: "bench-visible-sibling")
+                visibleHarness.applyItems(baseItems, isBusy: true, streamingID: streamingID)
+                visibleHarness.collectionView.layoutIfNeeded()
+
+                hiddenReducer = TimelineReducer()
+                hiddenCoalescer = DeltaCoalescer()
+                hiddenCoalescer.onFlush = { events in
+                    hiddenReducer.processBatch(events)
+                }
+                hiddenCoalescer.receive(.agentStart(sessionId: hiddenSessionID))
+                tickCount = 0
+            },
+            {
+                for tick in 0..<10 {
+                    let chunk = String(repeating: "Visible session content. ", count: 2)
+                    let existingText: String
+                    if case .assistantMessage(_, let text, _) = visibleHarness.coordinator.currentItemByID[streamingID] {
+                        existingText = text
+                    } else {
+                        existingText = ""
+                    }
+
+                    let updated = Self.streamingTextGrowth(
+                        base: baseItems,
+                        streamingID: streamingID,
+                        newText: existingText + chunk
+                    )
+                    visibleHarness.applyItems(updated, isBusy: true, streamingID: streamingID)
+
+                    hiddenCoalescer.receive(.textDelta(
+                        sessionId: hiddenSessionID,
+                        delta: "Hidden sibling delta \(tick). More background streaming work. "
+                    ))
+                    hiddenCoalescer.receive(.thinkingDelta(
+                        sessionId: hiddenSessionID,
+                        delta: "Hidden sibling thinking \(tick). "
+                    ))
+                    hiddenCoalescer.flushNow()
+                    tickCount = tick + 1
+                }
+
+                hiddenCoalescer.receive(.agentEnd(sessionId: hiddenSessionID))
+                hiddenCoalescer.flushNow()
+            }
+        )
+
+        let perTickUs = us / Double(max(1, tickCount))
+        print("METRIC multiplex_visible_hidden_tick_us=\(String(format: "%.1f", perTickUs))")
+        print("METRIC multiplex_hidden_items=\(hiddenReducer.items.count)")
+        #expect(hiddenReducer.items.count > 0)
+    }
+
     // MARK: - Aggregate Primary Metric
 
     @Test("Aggregate: total collection rendering cost")

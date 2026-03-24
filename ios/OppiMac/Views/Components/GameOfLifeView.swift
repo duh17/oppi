@@ -233,7 +233,8 @@ private final class GameOfLifeNSView: NSView {
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
     deinit {
-        stopAnimation()
+        timer?.invalidate()
+        timer = nil
     }
 
     override func layout() {
@@ -257,7 +258,7 @@ private final class GameOfLifeNSView: NSView {
     private func startAnimation() {
         guard timer == nil else { return }
         let t = Timer(timeInterval: 1.0 / 8.0, repeats: true) { [weak self] _ in
-            self?.timerFired()
+            MainActor.assumeIsolated { self?.timerFired() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t

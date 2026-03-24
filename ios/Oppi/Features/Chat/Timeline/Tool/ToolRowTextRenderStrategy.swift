@@ -16,7 +16,8 @@ struct ToolRowTextRenderStrategy {
         wasExpandedVisible: Bool,
         isCurrentModeText: Bool,
         isUsingMarkdownLayout: Bool,
-        isUsingReadMediaLayout: Bool
+        isUsingReadMediaLayout: Bool,
+        sessionId: String? = nil
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let signature = ToolTimelineRowRenderMetrics.textSignature(
@@ -76,7 +77,8 @@ struct ToolRowTextRenderStrategy {
                 mode: tier == .cheap ? "text.stream" : (language != nil ? "text.syntax" : "text.ansi"),
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: displayText.utf8.count,
-                language: language?.displayName
+                language: language?.displayName,
+                sessionId: sessionId
             )
 
             ToolRowTextRenderer.applyANSIOutputPresentation(

@@ -8,7 +8,7 @@ struct ToolTimelineRowWidthEstimateCache {
         estimatedContentWidth = nil
     }
 
-    mutating func resolve(text: String, metricMode: String) -> CGFloat {
+    mutating func resolve(text: String, metricMode: String, sessionId: String? = nil) -> CGFloat {
         if let estimatedContentWidth {
             return estimatedContentWidth
         }
@@ -18,7 +18,8 @@ struct ToolTimelineRowWidthEstimateCache {
         ChatTimelinePerf.recordToolRowMeasurement(
             name: "width.\(metricMode)",
             durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
-            inputBytes: text.utf8.count
+            inputBytes: text.utf8.count,
+            sessionId: sessionId
         )
         estimatedContentWidth = width
         return width
@@ -47,6 +48,7 @@ struct ToolTimelineRowViewportHeightCache {
         modeKey: Int,
         metricMode: String,
         inputBytes: Int,
+        sessionId: String? = nil,
         measure: () -> CGFloat
     ) -> CGFloat {
         if isValid,
@@ -61,7 +63,8 @@ struct ToolTimelineRowViewportHeightCache {
         ChatTimelinePerf.recordToolRowMeasurement(
             name: "viewport.\(metricMode)",
             durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
-            inputBytes: inputBytes
+            inputBytes: inputBytes,
+            sessionId: sessionId
         )
 
         isValid = true
@@ -143,10 +146,15 @@ enum ToolTimelineRowLayoutPerformance {
         frameWidth: CGFloat,
         renderedText: String,
         cache: inout ToolTimelineRowWidthEstimateCache,
-        metricMode: String
+        metricMode: String,
+        sessionId: String? = nil
     ) -> CGFloat {
         let minimumContentWidth = max(1, frameWidth - 12)
-        let estimatedContentWidth = cache.resolve(text: renderedText, metricMode: metricMode)
+        let estimatedContentWidth = cache.resolve(
+            text: renderedText,
+            metricMode: metricMode,
+            sessionId: sessionId
+        )
         let contentWidth = max(minimumContentWidth, estimatedContentWidth)
         return contentWidth - frameWidth
     }
@@ -159,6 +167,7 @@ enum ToolTimelineRowLayoutPerformance {
         inputBytes: Int,
         profile: ToolTimelineRowViewportProfile?,
         availableHeight: CGFloat,
+        sessionId: String? = nil,
         measure: () -> CGFloat
     ) -> CGFloat {
         if let profile {
@@ -175,6 +184,7 @@ enum ToolTimelineRowLayoutPerformance {
             modeKey: mode.cacheKey,
             metricMode: mode.perfName,
             inputBytes: inputBytes,
+            sessionId: sessionId,
             measure: measure
         )
     }

@@ -547,6 +547,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount: previousHiddenCount,
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
+                sessionId: configuration.sessionId,
                 themeChanged: themeChanged,
                 isBusy: configuration.isBusy
             )
@@ -576,7 +577,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // view layouts naturally and auto-scroll keeps the viewport pinned.
             let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
             if !configuration.isBusy || detached {
-                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count)
+                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
                 collectionView.layoutIfNeeded()
                 ChatTimelinePerf.endLayoutPass(layoutToken)
             }
@@ -910,7 +911,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 itemIDs,
                 dataSource: dataSource,
                 collectionView: collectionView,
-                currentIDs: currentIDs
+                currentIDs: currentIDs,
+                sessionId: sessionId
             )
         }
 
@@ -921,7 +923,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             TimelineScrollCoordinator.performScroll(
                 command,
                 in: collectionView,
-                currentIDs: currentIDs
+                currentIDs: currentIDs,
+                sessionId: sessionId
             ) { [weak self, weak collectionView] in
                 guard let self, let collectionView else { return }
                 // `scrollToItem(animated: false)` can update contentOffset on the next

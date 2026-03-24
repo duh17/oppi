@@ -14,6 +14,7 @@ enum TimelineSnapshotApplier {
         previousHiddenCount: Int,
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?,
+        sessionId: String? = nil,
         themeChanged: Bool = false,
         isBusy: Bool = false
     ) {
@@ -34,7 +35,8 @@ enum TimelineSnapshotApplier {
 
             let applyToken = ChatTimelinePerf.beginCollectionApply(
                 itemCount: nextIDs.count,
-                changedCount: 0
+                changedCount: 0,
+                sessionId: sessionId
             )
             dataSource?.apply(snapshot, animatingDifferences: false)
             ChatTimelinePerf.endCollectionApply(applyToken)
@@ -70,7 +72,8 @@ enum TimelineSnapshotApplier {
                 snapshot.reconfigureItems(changedIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
                     itemCount: nextIDs.count,
-                    changedCount: changedIDs.count
+                    changedCount: changedIDs.count,
+                    sessionId: sessionId
                 )
                 dataSource.apply(snapshot, animatingDifferences: false)
                 ChatTimelinePerf.endCollectionApply(applyToken)
@@ -123,10 +126,11 @@ enum TimelineSnapshotApplier {
         }
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
-            changedCount: dedupedChangedIDs.count
+            changedCount: dedupedChangedIDs.count,
+            sessionId: sessionId
         )
         if shouldAnimate {
-            FrameBudgetMonitor.shared.beginSection("structural_apply")
+            FrameBudgetMonitor.shared.beginSection("structural_apply", sessionId: sessionId)
         }
         dataSource?.apply(snapshot, animatingDifferences: shouldAnimate)
         if shouldAnimate {
@@ -151,7 +155,8 @@ enum TimelineSnapshotApplier {
         _ itemIDs: [String],
         dataSource: DataSource?,
         collectionView: UICollectionView,
-        currentIDs: [String]
+        currentIDs: [String],
+        sessionId: String? = nil
     ) {
         guard let dataSource else { return }
 
@@ -163,12 +168,13 @@ enum TimelineSnapshotApplier {
 
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: currentIDs.count,
-            changedCount: existing.count
+            changedCount: existing.count,
+            sessionId: sessionId
         )
         dataSource.apply(snapshot, animatingDifferences: false)
         ChatTimelinePerf.endCollectionApply(applyToken)
 
-        let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
+        let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count, sessionId: sessionId)
         collectionView.layoutIfNeeded()
         ChatTimelinePerf.endLayoutPass(layoutToken)
     }

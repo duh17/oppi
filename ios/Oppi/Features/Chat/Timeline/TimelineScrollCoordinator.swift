@@ -6,6 +6,7 @@ enum TimelineScrollCoordinator {
         _ command: ChatTimelineScrollCommand,
         in collectionView: UICollectionView,
         currentIDs: [String],
+        sessionId: String? = nil,
         afterNonAnimatedScroll: @escaping @MainActor () -> Void
     ) -> Bool {
         guard let index = currentIDs.firstIndex(of: command.id) else { return false }
@@ -19,7 +20,7 @@ enum TimelineScrollCoordinator {
             position = .bottom
         }
 
-        ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated)
+        ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated, sessionId: sessionId)
 
         if command.animated {
             collectionView.scrollToItem(at: indexPath, at: position, animated: true)

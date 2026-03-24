@@ -21,7 +21,8 @@ struct ToolRowCodeRenderStrategy {
         previousRenderedText: String?,
         previousAutoFollow: Bool,
         isCurrentModeCode: Bool,
-        wasExpandedVisible: Bool
+        wasExpandedVisible: Bool,
+        sessionId: String? = nil
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
@@ -103,7 +104,8 @@ struct ToolRowCodeRenderStrategy {
                 mode: tier == .cheap ? "code.stream" : (deferred != nil ? "code.deferred" : "code.highlight"),
                 durationMs: ChatTimelinePerf.elapsedMs(since: renderStartNs),
                 inputBytes: displayText.utf8.count,
-                language: language?.displayName
+                language: language?.displayName,
+                sessionId: sessionId
             )
             renderedText = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         }

@@ -16,7 +16,8 @@ extension ToolTimelineRowContentView {
     }
 
     func scheduleDeferredCodeHighlightIfNeeded(
-        _ deferredHighlight: ToolRowCodeRenderStrategy.DeferredHighlight
+        _ deferredHighlight: ToolRowCodeRenderStrategy.DeferredHighlight,
+        sessionId: String? = nil
     ) {
         if expandedCodeDeferredHighlightSignature == deferredHighlight.signature,
            let task = expandedCodeDeferredHighlightTask,
@@ -51,7 +52,8 @@ extension ToolTimelineRowContentView {
                     mode: "code.deferred.highlight",
                     durationMs: durationMs,
                     inputBytes: deferredHighlight.text.utf8.count,
-                    language: deferredHighlight.language.displayName
+                    language: deferredHighlight.language.displayName,
+                    sessionId: sessionId
                 )
 
                 guard let self,
