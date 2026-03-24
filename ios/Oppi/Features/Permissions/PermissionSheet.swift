@@ -36,6 +36,7 @@ struct PermissionSheet: View {
             .padding(.top, 12)
             .padding(.bottom, 24)
         }
+        .accessibilityIdentifier("permission.sheet")
     }
 
     // MARK: - Multiple Requests (Pager)
@@ -69,6 +70,7 @@ struct PermissionSheet: View {
                 .padding(.bottom, 16)
             }
         }
+        .accessibilityIdentifier("permission.sheet")
     }
 
     private func singlePageContent(_ request: PermissionRequest) -> some View {
@@ -256,6 +258,7 @@ private struct PermissionActionButtons: View {
                             .font(.footnote)
                     }
                     .disabled(isResolving)
+                    .accessibilityIdentifier("permission.scope")
 
                     Spacer()
                 }
@@ -273,6 +276,7 @@ private struct PermissionActionButtons: View {
                 .padding(.vertical, 14)
         }
         .disabled(isResolving)
+        .accessibilityIdentifier("permission.deny")
     }
 
     private var allowLabel: some View {
@@ -291,6 +295,7 @@ private struct PermissionActionButtons: View {
             .padding(.vertical, 14)
         }
         .disabled(isResolving)
+        .accessibilityIdentifier("permission.approve")
     }
 
     private var biometricIcon: String {
