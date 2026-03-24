@@ -22,6 +22,14 @@ actor SentryService {
         guard !hasConfigured else { return }
         hasConfigured = true
 
+        // Skip Sentry when running inside XCTest (unit tests, UI tests,
+        // benchmarks). The test harness sets XCTestConfigurationFilePath;
+        // normal debug builds on device do not.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            sentryLog.info("Sentry disabled (running under XCTest)")
+            return
+        }
+
         let mode = TelemetrySettings.mode
         guard mode.allowsRemoteDiagnosticsUpload else {
             sentryLog.info("Sentry disabled (mode=\(mode.label, privacy: .public))")
