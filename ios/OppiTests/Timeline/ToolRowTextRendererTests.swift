@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -128,6 +129,112 @@ struct CodeTests {
         let result = ToolRowTextRenderer.makeCodeAttributedText(text: "let x = 1", language: .swift, startLine: 1)
         #expect(result.length > 0)
     }
+
+    /// Regression test: shell syntax tokens must not bleed into the next line's
+    /// gutter (line number + separator). This happened when scanStringEndPos/
+    /// scanShellVariable used chars.count instead of the line-end bound, causing
+    /// cross-line tokens whose color range extended into gutter characters.
+    @Test func shellSyntaxDoesNotColorNextLineGutter() {
+        // Line 1 ends with an unmatched " that the scanner sees as a string opener.
+        // Before the fix, scanStringEndPos would scan past \n into line 2 to find
+        // the closing ", creating a cross-line token that colored line 2's gutter.
+        let text = """
+        SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+        BASE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+        OPPI_ROOT="${OPPI_ROOT:-${PIOS_ROOT:-$HOME/workspace/oppi}}"
+        """
+
+        let result = ToolRowTextRenderer.makeCodeAttributedText(
+            text: text, language: .shell, startLine: 1
+        )
+
+        // The guttered string is: " 1 │ <code>\n 2 │ <code>\n 3 │ <code>"
+        // Gutter characters (line number + separator) must keep their assigned
+        // colors (lineNumberColor / separatorColor) — no syntax color override.
+        let gutterRanges = findGutterRanges(in: result)
+        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
+        let separatorColor = UIColor(Color.themeComment.opacity(0.35))
+
+        for gutter in gutterRanges {
+            // Check line number portion
+            var numEffective = NSRange()
+            let numColor = result.attribute(.foregroundColor, at: gutter.lineNumStart, effectiveRange: &numEffective) as? UIColor
+            #expect(numColor == lineNumberColor, "Line \(gutter.lineNumber) number colored by syntax token")
+
+            // Check separator portion
+            var sepEffective = NSRange()
+            let sepColor = result.attribute(.foregroundColor, at: gutter.sepStart, effectiveRange: &sepEffective) as? UIColor
+            #expect(sepColor == separatorColor, "Line \(gutter.lineNumber) separator colored by syntax token")
+        }
+    }
+
+    /// Verify that $() and ${} variable expressions don't cross line boundaries
+    /// and bleed .type color into the next line's gutter.
+    @Test func shellVariableDoesNotColorNextLineGutter() {
+        let text = """
+        echo $(incomplete_subshell
+        next_line
+        """
+
+        let result = ToolRowTextRenderer.makeCodeAttributedText(
+            text: text, language: .shell, startLine: 1
+        )
+
+        let gutterRanges = findGutterRanges(in: result)
+        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
+
+        // Line 2's gutter must not be colored by a cross-line $() token
+        if let line2 = gutterRanges.first(where: { $0.lineNumber == 2 }) {
+            let numColor = result.attribute(.foregroundColor, at: line2.lineNumStart, effectiveRange: nil) as? UIColor
+            #expect(numColor == lineNumberColor, "Line 2 number colored by cross-line $() token")
+        }
+    }
+}
+
+// MARK: - Test Helpers
+
+private struct GutterInfo {
+    let lineNumber: Int
+    let lineNumStart: Int  // UTF-16 offset of line number in attributed string
+    let sepStart: Int      // UTF-16 offset of separator character
+}
+
+/// Find the gutter positions (line number + separator) in a makeCodeAttributedText result.
+private func findGutterRanges(in attributed: NSAttributedString) -> [GutterInfo] {
+    let text = attributed.string
+    var results: [GutterInfo] = []
+    var lineNumber = 0
+    var pos = 0
+    let nsText = text as NSString
+
+    while pos < nsText.length {
+        lineNumber += 1
+        // Skip leading spaces in line number
+        var numStart = pos
+        while numStart < nsText.length, nsText.character(at: numStart) == 0x20 /* space */ {
+            numStart += 1
+        }
+        // Find the separator character │ (U+2502)
+        var sepPos = pos
+        while sepPos < nsText.length {
+            let ch = nsText.character(at: sepPos)
+            if ch == 0x2502 { break } // │
+            if ch == 0x0A { break }   // newline — no separator found
+            sepPos += 1
+        }
+
+        if sepPos < nsText.length, nsText.character(at: sepPos) == 0x2502 {
+            results.append(GutterInfo(lineNumber: lineNumber, lineNumStart: pos, sepStart: sepPos))
+        }
+
+        // Advance to next line
+        while pos < nsText.length, nsText.character(at: pos) != 0x0A {
+            pos += 1
+        }
+        pos += 1 // skip newline
+    }
+
+    return results
 }
 
 // MARK: - Diff Helpers

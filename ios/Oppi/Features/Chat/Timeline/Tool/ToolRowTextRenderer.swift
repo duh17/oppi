@@ -238,12 +238,21 @@ enum ToolRowTextRenderer {
                 }
 
                 let offsetInLine = token.location - codeCharOffsets[lineIdx]
+                guard offsetInLine >= 0 else { continue }
+
                 let gutterPos = codeStartOffsets[lineIdx] + offsetInLine
+
+                // Clamp token length to stay within this line's code area.
+                // Prevents cross-line scanner bugs from coloring the next
+                // line's gutter (line number + separator).
+                let lineCodeLen = lines[lineIdx].count
+                let clampedLen = min(token.length, lineCodeLen - offsetInLine)
+                guard clampedLen > 0 else { continue }
 
                 result.addAttribute(
                     .foregroundColor,
                     value: color,
-                    range: NSRange(location: gutterPos, length: token.length)
+                    range: NSRange(location: gutterPos, length: clampedLen)
                 )
             }
         }

@@ -520,3 +520,81 @@ struct GraphQLHighlightingTests {
         #expect(result.string == gql)
     }
 }
+
+// MARK: - Cross-Line Token Regression
+
+@Suite("SyntaxHighlighter — Cross-Line Boundary")
+struct CrossLineBoundaryTests {
+    /// Verify no shell token spans across a newline boundary.
+    /// Before the fix, scanStringEndPos and scanShellVariable used chars.count
+    /// instead of the line-end bound, allowing tokens to extend into the next line.
+    @Test func shellTokensNeverCrossNewlines() {
+        let text = """
+        SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+        BASE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+        OPPI_ROOT="${OPPI_ROOT:-${PIOS_ROOT:-$HOME/workspace/oppi}}"
+        """
+
+        let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .shell)
+        let chars = Array(text)
+
+        for token in ranges {
+            let tokenEnd = token.location + token.length
+            // Check that no character within the token range is a newline
+            for pos in token.location..<min(tokenEnd, chars.count) {
+                #expect(
+                    chars[pos] != "\n",
+                    "Token at \(token.location) length \(token.length) kind \(token.kind) crosses newline at position \(pos)"
+                )
+            }
+        }
+    }
+
+    /// Verify that an unclosed string at end of line does not produce a cross-line token.
+    @Test func unclosedStringStopsAtLineEnd() {
+        let text = "echo \"hello\nnext_line"
+        let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .shell)
+        let chars = Array(text)
+        let newlinePos = chars.firstIndex(of: "\n")!
+
+        for token in ranges {
+            let tokenEnd = token.location + token.length
+            #expect(
+                tokenEnd <= newlinePos || token.location > newlinePos,
+                "Token at \(token.location) length \(token.length) crosses newline"
+            )
+        }
+    }
+
+    /// Verify unclosed $() subshell doesn't cross line boundary.
+    @Test func unclosedSubshellStopsAtLineEnd() {
+        let text = "echo $(incomplete\nnext_line"
+        let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .shell)
+        let chars = Array(text)
+        let newlinePos = chars.firstIndex(of: "\n")!
+
+        for token in ranges {
+            let tokenEnd = token.location + token.length
+            #expect(
+                tokenEnd <= newlinePos || token.location > newlinePos,
+                "Token at \(token.location) length \(token.length) crosses newline"
+            )
+        }
+    }
+
+    /// Generic (non-shell) scanner: strings must not cross line boundaries.
+    @Test func genericStringTokensRespectLineBounds() {
+        let text = "let x = \"unterminated\nlet y = 2"
+        let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .swift)
+        let chars = Array(text)
+        let newlinePos = chars.firstIndex(of: "\n")!
+
+        for token in ranges {
+            let tokenEnd = token.location + token.length
+            #expect(
+                tokenEnd <= newlinePos || token.location > newlinePos,
+                "Token at \(token.location) length \(token.length) crosses newline"
+            )
+        }
+    }
+}
