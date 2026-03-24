@@ -71,6 +71,22 @@ export class SessionLifecycleCoordinator {
   resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
 
+    // Auto-stop child sessions immediately when they go idle.
+    // Child sessions are ephemeral — they do one task and exit.
+    // The idle timeout is only useful for root sessions waiting for user input.
+    const active = this.deps.getActiveSession(key);
+    if (active?.session.parentSessionId && active.session.status === "ready") {
+      console.log("[session] auto-stopping idle child", {
+        sessionId: active.session.id,
+        parent: active.session.parentSessionId,
+      });
+      // Use setTimeout(0) so the "ready" state broadcast completes first
+      setTimeout(() => {
+        void this.deps.stopSession(active.session.id);
+      }, 0);
+      return;
+    }
+
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
       console.log("[session] idle timeout", {
