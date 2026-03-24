@@ -34,6 +34,15 @@ export interface Workspace {
   defaultModel?: string; // Override server default for this workspace
   lastUsedModel?: string; // Sticky: last model used in any session (auto-updated)
 
+  // Runtime
+  /** Workspace runtime mode. "host" = direct execution, "sandbox" = Gondolin micro-VM. */
+  runtime?: "host" | "sandbox";
+  /** Sandbox configuration (only used when runtime is "sandbox"). */
+  sandboxConfig?: {
+    /** Allowed egress hosts for network access. Default: ["*"] (all). */
+    allowedHosts?: string[];
+  };
+
   // Metadata
   createdAt: number;
   updatedAt: number;
@@ -471,6 +480,8 @@ export interface CreateWorkspaceRequest {
   extensions?: string[];
   defaultModel?: string;
   gitStatusEnabled?: boolean;
+  runtime?: "host" | "sandbox";
+  sandboxConfig?: { allowedHosts?: string[] };
 }
 
 export interface UpdateWorkspaceRequest {
@@ -486,6 +497,8 @@ export interface UpdateWorkspaceRequest {
   extensions?: string[];
   defaultModel?: string | null;
   gitStatusEnabled?: boolean;
+  runtime?: "host" | "sandbox";
+  sandboxConfig?: { allowedHosts?: string[] } | null;
 }
 
 export interface ClientLogUploadEntry {

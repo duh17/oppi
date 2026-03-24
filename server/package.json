@@ -62,6 +62,7 @@
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {
+    "@earendil-works/gondolin": "^0.7.0",
     "@mariozechner/pi-coding-agent": "^0.62.0",
     "diff-match-patch": "^1.0.5",
     "ws": "^8.18.0"

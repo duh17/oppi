@@ -11,6 +11,10 @@ import { basename, extname, join, resolve } from "node:path";
 
 import {
   createAgentSession,
+  createBashTool,
+  createReadTool,
+  createWriteTool,
+  createEditTool,
   type AgentSession,
   type AgentSessionEvent,
   type ExtensionFactory,
@@ -121,6 +125,8 @@ interface PendingExtensionUIResponse {
 export class SdkBackend {
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private static _gondolinManager: any;
 
   private piSession: AgentSession;
   private unsub: () => void;
@@ -225,6 +231,39 @@ export class SdkBackend {
     });
     await loader.reload();
 
+    // Sandbox mode: create tools backed by Gondolin micro-VM
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let sandboxTools: any[] | undefined;
+    if (workspace?.runtime === "sandbox") {
+      try {
+        const { GondolinManager } = await import("./gondolin-manager.js");
+        const {
+          createGondolinBashOps,
+          createGondolinReadOps,
+          createGondolinWriteOps,
+          createGondolinEditOps,
+        } = await import("./gondolin-ops.js");
+
+        // Lazy singleton — shared across all sessions for VM reuse.
+        if (!SdkBackend._gondolinManager) {
+          SdkBackend._gondolinManager = new GondolinManager();
+        }
+        const manager = SdkBackend._gondolinManager;
+        const vm = await manager.ensureWorkspaceVm(workspace, cwd);
+
+        sandboxTools = [
+          createReadTool(cwd, { operations: createGondolinReadOps(vm, cwd) }),
+          createBashTool(cwd, { operations: createGondolinBashOps(vm, cwd) }),
+          createEditTool(cwd, { operations: createGondolinEditOps(vm, cwd) }),
+          createWriteTool(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
+        ];
+        console.log(`[sdk] Sandbox VM ready for workspace ${workspace.id || "unknown"}`);
+      } catch (err) {
+        console.error("[sdk] Failed to create sandbox VM, falling back to host mode", err);
+        // Fall through to host mode — sandboxTools stays undefined
+      }
+    }
+
     const { session: piSession } = await createAgentSession({
       cwd,
       agentDir,
@@ -237,6 +276,7 @@ export class SdkBackend {
       sessionManager: piSessionManager,
       settingsManager,
       resourceLoader: loader,
+      ...(sandboxTools ? { tools: sandboxTools } : {}),
     });
 
     SdkBackend.applyDefaultQueueModes(piSession);

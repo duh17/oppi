@@ -63,6 +63,9 @@ export class WorkspaceStore {
       hostMount: normalizeOptionalString(req.hostMount),
       extensions: normalizeExtensions(req.extensions),
       defaultModel: normalizeOptionalString(req.defaultModel),
+      gitStatusEnabled: req.gitStatusEnabled,
+      runtime: req.runtime,
+      sandboxConfig: req.sandboxConfig,
       createdAt: now,
       updatedAt: now,
     };
@@ -104,6 +107,14 @@ export class WorkspaceStore {
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
       defaultModel: normalizeOptionalString(raw.defaultModel),
       lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
+      gitStatusEnabled:
+        typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
+      runtime:
+        raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
+      sandboxConfig:
+        raw.sandboxConfig && typeof raw.sandboxConfig === "object"
+          ? (raw.sandboxConfig as Workspace["sandboxConfig"])
+          : undefined,
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
     };
@@ -176,6 +187,9 @@ export class WorkspaceStore {
       workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
+    if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
+    if (updates.sandboxConfig !== undefined)
+      workspace.sandboxConfig = updates.sandboxConfig ?? undefined;
 
     workspace.updatedAt = Date.now();
 
