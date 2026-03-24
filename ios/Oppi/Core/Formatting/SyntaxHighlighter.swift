@@ -733,7 +733,7 @@ enum SyntaxHighlighter {
 
             let ch = allChars[i]
             if ch == "\"" || ch == "'" || ch == "`" {
-                let tokenEnd = scanStringEndPos(allChars, from: i, quote: ch)
+                let tokenEnd = scanStringEndPos(allChars, from: i, end: end, quote: ch)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
                 i = tokenEnd
                 continue
@@ -796,7 +796,7 @@ enum SyntaxHighlighter {
             }
 
             if ch == "\"" || ch == "'" || ch == "`" {
-                let tokenEnd = scanStringEndPos(allChars, from: i, quote: ch)
+                let tokenEnd = scanStringEndPos(allChars, from: i, end: end, quote: ch)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .string))
                 i = tokenEnd
                 expectCommand = false
@@ -804,7 +804,7 @@ enum SyntaxHighlighter {
             }
 
             if ch == "$" {
-                let (_, tokenEnd) = scanShellVariable(allChars, from: i)
+                let (_, tokenEnd) = scanShellVariable(allChars, from: i, end: end)
                 ranges.append(TokenRange(location: i, length: tokenEnd - i, kind: .type))
                 i = tokenEnd
                 expectCommand = false
@@ -819,13 +819,13 @@ enum SyntaxHighlighter {
             }
 
             if ch == "-", isShellOptionStart(allChars, at: i) {
-                let (_, tokenEnd) = scanShellToken(allChars, from: i)
+                let (_, tokenEnd) = scanShellToken(allChars, from: i, end: end)
                 i = tokenEnd
                 expectCommand = false
                 continue
             }
 
-            let (token, tokenEnd) = scanShellToken(allChars, from: i)
+            let (token, tokenEnd) = scanShellToken(allChars, from: i, end: end)
             if token.isEmpty {
                 i += 1
                 continue
@@ -873,9 +873,9 @@ enum SyntaxHighlighter {
         return prev.isWhitespace || prev == "|" || prev == "&" || prev == ";" || prev == "("
     }
 
-    private static func scanShellToken(_ chars: [Character], from start: Int) -> (String, Int) {
+    private static func scanShellToken(_ chars: [Character], from start: Int, end: Int) -> (String, Int) {
         var i = start
-        while i < chars.count {
+        while i < end {
             let c = chars[i]
             if c.isWhitespace || isShellDelimiter(c) {
                 break
@@ -971,27 +971,27 @@ enum SyntaxHighlighter {
         return i
     }
 
-    private static func scanShellVariable(_ chars: [Character], from start: Int) -> (String, Int) {
-        guard start < chars.count, chars[start] == "$" else { return ("", start) }
+    private static func scanShellVariable(_ chars: [Character], from start: Int, end: Int) -> (String, Int) {
+        guard start < end, chars[start] == "$" else { return ("", start) }
 
         var i = start + 1
-        guard i < chars.count else { return ("$", i) }
+        guard i < end else { return ("$", i) }
         let next = chars[i]
 
         if next == "{" {
             i += 1
             var depth = 1
-            while i < chars.count, depth > 0 {
+            while i < end, depth > 0 {
                 let c = chars[i]
                 if c == "{" {
                     depth += 1
                 } else if c == "}" {
                     depth -= 1
                 } else if c == "\"" || c == "'" || c == "`" {
-                    i = scanStringEndPos(chars, from: i, quote: c)
+                    i = scanStringEndPos(chars, from: i, end: end, quote: c)
                     continue
                 } else if c == "\\" {
-                    i = min(i + 2, chars.count)
+                    i = min(i + 2, end)
                     continue
                 }
                 i += 1
@@ -1002,7 +1002,7 @@ enum SyntaxHighlighter {
         if next == "(" {
             i += 1
             var depth = 1
-            while i < chars.count, depth > 0 {
+            while i < end, depth > 0 {
                 let c = chars[i]
                 if c == "(" {
                     depth += 1
@@ -1011,10 +1011,10 @@ enum SyntaxHighlighter {
                     i += 1
                     continue
                 } else if c == "\"" || c == "'" || c == "`" {
-                    i = scanStringEndPos(chars, from: i, quote: c)
+                    i = scanStringEndPos(chars, from: i, end: end, quote: c)
                     continue
                 } else if c == "\\" {
-                    i = min(i + 2, chars.count)
+                    i = min(i + 2, end)
                     continue
                 }
                 i += 1
@@ -1029,13 +1029,13 @@ enum SyntaxHighlighter {
 
         if next.isNumber {
             i += 1
-            while i < chars.count, chars[i].isNumber { i += 1 }
+            while i < end, chars[i].isNumber { i += 1 }
             return (String(chars[start..<i]), i)
         }
 
         if next.isLetter || next == "_" {
             i += 1
-            while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
+            while i < end, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
                 i += 1
             }
             return (String(chars[start..<i]), i)
@@ -1099,9 +1099,14 @@ enum SyntaxHighlighter {
 
     /// Scan string literal, return end position only (no String allocation).
     private static func scanStringEndPos(_ chars: [Character], from start: Int, quote: Character) -> Int {
+        scanStringEndPos(chars, from: start, end: chars.count, quote: quote)
+    }
+
+    /// Line-bounded variant: won't scan past `end`.
+    private static func scanStringEndPos(_ chars: [Character], from start: Int, end: Int, quote: Character) -> Int {
         var i = start + 1
         var escaped = false
-        while i < chars.count {
+        while i < end {
             if escaped {
                 escaped = false
             } else if chars[i] == "\\" {
@@ -1111,7 +1116,7 @@ enum SyntaxHighlighter {
             }
             i += 1
         }
-        return chars.count
+        return end
     }
 
     /// Scan number literal, return end position only (no String allocation).
