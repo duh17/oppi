@@ -23,6 +23,8 @@ export interface VmFactoryOptions {
   allowedHosts: string[];
   /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
   secrets?: Record<string, { value: string; headerName?: string }>;
+  /** Additional host paths to mount read-only at the same path inside the VM. */
+  readonlyMounts?: string[];
 }
 
 /**
@@ -34,7 +36,7 @@ export interface VmFactoryOptions {
 export async function defaultVmFactory(options: VmFactoryOptions): Promise<GondolinVm & { close(): Promise<void> }> {
   // Dynamic import — only loaded when sandbox mode is used.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { VM, RealFSProvider, createHttpHooks } = await import("@earendil-works/gondolin");
+  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } = await import("@earendil-works/gondolin");
 
   // Transform secrets to Gondolin SDK format (hosts + value per key)
   const gondolinSecrets = options.secrets
@@ -51,12 +53,20 @@ export async function defaultVmFactory(options: VmFactoryOptions): Promise<Gondo
     secrets: gondolinSecrets,
   });
 
+  // Build VFS mounts: workspace + any read-only paths (skills, agent config)
+  const mounts: Record<string, InstanceType<typeof RealFSProvider> | InstanceType<typeof ReadonlyProvider>> = {
+    "/workspace": new RealFSProvider(options.hostCwd),
+  };
+  if (options.readonlyMounts) {
+    for (const hostPath of options.readonlyMounts) {
+      // Mount at the same absolute path inside the VM so system prompt
+      // references (e.g. /Users/chenda/.pi/agent/skills/...) resolve.
+      mounts[hostPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
+    }
+  }
+
   const vm = await VM.create({
-    vfs: {
-      mounts: {
-        "/workspace": new RealFSProvider(options.hostCwd),
-      },
-    },
+    vfs: { mounts },
     httpHooks,
     env,
   });
@@ -81,7 +91,7 @@ export class GondolinManager {
    * Concurrent calls for the same workspace coalesce onto a single
    * startup promise to avoid spinning up duplicate VMs.
    */
-  async ensureWorkspaceVm(workspace: Workspace, hostCwd: string, secrets?: Record<string, { value: string; headerName?: string }>): Promise<GondolinVm> {
+  async ensureWorkspaceVm(workspace: Workspace, hostCwd: string, secrets?: Record<string, { value: string; headerName?: string }>, readonlyMounts?: string[]): Promise<GondolinVm> {
     const id = workspace.id;
 
     // Already running
@@ -92,7 +102,7 @@ export class GondolinManager {
     const inflight = this.starting.get(id);
     if (inflight) return inflight;
 
-    const promise = this.startVm(workspace, hostCwd, secrets);
+    const promise = this.startVm(workspace, hostCwd, secrets, readonlyMounts);
     this.starting.set(id, promise);
 
     try {
@@ -135,13 +145,14 @@ export class GondolinManager {
     workspace: Workspace,
     hostCwd: string,
     secrets?: Record<string, { value: string; headerName?: string }>,
+    readonlyMounts?: string[],
   ): Promise<GondolinVm & { close(): Promise<void> }> {
     const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? ["*"];
     console.log(
-      `[${ts()}] gondolin: starting VM for workspace ${workspace.id} (cwd=${hostCwd}, allowedHosts=${JSON.stringify(allowedHosts)})`,
+      `[${ts()}] gondolin: starting VM for workspace ${workspace.id} (cwd=${hostCwd}, allowedHosts=${JSON.stringify(allowedHosts)}, roMounts=${readonlyMounts?.length ?? 0})`,
     );
 
-    const vm = await this.factory({ hostCwd, allowedHosts, secrets });
+    const vm = await this.factory({ hostCwd, allowedHosts, secrets, readonlyMounts });
 
     console.log(`[${ts()}] gondolin: VM ready for workspace ${workspace.id}`);
     return vm;

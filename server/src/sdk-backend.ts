@@ -292,7 +292,16 @@ export class SdkBackend {
         // Auth extraction failed — proceed without secrets
       }
 
-      const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets);
+      // Mount skill directories + agentDir read-only so the agent can read
+      // SKILL.md files and AGENTS.md at the paths referenced in the system prompt.
+      const readonlyMounts: string[] = [];
+      if (config.skillPaths) {
+        readonlyMounts.push(...config.skillPaths);
+      }
+      // Mount agentDir so AGENTS.md, extensions, etc. are accessible
+      readonlyMounts.push(agentDir);
+
+      const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets, readonlyMounts);
 
       sandboxTools = [
         createReadToolDefinition(cwd, { operations: createGondolinReadOps(vm, cwd) }),
