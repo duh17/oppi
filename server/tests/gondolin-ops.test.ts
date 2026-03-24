@@ -208,9 +208,9 @@ describe("createGondolinReadOps", () => {
     await expect(ops.readFile(`${localCwd}/nope.txt`)).rejects.toThrow(/Failed to read/);
   });
 
-  it("checks access via test -r", async () => {
+  it("checks access via ls -d", async () => {
     const vm = createMockVm((args) => {
-      expect(args).toEqual(["/bin/test", "-r", "/workspace/file.txt"]);
+      expect(args).toEqual(["/bin/ls", "-d", "/workspace/file.txt"]);
       return createMockProcess({ exitCode: 0 });
     });
 

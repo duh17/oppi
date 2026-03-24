@@ -235,51 +235,54 @@ export class SdkBackend {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let sandboxTools: any[] | undefined;
     if (workspace?.runtime === "sandbox") {
-      try {
-        const { GondolinManager } = await import("./gondolin-manager.js");
-        const {
-          createGondolinBashOps,
-          createGondolinReadOps,
-          createGondolinWriteOps,
-          createGondolinEditOps,
-        } = await import("./gondolin-ops.js");
-
-        // Lazy singleton — shared across all sessions for VM reuse.
-        if (!SdkBackend._gondolinManager) {
-          SdkBackend._gondolinManager = new GondolinManager();
-        }
-        const manager = SdkBackend._gondolinManager;
-
-        // Extract LLM provider API keys as secrets for host-mediated injection.
-        // The VM gets placeholder values; real keys are injected by the host HTTP proxy.
-        const secrets: Record<string, { value: string; headerName?: string }> = {};
-        try {
-          const allCreds = authStorage.getAll();
-          for (const [provider, cred] of Object.entries(allCreds)) {
-            if (cred.type === "api_key" && cred.key) {
-              secrets[`${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`] = {
-                value: cred.key,
-                headerName: "Authorization",
-              };
-            }
-          }
-        } catch {
-          // Auth extraction failed — proceed without secrets
-        }
-
-        const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets);
-
-        sandboxTools = [
-          createReadTool(cwd, { operations: createGondolinReadOps(vm, cwd) }),
-          createBashTool(cwd, { operations: createGondolinBashOps(vm, cwd) }),
-          createEditTool(cwd, { operations: createGondolinEditOps(vm, cwd) }),
-          createWriteTool(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
-        ];
-        console.log(`[sdk] Sandbox VM ready for workspace ${workspace.id || "unknown"}`);
-      } catch (err) {
-        console.error("[sdk] Failed to create sandbox VM, falling back to host mode", err);
-        // Fall through to host mode — sandboxTools stays undefined
+      // Pre-flight: check QEMU availability before attempting VM creation.
+      const { isQemuAvailable, GondolinManager } = await import("./gondolin-manager.js");
+      if (!(await isQemuAvailable())) {
+        throw new Error(
+          "Sandbox mode requires QEMU but it is not installed on the server. " +
+            "Install with: brew install qemu (macOS) or apt install qemu-system (Linux)",
+        );
       }
+
+      const {
+        createGondolinBashOps,
+        createGondolinReadOps,
+        createGondolinWriteOps,
+        createGondolinEditOps,
+      } = await import("./gondolin-ops.js");
+
+      // Lazy singleton — shared across all sessions for VM reuse.
+      if (!SdkBackend._gondolinManager) {
+        SdkBackend._gondolinManager = new GondolinManager();
+      }
+      const manager = SdkBackend._gondolinManager;
+
+      // Extract LLM provider API keys as secrets for host-mediated injection.
+      // The VM gets placeholder values; real keys are injected by the host HTTP proxy.
+      const secrets: Record<string, { value: string; headerName?: string }> = {};
+      try {
+        const allCreds = authStorage.getAll();
+        for (const [provider, cred] of Object.entries(allCreds)) {
+          if (cred.type === "api_key" && cred.key) {
+            secrets[`${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`] = {
+              value: cred.key,
+              headerName: "Authorization",
+            };
+          }
+        }
+      } catch {
+        // Auth extraction failed — proceed without secrets
+      }
+
+      const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets);
+
+      sandboxTools = [
+        createReadTool(cwd, { operations: createGondolinReadOps(vm, cwd) }),
+        createBashTool(cwd, { operations: createGondolinBashOps(vm, cwd) }),
+        createEditTool(cwd, { operations: createGondolinEditOps(vm, cwd) }),
+        createWriteTool(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
+      ];
+      console.log(`[sdk] Sandbox VM ready for workspace ${workspace.id || "unknown"}`);
     }
 
     const { session: piSession } = await createAgentSession({

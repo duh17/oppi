@@ -774,8 +774,11 @@ final class ChatSessionManager {
             }
 
         case .error(let msg, _, let fatal):
+            // Sandbox VM errors (e.g. QEMU unavailable, VM start failure) propagate
+            // through this standard path — the server sends them as .error messages
+            // with fatal=true, which displays the message in the timeline and
+            // suppresses auto-reconnect below.
             coalescer.receive(.error(sessionId: sessionId, message: msg))
-            // Fatal setup errors — propagate to connection for auto-reconnect suppression.
             if fatal {
                 connection.fatalSetupError = true
             }

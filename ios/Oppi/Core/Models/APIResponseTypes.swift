@@ -41,7 +41,8 @@ struct UpdateWorkspaceRequest {
         hostMount: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
         extensions: [String]? = nil,
-        defaultModel: JSONValue? = nil
+        defaultModel: JSONValue? = nil,
+        sandboxConfig: JSONValue? = nil
     ) {
         var body: [String: JSONValue] = [:]
 
@@ -74,6 +75,9 @@ struct UpdateWorkspaceRequest {
         }
         if let defaultModel {
             body["defaultModel"] = defaultModel
+        }
+        if let sandboxConfig {
+            body["sandboxConfig"] = sandboxConfig
         }
 
         self.body = body

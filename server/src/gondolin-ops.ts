@@ -129,7 +129,8 @@ export function createGondolinReadOps(vm: GondolinVm, localCwd: string): ReadOpe
 
     async access(absolutePath: string) {
       const guestPath = toGuestPath(localCwd, absolutePath);
-      const result = await vm.exec(["/bin/test", "-r", guestPath]);
+      // Use ls rather than test -r or stat — FUSE-mounted VFS may not support them reliably.
+      const result = await vm.exec(["/bin/ls", "-d", guestPath]);
       if (!result.ok) {
         throw new Error(`ENOENT: no such file or directory, access '${guestPath}'`);
       }

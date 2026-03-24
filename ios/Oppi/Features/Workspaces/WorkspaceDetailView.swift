@@ -547,6 +547,11 @@ struct WorkspaceDetailView: View {
 
     // MARK: - Actions
 
+    /// Create a new session in this workspace.
+    ///
+    /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
+    /// standard API errors (500/503) and are caught and displayed in the
+    /// error alert — no special handling needed.
     private func createSession() async {
         guard let api = apiClient else {
             error = "Server is offline — reconnecting in background"
