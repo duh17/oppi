@@ -40,6 +40,14 @@ struct WorkspaceCreateView: View {
         workspaceStore.skillsByServer[server.id] ?? []
     }
 
+    /// Whether the form is valid for submission.
+    private var canCreate: Bool {
+        if name.isEmpty { return false }
+        if isCreating { return false }
+        if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        return true
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -124,6 +132,17 @@ struct WorkspaceCreateView: View {
 
     private var configureView: some View {
         Form {
+            // Sandbox toggle — first thing in the form
+            Section {
+                Toggle("Sandbox", isOn: $sandboxMode)
+                if sandboxMode {
+                    Text("Runs in an isolated micro-VM. Secrets and network are controlled by the host.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+            }
+
+            // Project name + path
             Section("Project") {
                 TextField("Name", text: $name)
                     .autocorrectionDisabled()
@@ -140,13 +159,25 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                     }
                 } else {
-                    TextField("~/workspace/project (optional)", text: $hostMount)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .font(.system(.body, design: .monospaced))
+                    TextField(
+                        sandboxMode
+                            ? "~/workspace/project (required)"
+                            : "~/workspace/project (optional)",
+                        text: $hostMount
+                    )
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .font(.system(.body, design: .monospaced))
+                }
+
+                if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Label("Sandbox requires a project path", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.themeOrange)
                 }
             }
 
+            // Skills
             Section("Skills") {
                 if skills.isEmpty {
                     Text("Loading skills…")
@@ -182,14 +213,9 @@ struct WorkspaceCreateView: View {
                 }
             }
 
+            // Options
             Section {
                 Toggle("Git status bar", isOn: $gitStatusEnabled)
-                Toggle("Sandbox mode", isOn: $sandboxMode)
-                if sandboxMode {
-                    Text("Runs in an isolated micro-VM. Files are shared, but secrets and network access are controlled by the host.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
             }
 
             if showAdvanced {
@@ -232,7 +258,7 @@ struct WorkspaceCreateView: View {
                         Spacer()
                     }
                 }
-                .disabled(name.isEmpty || isCreating)
+                .disabled(!canCreate)
             }
         }
     }
