@@ -44,7 +44,6 @@ struct WorkspaceCreateView: View {
     private var canCreate: Bool {
         if name.isEmpty { return false }
         if isCreating { return false }
-        if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         return true
     }
 
@@ -170,21 +169,16 @@ struct WorkspaceCreateView: View {
                         .font(.caption)
                     }
                 } else {
-                    TextField(
-                        sandboxMode
-                            ? "~/workspace/project (required)"
-                            : "~/workspace/project (optional)",
-                        text: $hostMount
-                    )
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .font(.system(.body, design: .monospaced))
+                    TextField("~/workspace/project (optional)", text: $hostMount)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .font(.system(.body, design: .monospaced))
                 }
 
                 if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Label("Sandbox requires a project path", systemImage: "exclamationmark.triangle.fill")
+                    Text("A new directory will be created at ~/sandbox/\(name.lowercased().replacingOccurrences(of: " ", with: "-"))/")
                         .font(.caption)
-                        .foregroundStyle(.themeOrange)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
