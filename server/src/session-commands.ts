@@ -98,15 +98,12 @@ function collectSessionContextComposition(
 function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
   const commands: SessionCommandDescriptor[] = [];
 
-  for (const {
-    command,
-    extensionPath,
-  } of session.extensionRunner?.getRegisteredCommandsWithPaths() ?? []) {
+  for (const command of session.extensionRunner?.getRegisteredCommands() ?? []) {
     commands.push({
       name: command.name,
       description: command.description,
       source: "extension",
-      path: extensionPath,
+      path: command.sourceInfo.path,
     });
   }
 
@@ -115,7 +112,7 @@ function collectSessionCommands(session: AgentSession): { commands: SessionComma
       name: template.name,
       description: template.description,
       source: "prompt",
-      location: toCommandLocation(template.source),
+      location: toCommandLocation(template.sourceInfo.source),
       path: template.filePath,
     });
   }
@@ -125,7 +122,7 @@ function collectSessionCommands(session: AgentSession): { commands: SessionComma
       name: `skill:${skill.name}`,
       description: skill.description,
       source: "skill",
-      location: toCommandLocation(skill.source),
+      location: toCommandLocation(skill.sourceInfo.source),
       path: skill.filePath,
     });
   }

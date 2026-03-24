@@ -168,10 +168,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
       ctx.stopSessionCalls.push(sessionId);
       const session = ctx.sessions.get(sessionId);
       if (session) {
-        ctx.sessions.set(
-          sessionId,
-          makeSession({ ...session, status: "stopped" }),
-        );
+        ctx.sessions.set(sessionId, makeSession({ ...session, status: "stopped" }));
       }
     },
 
@@ -363,10 +360,7 @@ describe("spawn-agent-extension", () => {
       // Build a chain: root -> current (depth=1) — child cannot spawn
       const { ctx, tool } = setup("child-1");
       ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
-      ctx.sessions.set(
-        "child-1",
-        makeSession({ id: "child-1", parentSessionId: "root-1" }),
-      );
+      ctx.sessions.set("child-1", makeSession({ id: "child-1", parentSessionId: "root-1" }));
 
       const result = await tool("spawn_agent").execute("tc1", {
         message: "should fail",
@@ -872,10 +866,7 @@ describe("spawn-agent-extension", () => {
 
     it("rejects sessions outside the spawn tree", async () => {
       const { ctx, tool } = setup();
-      ctx.sessions.set(
-        "unrelated",
-        makeSession({ id: "unrelated", status: "busy" }),
-      );
+      ctx.sessions.set("unrelated", makeSession({ id: "unrelated", status: "busy" }));
 
       const result = await tool("send_message").execute("tc1", {
         id: "unrelated",
@@ -945,10 +936,7 @@ describe("spawn-agent-extension", () => {
 
     it("works with grandchild sessions (descendant in tree)", async () => {
       const { ctx, tool } = setup();
-      ctx.sessions.set(
-        "c1",
-        makeSession({ id: "c1", parentSessionId: "parent-1" }),
-      );
+      ctx.sessions.set("c1", makeSession({ id: "c1", parentSessionId: "parent-1" }));
       ctx.sessions.set(
         "gc1",
         makeSession({

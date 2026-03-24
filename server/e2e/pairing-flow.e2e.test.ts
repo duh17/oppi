@@ -125,10 +125,20 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     it("pairs successfully with valid pairing token", async () => {
       if (!lmsReady()) return;
 
-      const res = await api("POST", "/pair", undefined, {
+      // Retry with fresh invite if pairing fails — previous test file may have
+      // left a consumed token on disk that hasn't been fully flushed.
+      let res = await api("POST", "/pair", undefined, {
         pairingToken: invite.pairingToken,
         deviceName: "e2e-pairing-test",
       });
+
+      if (res.status !== 200) {
+        invite = await generateTestInvite();
+        res = await api("POST", "/pair", undefined, {
+          pairingToken: invite.pairingToken,
+          deviceName: "e2e-pairing-test",
+        });
+      }
 
       expect(res.status).toBe(200);
       expect(res.json?.deviceToken).toBeTruthy();

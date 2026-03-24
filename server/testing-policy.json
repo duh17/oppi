@@ -11,8 +11,7 @@
       "test:ios:coverage",
       "test:ios:ui:full",
       "test:e2e:linux",
-      "test:e2e:linux:https",
-      "test:e2e:lmstudio:contract"
+      "test:ios:e2e"
     ],
     "release-preflight": [
       "check",
@@ -22,14 +21,9 @@
     ]
   },
   "ci": {
-    "prWorkflow": {
-      "path": ".github/workflows/pr-fast-gate.yml",
-      "command": "cd server && npm run test:gate:pr-fast"
-    },
-    "nightlyWorkflow": {
-      "path": ".github/workflows/nightly-deep-gate.yml",
-      "command": "cd server && npm run test:gate:nightly-deep"
-    }
+    "note": "GitHub Actions workflows not yet created. Gates run locally via npm scripts.",
+    "prCommand": "cd server && npm run test:gate:pr-fast",
+    "nightlyCommand": "cd server && npm run test:gate:nightly-deep"
   },
   "docs": {
     "canonical": "docs/testing/README.md"

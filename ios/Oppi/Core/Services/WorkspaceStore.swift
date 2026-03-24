@@ -57,6 +57,13 @@ final class WorkspaceStore {
     /// Which server's catalog is exposed through `workspaces` / `skills`.
     private(set) var activeServerId: String?
 
+    #if DEBUG
+    /// Set the active server ID for preview/testing purposes.
+    func setActiveServer(_ id: String) {
+        activeServerId = id
+    }
+    #endif
+
     /// Tracks whether each server catalog has been loaded at least once.
     private var serverLoaded: [String: Bool] = [:]
 

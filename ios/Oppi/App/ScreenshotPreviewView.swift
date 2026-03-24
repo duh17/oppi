@@ -87,6 +87,8 @@ private struct WorkspaceEditPreview: View {
             WorkspaceEditView(workspace: Self.mockWorkspace)
         }
         .environment(connection)
+        .environment(connection.workspaceStore)
+        .environment(\.apiClient, connection.apiClient)
         .onAppear {
             let serverId = "preview-server"
             connection.workspaceStore.skillsByServer[serverId] = Self.mockSkills

@@ -56,10 +56,13 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
+    "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
+    "test:ios:ui:full": "cd ../ios && bash scripts/test-ui.sh --full-suite",
+    "test:ios:e2e": "cd ../ios && bash scripts/e2e.sh",
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.60.0",
+    "@mariozechner/pi-coding-agent": "^0.62.0",
     "diff-match-patch": "^1.0.5",
     "ws": "^8.18.0"
   },
