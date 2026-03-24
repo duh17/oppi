@@ -90,9 +90,13 @@ export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOpe
       options: { onData: (data: Buffer) => void; signal?: AbortSignal; timeout?: number; env?: NodeJS.ProcessEnv },
     ) {
       const guestCwd = toGuestPath(localCwd, cwd);
+      // Filter host env: keep string values, strip HOME/USER/LOGNAME to prevent
+      // host identity leaking into the VM (~ would expand to host home dir).
+      const STRIP_ENV = new Set(["HOME", "USER", "LOGNAME", "SHELL", "PATH"]);
       const env = options.env
         ? Object.fromEntries(
-            Object.entries(options.env).filter((e): e is [string, string] => typeof e[1] === "string"),
+            Object.entries(options.env)
+              .filter((e): e is [string, string] => typeof e[1] === "string" && !STRIP_ENV.has(e[0])),
           )
         : undefined;
 
