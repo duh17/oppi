@@ -495,6 +495,13 @@ struct UIHangHarnessView: View {
                     message: "Sample error row for native renderer visual verification"
                 ))
 
+                // Expandable compaction summary for expand/collapse UI testing.
+                // Detail exceeds 140 chars so CompactionPresentation.canExpand is true.
+                items.append(.systemEvent(
+                    id: "\(sessionPrefix)-visual-compaction-expandable",
+                    message: "Context compacted (8192 tokens): The conversation context was compacted to stay within the model context window. Previous discussion covered architecture patterns for the ChatTimelineCollectionView, performance optimization strategies for UIKit cell reuse, and debugging approaches for main thread stalls during rapid scrolling operations with expanded tool output rows."
+                ))
+
                 items.append(.audioClip(
                     id: "\(sessionPrefix)-visual-audio",
                     title: "Harness Audio Clip",

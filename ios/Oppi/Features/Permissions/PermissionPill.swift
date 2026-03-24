@@ -64,6 +64,7 @@ struct PermissionPill: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityHint(accessibilityHint)
+            .accessibilityIdentifier("permission.pill")
     }
 
     // MARK: - Content

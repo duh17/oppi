@@ -43,6 +43,7 @@ struct PermissionOverlay: View {
                     showSheet = false
                 }
             }
+            .accessibilityIdentifier("permission.overlay")
         }
     }
 
