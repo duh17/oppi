@@ -57,7 +57,7 @@ final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
 
 final class NativeFullScreenCodeBody: UIView {
     private let scrollView = UIScrollView()
-    private let gutterLabel = UILabel()
+    private let gutterView = UITextView()
     private let separatorView = UIView()
     private let codeTextView = UITextView()
     private let content: String
@@ -109,17 +109,22 @@ final class NativeFullScreenCodeBody: UIView {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentContainer)
 
-        // Gutter
-        gutterLabel.translatesAutoresizingMaskIntoConstraints = false
-        gutterLabel.font = FullScreenCodeTypography.codeFont
-        gutterLabel.textColor = UIColor(palette.comment)
-        gutterLabel.textAlignment = .right
-        gutterLabel.numberOfLines = 0
-        contentContainer.addSubview(gutterLabel)
+        // Gutter — uses UITextView (not UILabel) so line heights match codeTextView exactly.
+        gutterView.translatesAutoresizingMaskIntoConstraints = false
+        gutterView.font = FullScreenCodeTypography.codeFont
+        gutterView.textColor = UIColor(palette.comment)
+        gutterView.textAlignment = .right
+        gutterView.isEditable = false
+        gutterView.isSelectable = false
+        gutterView.isScrollEnabled = false
+        gutterView.backgroundColor = .clear
+        gutterView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        gutterView.textContainer.lineFragmentPadding = 0
+        contentContainer.addSubview(gutterView)
 
         let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         let (numbers, gutterWidth) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
-        gutterLabel.text = numbers
+        gutterView.text = numbers
 
         // Separator
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -154,11 +159,11 @@ final class NativeFullScreenCodeBody: UIView {
             contentContainer.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             contentContainer.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
 
-            gutterLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 6),
-            gutterLabel.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 8),
-            gutterLabel.widthAnchor.constraint(equalToConstant: gutterWidth),
+            gutterView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 6),
+            gutterView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            gutterView.widthAnchor.constraint(equalToConstant: gutterWidth),
 
-            separatorView.leadingAnchor.constraint(equalTo: gutterLabel.trailingAnchor, constant: 6),
+            separatorView.leadingAnchor.constraint(equalTo: gutterView.trailingAnchor, constant: 6),
             separatorView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             separatorView.widthAnchor.constraint(equalToConstant: 1),
@@ -169,8 +174,8 @@ final class NativeFullScreenCodeBody: UIView {
             codeTextView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
 
             // Ensure gutter matches code height
-            gutterLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor, constant: -8),
-            codeTextView.bottomAnchor.constraint(greaterThanOrEqualTo: gutterLabel.bottomAnchor, constant: 8),
+            gutterView.bottomAnchor.constraint(lessThanOrEqualTo: contentContainer.bottomAnchor),
+            codeTextView.bottomAnchor.constraint(greaterThanOrEqualTo: gutterView.bottomAnchor),
         ])
     }
 
