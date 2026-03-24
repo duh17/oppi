@@ -778,6 +778,14 @@ actor APIClient {
         return try makeURL(path: "/workspaces/\(workspaceId)/files/\(path)?mode=browse&token=\(token)")
     }
 
+    /// Fetch content of a file that was touched (written/edited) by a specific session.
+    ///
+    /// Works for both workspace-relative paths and absolute paths (e.g. ~/.agent/diagrams/).
+    /// The server validates the path exists in the session's `changeStats.changedFiles`.
+    func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
+        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/touched-file?path=\(try encodeQueryPath(path))")
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.

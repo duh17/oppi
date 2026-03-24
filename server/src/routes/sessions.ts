@@ -33,6 +33,12 @@ import {
 import { ts } from "../log-utils.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import {
+  getContentType,
+  isSensitivePath,
+  STREAMING_EXTENSIONS,
+  MEDIA_EXTENSIONS,
+} from "./workspace-files.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
@@ -629,6 +635,109 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     createReadStream(resolved).pipe(res);
   }
 
+  // ─── Touched File Access (files from session changeStats) ───
+
+  const MAX_TOUCHED_IMAGE_SIZE = 50 * 1024 * 1024; // 50 MB
+  const MAX_TOUCHED_TEXT_SIZE = 1 * 1024 * 1024; // 1 MB
+
+  async function handleGetTouchedFile(
+    wsId: string,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (session.workspaceId !== wsId) {
+      helpers.error(res, 400, "Session does not belong to this workspace");
+      return;
+    }
+
+    const reqPath = url.searchParams.get("path");
+    if (!reqPath) {
+      helpers.error(res, 400, "path parameter required");
+      return;
+    }
+
+    // Authorization: path must be in session's changed files
+    const changedFiles = session.changeStats?.changedFiles ?? [];
+    if (!changedFiles.includes(reqPath)) {
+      helpers.error(res, 403, "Path not in session changed files");
+      return;
+    }
+
+    // Sensitive file check
+    if (isSensitivePath(reqPath)) {
+      helpers.error(res, 403, "Access denied: sensitive file");
+      return;
+    }
+
+    // Resolve the absolute file path
+    let absolutePath: string;
+    if (reqPath.startsWith("/")) {
+      absolutePath = reqPath;
+    } else if (reqPath.startsWith("~")) {
+      absolutePath = reqPath.replace(/^~(?=\/|$)/, homedir());
+    } else {
+      const workspaceRoot = resolveSdkSessionCwd(workspace);
+      absolutePath = join(workspaceRoot, reqPath);
+    }
+
+    // Resolve to canonical path and verify existence
+    let resolvedPath: string;
+    try {
+      resolvedPath = await realpath(absolutePath);
+    } catch {
+      helpers.error(res, 404, "File not found");
+      return;
+    }
+
+    let fileStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStat = await stat(resolvedPath);
+    } catch {
+      helpers.error(res, 404, "File not found");
+      return;
+    }
+
+    if (!fileStat.isFile()) {
+      helpers.error(res, 400, "Not a file");
+      return;
+    }
+
+    // Size limits: streaming media no limit, images/PDF 50MB, text 1MB
+    const ext = extname(resolvedPath).toLowerCase();
+    if (!STREAMING_EXTENSIONS.has(ext)) {
+      const isMedia = MEDIA_EXTENSIONS.has(ext);
+      const maxSize = isMedia ? MAX_TOUCHED_IMAGE_SIZE : MAX_TOUCHED_TEXT_SIZE;
+      if (fileStat.size > maxSize) {
+        const limitMB = Math.round(maxSize / (1024 * 1024));
+        helpers.error(res, 413, `File too large (max ${limitMB}MB)`);
+        return;
+      }
+    }
+
+    // Serve the file
+    const filename = resolvedPath.split("/").pop() ?? resolvedPath;
+    const contentType = getContentType(ext, filename);
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": fileStat.size.toString(),
+      "Cache-Control": "private, no-cache",
+    });
+    createReadStream(resolvedPath).pipe(res as NodeJS.WritableStream);
+  }
+
   async function handleGetSessionOverallDiff(
     sessionId: string,
     url: URL,
@@ -887,6 +996,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     );
     if (wsSessionToolOutputMatch && method === "GET") {
       await handleGetToolOutput(wsSessionToolOutputMatch[2], wsSessionToolOutputMatch[3], req, res);
+      return true;
+    }
+
+    const touchedFileMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/touched-file$/);
+    if (touchedFileMatch && method === "GET") {
+      await handleGetTouchedFile(touchedFileMatch[1], touchedFileMatch[2], url, res);
       return true;
     }
 

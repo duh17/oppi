@@ -28,7 +28,7 @@ const WALK_MAX_DEPTH = 12;
 export const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 
 /** Streaming media extensions — video/audio that AVPlayer streams progressively. */
-const STREAMING_EXTENSIONS = new Set([
+export const STREAMING_EXTENSIONS = new Set([
   ".mp4",
   ".mov",
   ".m4v",
@@ -44,7 +44,7 @@ const STREAMING_EXTENSIONS = new Set([
 ]);
 
 /** All binary media extensions (streaming + images + PDF) for browse-mode size gating. */
-const MEDIA_EXTENSIONS = new Set([...STREAMING_EXTENSIONS, ".pdf", ...ALLOWED_EXTENSIONS]);
+export const MEDIA_EXTENSIONS = new Set([...STREAMING_EXTENSIONS, ".pdf", ...ALLOWED_EXTENSIONS]);
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".png": "image/png",
