@@ -25,6 +25,8 @@ struct WorkspaceEditView: View {
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
+    @State private var runtime: WorkspaceRuntime?
+    @State private var allowedHostsText: String = ""
     @State private var loadedWorkspaceID: String?
 
     private var activeServerId: String? {
@@ -247,6 +249,30 @@ struct WorkspaceEditView: View {
                 }
             }
 
+            if runtime == .sandbox {
+                Section {
+                    Text("This workspace runs in a sandboxed micro-VM.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Allowed Hosts")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                        TextEditor(text: $allowedHostsText)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 80)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Text("One host pattern per line. Use * to allow all.")
+                            .font(.caption2)
+                            .foregroundStyle(.themeComment)
+                    }
+                } header: {
+                    Text("Sandbox")
+                }
+            }
+
             Section("Default Model") {
                 TextField("Model identifier", text: $defaultModel)
                     .autocorrectionDisabled()
@@ -376,6 +402,8 @@ struct WorkspaceEditView: View {
         gitStatusEnabled = source.gitStatusEnabled ?? true
         setSelectedExtensionNames(source.extensions ?? [])
         defaultModel = source.defaultModel ?? ""
+        runtime = source.runtime
+        allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
     }
 
     private func loadModels() async {
@@ -407,6 +435,14 @@ struct WorkspaceEditView: View {
         isSaving = true
         error = nil
 
+        let sandboxConfigValue: JSONValue? = runtime == .sandbox ? {
+            let hosts = allowedHostsText
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            return .object(["allowedHosts": .array(hosts.map { .string($0) })])
+        }() : nil
+
         let request = UpdateWorkspaceRequest(
             name: name,
             description: nullableJSONString(description),
@@ -417,7 +453,8 @@ struct WorkspaceEditView: View {
             hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
             extensions: selectedExtensionNames,
-            defaultModel: nullableJSONString(defaultModel)
+            defaultModel: nullableJSONString(defaultModel),
+            sandboxConfig: sandboxConfigValue
         )
 
         do {
