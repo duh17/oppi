@@ -187,6 +187,128 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     expect(output).toContain("streaming-test");
   });
 
+  // ─── ISOLATION: prove sandbox actually blocks host access ───
+
+  it("ls ~ does NOT return host home directory contents", async () => {
+    if (!qemuAvailable) return;
+
+    // This is THE critical test. If this fails, the sandbox is broken.
+    // Inside the VM, ~ should resolve to /root (VM's root user home),
+    // NOT /Users/<whoever> on the host.
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("ls ~", hostDir, { onData: (d) => chunks.push(d) });
+    const output = Buffer.concat(chunks).toString();
+
+    // Host home has Desktop, Documents, Library, Downloads, etc.
+    // VM root home should NOT have any of these.
+    expect(output).not.toContain("Desktop");
+    expect(output).not.toContain("Documents");
+    expect(output).not.toContain("Library");
+    expect(output).not.toContain("Downloads");
+    expect(output).not.toContain("Applications");
+  });
+
+  it("HOME env is NOT the host user home", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("echo $HOME", hostDir, { onData: (d) => chunks.push(d) });
+    const home = Buffer.concat(chunks).toString().trim();
+
+    // Must NOT be the host user's home
+    expect(home).not.toContain("/Users/");
+    expect(home).not.toContain("chenda");
+  });
+
+  it("whoami is NOT the host user", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("whoami", hostDir, { onData: (d) => chunks.push(d) });
+    const user = Buffer.concat(chunks).toString().trim();
+
+    expect(user).not.toBe("chenda");
+    // VM typically runs as root
+    expect(user).toBe("root");
+  });
+
+  it("hostname is NOT the host machine", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("hostname", hostDir, { onData: (d) => chunks.push(d) });
+    const hostname = Buffer.concat(chunks).toString().trim();
+
+    expect(hostname).not.toBe("mac-studio");
+    expect(hostname).not.toContain("chenda");
+  });
+
+  it("cannot read /etc/passwd from host", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("cat /etc/passwd", hostDir, { onData: (d) => chunks.push(d) });
+    const passwd = Buffer.concat(chunks).toString();
+
+    // Host /etc/passwd would contain the host username
+    expect(passwd).not.toContain("chenda");
+    // VM passwd should have root
+    expect(passwd).toContain("root");
+  });
+
+  it("cannot access host workspace directories", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("ls /Users/chenda/workspace 2>&1 || true", hostDir, {
+      onData: (d) => chunks.push(d),
+    });
+    const output = Buffer.concat(chunks).toString();
+
+    // This path should not exist in the VM
+    expect(output).toContain("No such file");
+  });
+
+  it("cwd resolves to /workspace inside VM", async () => {
+    if (!qemuAvailable) return;
+
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("pwd", hostDir, { onData: (d) => chunks.push(d) });
+    const pwd = Buffer.concat(chunks).toString().trim();
+
+    expect(pwd).toBe("/workspace");
+  });
+
+  it("env vars from host process are stripped", async () => {
+    if (!qemuAvailable) return;
+
+    // Simulate what the real session does: pass host env through ops.exec
+    const ops = createGondolinBashOps(vm, hostDir);
+    const chunks: Buffer[] = [];
+    await ops.exec("echo HOME=$HOME USER=$USER", hostDir, {
+      onData: (d) => chunks.push(d),
+      env: {
+        HOME: "/Users/chenda",
+        USER: "chenda",
+        LOGNAME: "chenda",
+        PATH: "/usr/local/bin:/usr/bin",
+        SOME_SAFE_VAR: "kept",
+      } as unknown as NodeJS.ProcessEnv,
+    });
+    const output = Buffer.concat(chunks).toString().trim();
+
+    // HOME and USER should have been stripped, not forwarded
+    expect(output).not.toContain("HOME=/Users/chenda");
+    expect(output).not.toContain("USER=chenda");
+  });
+
   // ─── VM reuse ───
 
   it("reuses existing VM for same workspace", async () => {
