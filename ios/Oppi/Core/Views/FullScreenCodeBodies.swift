@@ -186,29 +186,18 @@ final class NativeFullScreenCodeBody: UIView {
 
         let text = content
         highlightTask = Task { [weak self] in
-            // AttributedString is Sendable; NSAttributedString is not.
-            // Convert at the boundary — still O(n), much cheaper than the old O(n^2) build.
-            let sendable = await Task.detached(priority: .userInitiated) {
-                let highlighted = SyntaxHighlighter.highlight(text, language: syntaxLang)
-                // SyntaxHighlighter caps highlighting at maxLines for performance.
-                // Append the unhighlighted remainder so full-screen shows all content.
-                let highlightedStr = highlighted.string
-                guard highlightedStr.count < text.count else {
-                    return AttributedString(highlighted)
-                }
-                let mutable = NSMutableAttributedString(attributedString: highlighted)
-                let splitIndex = text.index(text.startIndex, offsetBy: highlightedStr.count)
-                let remainder = String(text[splitIndex...])
-                let baseAttrs: [NSAttributedString.Key: Any] = highlighted.length > 0
-                    ? highlighted.attributes(at: 0, effectiveRange: nil)
-                    : [:]
-                mutable.append(NSAttributedString(string: remainder, attributes: baseAttrs))
-                return AttributedString(mutable)
+            // Use SendableNSAttributedString to avoid the lossy
+            // NSAttributedString → AttributedString → NSAttributedString round-trip
+            // that can corrupt UIKit's internal NSMutableRLEArray. (APPLE-IOS-1Y)
+            let wrapper = await Task.detached(priority: .userInitiated) {
+                SendableNSAttributedString(
+                    FullScreenCodeHighlighter.buildHighlightedText(text, language: syntaxLang)
+                )
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.codeTextView.attributedText = fullScreenAttributedCodeText(
-                    from: NSAttributedString(sendable)
+                    from: wrapper.value
                 )
             }
         }
@@ -540,14 +529,17 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
         let source = content
         renderTask = Task { [weak self] in
-            // AttributedString is Sendable; NSAttributedString is not.
-            let sendable = await Task.detached(priority: .userInitiated) {
-                AttributedString(ANSIParser.attributedString(from: source, baseForeground: .themeFg))
+            // Use SendableNSAttributedString to avoid the lossy
+            // AttributedString round-trip. (APPLE-IOS-1Y)
+            let wrapper = await Task.detached(priority: .userInitiated) {
+                SendableNSAttributedString(
+                    ANSIParser.attributedString(from: source, baseForeground: .themeFg)
+                )
             }.value
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.outputView.attributedText = NSAttributedString(sendable)
+                self?.outputView.attributedText = wrapper.value
                 self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
         }

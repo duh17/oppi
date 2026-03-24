@@ -280,11 +280,11 @@ final class AssistantMarkdownSegmentApplier {
         let lang = SyntaxLanguage.detect(langStr)
         highlightTasks[index]?.cancel()
         highlightTasks[index] = Task { [weak self] in
-            let sendable = await Task.detached(priority: .userInitiated) {
-                AttributedString(SyntaxHighlighter.highlight(code, language: lang))
+            let wrapper = await Task.detached(priority: .userInitiated) {
+                SendableNSAttributedString(SyntaxHighlighter.highlight(code, language: lang))
             }.value
             guard !Task.isCancelled else { return }
-            self?.codeBlockViews[index]?.applyHighlightedCode(NSAttributedString(sendable))
+            self?.codeBlockViews[index]?.applyHighlightedCode(wrapper.value)
         }
     }
 }
