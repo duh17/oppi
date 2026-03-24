@@ -1,6 +1,6 @@
 # Oppi — Agent Guide
 
-Oppi monorepo — iOS app + self-hosted server for mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions.
+Oppi monorepo — iOS/macOS app + self-hosted server for mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions.
 
 ## First Message
 
@@ -13,7 +13,7 @@ For context on specific areas, read the relevant docs:
 ## Structure
 
 ```
-ios/           iOS app (SwiftUI + UIKit, iOS 26+)
+clients/apple/ Apple clients (iOS + macOS, SwiftUI + UIKit, iOS 26+)
 server/        Server runtime (Node.js/TypeScript)
 ```
 
@@ -26,16 +26,16 @@ cd server && npm test
 cd server && npm run check    # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 
-# iOS — use sim-pool.sh for simulator commands (avoids collisions between agents)
-cd ios && xcodegen generate
-cd ios && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
-cd ios && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
+# Apple — use sim-pool.sh for simulator commands (avoids collisions between agents)
+cd clients/apple && xcodegen generate
+cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
 # Default target: your device UDID
-# Note: repo ios/scripts/install.sh is a compatibility wrapper to the canonical
+# Note: repo clients/apple/scripts/install.sh is a compatibility wrapper to the canonical
 # install implementation in the personal oppi-dev skill.
-cd ios && bash scripts/install.sh -d DEVICE_UDID --launch
+cd clients/apple && bash scripts/install.sh -d DEVICE_UDID --launch
 ```
 
 **sim-pool.sh** manages a pool of simulators with slot-based locking so multiple agents can build/test in parallel without colliding. It auto-injects `-destination` and `-derivedDataPath`. Do NOT pass your own `-destination` — the pool handles it. Simulators are lazy-created on first claim. Stale locks from crashed processes are auto-reaped.
@@ -64,7 +64,7 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - `git stash` — stashes ALL changes
 - `git push --force`
 - `xcrun devicectl device uninstall` — never uninstall the iOS app
-- Raw `devicectl device install` — use `ios/scripts/install.sh -d DEVICE_UDID` instead (repo wrapper to the canonical oppi-dev install script)
+- Raw `devicectl device install` — use `clients/apple/scripts/install.sh -d DEVICE_UDID` instead (repo wrapper to the canonical oppi-dev install script)
 
 ### GitHub Issues
 ```bash
@@ -89,7 +89,7 @@ No partial protocol updates.
 - Validate at boundaries — parse incoming external data before internal use
 - Keep behavior observable — structured logs, deterministic error messages
 
-### Swift (iOS)
+### Swift (Apple clients)
 - Swift 6 strict concurrency (`SWIFT_STRICT_CONCURRENCY: complete`)
 - All `@Observable` classes must be `@MainActor`
 - Prefer `if let x` over `if let x = x`
@@ -99,7 +99,7 @@ No partial protocol updates.
 ### Rendering Performance (iOS)
 - See [`.internal/golden-principles.md`](.internal/golden-principles.md) (Rendering section) for enforced invariants.
 
-### Testing (iOS)
+### Testing (Apple clients)
 - Use Swift Testing (`import Testing`, `@Test`, `#expect`) for all unit tests. No XCTest for unit tests.
 - XCTest is only allowed for UI tests (`XCUIApplication` requires it — Swift Testing has no UI testing support).
 - Use `@Suite("Name")` to group related tests in a struct.
@@ -156,6 +156,6 @@ Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-o
 ## Definition of Done
 
 A task is done when:
-1. `npm run check` passes (server) and/or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` pass (iOS)
+1. `npm run check` passes (server) and/or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` pass (Apple)
 2. Protocol changes are mirrored on both sides with tests
-3. `xcodegen generate` was run if iOS file structure changed
+3. `xcodegen generate` was run if Apple client file structure changed

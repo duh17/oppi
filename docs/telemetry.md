@@ -9,7 +9,7 @@
 The release flow enforces this with one gate:
 - `OPPI_TELEMETRY_MODE=internal`
 
-`ios/scripts/release.sh` sets this by default for TestFlight archives.
+`clients/apple/scripts/release.sh` sets this by default for TestFlight archives.
 To disable remote diagnostics uploads, set `OPPI_TELEMETRY_MODE=public`.
 
 ## Single telemetry gate

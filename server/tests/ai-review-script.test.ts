@@ -77,8 +77,8 @@ describe("ai-review script", () => {
     expect(protocolCheck?.details).toEqual({
       touched: ["server/src/types.ts"],
       missing: [
-        "ios/Oppi/Core/Models/ServerMessage.swift",
-        "ios/Oppi/Core/Models/ClientMessage.swift",
+        "clients/apple/Oppi/Core/Models/ServerMessage.swift",
+        "clients/apple/Oppi/Core/Models/ClientMessage.swift",
       ],
     });
   });

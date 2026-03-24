@@ -42,7 +42,6 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:ios:coverage": "cd ../ios && bash scripts/check-coverage.sh",
     "test:watch": "vitest",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
@@ -57,8 +56,7 @@
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
-    "test:ios:ui:full": "cd ../ios && bash scripts/test-ui.sh --full-suite",
-    "test:ios:e2e": "cd ../ios && bash scripts/e2e.sh",
+
     "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
   },
   "dependencies": {

@@ -490,9 +490,9 @@ export function defaultPolicy(): DeclarativePolicyConfig {
 
       // ── Local machine control → ask ──
       {
-        id: "ask-ios-install",
+        id: "ask-apple-install",
         decision: "ask",
-        label: "Install iOS app on device",
+        label: "Install app on device",
         match: { tool: "bash", commandMatches: "*scripts/install.sh*" },
       },
       {
