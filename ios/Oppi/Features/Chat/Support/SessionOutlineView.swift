@@ -10,12 +10,16 @@ import SwiftUI
 /// window limits ForEach scope to ~200 visible items with auto-expand on scroll.
 struct SessionOutlineView: View {
     let items: [ChatItem]
+    let sessionId: String
+    let workspaceId: String?
+    let changedFiles: [String]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
 
+    @State private var outlineTab: OutlineTab = .timeline
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var filter: OutlineFilter = .all
@@ -30,17 +34,45 @@ struct SessionOutlineView: View {
 
     @State private var searchDebounceTask: Task<Void, Never>?
 
+    enum OutlineTab: String, CaseIterable {
+        case timeline = "Timeline"
+        case files = "Files"
+    }
+
     enum OutlineFilter: String, CaseIterable {
         case all = "All"
         case messages = "Messages"
         case tools = "Tools"
     }
 
+    private var hasFiles: Bool {
+        !changedFiles.isEmpty
+    }
+
     var body: some View {
         NavigationStack {
-            outlinePane
+            VStack(spacing: 0) {
+                // Tab picker (only when session has files)
+                if hasFiles {
+                    outlineTabPicker
+                }
+
+                // Content
+                if outlineTab == .files && hasFiles {
+                    SessionFilesListView(
+                        sessionId: sessionId,
+                        workspaceId: workspaceId,
+                        changedFiles: changedFiles
+                    )
+                } else {
+                    outlinePane
+                }
+            }
             .background(Color.themeBg)
-            .searchable(text: $searchText, prompt: "Search session timeline…")
+            .searchable(
+                text: $searchText,
+                prompt: outlineTab == .timeline ? "Search session timeline…" : "Search files…"
+            )
             .navigationTitle("Session Timeline")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -76,6 +108,19 @@ struct SessionOutlineView: View {
                 searchDebounceTask?.cancel()
             }
         }
+    }
+
+    // MARK: - Tab Picker
+
+    private var outlineTabPicker: some View {
+        let fileCount = changedFiles.count
+        return Picker("Tab", selection: $outlineTab) {
+            Text("Timeline").tag(OutlineTab.timeline)
+            Text("Files (\(fileCount))").tag(OutlineTab.files)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Index Building

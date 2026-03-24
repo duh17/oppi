@@ -48,7 +48,6 @@ struct ChatView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextPillDetailFile: WorkspaceReviewFile?
-    @State private var selectedViewTab: ChatViewTab = .chat
 
     init(sessionId: String, initialInputText: String = "") {
         self.sessionId = sessionId
@@ -62,11 +61,6 @@ struct ChatView: View {
 
     private struct ChildSessionRoute: Identifiable, Hashable {
         let id: String
-    }
-
-    private enum ChatViewTab: String, CaseIterable {
-        case chat = "Chat"
-        case files = "Files"
     }
 
     /// Per-session reducer, owned by sessionManager.
@@ -84,16 +78,6 @@ struct ChatView: View {
     /// Child sessions spawned by this session.
     private var childSessions: [Session] {
         SessionTreeHelper.sortedChildSessions(of: sessionId, in: sessionStore.sessions)
-    }
-
-    /// Files touched by this session (written/edited).
-    private var sessionChangedFiles: [String] {
-        session?.changeStats?.changedFiles ?? []
-    }
-
-    /// Whether to show the tab selector (only when session has touched files).
-    private var showsViewTabs: Bool {
-        !sessionChangedFiles.isEmpty
     }
 
     /// Parent session (when this is a spawned child).
@@ -371,23 +355,7 @@ struct ChatView: View {
     }
 
     private var configuredChatContent: some View {
-        VStack(spacing: 0) {
-            // Tab selector (only when session has touched files)
-            if showsViewTabs {
-                viewTabPicker
-            }
-
-            // Content area: chat timeline or files list
-            if selectedViewTab == .files && showsViewTabs {
-                SessionFilesListView(
-                    sessionId: sessionId,
-                    workspaceId: session?.workspaceId,
-                    changedFiles: sessionChangedFiles
-                )
-            } else {
-                chatTimelineScaffold
-            }
-        }
+        chatTimelineScaffold
             .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -409,19 +377,6 @@ struct ChatView: View {
                 chatTrailingToolbarItem
             }
         }
-    }
-
-    @ViewBuilder
-    private var viewTabPicker: some View {
-        let fileCount = sessionChangedFiles.count
-        Picker("View", selection: $selectedViewTab) {
-            Text("Chat").tag(ChatViewTab.chat)
-            Text("Files (\(fileCount))").tag(ChatViewTab.files)
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.themeBg)
     }
 
     @ViewBuilder
@@ -860,6 +815,9 @@ struct ChatView: View {
     private var outlineSheet: some View {
         SessionOutlineView(
             items: reducer.items,
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId,
+            changedFiles: session?.changeStats?.changedFiles ?? [],
             onSelect: { targetID in
                 scrollController.scrollTargetID = targetID
             },
