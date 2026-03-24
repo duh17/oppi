@@ -93,7 +93,11 @@ export interface SessionCoordinatorBundleDeps {
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
   getAvailableModelIds: () => string[];
   /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
-  sendMessage: (sessionId: string, message: string, behavior?: "steer" | "followUp") => Promise<void>;
+  sendMessage: (
+    sessionId: string,
+    message: string,
+    behavior?: "steer" | "followUp",
+  ) => Promise<void>;
 }
 
 export function createSessionCoordinatorBundle(

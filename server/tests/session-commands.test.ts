@@ -23,10 +23,11 @@ describe("SessionCommandCoordinator", () => {
   it("supports get_commands passthrough", async () => {
     const agentSession = {
       extensionRunner: {
-        getRegisteredCommandsWithPaths: () => [
+        getRegisteredCommands: () => [
           {
-            command: { name: "remember", description: "Save note" },
-            extensionPath: "/ext/memory.js",
+            name: "remember",
+            description: "Save note",
+            sourceInfo: { path: "/ext/memory.js", source: "user", scope: "user", origin: "top-level" },
           },
         ],
       },
@@ -34,7 +35,7 @@ describe("SessionCommandCoordinator", () => {
         {
           name: "plan",
           description: "Plan prompt",
-          source: "project",
+          sourceInfo: { source: "project", path: "/repo/prompts/plan.md", scope: "project", origin: "top-level" },
           filePath: "/repo/prompts/plan.md",
         },
       ],
@@ -44,7 +45,7 @@ describe("SessionCommandCoordinator", () => {
             {
               name: "tmux",
               description: "Control tmux",
-              source: "user",
+              sourceInfo: { source: "user", path: "/Users/me/.pi/agent/skills/tmux/SKILL.md", scope: "user", origin: "top-level" },
               filePath: "/Users/me/.pi/agent/skills/tmux/SKILL.md",
             },
           ],

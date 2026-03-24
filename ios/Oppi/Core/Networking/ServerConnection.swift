@@ -735,6 +735,7 @@ final class ServerConnection {
     /// Set the server ID for screenshot preview harness (no real credentials needed).
     func setPreviewServerId(_ id: String) {
         currentServerId = id
+        workspaceStore.setActiveServer(id)
     }
 #endif
 }
