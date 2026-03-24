@@ -335,6 +335,14 @@ struct WorkspaceDetailView: View {
                     HStack(spacing: 6) {
                         WorkspaceIcon(icon: currentWorkspace.icon, size: 16)
                             .frame(width: 24, height: 24)
+                        if currentWorkspace.runtime == .sandbox {
+                            Text("SANDBOX")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.themeOrange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.themeOrange.opacity(0.15), in: Capsule())
+                        }
                         Text("\(currentWorkspace.skills.count) skills")
                             .font(.caption2)
                         if let model = currentWorkspace.defaultModel {

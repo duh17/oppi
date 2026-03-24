@@ -26,6 +26,7 @@ struct WorkspaceCreateView: View {
     @State private var selectedSkills: Set<String> = []
     @State private var gitStatusEnabled = true
     @State private var showAdvanced = false
+    @State private var sandboxMode = false
     @State private var isCreating = false
     @State private var error: String?
 
@@ -186,6 +187,17 @@ struct WorkspaceCreateView: View {
             }
 
             if showAdvanced {
+                Section {
+                    Toggle("Sandbox mode", isOn: $sandboxMode)
+                    if sandboxMode {
+                        Text("Agent runs in an isolated micro-VM. Files are shared, but secrets and network access are controlled by the host.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
+                } header: {
+                    Text("Runtime")
+                }
+
                 Section("Optional") {
                     TextField("Description", text: $description)
                     TextField("Icon (SF Symbol or emoji)", text: $icon)
@@ -324,7 +336,9 @@ struct WorkspaceCreateView: View {
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
             hostMount: hostMount.isEmpty ? nil : hostMount,
-            gitStatusEnabled: gitStatusEnabled
+            gitStatusEnabled: gitStatusEnabled,
+            runtime: sandboxMode ? .sandbox : nil,
+            sandboxConfig: sandboxMode ? SandboxConfig(allowedHosts: ["*"]) : nil
         )
 
         do {

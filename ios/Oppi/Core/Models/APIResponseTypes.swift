@@ -24,6 +24,8 @@ struct CreateWorkspaceRequest: Encodable {
     var gitStatusEnabled: Bool?
     var extensions: [String]?
     var defaultModel: String?
+    var runtime: WorkspaceRuntime?
+    var sandboxConfig: SandboxConfig?
 }
 
 struct UpdateWorkspaceRequest {
