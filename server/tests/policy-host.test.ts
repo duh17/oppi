@@ -146,14 +146,14 @@ describe("host preset: external actions gated", () => {
 // ─── Host-control flows → ask ───
 
 describe("host preset: host-control flows gated", () => {
-  it("asks for ios install script", () => {
-    expect(policy.evaluate(bash("./ios/scripts/install.sh --launch")).action).toBe("ask");
+  it("asks for apple install script", () => {
+    expect(policy.evaluate(bash("./clients/apple/scripts/install.sh --launch")).action).toBe("ask");
   });
 
-  it("asks for install script after cd ios", () => {
+  it("asks for install script after cd clients/apple", () => {
     expect(
       policy.evaluate(
-        bash("cd ios && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+        bash("cd clients/apple && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
       ).action,
     ).toBe("ask");
   });

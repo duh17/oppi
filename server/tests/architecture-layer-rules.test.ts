@@ -63,11 +63,11 @@ describe("architecture layer rule helpers", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-"));
 
     try {
-      write(join(repoRoot, "ios/Oppi/Core/Runtime/TimelineReducer.swift"), "import UIKit\n");
-      write(join(repoRoot, "ios/Oppi/Core/Runtime/DeltaCoalescer.swift"), "import Foundation\n");
+      write(join(repoRoot, "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift"), "import UIKit\n");
+      write(join(repoRoot, "clients/apple/Oppi/Core/Runtime/DeltaCoalescer.swift"), "import Foundation\n");
 
       write(
-        join(repoRoot, "ios/Oppi/Core/Views/BadView.swift"),
+        join(repoRoot, "clients/apple/Oppi/Core/Views/BadView.swift"),
         [
           "import Foundation",
           "struct BadView {",
@@ -76,17 +76,17 @@ describe("architecture layer rule helpers", () => {
         ].join("\n"),
       );
 
-      write(join(repoRoot, "ios/Oppi/Core/Services/SessionStore.swift"), "import Foundation\n");
-      write(join(repoRoot, "ios/Oppi/Core/Services/WorkspaceStore.swift"), "import Foundation\n");
+      write(join(repoRoot, "clients/apple/Oppi/Core/Services/SessionStore.swift"), "import Foundation\n");
+      write(join(repoRoot, "clients/apple/Oppi/Core/Services/WorkspaceStore.swift"), "import Foundation\n");
       write(
-        join(repoRoot, "ios/Oppi/Core/Services/PermissionStore.swift"),
+        join(repoRoot, "clients/apple/Oppi/Core/Services/PermissionStore.swift"),
         [
           "import Foundation",
           "/// Separate from SessionStore so permission ticks do not churn session UI.",
           "final class PermissionStore {}",
         ].join("\n"),
       );
-      write(join(repoRoot, "ios/Oppi/Core/Services/MessageQueueStore.swift"), "import Foundation\n");
+      write(join(repoRoot, "clients/apple/Oppi/Core/Services/MessageQueueStore.swift"), "import Foundation\n");
 
       const violations = findIosLayerViolations(repoRoot);
 
@@ -94,11 +94,11 @@ describe("architecture layer rule helpers", () => {
         expect.arrayContaining([
           expect.objectContaining({
             rule: "runtime-no-uikit",
-            file: "ios/Oppi/Core/Runtime/TimelineReducer.swift",
+            file: "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift",
           }),
           expect.objectContaining({
             rule: "view-layer-network-boundary",
-            file: "ios/Oppi/Core/Views/BadView.swift",
+            file: "clients/apple/Oppi/Core/Views/BadView.swift",
           }),
         ]),
       );

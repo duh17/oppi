@@ -75,7 +75,7 @@ describe("external actions gated", () => {
     "npm publish",
     "ssh user@server.com",
     "scp file user@server:/tmp/",
-    "./ios/scripts/install.sh --launch",
+    "./clients/apple/scripts/install.sh --launch",
     "launchctl stop dev.chenda.oppi",
     "npx tsx src/cli.ts serve",
     "xcrun devicectl device install app --device 0000 /tmp/Oppi.app",

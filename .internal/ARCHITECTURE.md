@@ -8,7 +8,7 @@ This is a map of the code that exists today.
 Oppi has two runtimes in one repo:
 
 - `server/` — Node.js/TypeScript server embedding pi SDK sessions in-process.
-- `ios/` — iOS app (SwiftUI + UIKit) supervising sessions over `/stream` + REST.
+- `clients/apple/` — iOS + macOS apps (SwiftUI + UIKit) supervising sessions over `/stream` + REST.
 
 ---
 
@@ -200,7 +200,7 @@ These are the observed directions in imports/calls today:
 
 ---
 
-## iOS architecture (`ios/Oppi`)
+## iOS architecture (`clients/apple/Oppi`)
 
 ### Layer map (current imports and call paths)
 
@@ -488,8 +488,8 @@ Design principle: each store covers one reason for a view to re-render. `ChatSes
   - `ServerMessage` union
   - stream envelope fields (`sessionId`, `seq`, `streamSeq`, `currentSeq`)
 - iOS mirrors:
-  - `ios/Oppi/Core/Models/ClientMessage.swift` (manual `Encodable`)
-  - `ios/Oppi/Core/Models/ServerMessage.swift` (manual `Decodable` + `.unknown(type:)`)
+  - `clients/apple/Oppi/Core/Models/ClientMessage.swift` (manual `Encodable`)
+  - `clients/apple/Oppi/Core/Models/ServerMessage.swift` (manual `Decodable` + `.unknown(type:)`)
   - `SessionScopedMessage` (outbound `/stream` envelope)
   - `StreamMessage` (inbound `/stream` envelope)
 

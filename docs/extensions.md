@@ -347,9 +347,9 @@ To add a new built-in tool renderer, add it to `BUILTIN_RENDERERS` in `mobile-re
 | `~/.pi/agent/extensions/*.ts` | Pi extensions (auto-discovered) |
 | `~/.pi/agent/mobile-renderers/*.ts` | User-provided mobile renderers |
 | `server/extensions/permission-gate/` | Managed permission gate extension |
-| `ios/.../StyledSegment.swift` | Segment model |
-| `ios/.../SegmentRenderer.swift` | Segment → NSAttributedString |
-| `ios/.../ToolPresentationBuilder.swift` | Segments → tool row UI |
+| `clients/apple/.../StyledSegment.swift` | Segment model |
+| `clients/apple/.../SegmentRenderer.swift` | Segment → NSAttributedString |
+| `clients/apple/.../ToolPresentationBuilder.swift` | Segments → tool row UI |
 
 ## Relationship to Pi
 

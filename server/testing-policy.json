@@ -5,25 +5,23 @@
       "check",
       "test:coverage"
     ],
-    "nightly-deep": [
-      "check",
-      "test:coverage",
-      "test:ios:coverage",
-      "test:ios:ui:full",
-      "test:e2e:linux",
-      "test:ios:e2e"
-    ],
-    "release-preflight": [
-      "check",
-      "test:coverage",
-      "test:ios:coverage",
-      "telemetry:review:gate"
-    ]
+    "nightly-deep": {
+      "server": ["check", "test:coverage", "test:e2e:linux"],
+      "apple": [
+        "cd clients/apple && bash scripts/check-coverage.sh",
+        "cd clients/apple && bash scripts/test-ui.sh --full-suite",
+        "cd clients/apple && bash scripts/e2e.sh"
+      ]
+    },
+    "release-preflight": {
+      "server": ["check", "test:coverage", "telemetry:review:gate"],
+      "apple": ["cd clients/apple && bash scripts/check-coverage.sh"]
+    }
   },
   "ci": {
-    "note": "GitHub Actions workflows not yet created. Gates run locally via npm scripts.",
+    "note": "GitHub Actions workflows not yet created. Gates run locally.",
     "prCommand": "cd server && npm run test:gate:pr-fast",
-    "nightlyCommand": "cd server && npm run test:gate:nightly-deep"
+    "nightlyNote": "Run server npm scripts + apple scripts separately from repo root."
   },
   "docs": {
     "canonical": "docs/testing/README.md"

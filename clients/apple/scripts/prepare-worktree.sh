@@ -42,6 +42,13 @@ SYMLINK_DIRS=(
     "server/config"
 )
 
+# Per-worktree exclude file — prevents symlinks from being tracked.
+# This is the worktree-local equivalent of .gitignore but never shared
+# with other worktrees or committed. Avoids the merge-back gotcha where
+# tracked symlinks replace real directories on main.
+EXCLUDE_FILE="$(git -C "$WORKTREE" rev-parse --git-dir)/info/exclude"
+mkdir -p "$(dirname "$EXCLUDE_FILE")"
+
 for dir in "${SYMLINK_DIRS[@]}"; do
     src="$MAIN_TREE/$dir"
     dst="$WORKTREE/$dir"
@@ -53,19 +60,25 @@ for dir in "${SYMLINK_DIRS[@]}"; do
 
     if [[ -L "$dst" ]]; then
         echo "  ok   $dir (already symlinked)"
-        continue
+        # Still ensure exclude entry exists
+    else
+        if [[ -d "$dst" ]]; then
+            # Worktree has a real dir (from tracked files) — merge by
+            # removing the dir and symlinking. The tracked files exist
+            # in the symlink target too (it's the same repo).
+            rm -rf "$dst"
+        fi
+
+        mkdir -p "$(dirname "$dst")"
+        ln -s "$src" "$dst"
+        echo "  link $dir -> $src"
     fi
 
-    if [[ -d "$dst" ]]; then
-        # Worktree has a real dir (from tracked files) — merge by
-        # removing the dir and symlinking. The tracked files exist
-        # in the symlink target too (it's the same repo).
-        rm -rf "$dst"
+    # Add to worktree-local exclude if not already present
+    if ! grep -qxF "/$dir" "$EXCLUDE_FILE" 2>/dev/null; then
+        echo "/$dir" >> "$EXCLUDE_FILE"
+        echo "  exclude /$dir (added to .git/info/exclude)"
     fi
-
-    mkdir -p "$(dirname "$dst")"
-    ln -s "$src" "$dst"
-    echo "  link $dir -> $src"
 done
 
 echo "Done. Worktree is ready for builds."

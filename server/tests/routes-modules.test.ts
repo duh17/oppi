@@ -69,7 +69,8 @@ describe("routes modules", () => {
       const metricModelsPath = join(
         process.cwd(),
         "..",
-        "ios",
+        "clients",
+        "apple",
         "Oppi",
         "Core",
         "Services",
