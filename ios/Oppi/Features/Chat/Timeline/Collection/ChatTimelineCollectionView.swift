@@ -556,7 +556,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
-                ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+
+                // Process pending scroll commands (auto-scroll during streaming).
+                var didScroll = false
+                if let scrollCommand = configuration.scrollCommand,
+                   scrollCommand.nonce != lastHandledScrollCommandNonce,
+                   performScroll(scrollCommand, in: collectionView) {
+                    lastHandledScrollCommandNonce = scrollCommand.nonce
+                    didScroll = true
+                }
+                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
                 return
             }
