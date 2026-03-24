@@ -75,6 +75,15 @@ struct WorkspaceCreateView: View {
 
     private var projectPickerView: some View {
         List {
+            Section {
+                Toggle("Sandbox", isOn: $sandboxMode)
+                if sandboxMode {
+                    Text("Isolated micro-VM. Pick a project to mount.")
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+            }
+
             if isLoadingDirectories {
                 Section {
                     HStack {
@@ -118,10 +127,12 @@ struct WorkspaceCreateView: View {
                     Button { selectManual() } label: {
                         Label("Enter path manually", systemImage: "keyboard")
                     }
-                    Button { selectBlank() } label: {
-                        Label("Blank workspace (no project)", systemImage: "square.dashed")
+                    if !sandboxMode {
+                        Button { selectBlank() } label: {
+                            Label("Blank workspace (no project)", systemImage: "square.dashed")
+                        }
+                        .foregroundStyle(.themeComment)
                     }
-                    .foregroundStyle(.themeComment)
                 }
             }
         }
