@@ -219,7 +219,9 @@ private final class GameOfLifeNSView: NSView {
     }
 
     private let golLayer: GameOfLifeMacLayer
-    private var timer: Timer?
+    // nonisolated(unsafe): Timer is only touched on main thread but deinit
+    // runs in a nonisolated context — this silences the strict-concurrency error.
+    private nonisolated(unsafe) var timer: Timer?
 
     init(gridSize: Int) {
         self.gridSize = gridSize
@@ -234,7 +236,6 @@ private final class GameOfLifeNSView: NSView {
 
     deinit {
         timer?.invalidate()
-        timer = nil
     }
 
     override func layout() {
