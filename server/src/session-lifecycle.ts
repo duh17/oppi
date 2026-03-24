@@ -71,19 +71,37 @@ export class SessionLifecycleCoordinator {
   resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
 
-    // Auto-stop child sessions immediately when they go idle.
-    // Child sessions are ephemeral — they do one task and exit.
-    // The idle timeout is only useful for root sessions waiting for user input.
+    // Auto-stop child sessions after they complete their work.
+    // Children are ephemeral — they do one task and exit.
+    // Give a grace period so the prompt has time to dispatch (especially
+    // in sandbox mode where VM boot adds latency before the first turn).
     const active = this.deps.getActiveSession(key);
     if (active?.session.parentSessionId && active.session.status === "ready") {
-      console.log("[session] auto-stopping idle child", {
-        sessionId: active.session.id,
-        parent: active.session.parentSessionId,
-      });
-      // Use setTimeout(0) so the "ready" state broadcast completes first
-      setTimeout(() => {
-        void this.deps.stopSession(active.session.id);
-      }, 0);
+      // Only auto-stop if the child has done at least one turn.
+      // Before that, it's still initializing — let it run.
+      if (active.session.messageCount > 0) {
+        console.log("[session] auto-stopping idle child", {
+          sessionId: active.session.id,
+          parent: active.session.parentSessionId,
+        });
+        setTimeout(() => {
+          void this.deps.stopSession(active.session.id);
+        }, 0);
+        return;
+      }
+      // First idle: grace period for prompt dispatch + LLM response.
+      const CHILD_GRACE_MS = 30_000;
+      const timer = setTimeout(() => {
+        const current = this.deps.getActiveSession(key);
+        if (current?.session.parentSessionId && current.session.status === "ready") {
+          console.log("[session] auto-stopping idle child (grace expired)", {
+            sessionId: current.session.id,
+            parent: current.session.parentSessionId,
+          });
+          void this.deps.stopSession(current.session.id);
+        }
+      }, CHILD_GRACE_MS);
+      this.idleTimers.set(key, timer);
       return;
     }
 
