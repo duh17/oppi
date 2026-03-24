@@ -187,9 +187,11 @@ struct ChatView: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 if scrollController.isJumpToBottomHintVisible {
-                    JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
-                        scrollController.requestScrollToBottom()
-                    }
+                    JumpToBottomHintButton(
+                        isBusy: isBusy,
+                        modelId: session?.model,
+                        onTap: { scrollController.requestScrollToBottom() }
+                    )
                     .padding(.trailing, 27)
                     .padding(.bottom, footerHeight + 10)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))

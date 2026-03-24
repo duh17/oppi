@@ -14,47 +14,79 @@ struct ChatEmptyState: View {
 // MARK: - Jump to Bottom
 
 struct JumpToBottomHintButton: View {
-    let isStreaming: Bool
+    let isBusy: Bool
+    let modelId: String?
     let onTap: () -> Void
 
     @State private var pulse = false
 
+    private var providerColor: Color {
+        ProviderColor.color(for: modelId, palette: ThemeRuntimeState.currentPalette())
+    }
+
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: "arrow.down")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(isStreaming ? .themeBlue : .themeFg)
-                .frame(width: 34, height: 34)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(alignment: .topTrailing) {
-                    if isStreaming {
-                        Circle()
-                            .fill(Color.themeBlue)
-                            .frame(width: 6, height: 6)
-                            .scaleEffect(pulse ? 1.0 : 0.72)
-                            .opacity(pulse ? 1.0 : 0.55)
-                            .offset(x: 1, y: -1)
-                    }
+            ZStack {
+                if isBusy {
+                    busyContent
+                } else {
+                    idleContent
                 }
+            }
+            .animation(.easeInOut(duration: 0.25), value: isBusy)
         }
         .buttonStyle(.plain)
         .contentShape(Circle())
-        .accessibilityLabel(isStreaming ? "Jump to latest streaming message" : "Jump to latest message")
+        .accessibilityLabel(isBusy ? "Agent working, jump to bottom" : "Jump to latest message")
         .accessibilityIdentifier("chat.jumpToBottom")
         .onAppear {
-            guard isStreaming else { return }
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
+            if isBusy { startPulse() }
         }
-        .onChange(of: isStreaming) { _, streaming in
-            if streaming {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                    pulse = true
-                }
+        .onChange(of: isBusy) { _, busy in
+            if busy {
+                startPulse()
             } else {
                 pulse = false
             }
+        }
+    }
+
+    // MARK: - Busy State (spinner + arrow badge)
+
+    private var busyContent: some View {
+        WorkingSpinnerView(tintColor: providerColor)
+            .frame(width: 20, height: 20)
+            .frame(width: 36, height: 36)
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay {
+                Circle()
+                    .stroke(providerColor.opacity(pulse ? 0.45 : 0.15), lineWidth: 1.5)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 7, weight: .black))
+                    .foregroundStyle(.themeBg)
+                    .frame(width: 14, height: 14)
+                    .background(providerColor, in: Circle())
+                    .offset(x: 2, y: 2)
+            }
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+
+    // MARK: - Idle State (plain arrow)
+
+    private var idleContent: some View {
+        Image(systemName: "arrow.down")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.themeFg)
+            .frame(width: 34, height: 34)
+            .background(.ultraThinMaterial, in: Circle())
+            .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+
+    private func startPulse() {
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+            pulse = true
         }
     }
 }
