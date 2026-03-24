@@ -86,7 +86,7 @@ describe("Storage.createWorkspace", () => {
 
     expect(ws.description).toBe("A coding workspace");
     expect(ws.icon).toBe("terminal");
-    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
+    expect(ws.runtime).toBeUndefined();
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("replace");
     expect(ws.hostMount).toBe("~/workspace/oppi");
@@ -112,13 +112,13 @@ describe("Storage.createWorkspace", () => {
     expect(ids.size).toBe(3);
   });
 
-  it("does not expose runtime field", () => {
+  it("defaults runtime to undefined when not specified", () => {
     const ws = storage.createWorkspace({
       name: "no-runtime",
       skills: [],
     });
 
-    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
+    expect(ws.runtime).toBeUndefined();
   });
 
   it("keeps workspace directory available", () => {
@@ -168,7 +168,7 @@ describe("Storage.getWorkspace", () => {
 
     const loaded = storage.getWorkspace(ws.id);
     expect(loaded).toBeDefined();
-    expect(Object.prototype.hasOwnProperty.call(loaded!, "runtime")).toBe(false);
+    expect(loaded!.runtime).toBeUndefined();
   });
 });
 
@@ -477,7 +477,7 @@ describe("Storage.ensureDefaultWorkspaces", () => {
     for (const ws of list) {
       expect(ws.id.length).toBe(8);
       expect(ws.skills).toBeInstanceOf(Array);
-      expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
+      expect(ws.runtime).toBeUndefined();
       expect(ws.createdAt).toBeGreaterThan(0);
     }
   });
@@ -506,7 +506,7 @@ describe("Storage runtime-key handling", () => {
     const list = storage.listWorkspaces();
     expect(list.map((w) => w.id)).toContain(good.id);
     expect(list.map((w) => w.id)).toContain(oldRecord.id);
-    expect(Object.prototype.hasOwnProperty.call(list.find((w) => w.id == oldRecord.id)!, "runtime")).toBe(false);
+    expect(list.find((w) => w.id == oldRecord.id)!.runtime).toBe("host");
   });
 });
 
@@ -578,12 +578,12 @@ describe("Workspace full lifecycle", () => {
     expect(storage.listWorkspaces().find((w) => w.id === ws.id)).toBeUndefined();
   });
 
-  it("create workspace omits runtime key", () => {
+  it("create workspace defaults runtime to undefined", () => {
     const ws = storage.createWorkspace(createReq({ name: "Admin" }));
     const reloaded = storage.getWorkspace(ws.id);
 
-    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(reloaded!, "runtime")).toBe(false);
+    expect(ws.runtime).toBeUndefined();
+    expect(reloaded!.runtime).toBeUndefined();
   });
 
   it("multiple users, independent lifecycle", () => {
