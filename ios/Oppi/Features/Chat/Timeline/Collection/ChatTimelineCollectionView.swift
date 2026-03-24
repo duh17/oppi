@@ -537,16 +537,34 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     itemCount: currentIDs.count,
                     changedCount: 1
                 )
-                // Update item maps before the apply so the cell provider
-                // reads the fresh item content.
+                // Update the streaming item map entry.
                 currentItemByID[streamingID] = nextItem
                 previousItemByID[streamingID] = nextItem
 
+                // Also detect changed mutable items (in-flight tools, active
+                // thinking rows) alongside the streaming assistant. Without
+                // this, tool/thinking rows freeze visually during streaming.
+                var reconfigureIDs = [streamingID]
+                for item in configuration.items {
+                    let id = item.id
+                    guard id != streamingID else { continue }
+                    guard TimelineSnapshotApplier.isStreamingMutableItem(item) else { continue }
+                    if let prev = currentItemByID[id], prev != item {
+                        currentItemByID[id] = item
+                        previousItemByID[id] = item
+                        reconfigureIDs.append(id)
+                    }
+                }
+
+                ChatTimelinePerf.beginTimelineApplyCycle(
+                    itemCount: currentIDs.count,
+                    changedCount: reconfigureIDs.count
+                )
                 var snapshot = dataSource.snapshot()
-                snapshot.reconfigureItems([streamingID])
+                snapshot.reconfigureItems(reconfigureIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
                     itemCount: currentIDs.count,
-                    changedCount: 1,
+                    changedCount: reconfigureIDs.count,
                     sessionId: configuration.sessionId
                 )
                 dataSource.apply(snapshot, animatingDifferences: false)
