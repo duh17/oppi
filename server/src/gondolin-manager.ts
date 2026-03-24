@@ -16,7 +16,9 @@ import { ts } from "./log-utils.js";
  * Injected at construction so tests can substitute a mock without
  * importing the real gondolin SDK.
  */
-export type VmFactory = (options: VmFactoryOptions) => Promise<GondolinVm & { close(): Promise<void> }>;
+export type VmFactory = (
+  options: VmFactoryOptions,
+) => Promise<GondolinVm & { close(): Promise<void> }>;
 
 export interface VmFactoryOptions {
   hostCwd: string;
@@ -33,10 +35,12 @@ export interface VmFactoryOptions {
  * Dynamically imports `@earendil-works/gondolin` so the module is
  * only required at runtime when sandbox mode is actually used.
  */
-export async function defaultVmFactory(options: VmFactoryOptions): Promise<GondolinVm & { close(): Promise<void> }> {
+export async function defaultVmFactory(
+  options: VmFactoryOptions,
+): Promise<GondolinVm & { close(): Promise<void> }> {
   // Dynamic import — only loaded when sandbox mode is used.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } = await import("@earendil-works/gondolin");
+  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } =
+    await import("@earendil-works/gondolin");
 
   // Transform secrets to Gondolin SDK format (hosts + value per key)
   const gondolinSecrets = options.secrets
@@ -54,7 +58,10 @@ export async function defaultVmFactory(options: VmFactoryOptions): Promise<Gondo
   });
 
   // Build VFS mounts: workspace + any read-only paths (skills, agent config)
-  const mounts: Record<string, InstanceType<typeof RealFSProvider> | InstanceType<typeof ReadonlyProvider>> = {
+  const mounts: Record<
+    string,
+    InstanceType<typeof RealFSProvider> | InstanceType<typeof ReadonlyProvider>
+  > = {
     "/workspace": new RealFSProvider(options.hostCwd),
   };
   if (options.readonlyMounts) {
@@ -91,7 +98,12 @@ export class GondolinManager {
    * Concurrent calls for the same workspace coalesce onto a single
    * startup promise to avoid spinning up duplicate VMs.
    */
-  async ensureWorkspaceVm(workspace: Workspace, hostCwd: string, secrets?: Record<string, { value: string; headerName?: string }>, readonlyMounts?: string[]): Promise<GondolinVm> {
+  async ensureWorkspaceVm(
+    workspace: Workspace,
+    hostCwd: string,
+    secrets?: Record<string, { value: string; headerName?: string }>,
+    readonlyMounts?: string[],
+  ): Promise<GondolinVm> {
     const id = workspace.id;
 
     // Already running
@@ -119,12 +131,12 @@ export class GondolinManager {
     if (!vm) return;
 
     this.vms.delete(workspaceId);
-    console.log(`[${ts()}] gondolin: stopping VM for workspace ${workspaceId}`);
+    console.log("[gondolin] stopping VM", { workspaceId, ts: ts() });
 
     try {
       await vm.close();
     } catch (err) {
-      console.error(`[${ts()}] gondolin: error stopping VM for workspace ${workspaceId}:`, err);
+      console.error("[gondolin] error stopping VM", { workspaceId, err, ts: ts() });
     }
   }
 
@@ -148,13 +160,17 @@ export class GondolinManager {
     readonlyMounts?: string[],
   ): Promise<GondolinVm & { close(): Promise<void> }> {
     const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? ["*"];
-    console.log(
-      `[${ts()}] gondolin: starting VM for workspace ${workspace.id} (cwd=${hostCwd}, allowedHosts=${JSON.stringify(allowedHosts)}, roMounts=${readonlyMounts?.length ?? 0})`,
-    );
+    console.log("[gondolin] starting VM", {
+      workspaceId: workspace.id,
+      cwd: hostCwd,
+      allowedHosts,
+      roMounts: readonlyMounts?.length ?? 0,
+      ts: ts(),
+    });
 
     const vm = await this.factory({ hostCwd, allowedHosts, secrets, readonlyMounts });
 
-    console.log(`[${ts()}] gondolin: VM ready for workspace ${workspace.id}`);
+    console.log("[gondolin] VM ready", { workspaceId: workspace.id, ts: ts() });
     return vm;
   }
 }

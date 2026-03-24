@@ -109,8 +109,7 @@ export class WorkspaceStore {
       lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
-      runtime:
-        raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
+      runtime: raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
       sandboxConfig:
         raw.sandboxConfig && typeof raw.sandboxConfig === "object"
           ? (raw.sandboxConfig as Workspace["sandboxConfig"])

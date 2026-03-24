@@ -4,6 +4,7 @@ server/dist/
 
 # iOS
 ios/build/
+ios/.build/
 ios/docs/
 ios/*.xcodeproj/
 ios/OppiMacTests/
@@ -58,6 +59,11 @@ session-traces/
 *.ips
 node_modules/
 server/coverage/
+.ruff_cache/
+
+# Performance artifacts (never commit)
+*.tailspin.gz
+.bench-output.txt
 
 # Screen recordings (large, accidental commits)
 ScreenRecording_*.mov

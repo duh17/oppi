@@ -87,7 +87,12 @@ export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOpe
     async exec(
       command: string,
       cwd: string,
-      options: { onData: (data: Buffer) => void; signal?: AbortSignal; timeout?: number; env?: NodeJS.ProcessEnv },
+      options: {
+        onData: (data: Buffer) => void;
+        signal?: AbortSignal;
+        timeout?: number;
+        env?: NodeJS.ProcessEnv;
+      },
     ) {
       const guestCwd = toGuestPath(localCwd, cwd);
       // Filter host env: keep string values, strip HOME/USER/LOGNAME to prevent
@@ -95,8 +100,9 @@ export function createGondolinBashOps(vm: GondolinVm, localCwd: string): BashOpe
       const STRIP_ENV = new Set(["HOME", "USER", "LOGNAME", "SHELL", "PATH"]);
       const env = options.env
         ? Object.fromEntries(
-            Object.entries(options.env)
-              .filter((e): e is [string, string] => typeof e[1] === "string" && !STRIP_ENV.has(e[0])),
+            Object.entries(options.env).filter(
+              (e): e is [string, string] => typeof e[1] === "string" && !STRIP_ENV.has(e[0]),
+            ),
           )
         : undefined;
 

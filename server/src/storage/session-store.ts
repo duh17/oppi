@@ -54,10 +54,12 @@ export class SessionStore {
       const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
       if (!isRecord(raw)) return undefined;
       const session = raw.session as Session | undefined;
-      // Backfill cache token fields for sessions created before this change
+      // Backfill cache token fields for sessions persisted before cacheRead/cacheWrite existed.
+      // Type says they exist but on-disk data may lack them — intentional `as` cast for migration.
       if (session?.tokens && !("cacheRead" in session.tokens)) {
-        (session.tokens as any).cacheRead = 0;
-        (session.tokens as any).cacheWrite = 0;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const t = session.tokens as any;
+        session.tokens = { input: t.input, output: t.output, cacheRead: 0, cacheWrite: 0 };
       }
       return session;
     } catch {

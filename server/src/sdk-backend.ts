@@ -12,10 +12,6 @@ import { basename, extname, join, resolve } from "node:path";
 
 import {
   createAgentSession,
-  createBashTool,
-  createReadTool,
-  createWriteTool,
-  createEditTool,
   createBashToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
@@ -77,12 +73,12 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
     if (workspace?.runtime === "sandbox") {
       // Auto-create a dedicated sandbox directory. Permanent, per-workspace.
       // Slug the name to a safe directory name, fall back to id.
-      const slug = (workspace.name || workspace.id)
-        .toLowerCase()
-        .replace(/[^a-z0-9-_]/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
-        || workspace.id;
+      const slug =
+        (workspace.name || workspace.id)
+          .toLowerCase()
+          .replace(/[^a-z0-9-_]/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "") || workspace.id;
       const sandboxDir = join(homedir(), "sandbox", slug);
       mkdirSync(sandboxDir, { recursive: true });
       return sandboxDir;
@@ -309,7 +305,7 @@ export class SdkBackend {
         createEditToolDefinition(cwd, { operations: createGondolinEditOps(vm, cwd) }),
         createWriteToolDefinition(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
       ];
-      console.log(`[sdk] Sandbox VM ready for workspace ${workspace.id || "unknown"}`);
+      console.log("[sdk] Sandbox VM ready", { workspaceId: workspace.id || "unknown" });
     }
 
     const { session: piSession } = await createAgentSession({
