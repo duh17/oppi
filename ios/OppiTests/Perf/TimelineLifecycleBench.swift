@@ -303,7 +303,8 @@ struct TimelineLifecycleBench {
 
         for targetIP in toolIPs {
             guard let attrsBefore = cv.layoutAttributesForItem(at: targetIP) else { continue }
-            let screenYBefore = attrsBefore.frame.origin.y - cv.contentOffset.y
+            // Bottom-edge anchoring: measure the cell's bottom screen position.
+            let bottomScreenYBefore = attrsBefore.frame.maxY - cv.contentOffset.y
 
             // Expand
             harness.coordinator.collectionView(cv, didSelectItemAt: targetIP)
@@ -313,8 +314,8 @@ struct TimelineLifecycleBench {
             }
 
             if let attrsAfter = cv.layoutAttributesForItem(at: targetIP) {
-                let screenYAfter = attrsAfter.frame.origin.y - cv.contentOffset.y
-                let shift = abs(screenYAfter - screenYBefore)
+                let bottomScreenYAfter = attrsAfter.frame.maxY - cv.contentOffset.y
+                let shift = abs(bottomScreenYAfter - bottomScreenYBefore)
                 expandShiftMaxPt = max(expandShiftMaxPt, shift)
             }
 

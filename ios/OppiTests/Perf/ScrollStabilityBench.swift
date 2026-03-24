@@ -193,8 +193,9 @@ struct ScrollStabilityBench {
         var maxShift: CGFloat = 0
 
         for round in 1 ... toggleRounds {
+            // Bottom-edge anchoring: measure the cell's bottom screen position.
             let attrsBefore = cv.layoutAttributesForItem(at: targetIP)
-            let screenYBefore = (attrsBefore?.frame.origin.y ?? 0) - cv.contentOffset.y
+            let bottomScreenYBefore = (attrsBefore?.frame.maxY ?? 0) - cv.contentOffset.y
 
             harness.coordinator.collectionView(cv, didSelectItemAt: targetIP)
             // Drain for cascade settlement.
@@ -203,11 +204,11 @@ struct ScrollStabilityBench {
             }
 
             let attrsAfter = cv.layoutAttributesForItem(at: targetIP)
-            let screenYAfter = (attrsAfter?.frame.origin.y ?? 0) - cv.contentOffset.y
-            let shift = abs(screenYAfter - screenYBefore)
+            let bottomScreenYAfter = (attrsAfter?.frame.maxY ?? 0) - cv.contentOffset.y
+            let shift = abs(bottomScreenYAfter - bottomScreenYBefore)
             maxShift = max(maxShift, shift)
 
-            #expect(shift < 2.0, "Shift \(shift)pt on toggle round \(round)")
+            #expect(shift < 2.0, "Bottom-edge shift \(shift)pt on toggle round \(round)")
         }
 
         print("METRIC expand_collapse_max_shift_pt=\(Int(maxShift * 100))")

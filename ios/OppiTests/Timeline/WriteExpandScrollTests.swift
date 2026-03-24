@@ -92,18 +92,28 @@ struct WriteExpandScrollTests {
             return
         }
 
-        let offsetBeforeExpand = wh.collectionView.contentOffset.y
+        // Bottom-edge anchoring: capture the bottom of the target cell
+        // before expansion. After expansion, the bottom should stay in place
+        // (the cell grows upward).
+        let bottomScreenYBefore: CGFloat? = {
+            guard let attrs = wh.collectionView.layoutAttributesForItem(at: targetIP) else { return nil }
+            return attrs.frame.maxY - wh.collectionView.contentOffset.y
+        }()
 
         // Tap to expand the write tool output.
         wh.coordinator.collectionView(wh.collectionView, didSelectItemAt: targetIP)
         wh.collectionView.layoutIfNeeded()
 
         let offsetAfterExpand = wh.collectionView.contentOffset.y
-        let expandDrift = abs(offsetAfterExpand - offsetBeforeExpand)
 
-        // The expand itself should not cause large offset drift.
-        #expect(expandDrift < 5.0,
-                "contentOffset drifted \(expandDrift)pt after expanding write tool row")
+        // The bottom edge of the cell should stay at the same screen position.
+        if let before = bottomScreenYBefore,
+           let attrs = wh.collectionView.layoutAttributesForItem(at: targetIP) {
+            let after = attrs.frame.maxY - wh.collectionView.contentOffset.y
+            let bottomDrift = abs(after - before)
+            #expect(bottomDrift < 5.0,
+                    "Bottom-edge drifted \(bottomDrift)pt after expanding write tool row")
+        }
 
         // Now simulate the user trying to scroll up after the expand.
         // In the bug scenario, the offset resets back to the expanded position.

@@ -57,9 +57,10 @@ final class AnchoredCollectionView: UICollectionView {
     private var expandCollapseAnchorScreenY: CGFloat = 0
 
     /// Pin a specific item's screen position across expand/collapse layout
-    /// passes. Captures the item's current screen-relative Y and
-    /// force-restores it on every subsequent contentOffset change until
-    /// `clearExpandCollapseAnchor()` is called.
+    /// passes. Uses top-edge (origin.y) for the deferred anchor because
+    /// origin.y is stable across self-sizing cascade passes (only height
+    /// changes during re-estimation, not origin). The caller applies the
+    /// immediate bottom-edge offset correction before calling this.
     func setExpandCollapseAnchor(indexPath: IndexPath) {
         expandCollapseAnchorIP = indexPath
         expandCollapseSavedOffsetY = contentOffset.y
@@ -71,6 +72,15 @@ final class AnchoredCollectionView: UICollectionView {
     /// Clear the expand/collapse anchor after layout passes have settled.
     func clearExpandCollapseAnchor() {
         expandCollapseAnchorIP = nil
+    }
+
+    /// Apply an absolute contentOffset.y correction while suppressing the
+    /// didSet interceptor and any internal layout passes that UIKit
+    /// triggers when setting contentOffset on a UICollectionView.
+    func applyOffsetCorrection(_ targetOffsetY: CGFloat) {
+        isApplyingAnchorCorrection = true
+        contentOffset.y = targetOffsetY
+        isApplyingAnchorCorrection = false
     }
 
     // MARK: - Detached anchor
