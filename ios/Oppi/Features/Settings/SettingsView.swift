@@ -107,9 +107,11 @@ struct SettingsView: View {
                     }
                 }
 
-                Text(themeStore.selectedThemeID.detail)
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
+                if !themeStore.selectedThemeID.detail.isEmpty {
+                    Text(themeStore.selectedThemeID.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                }
 
                 NavigationLink("Import from Server") {
                     ThemeImportView()
@@ -122,6 +124,12 @@ struct SettingsView: View {
                 }
                 .onChange(of: spinnerStyle) { _, newValue in
                     AppPreferences.Appearance.setSpinnerStyle(newValue)
+                }
+
+                LabeledContent("Preview") {
+                    WorkingSpinnerView(tintColor: .themeFg)
+                        .frame(width: 20, height: 20)
+                        .id(spinnerStyle)
                 }
             }
 

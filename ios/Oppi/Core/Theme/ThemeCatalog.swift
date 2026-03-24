@@ -207,7 +207,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         case .night:
             return "OLED black with warm accents. Minimizes eye strain in the dark."
         case .custom:
-            return "Imported theme from server."
+            return ""
         }
     }
 

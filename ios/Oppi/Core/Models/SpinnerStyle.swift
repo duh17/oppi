@@ -7,8 +7,8 @@ enum SpinnerStyle: String, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .brailleDots: return "Braille Dots"
-        case .gameOfLife: return "Game of Life"
+        case .brailleDots: return "Pi"
+        case .gameOfLife: return "GoL"
         }
     }
 
