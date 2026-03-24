@@ -39,8 +39,10 @@ final class StreamingTextRevealer {
     // MARK: - Configuration
 
     /// Target duration to reveal each batch of new characters.
-    /// Slightly under the coalescer interval so reveal completes before next flush.
-    private let revealDuration: Double = 0.030 // 30ms (coalescer is 33ms)
+    /// Slightly longer than the coalescer interval (33ms) so reveal animation
+    /// visibly overlaps with the next flush — producing a gentle, continuous
+    /// appear effect similar to ChatGPT's streaming reveal.
+    private let revealDuration: Double = 0.060 // 60ms (coalescer is 33ms)
 
     /// Minimum characters to reveal per frame (avoids imperceptible single-char reveals).
     private let minCharsPerFrame: Double = 1.0
