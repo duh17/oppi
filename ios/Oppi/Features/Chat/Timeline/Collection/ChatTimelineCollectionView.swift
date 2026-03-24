@@ -526,31 +526,32 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                let nextItem = configuration.items.last(where: { $0.id == streamingID }),
                let prevItem = currentItemByID[streamingID],
                prevItem != nextItem,
-               let indexPath = dataSource?.indexPath(for: streamingID),
-               let cell = collectionView.cellForItem(at: indexPath) {
-                // Direct streaming cell update.
+               let dataSource {
+                // Lightweight streaming reconfigure: skip the full plan build
+                // (O(n) dedup + Set construction) but still go through
+                // dataSource.apply() so UIKit handles cell self-sizing.
+                // Raw cell.contentConfiguration bypasses the compositional
+                // layout's preferredLayoutAttributesFitting — the cell stays
+                // its old height and clips growing text.
                 ChatTimelinePerf.beginTimelineApplyCycle(
                     itemCount: currentIDs.count,
                     changedCount: 1
                 )
-                let configureStartNs = ChatTimelinePerf.timestampNs()
-                if let config = assistantRowConfiguration(itemID: streamingID, item: nextItem) {
-                    let applyToken = ChatTimelinePerf.beginCollectionApply(
-                        itemCount: currentIDs.count,
-                        changedCount: 1,
-                        sessionId: configuration.sessionId
-                    )
-                    cell.contentConfiguration = config
-                    cell.contentView.clipsToBounds = true
-                    ChatTimelinePerf.endCollectionApply(applyToken)
-                }
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: "assistant_native_direct",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
-                // Update tracking for the streaming item only.
+                // Update item maps before the apply so the cell provider
+                // reads the fresh item content.
                 currentItemByID[streamingID] = nextItem
                 previousItemByID[streamingID] = nextItem
+
+                var snapshot = dataSource.snapshot()
+                snapshot.reconfigureItems([streamingID])
+                let applyToken = ChatTimelinePerf.beginCollectionApply(
+                    itemCount: currentIDs.count,
+                    changedCount: 1,
+                    sessionId: configuration.sessionId
+                )
+                dataSource.apply(snapshot, animatingDifferences: false)
+                ChatTimelinePerf.endCollectionApply(applyToken)
+
                 previousStreamingAssistantID = configuration.streamingAssistantID
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
