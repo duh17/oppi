@@ -1,0 +1,7 @@
+// Local overrides — NOT committed to git.
+// Copy this file to Local.xcconfig and fill in values.
+//
+// xcconfig treats // as comments, so URLs need indirection through single slashes.
+_SLASH = /
+_SS = $(_SLASH)$(_SLASH)
+// SENTRY_DSN = https:$(_SS)your-key@your-host.ingest.us.sentry.io/your-project-id

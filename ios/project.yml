@@ -23,6 +23,9 @@ options:
   xcodeVersion: "26.2"
   generateEmptyDirectories: true
   defaultLocalization: en
+configFiles:
+  Debug: Base.xcconfig
+  Release: Base.xcconfig
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -31,7 +34,6 @@ settings:
     INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UILaunchScreen_Generation: true
     ENABLE_USER_SCRIPT_SANDBOXING: true
-    SENTRY_DSN: ""
     OPPI_TELEMETRY_MODE: "internal"
     APP_GROUP_IDENTIFIER: group.oppi
   configs:

@@ -45,6 +45,7 @@ auth.json
 *.pem
 **/identity/private*.json
 **/identity/*.pem
+ios/Local.xcconfig
 
 # Runtime data
 session-traces/

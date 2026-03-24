@@ -1,0 +1,6 @@
+// Base build configuration — committed to git.
+// Default values for secrets. Override in Local.xcconfig (gitignored).
+SENTRY_DSN =
+
+// Pull in local overrides if present (optional include — no error if missing).
+#include? "Local.xcconfig"
