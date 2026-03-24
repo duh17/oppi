@@ -232,6 +232,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
+        private var previousItemCount = 0
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         var lastObservedContentOffsetY: CGFloat?
@@ -510,6 +511,74 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             }
 
+            // Streaming fast path: when the item list is structurally unchanged
+            // (same count, same streaming ID, same busy/hidden state), skip
+            // the full plan build + snapshot apply. This avoids O(n) dedup,
+            // Set construction, and UIKit snapshot diffing on every 33ms tick.
+            let structurallyUnchanged = configuration.items.count == previousItemCount
+                && configuration.streamingAssistantID == previousStreamingAssistantID
+                && configuration.isBusy == isTimelineBusy
+                && configuration.hiddenCount == previousHiddenCount
+                && !themeChanged
+
+            if structurallyUnchanged,
+               let streamingID = configuration.streamingAssistantID,
+               let nextItem = configuration.items.last(where: { $0.id == streamingID }),
+               let prevItem = currentItemByID[streamingID],
+               prevItem != nextItem,
+               let indexPath = dataSource?.indexPath(for: streamingID),
+               let cell = collectionView.cellForItem(at: indexPath) {
+                // Direct streaming cell update.
+                ChatTimelinePerf.beginTimelineApplyCycle(
+                    itemCount: currentIDs.count,
+                    changedCount: 1
+                )
+                let configureStartNs = ChatTimelinePerf.timestampNs()
+                if let config = assistantRowConfiguration(itemID: streamingID, item: nextItem) {
+                    let applyToken = ChatTimelinePerf.beginCollectionApply(
+                        itemCount: currentIDs.count,
+                        changedCount: 1,
+                        sessionId: configuration.sessionId
+                    )
+                    cell.contentConfiguration = config
+                    cell.contentView.clipsToBounds = true
+                    ChatTimelinePerf.endCollectionApply(applyToken)
+                }
+                ChatTimelinePerf.recordCellConfigure(
+                    rowType: "assistant_native_direct",
+                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+                )
+                // Update tracking for the streaming item only.
+                currentItemByID[streamingID] = nextItem
+                previousItemByID[streamingID] = nextItem
+                previousStreamingAssistantID = configuration.streamingAssistantID
+                previousHiddenCount = configuration.hiddenCount
+                previousItemCount = configuration.items.count
+                previousThemeID = currentThemeID
+                ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+                updateDetachedStreamingHintVisibility()
+                return
+            }
+
+            // No-op fast path: streaming, structurally unchanged, content identical.
+            if structurallyUnchanged,
+               let streamingID = configuration.streamingAssistantID,
+               let nextItem = configuration.items.last(where: { $0.id == streamingID }),
+               let prevItem = currentItemByID[streamingID],
+               prevItem == nextItem {
+                ChatTimelinePerf.beginTimelineApplyCycle(
+                    itemCount: currentIDs.count,
+                    changedCount: 0
+                )
+                previousStreamingAssistantID = configuration.streamingAssistantID
+                previousHiddenCount = configuration.hiddenCount
+                previousItemCount = configuration.items.count
+                previousThemeID = currentThemeID
+                ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+                updateDetachedStreamingHintVisibility()
+                return
+            }
+
             let applyPlan = ChatTimelineApplyPlan.build(
                 items: configuration.items,
                 hiddenCount: configuration.hiddenCount,
@@ -555,6 +624,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousItemByID = applyPlan.nextItemByID
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
+            previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
 
             // Note: detached anchor is NOT cleared here. It persists until

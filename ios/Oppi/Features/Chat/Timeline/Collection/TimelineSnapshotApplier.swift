@@ -107,11 +107,12 @@ enum TimelineSnapshotApplier {
         )
 
         // Structural change: IDs changed (new rows inserted or removed).
-        // Animate during busy sessions so new tool/system rows slide in
-        // smoothly instead of popping. Skip animation on idle transitions
-        // (working indicator removed, session ended) to avoid layout
-        // settlement issues that leave content behind the input bar.
-        let shouldAnimate = isBusy
+        // Never animate structural diffs — instant transitions are calmer
+        // and avoid the layout settlement overhead that animated applies
+        // incur (~2-3x cost). The previous behavior animated during busy
+        // sessions, which caused tool/system row insertions to slide in
+        // with a crossfade that could stutter on heavy timelines.
+        let shouldAnimate = false
 
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
@@ -338,7 +339,7 @@ enum TimelineSnapshotApplier {
         isStreamingMutableItem(nextItem) || isStreamingMutableItem(previousItem)
     }
 
-    private static func isStreamingMutableItem(_ item: ChatItem?) -> Bool {
+    static func isStreamingMutableItem(_ item: ChatItem?) -> Bool {
         guard let item else { return false }
 
         switch item {

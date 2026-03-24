@@ -68,8 +68,18 @@ final class AssistantMarkdownSegmentApplier {
 
         if signatures == renderedSegmentSignatures {
             updateInPlace(segments: segments, config: config)
+        } else if config.isStreaming {
+            // Streaming structural change: find the common prefix of segment
+            // signatures and reuse existing views. Only rebuild the tail that
+            // changed (e.g., a code block appeared at the end). This avoids
+            // destroying and recreating expensive text views for the prefix.
+            incrementalRebuild(
+                segments: segments,
+                signatures: signatures,
+                config: config
+            )
         } else {
-            // Structural change resets reveal state.
+            // Non-streaming structural change: full rebuild.
             textRevealer.reset()
             lastStreamingTextCharCount = 0
             rebuild(segments: segments, signatures: signatures, config: config)
@@ -140,6 +150,120 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+    /// Streaming-aware structural rebuild that reuses views for unchanged
+    /// prefix segments. When segments go from [.text] to [.text, .codeBlock],
+    /// the existing text view is kept and only the code block view is created.
+    /// This avoids the cost of destroying and recreating expensive UITextViews.
+    private func incrementalRebuild(
+        segments: [FlatSegment],
+        signatures: [SegmentSignature],
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        let oldSigs = renderedSegmentSignatures
+        let palette = config.themeID.palette
+
+        // Find the common prefix length.
+        var commonPrefix = 0
+        let minLen = min(oldSigs.count, signatures.count)
+        while commonPrefix < minLen && oldSigs[commonPrefix] == signatures[commonPrefix] {
+            commonPrefix += 1
+        }
+
+        // If no common prefix, fall back to full rebuild.
+        guard commonPrefix > 0 else {
+            textRevealer.reset()
+            lastStreamingTextCharCount = 0
+            rebuild(segments: segments, signatures: signatures, config: config)
+            return
+        }
+
+        // Prefix views are already configured from the previous apply cycle.
+        // During streaming, prefix segments are frozen by the incremental
+        // parser — their content doesn't change. Only the last text segment
+        // (which is the growing tail) needs updating, and it's always at or
+        // beyond the common prefix boundary. Skip prefix updates entirely
+        // to avoid expensive textView.attributedText re-assignments.
+        //
+        // Note: this is safe because incrementalRebuild is only called during
+        // streaming (non-streaming structural changes use full rebuild).
+
+        // Remove extra views beyond the common prefix.
+        while stackView.arrangedSubviews.count > commonPrefix {
+            guard let view = stackView.arrangedSubviews.last else { break }
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        // Remove stale references for indices >= commonPrefix.
+        for index in commonPrefix ..< max(oldSigs.count, signatures.count) {
+            textViews.removeValue(forKey: index)
+            codeBlockViews.removeValue(forKey: index)
+            tableViews.removeValue(forKey: index)
+            imageViews.removeValue(forKey: index)
+            highlightTasks[index]?.cancel()
+            highlightTasks.removeValue(forKey: index)
+        }
+
+        // Build and append new tail views.
+        for index in commonPrefix ..< segments.count {
+            switch segments[index] {
+            case .text(let attributed):
+                let textView = makeTextView(palette: palette)
+                textView.isSelectable = config.textSelectionEnabled
+                textView.attributedText = NSAttributedString(attributed)
+                stackView.addArrangedSubview(textView)
+                textViews[index] = textView
+
+            case .codeBlock(let language, let code):
+                let codeView = NativeCodeBlockView()
+                let isOpen = config.isStreaming
+                    && index == segments.count - 1
+                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                codeView.configureSelectedTextPi(
+                    router: config.selectedTextPiRouter,
+                    sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                )
+                codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
+                stackView.addArrangedSubview(codeView)
+                codeBlockViews[index] = codeView
+                if !isOpen {
+                    scheduleHighlight(index: index, language: language, code: code)
+                }
+
+            case .table(let headers, let rows):
+                let tableView = NativeTableBlockView()
+                tableView.configureSelectedTextPi(
+                    router: config.selectedTextPiRouter,
+                    sourceContext: assistantTableSourceContext(config: config)
+                )
+                tableView.apply(headers: headers, rows: rows, palette: palette)
+                stackView.addArrangedSubview(tableView)
+                tableViews[index] = tableView
+
+            case .thematicBreak:
+                stackView.addArrangedSubview(makeThematicBreak(palette: palette))
+
+            case .image(let alt, let url):
+                let imageView = NativeMarkdownImageView()
+                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                stackView.addArrangedSubview(imageView)
+                imageViews[index] = imageView
+            }
+        }
+
+        renderedSegmentSignatures = signatures
+
+        // Reset reveal state on structural change — new segments start fresh.
+        textRevealer.reset()
+        lastStreamingTextCharCount = 0
+
+        // Track character count for the new last text segment.
+        let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
+        if let lastIdx = lastTextIndex, let tv = textViews[lastIdx] {
+            lastStreamingTextCharCount = tv.attributedText?.length ?? 0
+        }
+    }
+
     private func updateInPlace(
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration
@@ -148,29 +272,37 @@ final class AssistantMarkdownSegmentApplier {
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
 
         for (index, segment) in segments.enumerated() {
+            // During streaming, only the last text segment grows. All other
+            // segments are frozen by the incremental parser. Skip them to
+            // avoid expensive attributedText re-assignments and code block
+            // reconfigurations.
+            let isStreamingTail = config.isStreaming && index == lastTextIndex
+
             switch segment {
             case .text(let attributed):
                 if let textView = textViews[index] {
-                    textView.isSelectable = config.textSelectionEnabled
+                    if !config.isStreaming || isStreamingTail {
+                        textView.isSelectable = config.textSelectionEnabled
 
-                    // FlatSegment.build uses UIKit attribute scope (UIFont/UIColor)
-                    // directly, so direct conversion produces correct NSAttributedString
-                    // attributes — no normalization pass needed.
-                    let attrText = NSAttributedString(attributed)
-                    textView.attributedText = attrText
+                        // FlatSegment.build uses UIKit attribute scope (UIFont/UIColor)
+                        // directly, so direct conversion produces correct NSAttributedString
+                        // attributes — no normalization pass needed.
+                        let attrText = NSAttributedString(attributed)
+                        textView.attributedText = attrText
 
-                    // Smooth reveal for the last (actively growing) text segment during streaming.
-                    if config.isStreaming, index == lastTextIndex {
-                        let previousCount = lastStreamingTextCharCount
-                        let currentCount = attrText.length
-                        if currentCount > previousCount {
-                            textRevealer.reveal(
-                                in: textView,
-                                normalizedText: attrText,
-                                previousVisibleCount: previousCount
-                            )
+                        // Smooth reveal for the last (actively growing) text segment during streaming.
+                        if isStreamingTail {
+                            let previousCount = lastStreamingTextCharCount
+                            let currentCount = attrText.length
+                            if currentCount > previousCount {
+                                textRevealer.reveal(
+                                    in: textView,
+                                    normalizedText: attrText,
+                                    previousVisibleCount: previousCount
+                                )
+                            }
+                            lastStreamingTextCharCount = currentCount
                         }
-                        lastStreamingTextCharCount = currentCount
                     }
                 }
 
@@ -179,13 +311,15 @@ final class AssistantMarkdownSegmentApplier {
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
                         && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
-                    codeView.configureSelectedTextPi(
-                        router: config.selectedTextPiRouter,
-                        sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
-                    )
-                    codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
-                    if !isOpen && highlightTasks[index] == nil {
-                        scheduleHighlight(index: index, language: language, code: code)
+                    if !config.isStreaming || isOpen {
+                        codeView.configureSelectedTextPi(
+                            router: config.selectedTextPiRouter,
+                            sourceContext: assistantCodeBlockSourceContext(language: language, config: config)
+                        )
+                        codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
+                        if !isOpen && highlightTasks[index] == nil {
+                            scheduleHighlight(index: index, language: language, code: code)
+                        }
                     }
                 }
 
