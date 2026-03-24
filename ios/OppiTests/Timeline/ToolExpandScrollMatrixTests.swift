@@ -13,15 +13,19 @@ struct ToolExpandScrollMatrixTests {
         )
 
         fixture.prepareDetachedViewport()
-        let offsetBeforeExpand = fixture.offsetY
+        let bottomScreenYBefore = fixture.targetBottomScreenY()
 
         fixture.expandTarget()
         fixture.assertExpandedInnerScrollViewsDoNotCompeteForVerticalScroll()
 
+        // Bottom-edge anchoring: the bottom of the cell should stay at
+        // the same screen position after expansion (expand grows upward).
+        if let before = bottomScreenYBefore, let after = fixture.targetBottomScreenY() {
+            let bottomDrift = abs(after - before)
+            #expect(bottomDrift < 8.0,
+                    "Bottom-edge drifted \(bottomDrift)pt for \(toolCase.name)")
+        }
         let offsetAfterExpand = fixture.offsetY
-        let expandDrift = abs(offsetAfterExpand - offsetBeforeExpand)
-        #expect(expandDrift < 8.0,
-                "Expand drifted \(expandDrift)pt for \(toolCase.name)")
 
         let upwardTarget = fixture.clampOffsetY(offsetAfterExpand - 220)
         fixture.setOffsetY(upwardTarget)
@@ -64,7 +68,7 @@ struct ToolExpandScrollMatrixTests {
 
     @MainActor
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
-    func expandingToolRowsKeepsAnchoredOffsetStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
+    func expandingToolRowsKeepsAnchoredBottomEdgeStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
             ToolExpandScrollMatrixFixture.make(
                 for: toolCase,
@@ -74,19 +78,21 @@ struct ToolExpandScrollMatrixTests {
         )
 
         fixture.prepareDetachedViewport()
-        let offsetBeforeExpand = fixture.offsetY
+        let bottomScreenYBefore = fixture.targetBottomScreenY()
 
         fixture.expandTarget()
 
-        let offsetAfterExpand = fixture.offsetY
-        let expandDrift = abs(offsetAfterExpand - offsetBeforeExpand)
-        #expect(expandDrift < 8.0,
-                "Anchored expand drifted \(expandDrift)pt for \(toolCase.name)")
+        // Bottom-edge anchoring: the bottom of the cell stays in place.
+        if let before = bottomScreenYBefore, let after = fixture.targetBottomScreenY() {
+            let bottomDrift = abs(after - before)
+            #expect(bottomDrift < 8.0,
+                    "Anchored expand bottom-edge drifted \(bottomDrift)pt for \(toolCase.name)")
+        }
     }
 
     @MainActor
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
-    func collapsingToolRowsKeepsAnchoredOffsetStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
+    func collapsingToolRowsKeepsAnchoredBottomEdgeStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
             ToolExpandScrollMatrixFixture.make(
                 for: toolCase,
@@ -97,14 +103,16 @@ struct ToolExpandScrollMatrixTests {
 
         fixture.prepareDetachedViewport()
         fixture.expandTarget()
-        let offsetBeforeCollapse = fixture.offsetY
+        let bottomScreenYBeforeCollapse = fixture.targetBottomScreenY()
 
         fixture.collapseTarget()
 
-        let offsetAfterCollapse = fixture.offsetY
-        let collapseDrift = abs(offsetAfterCollapse - offsetBeforeCollapse)
-        #expect(collapseDrift < 8.0,
-                "Anchored collapse drifted \(collapseDrift)pt for \(toolCase.name)")
+        // Bottom-edge anchoring: the bottom of the cell stays in place.
+        if let before = bottomScreenYBeforeCollapse, let after = fixture.targetBottomScreenY() {
+            let bottomDrift = abs(after - before)
+            #expect(bottomDrift < 8.0,
+                    "Anchored collapse bottom-edge drifted \(bottomDrift)pt for \(toolCase.name)")
+        }
     }
 
     @MainActor

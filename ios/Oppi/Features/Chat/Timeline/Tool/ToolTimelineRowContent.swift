@@ -59,8 +59,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private static let maxValidHeight: CGFloat = 10_000
     static let minOutputViewportHeight: CGFloat = 56
     static let minDiffViewportHeight: CGFloat = 68
-    static let maxOutputViewportHeight: CGFloat = 620
-    static let maxDiffViewportHeight: CGFloat = 760
+    /// Unified max viewport height for all expanded content types.
+    /// Keeps tool row expansion visually consistent regardless of content kind.
+    static let maxExpandedViewportHeight: CGFloat = 620
+    static let maxOutputViewportHeight: CGFloat = maxExpandedViewportHeight
+    static let maxDiffViewportHeight: CGFloat = maxExpandedViewportHeight
     /// Fixed viewport height used during streaming. The cell height stays
     /// constant while content grows inside, eliminating the nested-scroll
     /// invalidation cascade (inner content resize → cell height change →

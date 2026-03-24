@@ -1022,64 +1022,94 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         ) {
             let anchoredCV = collectionView as? AnchoredCollectionView
 
-            // Capture anchor position before the reconfigure changes it.
-            let screenYBefore: CGFloat?
+            // Capture the bottom edge of the cell before the reconfigure.
+            // Bottom-edge anchoring makes the expansion grow upward so the
+            // working indicator and items below remain visible.
+            let bottomScreenYBefore: CGFloat?
             if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-                screenYBefore = attrs.frame.origin.y - collectionView.contentOffset.y
+                bottomScreenYBefore = attrs.frame.maxY - collectionView.contentOffset.y
             } else {
-                screenYBefore = nil
+                bottomScreenYBefore = nil
             }
 
             reconfigureToolRow(itemID: itemID, in: collectionView)
 
-            // Restore anchor position after the synchronous layout pass.
-            if let screenYBefore {
-                restoreAnchorScreenPosition(
-                    anchorIndexPath: anchorIndexPath,
-                    savedScreenY: screenYBefore,
-                    in: collectionView
+            // Temporarily disable AnchoredCollectionView's own anchoring
+            // during the forced layout. Without this, the anchoring captures
+            // the OLD offset (before bottom-edge correction) and the
+            // self-sizing cascade tries to maintain that old state, undoing
+            // our correction.
+            let savedDetached = anchoredCV?.isDetachedFromBottom ?? false
+            anchoredCV?.isDetachedFromBottom = false
+            anchoredCV?.clearDetachedAnchor()
+
+            // Force layout to settle the new cell size. Bottom-edge anchoring
+            // needs the ACTUAL maxY (origin + height) after expansion, which
+            // requires the layout pass to resolve the new self-sizing height.
+            let offsetBeforeLayout = collectionView.contentOffset.y
+            collectionView.layoutIfNeeded()
+
+            // Restore the detached flag after the forced layout.
+            anchoredCV?.isDetachedFromBottom = savedDetached
+
+            // Compute the absolute target offset that keeps the bottom edge
+            // at the same screen position as before the reconfigure.
+            if let bottomScreenYBefore,
+               let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
+                // Target: newMaxY - targetOffset = savedBottomScreenY
+                //   => targetOffset = newMaxY - savedBottomScreenY
+                let targetOffset = newAttrs.frame.maxY - bottomScreenYBefore
+
+                let insets = collectionView.adjustedContentInset
+                let minOffsetY = -insets.top
+                let maxOffsetY = max(
+                    minOffsetY,
+                    collectionView.contentSize.height
+                        - collectionView.bounds.height
+                        + insets.bottom
                 )
+                let clamped = min(max(targetOffset, minOffsetY), maxOffsetY)
+                if abs(clamped - collectionView.contentOffset.y) > 0.5 {
+                    // Suppress AnchoredCollectionView's didSet interceptor
+                    // and internal layout passes that would fight this
+                    // correction. Without this, setting contentOffset
+                    // triggers an internal layout pass in the compositional
+                    // layout which adjusts the offset back immediately.
+                    anchoredCV?.applyOffsetCorrection(clamped)
+                        ?? { collectionView.contentOffset.y = clamped }()
+                }
+            } else if abs(collectionView.contentOffset.y - offsetBeforeLayout) > 0.5 {
+                // No attrs but layout shifted the offset — restore.
+                collectionView.contentOffset.y = offsetBeforeLayout
             }
 
-            // Set the AnchoredCollectionView anchor for the deferred async
-            // invalidateEnclosingCollectionViewLayout pass, then clear one
-            // tick after that pass settles.
+            // Sync the detached flag on the AnchoredCollectionView so the
+            // detached anchor system provides ongoing protection after the
+            // expand/collapse anchor clears. Without this, UIKit's self-sizing
+            // cascade reverts the bottom-edge offset correction for collapses
+            // (the cascade wants top-edge stability, we want bottom-edge).
+            let isDetached = !(scrollController?.isCurrentlyNearBottom ?? true)
+            anchoredCV?.isDetachedFromBottom = isDetached
+
+            // Set the expand/collapse anchor for the deferred async
+            // layout passes (invalidateEnclosingCollectionViewLayout,
+            // self-sizing cascades), then clear and hand off to the
+            // detached anchor for ongoing protection.
             anchoredCV?.setExpandCollapseAnchor(indexPath: anchorIndexPath)
-            DispatchQueue.main.async { [weak anchoredCV] in
-                DispatchQueue.main.async { [weak anchoredCV] in
+            DispatchQueue.main.async { [weak anchoredCV, isDetached] in
+                DispatchQueue.main.async { [weak anchoredCV, isDetached] in
                     anchoredCV?.clearExpandCollapseAnchor()
+                    // Re-capture the detached anchor at the settled position
+                    // so the detached system takes over from the expand/collapse
+                    // anchor seamlessly.
+                    if isDetached {
+                        anchoredCV?.captureDetachedAnchor()
+                    }
                 }
             }
         }
 
-        /// Adjust contentOffset so the item at `anchorIndexPath` returns
-        /// to `savedScreenY` (its screen-relative Y before the layout
-        /// change). Safe to call outside of `layoutSubviews`.
-        private func restoreAnchorScreenPosition(
-            anchorIndexPath: IndexPath,
-            savedScreenY: CGFloat,
-            in collectionView: UICollectionView
-        ) {
-            guard let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) else {
-                return
-            }
-            let currentScreenY = newAttrs.frame.origin.y - collectionView.contentOffset.y
-            let delta = currentScreenY - savedScreenY
-            guard delta.isFinite, abs(delta) > 0.5 else { return }
 
-            let insets = collectionView.adjustedContentInset
-            let minOffsetY = -insets.top
-            let maxOffsetY = max(
-                minOffsetY,
-                collectionView.contentSize.height
-                    - collectionView.bounds.height
-                    + insets.bottom
-            )
-            let target = collectionView.contentOffset.y + delta
-            let clamped = min(max(target, minOffsetY), maxOffsetY)
-            guard abs(clamped - collectionView.contentOffset.y) > 0.5 else { return }
-            collectionView.contentOffset.y = clamped
-        }
 
         func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
             TimelineSnapshotApplier.reconfigureItems(
