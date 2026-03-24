@@ -458,7 +458,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             hiddenCount = configuration.hiddenCount
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
-            isTimelineBusy = configuration.isBusy
+            // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
+            // check so the comparison detects busy→idle transitions.
 
             if sessionScopeChanged {
                 cancelAllToolOutputLoadTasks()
@@ -580,6 +581,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
+                isTimelineBusy = configuration.isBusy
 
                 // Process pending scroll commands (auto-scroll during streaming).
                 var didScroll = false
@@ -594,21 +596,89 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
 
-            // No-op fast path: streaming, structurally unchanged, content identical.
+            // No-op fast path: streaming, structurally unchanged, content
+            // identical for the assistant AND all mutable items.
             if structurallyUnchanged,
                let streamingID = configuration.streamingAssistantID,
                let nextItem = configuration.items.last(where: { $0.id == streamingID }),
                let prevItem = currentItemByID[streamingID],
                prevItem == nextItem {
-                ChatTimelinePerf.beginTimelineApplyCycle(
-                    itemCount: currentIDs.count,
-                    changedCount: 0
-                )
+                // Even when the assistant is unchanged, mutable items (tools,
+                // thinking) may have changed. Scan for them before declaring
+                // this a true no-op.
+                var mutableChanged = false
+                for item in configuration.items {
+                    let id = item.id
+                    guard id != streamingID else { continue }
+                    let prev = currentItemByID[id]
+                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                        || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
+                        continue
+                    }
+                    if prev != item {
+                        mutableChanged = true
+                        break
+                    }
+                }
+                if !mutableChanged {
+                    ChatTimelinePerf.beginTimelineApplyCycle(
+                        itemCount: currentIDs.count,
+                        changedCount: 0
+                    )
+                    previousStreamingAssistantID = configuration.streamingAssistantID
+                    previousHiddenCount = configuration.hiddenCount
+                    previousItemCount = configuration.items.count
+                    previousThemeID = currentThemeID
+                    isTimelineBusy = configuration.isBusy
+                    ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+                    updateDetachedStreamingHintVisibility()
+                    return
+                }
+                // Mutable items changed — fall through to mutable-only reconfigure.
+                var reconfigureIDs: [String] = []
+                for item in configuration.items {
+                    let id = item.id
+                    guard id != streamingID else { continue }
+                    let prev = currentItemByID[id]
+                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                        || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
+                        continue
+                    }
+                    if let prev, prev != item {
+                        currentItemByID[id] = item
+                        previousItemByID[id] = item
+                        reconfigureIDs.append(id)
+                    }
+                }
+                if !reconfigureIDs.isEmpty, let dataSource {
+                    ChatTimelinePerf.beginTimelineApplyCycle(
+                        itemCount: currentIDs.count,
+                        changedCount: reconfigureIDs.count
+                    )
+                    var snapshot = dataSource.snapshot()
+                    snapshot.reconfigureItems(reconfigureIDs)
+                    let applyToken = ChatTimelinePerf.beginCollectionApply(
+                        itemCount: currentIDs.count,
+                        changedCount: reconfigureIDs.count,
+                        sessionId: configuration.sessionId
+                    )
+                    dataSource.apply(snapshot, animatingDifferences: false)
+                    ChatTimelinePerf.endCollectionApply(applyToken)
+                }
                 previousStreamingAssistantID = configuration.streamingAssistantID
                 previousHiddenCount = configuration.hiddenCount
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
-                ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+                isTimelineBusy = configuration.isBusy
+
+                var didScroll = false
+                if let scrollCommand = configuration.scrollCommand,
+                   scrollCommand.nonce != lastHandledScrollCommandNonce,
+                   performScroll(scrollCommand, in: collectionView) {
+                    lastHandledScrollCommandNonce = scrollCommand.nonce
+                    didScroll = true
+                }
+                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
                 return
             }
@@ -660,6 +730,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenCount = configuration.hiddenCount
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
+            isTimelineBusy = configuration.isBusy
 
             // Note: detached anchor is NOT cleared here. It persists until
             // the next snapshot apply, where captureDetachedAnchor() replaces
