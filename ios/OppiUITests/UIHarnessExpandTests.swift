@@ -3,10 +3,15 @@ import XCTest
 /// Expand/collapse flow and error row rendering tests for the UI hang harness.
 ///
 /// Validates that:
-/// - Thinking and tool row full-screen transitions do not cause stalls
+/// - Tool row full-screen transitions (via double-tap) do not cause stalls
 /// - Compaction row expand/collapse toggle works without regressions
 /// - Rapid expand/collapse cycling stays stall-free
 /// - Error rows render alongside expand/collapse content without hang regressions
+///
+/// Full-screen expansion on thinking and tool rows is triggered by double-tap,
+/// pinch-out, or context menu — there are no explicit expand buttons.
+/// The tests use harness focus buttons to scroll to and expand tool rows with
+/// long content, then double-tap the expanded content area to trigger full-screen.
 @MainActor
 final class UIHarnessExpandTests: UIHarnessTestCase {
 
@@ -20,30 +25,21 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
-        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
-        expandAll.tap()
+        // Focus the extension markdown tool — it has long rich content that
+        // supports full-screen expansion via double-tap, exercising the same
+        // full-screen presentation path as thinking rows.
+        let extensionFocus = app.descendants(matching: .any)["harness.extension.focus"]
+        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
+        extensionFocus.tap()
 
-        let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
-        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
-        renderToolSet.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.extensionExpanded", equals: 1, timeout: 4), 1)
+        Thread.sleep(forTimeInterval: 0.5)
 
-        // Scroll to bottom where visual fixtures live.
-        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
-        bottomButton.tap()
-        sleep(1)
-
-        // The thinking full-screen button may not exist in every harness configuration.
-        let thinkingExpandButton = app.descendants(matching: .any)["thinking.expand-full-screen"]
-        guard thinkingExpandButton.waitForExistence(timeout: 5) else {
-            throw XCTSkip(
-                "thinking.expand-full-screen button not found; "
-                + "skipping full-screen cycle"
-            )
-        }
-
-        thinkingExpandButton.tap()
+        // Double-tap the expanded content area to trigger full-screen.
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        let expandedArea = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        expandedArea.doubleTap()
         sleep(1)
 
         // Dismiss: try navigation-bar Done button, then fullscreen-image dismiss.
@@ -58,7 +54,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         }
 
         XCTAssertTrue(
-            assertHarnessStillRunning(context: "thinking row full-screen expand/dismiss")
+            assertHarnessStillRunning(context: "extension markdown full-screen expand/dismiss")
         )
 
         let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
@@ -73,31 +69,23 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
-        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
-        expandAll.tap()
+        // Focus the extension text tool — it has long plain-text content that
+        // supports full-screen expansion via double-tap.
+        let extensionTextFocus = app.descendants(matching: .any)["harness.extensionText.focus"]
+        XCTAssertTrue(extensionTextFocus.waitForExistence(timeout: 4))
+        extensionTextFocus.tap()
 
-        let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
-        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
-        renderToolSet.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
+        Thread.sleep(forTimeInterval: 0.5)
 
-        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
-        bottomButton.tap()
+        // Double-tap the expanded content area to trigger full-screen.
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        let expandedArea = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        expandedArea.doubleTap()
         sleep(1)
 
-        // The tool full-screen button may not exist in every harness configuration.
-        let toolExpandButton = app.descendants(matching: .any)["tool.expand-full-screen"]
-        guard toolExpandButton.waitForExistence(timeout: 5) else {
-            throw XCTSkip(
-                "tool.expand-full-screen button not found; "
-                + "skipping full-screen cycle"
-            )
-        }
-
-        toolExpandButton.tap()
-        sleep(1)
-
+        // Dismiss: try navigation-bar Done button, then fullscreen-image dismiss.
         let doneButton = app.buttons["Done"]
         if doneButton.waitForExistence(timeout: 4) {
             doneButton.tap()
@@ -135,8 +123,18 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         bottomButton.tap()
         sleep(1)
 
+        // The compaction row is near but not at the very bottom (audio clip is
+        // last). If not immediately visible, swipe the timeline to find it.
         let compactionToggle = app.descendants(matching: .any)["compaction.expand-toggle"]
-        guard compactionToggle.waitForExistence(timeout: 6) else {
+        if !compactionToggle.waitForExistence(timeout: 2) {
+            let timeline = app.descendants(matching: .any)["harness.timeline"]
+            for _ in 0..<5 {
+                timeline.swipeDown()
+                if compactionToggle.waitForExistence(timeout: 1) { break }
+            }
+        }
+
+        guard compactionToggle.waitForExistence(timeout: 2) else {
             throw XCTSkip(
                 "compaction.expand-toggle not found; "
                 + "no expandable compaction row in current harness fixtures"
