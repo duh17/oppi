@@ -192,4 +192,66 @@ struct StreamingFastPathTests {
         }
         #expect(text == "Hello, how can I help?")
     }
+
+    /// When a tool transitions from in-flight (isDone=false) to completed
+    /// (isDone=true) while streaming continues, the tool row must update.
+    /// Bug: isStreamingMutableItem only checks the NEW item, which has
+    /// isDone=true → returns false → tool-done transition is invisible.
+    @Test func toolDoneTransitionDuringStreaming() {
+        let h = Harness()
+        let streamingID = "assistant-1"
+
+        // Tool is in-flight while assistant streams.
+        h.apply(items: [
+            .assistantMessage(id: streamingID, text: "Running command", timestamp: timestamp),
+            .toolCall(
+                id: "tool-1", tool: "bash", argsSummary: "echo hi",
+                outputPreview: "", outputByteCount: 0, isError: false, isDone: false
+            ),
+        ], streamingAssistantID: streamingID)
+
+        // Tool completes (isDone: false → true) while assistant text grows.
+        h.apply(items: [
+            .assistantMessage(id: streamingID, text: "Running command completed", timestamp: timestamp),
+            .toolCall(
+                id: "tool-1", tool: "bash", argsSummary: "echo hi",
+                outputPreview: "hi\n", outputByteCount: 3, isError: false, isDone: true
+            ),
+        ], streamingAssistantID: streamingID)
+
+        let toolItem = h.coordinator.currentItemByID["tool-1"]
+        guard case .toolCall(_, _, _, let preview, let bytes, _, let isDone) = toolItem else {
+            Issue.record("Expected tool call item after done transition")
+            return
+        }
+        #expect(isDone == true, "Tool should be marked done")
+        #expect(preview == "hi\n", "Tool output should reflect completed state")
+        #expect(bytes == 3, "Tool byte count should reflect completed state")
+    }
+
+    /// When thinking transitions from active to done while streaming,
+    /// the thinking row must update.
+    @Test func thinkingDoneTransitionDuringStreaming() {
+        let h = Harness()
+        let streamingID = "assistant-1"
+
+        h.apply(items: [
+            .thinking(id: "think-1", preview: "Let me think...", hasMore: false, isDone: false),
+            .assistantMessage(id: streamingID, text: "Based on", timestamp: timestamp),
+        ], streamingAssistantID: streamingID)
+
+        // Thinking completes while assistant text grows.
+        h.apply(items: [
+            .thinking(id: "think-1", preview: "Let me think about this carefully.", hasMore: true, isDone: true),
+            .assistantMessage(id: streamingID, text: "Based on my analysis", timestamp: timestamp),
+        ], streamingAssistantID: streamingID)
+
+        let thinkItem = h.coordinator.currentItemByID["think-1"]
+        guard case .thinking(_, let preview, _, let isDone) = thinkItem else {
+            Issue.record("Expected thinking item after done transition")
+            return
+        }
+        #expect(isDone == true, "Thinking should be marked done")
+        #expect(preview == "Let me think about this carefully.", "Thinking preview should reflect completed state")
+    }
 }

@@ -542,14 +542,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousItemByID[streamingID] = nextItem
 
                 // Also detect changed mutable items (in-flight tools, active
-                // thinking rows) alongside the streaming assistant. Without
-                // this, tool/thinking rows freeze visually during streaming.
+                // thinking rows) alongside the streaming assistant. Check both
+                // the previous AND current item for mutability — a tool going
+                // from isDone:false to isDone:true needs reconfiguration even
+                // though the NEW item is no longer "mutable".
                 var reconfigureIDs = [streamingID]
                 for item in configuration.items {
                     let id = item.id
                     guard id != streamingID else { continue }
-                    guard TimelineSnapshotApplier.isStreamingMutableItem(item) else { continue }
-                    if let prev = currentItemByID[id], prev != item {
+                    let prevItem = currentItemByID[id]
+                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                        || TimelineSnapshotApplier.isStreamingMutableItem(prevItem) else {
+                        continue
+                    }
+                    if let prev = prevItem, prev != item {
                         currentItemByID[id] = item
                         previousItemByID[id] = item
                         reconfigureIDs.append(id)
