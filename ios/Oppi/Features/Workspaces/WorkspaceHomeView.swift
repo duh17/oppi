@@ -312,6 +312,15 @@ private struct WorkspaceHomeRow: View {
                         .font(.headline)
                         .foregroundStyle(.themeFg)
 
+                    if workspace.runtime == .sandbox {
+                        Text("SANDBOX")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeOrange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.themeOrange.opacity(0.15), in: Capsule())
+                    }
+
                     if hasAttention {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(.themeOrange)

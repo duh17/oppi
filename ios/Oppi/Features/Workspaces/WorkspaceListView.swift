@@ -101,6 +101,14 @@ private struct WorkspaceRowView: View {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
+                    if workspace.runtime == .sandbox {
+                        Text("SANDBOX")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeOrange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.themeOrange.opacity(0.15), in: Capsule())
+                    }
                     RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
                 }
 
