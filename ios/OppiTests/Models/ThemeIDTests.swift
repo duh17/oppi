@@ -115,7 +115,7 @@ struct ThemeIDTests {
         #expect(!ThemeID.dark.detail.isEmpty)
         #expect(!ThemeID.light.detail.isEmpty)
         #expect(!ThemeID.night.detail.isEmpty)
-        #expect(!ThemeID.custom("X").detail.isEmpty)
+        #expect(ThemeID.custom("X").detail.isEmpty, "Custom themes have no detail text")
     }
 
     // MARK: - preferredColorScheme

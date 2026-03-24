@@ -2,13 +2,15 @@ import SwiftUI
 
 // MARK: - Unified Spinner
 
-/// SwiftUI view that shows the active spinner style (braille dots or Game of Life).
-/// Used in the jump-to-bottom button to indicate agent activity while detached.
+/// SwiftUI view that shows a spinner style (braille dots or Game of Life).
+/// Defaults to the persisted preference. Pass an explicit `style` to override
+/// (e.g. for previews where the binding hasn't written to prefs yet).
 struct WorkingSpinnerView: View {
     let tintColor: Color
+    var style: SpinnerStyle = .current
 
     var body: some View {
-        switch SpinnerStyle.current {
+        switch style {
         case .brailleDots:
             BrailleSpinnerRepresentable(tintColor: tintColor)
         case .gameOfLife:
