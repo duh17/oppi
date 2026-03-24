@@ -69,6 +69,12 @@ function resolveRegistryModel(
 export function resolveSdkSessionCwd(workspace?: Workspace): string {
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
+    if (workspace?.runtime === "sandbox") {
+      throw new Error(
+        "Sandbox workspaces require a hostMount directory. " +
+          "Set a project path to limit what the VM can access.",
+      );
+    }
     return homedir();
   }
 
