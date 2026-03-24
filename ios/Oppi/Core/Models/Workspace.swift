@@ -5,6 +5,15 @@ enum WorkspaceSystemPromptMode: String, Codable, Sendable, CaseIterable {
     case replace
 }
 
+enum WorkspaceRuntime: String, Codable, Sendable {
+    case host
+    case sandbox
+}
+
+struct SandboxConfig: Codable, Sendable, Equatable, Hashable {
+    var allowedHosts: [String]?
+}
+
 /// Workspace model matching server's `Workspace` type.
 ///
 /// A workspace defines the agent environment: skills, permissions,
@@ -30,6 +39,10 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     // Git status
     var gitStatusEnabled: Bool?  // Show git context bar (default: true)
 
+    // Runtime
+    var runtime: WorkspaceRuntime?
+    var sandboxConfig: SandboxConfig?
+
     // Defaults
     var defaultModel: String?
 
@@ -48,6 +61,7 @@ extension Workspace: Codable {
         case systemPrompt, systemPromptMode, hostMount
         case extensions
         case gitStatusEnabled
+        case runtime, sandboxConfig
         case defaultModel
         case createdAt, updatedAt
     }
@@ -64,6 +78,8 @@ extension Workspace: Codable {
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
         extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
         gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
+        runtime = try c.decodeIfPresent(WorkspaceRuntime.self, forKey: .runtime)
+        sandboxConfig = try c.decodeIfPresent(SandboxConfig.self, forKey: .sandboxConfig)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
 
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
@@ -85,6 +101,8 @@ extension Workspace: Codable {
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
         try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
+        try c.encodeIfPresent(runtime, forKey: .runtime)
+        try c.encodeIfPresent(sandboxConfig, forKey: .sandboxConfig)
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)

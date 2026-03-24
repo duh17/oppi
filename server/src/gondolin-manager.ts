@@ -21,6 +21,8 @@ export type VmFactory = (options: VmFactoryOptions) => Promise<GondolinVm & { cl
 export interface VmFactoryOptions {
   hostCwd: string;
   allowedHosts: string[];
+  /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
+  secrets?: Record<string, { value: string; headerName?: string }>;
 }
 
 /**
@@ -34,8 +36,19 @@ export async function defaultVmFactory(options: VmFactoryOptions): Promise<Gondo
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { VM, RealFSProvider, createHttpHooks } = await import("@earendil-works/gondolin");
 
-  const { httpHooks } = createHttpHooks({
+  // Transform secrets to Gondolin SDK format (hosts + value per key)
+  const gondolinSecrets = options.secrets
+    ? Object.fromEntries(
+        Object.entries(options.secrets).map(([key, { value }]) => [
+          key,
+          { hosts: options.allowedHosts, value },
+        ]),
+      )
+    : undefined;
+
+  const { httpHooks, env } = createHttpHooks({
     allowedHosts: options.allowedHosts,
+    secrets: gondolinSecrets,
   });
 
   const vm = await VM.create({
@@ -45,6 +58,7 @@ export async function defaultVmFactory(options: VmFactoryOptions): Promise<Gondo
       },
     },
     httpHooks,
+    env,
   });
 
   return vm;
@@ -67,7 +81,7 @@ export class GondolinManager {
    * Concurrent calls for the same workspace coalesce onto a single
    * startup promise to avoid spinning up duplicate VMs.
    */
-  async ensureWorkspaceVm(workspace: WorkspaceWithSandbox, hostCwd: string): Promise<GondolinVm> {
+  async ensureWorkspaceVm(workspace: Workspace, hostCwd: string, secrets?: Record<string, { value: string; headerName?: string }>): Promise<GondolinVm> {
     const id = workspace.id;
 
     // Already running
@@ -78,7 +92,7 @@ export class GondolinManager {
     const inflight = this.starting.get(id);
     if (inflight) return inflight;
 
-    const promise = this.startVm(workspace, hostCwd);
+    const promise = this.startVm(workspace, hostCwd, secrets);
     this.starting.set(id, promise);
 
     try {
@@ -118,32 +132,39 @@ export class GondolinManager {
   }
 
   private async startVm(
-    workspace: WorkspaceWithSandbox,
+    workspace: Workspace,
     hostCwd: string,
+    secrets?: Record<string, { value: string; headerName?: string }>,
   ): Promise<GondolinVm & { close(): Promise<void> }> {
     const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? ["*"];
     console.log(
       `[${ts()}] gondolin: starting VM for workspace ${workspace.id} (cwd=${hostCwd}, allowedHosts=${JSON.stringify(allowedHosts)})`,
     );
 
-    const vm = await this.factory({ hostCwd, allowedHosts });
+    const vm = await this.factory({ hostCwd, allowedHosts, secrets });
 
     console.log(`[${ts()}] gondolin: VM ready for workspace ${workspace.id}`);
     return vm;
   }
 }
 
-// ─── Workspace extension ───
-
 /**
- * Workspace with optional sandbox fields.
- * The canonical Workspace type in types.ts is being extended by another agent —
- * this local type captures the fields we depend on without modifying the
- * shared type definition.
+ * Check whether QEMU is available on the host.
+ * Returns true if `qemu-system-aarch64` (or `qemu-system-x86_64` on Intel) is found in PATH.
  */
-export interface WorkspaceWithSandbox extends Workspace {
-  runtime?: "host" | "sandbox";
-  sandboxConfig?: {
-    allowedHosts?: string[];
-  };
+export async function isQemuAvailable(): Promise<boolean> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  // Try aarch64 first (Apple Silicon), fall back to x86_64
+  for (const arch of ["aarch64", "x86_64"]) {
+    try {
+      await execFileAsync(`qemu-system-${arch}`, ["--version"]);
+      return true;
+    } catch {
+      // Not found, try next
+    }
+  }
+  return false;
 }

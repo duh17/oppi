@@ -249,7 +249,25 @@ export class SdkBackend {
           SdkBackend._gondolinManager = new GondolinManager();
         }
         const manager = SdkBackend._gondolinManager;
-        const vm = await manager.ensureWorkspaceVm(workspace, cwd);
+
+        // Extract LLM provider API keys as secrets for host-mediated injection.
+        // The VM gets placeholder values; real keys are injected by the host HTTP proxy.
+        const secrets: Record<string, { value: string; headerName?: string }> = {};
+        try {
+          const allCreds = authStorage.getAll();
+          for (const [provider, cred] of Object.entries(allCreds)) {
+            if (cred.type === "api_key" && cred.key) {
+              secrets[`${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`] = {
+                value: cred.key,
+                headerName: "Authorization",
+              };
+            }
+          }
+        } catch {
+          // Auth extraction failed — proceed without secrets
+        }
+
+        const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets);
 
         sandboxTools = [
           createReadTool(cwd, { operations: createGondolinReadOps(vm, cwd) }),

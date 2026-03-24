@@ -1,14 +1,11 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { GondolinManager, type VmFactory, type VmFactoryOptions } from "../src/gondolin-manager.js";
+import { GondolinManager, isQemuAvailable, type VmFactory, type VmFactoryOptions } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import type { Workspace } from "../src/types.js";
 
 // ─── Helpers ───
 
-function makeWorkspace(overrides: Partial<Workspace> & { id: string } = { id: "w1" }): Workspace & {
-  runtime?: "host" | "sandbox";
-  sandboxConfig?: { allowedHosts?: string[] };
-} {
+function makeWorkspace(overrides: Partial<Workspace> & { id: string } = { id: "w1" }): Workspace {
   const now = Date.now();
   return {
     name: "test",
@@ -247,5 +244,12 @@ describe("isRunning / getVm", () => {
     expect(manager.getVm("w1")).toBe(vms[0]);
 
     await manager.stopAll();
+  });
+});
+
+describe("isQemuAvailable", () => {
+  it("returns a boolean", async () => {
+    const result = await isQemuAvailable();
+    expect(typeof result).toBe("boolean");
   });
 });
