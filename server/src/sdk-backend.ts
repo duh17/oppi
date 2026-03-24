@@ -16,6 +16,10 @@ import {
   createReadTool,
   createWriteTool,
   createEditTool,
+  createBashToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  createEditToolDefinition,
   type AgentSession,
   type AgentSessionEvent,
   type ExtensionFactory,
@@ -291,10 +295,10 @@ export class SdkBackend {
       const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets);
 
       sandboxTools = [
-        createReadTool(cwd, { operations: createGondolinReadOps(vm, cwd) }),
-        createBashTool(cwd, { operations: createGondolinBashOps(vm, cwd) }),
-        createEditTool(cwd, { operations: createGondolinEditOps(vm, cwd) }),
-        createWriteTool(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
+        createReadToolDefinition(cwd, { operations: createGondolinReadOps(vm, cwd) }),
+        createBashToolDefinition(cwd, { operations: createGondolinBashOps(vm, cwd) }),
+        createEditToolDefinition(cwd, { operations: createGondolinEditOps(vm, cwd) }),
+        createWriteToolDefinition(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
       ];
       console.log(`[sdk] Sandbox VM ready for workspace ${workspace.id || "unknown"}`);
     }
@@ -311,7 +315,10 @@ export class SdkBackend {
       sessionManager: piSessionManager,
       settingsManager,
       resourceLoader: loader,
-      ...(sandboxTools ? { tools: sandboxTools } : {}),
+      // Sandbox: disable all built-in tools (tools: []) and inject VM-backed
+      // implementations as customTools. This ensures bash/read/write/edit execute
+      // inside the Gondolin VM, not on the host.
+      ...(sandboxTools ? { tools: [], customTools: sandboxTools } : {}),
     });
 
     SdkBackend.applyDefaultQueueModes(piSession);
