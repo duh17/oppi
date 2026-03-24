@@ -127,7 +127,7 @@ struct SettingsView: View {
                 }
 
                 LabeledContent("Preview") {
-                    WorkingSpinnerView(tintColor: .themeFg)
+                    WorkingSpinnerView(tintColor: .themeFg, style: spinnerStyle)
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
                 }
