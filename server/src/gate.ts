@@ -14,6 +14,7 @@ import { parseBashCommand, type GateRequest } from "./policy.js";
 import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ServerMessage } from "./types.js";
 
 // ─── Types ───
@@ -56,6 +57,7 @@ const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rule
 
 export interface GateServerOptions {
   approvalTimeoutMs?: number;
+  metrics?: ServerMetricCollector;
 }
 
 export class GateServer extends EventEmitter {
@@ -67,6 +69,7 @@ export class GateServer extends EventEmitter {
   readonly ruleStore: RuleStore;
   readonly auditLog: AuditLog;
   private readonly approvalTimeoutMs: number;
+  private readonly metrics?: ServerMetricCollector;
 
   constructor(
     defaultPolicy: PolicyEngine,
@@ -78,6 +81,7 @@ export class GateServer extends EventEmitter {
     this.defaultPolicy = defaultPolicy;
     this.ruleStore = ruleStore;
     this.auditLog = auditLog;
+    this.metrics = options.metrics;
 
     const configuredTimeout = options.approvalTimeoutMs;
     this.approvalTimeoutMs =
@@ -212,6 +216,12 @@ export class GateServer extends EventEmitter {
         ...(expiresAt !== undefined ? { expiresAt } : {}),
       },
     });
+
+    if (this.metrics) {
+      try {
+        this.metrics.record("server.gate_approval_wait_ms", Date.now() - pending.createdAt);
+      } catch {}
+    }
 
     pending.resolve({ action, reason: action === "deny" ? "Denied by user" : undefined });
     this.cleanupPending(requestId);
@@ -366,6 +376,7 @@ export class GateServer extends EventEmitter {
     guard: SessionGuard,
     req: GateRequest,
   ): Promise<{ action: "allow" | "deny"; reason?: string }> {
+    const checkStart = Date.now();
     const policy = this.getPolicy(guard.sessionId);
     const allRules = this.ruleStore.getAll();
     const decision = policy.evaluateWithRules(req, allRules, guard.sessionId, guard.workspaceId);
@@ -384,6 +395,12 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_allowed", { sessionId: guard.sessionId, ...req, decision });
+      if (this.metrics) {
+        try {
+          this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
+          this.metrics.record("server.gate_decision", 1, { action: "allow" });
+        } catch {}
+      }
       return { action: "allow" };
     }
 
@@ -400,10 +417,22 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_denied", { sessionId: guard.sessionId, ...req, decision });
+      if (this.metrics) {
+        try {
+          this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
+          this.metrics.record("server.gate_decision", 1, { action: "deny" });
+        } catch {}
+      }
       return { action: "deny", reason: decision.reason };
     }
 
     // action === "ask" — create pending decision, wait for phone
+    if (this.metrics) {
+      try {
+        this.metrics.record("server.gate_check_ms", Date.now() - checkStart);
+        this.metrics.record("server.gate_decision", 1, { action: "ask" });
+      } catch {}
+    }
     const requestId = generateId(12);
 
     const response = await new Promise<GateResponse>((resolve) => {
@@ -442,6 +471,11 @@ export class GateServer extends EventEmitter {
               resolvedBy: "timeout",
               layer: "timeout",
             });
+            if (this.metrics) {
+              try {
+                this.metrics.record("server.gate_timeout", 1);
+              } catch {}
+            }
             resolve({ action: "deny", reason: "Approval timeout" });
             this.cleanupPending(requestId);
             this.emit("approval_timeout", { requestId, sessionId: guard.sessionId });

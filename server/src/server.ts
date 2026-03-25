@@ -324,8 +324,15 @@ export class Server {
     this.policy.setProtectedPaths([rulesPath, configPath]);
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
+    // Server operational metrics collector (event-driven latencies, counts)
+    // Created before GateServer so we can inject it for gate metrics.
+    this.opsMetrics = new ServerMetricCollector(
+      new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
+    );
+
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
       approvalTimeoutMs: config.approvalTimeoutMs,
+      metrics: this.opsMetrics,
     });
     // Scan both host skills (~/.pi/agent/skills/) and bundled skills (server/skills/).
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -349,11 +356,6 @@ export class Server {
         this.models.ensureSessionContextWindow(targetSession),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
-
-    // Server operational metrics collector (event-driven latencies, counts)
-    this.opsMetrics = new ServerMetricCollector(
-      new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
-    );
 
     // Create the user stream mux (handles /stream WS, event rings, replay)
     this.streamMux = new UserStreamMux({
