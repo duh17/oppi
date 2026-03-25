@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import SwiftUI
 
 /// Attribute key for tagging diff line kind (added/removed/header) for full-width background rendering.
 let diffLineKindAttributeKey = NSAttributedString.Key("unifiedDiffLineKind")
@@ -44,9 +43,11 @@ enum DiffAttributedStringBuilder {
         let syntaxColorArray: [UIColor?]  // 9 entries: variable=nil, comment..operator
 
         nonisolated(unsafe) private static var cached: Self?
+        nonisolated(unsafe) private static var cachedThemeID: ThemeID?
 
         static func current() -> Self {
-            if let cached { return cached }
+            let currentTheme = ThemeRuntimeState.currentThemeID()
+            if let cached, cachedThemeID == currentTheme { return cached }
             let codeFont = AppFont.monoMedium
             let headerFont = AppFont.monoBold
             let gutterFont = AppFont.monoBold
@@ -78,8 +79,8 @@ enum DiffAttributedStringBuilder {
                 codeFont: codeFont,
                 paragraph: paragraph,
                 headerAttrs: [.font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
-                gutterAddedAttrs: [.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph],
-                gutterRemovedAttrs: [.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph],
+                gutterAddedAttrs: [.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
+                gutterRemovedAttrs: [.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
                 gutterContextAttrs: [.font: gutterFont, .foregroundColor: contextDim, .paragraphStyle: paragraph],
                 lineNumAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph],
                 lineNumAddedAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
@@ -94,6 +95,7 @@ enum DiffAttributedStringBuilder {
                 syntaxColorArray: syntaxColorArray
             )
             cached = attrs
+            cachedThemeID = currentTheme
             return attrs
         }
 

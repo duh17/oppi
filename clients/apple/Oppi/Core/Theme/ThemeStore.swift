@@ -8,6 +8,7 @@ final class ThemeStore {
             guard selectedThemeID != oldValue else { return }
             UserDefaults.standard.set(selectedThemeID.rawValue, forKey: ThemeID.storageKey)
             ThemeRuntimeState.setThemeID(selectedThemeID)
+            ToolRowRenderCache.evictAll()
         }
     }
 
