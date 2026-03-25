@@ -23,6 +23,8 @@ export interface ServerMetricsDeps {
   getSessionCounts: () => { busy: number; ready: number; starting: number; total: number };
   /** Returns count of open WebSocket connections. */
   getWebSocketCount: () => number;
+  /** Optional: record to the operational metrics collector (for session_active_peak). */
+  recordOpsMetric?: (metric: string, value: number) => void;
 }
 
 interface CpuSnapshot {
@@ -60,8 +62,17 @@ function round2(n: number): number {
 export class ServerMetricsCollector {
   private timer: NodeJS.Timeout | null = null;
   private lastCpu: CpuSnapshot | null = null;
+  /** Peak active session count since last sample — reset each interval. */
+  private activeSessionPeak = 0;
 
   constructor(private readonly deps: ServerMetricsDeps) {}
+
+  /** Update the high-water mark. Called externally when sessions start/stop. */
+  recordActiveSessionCount(count: number): void {
+    if (count > this.activeSessionPeak) {
+      this.activeSessionPeak = count;
+    }
+  }
 
   start(): void {
     if (this.timer) return;
@@ -107,6 +118,17 @@ export class ServerMetricsCollector {
       }
       this.lastCpu = { user: cpuUsage.user, system: cpuUsage.system, timestamp: now };
 
+      // Update peak from current sample, then capture and reset
+      if (sessions.total > this.activeSessionPeak) {
+        this.activeSessionPeak = sessions.total;
+      }
+      const peak = this.activeSessionPeak;
+      this.activeSessionPeak = sessions.total; // reset for next interval
+
+      if (peak > 0) {
+        this.deps.recordOpsMetric?.("server.session_active_peak", peak);
+      }
+
       const record = {
         ts: now,
         cpu: {
@@ -120,7 +142,10 @@ export class ServerMetricsCollector {
           rss: round2(mem.rss / 1024 / 1024),
           external: round2(mem.external / 1024 / 1024),
         },
-        sessions,
+        sessions: {
+          ...sessions,
+          peak,
+        },
         wsConnections: wsCount,
       };
 

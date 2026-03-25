@@ -37,6 +37,7 @@ import type {
   PiStateSnapshot,
   SessionBackendEvent,
 } from "./pi-events.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Storage } from "./storage.js";
 import type { Session, Workspace } from "./types.js";
 
@@ -113,6 +114,8 @@ export interface SdkBackendConfig {
   storage?: Storage;
   /** Additional extension factories injected for this session. */
   extraExtensionFactories?: ExtensionFactory[];
+  /** Operational metrics collector for SDK timing. */
+  metrics?: ServerMetricCollector;
 }
 
 interface ExtensionUIResponsePayload {
@@ -342,6 +345,8 @@ export class SdkBackend {
     const backend = new SdkBackend(piSession, unsub, onEvent, modelRegistry);
 
     const preBindMs = Date.now() - createStartMs;
+    config.metrics?.record("server.session_create_sdk_ms", preBindMs);
+
     await piSession.bindExtensions({
       uiContext: backend.createExtensionUIContext(),
       onError: (error) => {
@@ -356,11 +361,14 @@ export class SdkBackend {
     });
 
     const totalMs = Date.now() - createStartMs;
+    const bindMs = totalMs - preBindMs;
+    config.metrics?.record("server.session_create_bind_ms", bindMs);
+
     console.log("[sdk] Session created", {
       model: piSession.model?.id ?? piSession.model?.name,
       thinking: piSession.thinkingLevel,
       setupMs: preBindMs,
-      bindExtensionMs: totalMs - preBindMs,
+      bindExtensionMs: bindMs,
       totalMs,
     });
 
