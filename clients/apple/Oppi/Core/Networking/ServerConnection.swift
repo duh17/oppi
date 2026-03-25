@@ -93,6 +93,10 @@ final class ServerConnection {
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
 
+    // Ask extension
+    var activeAskRequest: AskRequest?
+    var askAnswerMode: Bool = false
+
     /// Per-connection chat UI state (composer, caches, thinking level).
     /// Views observe this directly via `@Environment(ChatSessionState.self)`.
     let chatState = ChatSessionState()
@@ -594,6 +598,8 @@ final class ServerConnection {
         sender.activeSessionId = sessionId
         // Reset per-connection UI state for the new focused session
         activeExtensionDialog = nil
+        activeAskRequest = nil
+        askAnswerMode = false
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
         chatState.resetSessionState()
@@ -620,6 +626,8 @@ final class ServerConnection {
         }
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
+        activeAskRequest = nil
+        askAnswerMode = false
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
         silenceWatchdog.stop()
@@ -706,6 +714,8 @@ final class ServerConnection {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled), sessionId: activeSessionId)
         activeExtensionDialog = nil
+        activeAskRequest = nil
+        askAnswerMode = false
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
     }

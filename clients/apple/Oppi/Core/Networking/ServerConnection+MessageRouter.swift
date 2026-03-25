@@ -38,9 +38,21 @@ extension ServerConnection {
             )
 
         case .extensionUIRequest(let request):
-            extensionTimeoutTask?.cancel()
-            activeExtensionDialog = request
-            scheduleExtensionTimeout(request)
+            if request.method == "ask", let questions = request.askQuestions, !questions.isEmpty {
+                // Route to inline ask card
+                activeAskRequest = AskRequest(
+                    id: request.id,
+                    sessionId: request.sessionId,
+                    questions: questions,
+                    allowCustom: request.allowCustom ?? true,
+                    timeout: request.timeout
+                )
+            } else {
+                // Existing generic dialog path
+                extensionTimeoutTask?.cancel()
+                activeExtensionDialog = request
+                scheduleExtensionTimeout(request)
+            }
 
         case .extensionUINotification(_, let message, _, _, _):
             extensionToast = message

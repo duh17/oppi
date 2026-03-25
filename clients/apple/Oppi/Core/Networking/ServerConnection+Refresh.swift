@@ -292,6 +292,8 @@ extension ServerConnection {
 
         if !streamAlive {
             activeExtensionDialog = nil
+            activeAskRequest = nil
+            askAnswerMode = false
             extensionTimeoutTask?.cancel()
             extensionTimeoutTask = nil
 

@@ -84,6 +84,9 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     var placeholder: String?
     var prefill: String?
     var timeout: Int?
+    // Ask extension fields (method: "ask")
+    var askQuestions: [AskQuestion]?
+    var allowCustom: Bool?
 }
 
 enum TurnAckStage: String, Codable, Sendable {
@@ -131,6 +134,8 @@ extension ServerMessage: Decodable {
         case id, sessionId, input, displaySummary, timeoutAt, expires
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
+        // ask extension (extension_ui_request with method: "ask")
+        case questions, allowCustom
         // extension_ui_notification
         case notifyType, statusKey, statusText
         // command_result
@@ -313,6 +318,8 @@ extension ServerMessage: Decodable {
             self = .permissionCancelled(id: id)
 
         case "extension_ui_request":
+            let askQuestions = try c.decodeIfPresent([AskQuestion].self, forKey: .questions)
+            let allowCustom = try c.decodeIfPresent(Bool.self, forKey: .allowCustom)
             let req = ExtensionUIRequest(
                 id: try c.decode(String.self, forKey: .id),
                 sessionId: try c.decode(String.self, forKey: .sessionId),
@@ -322,7 +329,9 @@ extension ServerMessage: Decodable {
                 message: try c.decodeIfPresent(String.self, forKey: .message),
                 placeholder: try c.decodeIfPresent(String.self, forKey: .placeholder),
                 prefill: try c.decodeIfPresent(String.self, forKey: .prefill),
-                timeout: try c.decodeIfPresent(Int.self, forKey: .timeout)
+                timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
+                askQuestions: askQuestions,
+                allowCustom: allowCustom
             )
             self = .extensionUIRequest(req)
 
