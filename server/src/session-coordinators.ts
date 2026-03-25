@@ -118,6 +118,8 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     markSessionDirty: (key) => deps.markSessionDirty(key),
+    // Lazy — uiCoordinator created later in this function
+    respondToUIRequest: (key, response): boolean => uiCoordinator.respondToUIRequest(key, response),
   });
 
   const stopCoordinator = new SessionStopCoordinator(
@@ -259,6 +261,7 @@ export function createSessionCoordinatorBundle(
 
   const uiCoordinator = new SessionUICoordinator({
     getActiveSession: (key) => deps.active.get(key),
+    eventProcessor,
   });
 
   return {

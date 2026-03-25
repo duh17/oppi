@@ -40,6 +40,16 @@ const FIRE_AND_FORGET_METHODS = new Set([
   "set_editor_text",
 ]);
 
+/** Server-side state for ask tool interception. */
+export interface PendingAskState {
+  /** ID of the synthetic ask request sent to iOS. */
+  requestId: string;
+  /** Questions from tool args (ordered). */
+  questions: Array<{ id: string; question: string; multiSelect?: boolean }>;
+  /** Extension select/input requests deferred until iOS responds. */
+  deferred: Array<{ id: string; req: ExtensionUIRequest }>;
+}
+
 export interface EventProcessorSessionState {
   session: Session;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
@@ -53,6 +63,8 @@ export interface EventProcessorSessionState {
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews. */
   streamingArgPreviews: Set<string>;
+  /** Active ask tool — defers extension select() calls until iOS responds. */
+  pendingAsk?: PendingAskState;
 }
 
 export interface SessionEventProcessorDeps {
@@ -61,6 +73,11 @@ export interface SessionEventProcessorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
+  /** Respond to a pending extension UI request (ask deferred resolution). */
+  respondToUIRequest: (
+    key: string,
+    response: { type: "extension_ui_response"; id: string; value?: string; cancelled?: boolean },
+  ) => boolean;
 }
 
 export class SessionEventProcessor {
@@ -110,7 +127,15 @@ export class SessionEventProcessor {
       return;
     }
 
-    // Dialog method — track and forward to phone
+    // Ask interception: defer extension's select/input calls while the iOS
+    // AskCard is active. They'll be resolved when iOS responds to the ask.
+    if (active.pendingAsk && (req.method === "select" || req.method === "input")) {
+      active.pendingUIRequests.set(req.id, req);
+      active.pendingAsk.deferred.push({ id: req.id, req });
+      return;
+    }
+
+    // Normal dialog — track and forward to phone
     active.pendingUIRequests.set(req.id, req);
     this.deps.broadcast(key, {
       type: "extension_ui_request",
@@ -154,6 +179,15 @@ export class SessionEventProcessor {
       case "tool_execution_start":
         updateSessionChangeStats(session, event.toolName, event.args);
         this.maybeEmitGitStatus(key, session, event.toolName);
+        if (event.toolName === "ask" && event.args?.questions) {
+          this.initiateAskFlow(key, active, event.args);
+        }
+        break;
+
+      case "tool_execution_end":
+        if (event.toolName === "ask") {
+          active.pendingAsk = undefined;
+        }
         break;
 
       case "message_end":
@@ -169,6 +203,91 @@ export class SessionEventProcessor {
     }
 
     this.deps.markSessionDirty(key);
+  }
+
+  /** Send structured ask request to iOS. Extension select() calls are deferred. */
+  private initiateAskFlow(
+    key: string,
+    active: EventProcessorSessionState,
+    args: Record<string, unknown>,
+  ): void {
+    const questions = args.questions as Array<{
+      id: string;
+      question: string;
+      options?: Array<{ value: string; label: string; description?: string }>;
+      multiSelect?: boolean;
+    }>;
+    if (!Array.isArray(questions) || questions.length === 0) return;
+
+    const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    active.pendingAsk = {
+      requestId,
+      questions: questions.map((q) => ({ id: q.id, question: q.question, multiSelect: q.multiSelect })),
+      deferred: [],
+    };
+
+    // Register as pending so the iOS response is accepted
+    active.pendingUIRequests.set(requestId, { type: "extension_ui_request", id: requestId, method: "ask" });
+
+    this.deps.broadcast(key, {
+      type: "extension_ui_request",
+      id: requestId,
+      sessionId: active.session.id,
+      method: "ask",
+      questions: questions.map((q) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options ?? [],
+        multiSelect: q.multiSelect,
+      })),
+      allowCustom: (args.allowCustom as boolean) ?? true,
+      timeout: 120000,
+    });
+  }
+
+  /** Resolve deferred select/input requests using iOS ask answers. */
+  resolveAskDeferred(
+    key: string,
+    active: EventProcessorSessionState,
+    answers: Record<string, string | string[]>,
+    cancelled: boolean,
+  ): void {
+    const ask = active.pendingAsk;
+    if (!ask) return;
+
+    for (let i = 0; i < ask.deferred.length; i++) {
+      const { id, req } = ask.deferred[i];
+      const question = ask.questions[i];
+
+      if (cancelled) {
+        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
+        continue;
+      }
+
+      if (!question) {
+        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
+        continue;
+      }
+
+      const answer = answers[question.id];
+      if (answer === undefined) {
+        // Ignored — cancel this select so the extension skips it
+        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
+      } else if (req.method === "select" && req.options) {
+        // Match answer value back to option label
+        const value = Array.isArray(answer) ? answer[0] : answer;
+        const label =
+          req.options.find((o) => o.toLowerCase().includes(value?.toLowerCase() ?? "")) ??
+          req.options.find((o) => o === value) ??
+          value;
+        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, value: label });
+      } else {
+        const text = Array.isArray(answer) ? answer.join(", ") : answer;
+        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, value: text });
+      }
+    }
+
+    ask.deferred = [];
   }
 
   /**

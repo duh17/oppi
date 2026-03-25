@@ -5,7 +5,7 @@ import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend, resolveSdkSessionCwd } from "./sdk-backend.js";
-import type { ExtensionUIRequest } from "./session-events.js";
+import type { ExtensionUIRequest, PendingAskState } from "./session-events.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
 import { createSpawnAgentFactory } from "./spawn-agent-extension.js";
@@ -26,6 +26,7 @@ export interface SessionStartActiveSession {
   toolNames: Map<string, string>;
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
+  pendingAsk?: PendingAskState;
   toolFullOutputPaths: Map<string, string>;
   messageQueue?: SessionMessageQueueStore;
   turnCache: TurnDedupeCache;
