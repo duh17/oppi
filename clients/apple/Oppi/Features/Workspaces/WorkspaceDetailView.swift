@@ -176,9 +176,16 @@ struct WorkspaceDetailView: View {
         let allStoppedTreeNodes = SessionTreeHelper.buildTree(
             from: workspaceSessions.filter { $0.status == .stopped }
         )
+        // Filter out stopped children whose parent exists in any workspace session
+        // (active or stopped). Children are only accessible through the parent's chat view.
+        let allWorkspaceIds = Set(workspaceSessions.map(\.id))
+        let rootStoppedTreeNodes = allStoppedTreeNodes.filter { node in
+            guard let parentId = node.session.parentSessionId else { return true }
+            return !allWorkspaceIds.contains(parentId)
+        }
         let matchingStoppedTreeNodes = hasSessionSearchQuery
-            ? allStoppedTreeNodes.filter { treeMatchesSearch($0) }
-            : allStoppedTreeNodes
+            ? rootStoppedTreeNodes.filter { treeMatchesSearch($0) }
+            : rootStoppedTreeNodes
 
         return ViewData(
             rootNodes: rootNodes,
@@ -186,7 +193,7 @@ struct WorkspaceDetailView: View {
                 .map(\.session)
                 .sorted { $0.lastActivity > $1.lastActivity },
             stoppedRootNodesById: Dictionary(
-                uniqueKeysWithValues: allStoppedTreeNodes.map { ($0.session.id, $0) }
+                uniqueKeysWithValues: rootStoppedTreeNodes.map { ($0.session.id, $0) }
             ),
             localFiltered: filteredLocalSessions,
             wsEmpty: workspaceSessions.isEmpty
