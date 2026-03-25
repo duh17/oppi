@@ -11,10 +11,11 @@
  *
  * Requires QEMU installed. Skipped automatically if not available.
  *
- * KNOWN ATTACK VECTORS (documented, not yet fixed):
- * - auth.json readable via readonlyMount of agentDir
- * - ANTHROPIC_API_KEY and similar env vars leak through STRIP_ENV filter
+ * KNOWN ISSUES (documented):
+ * - auth.json readable via readonlyMount of agentDir (production mounts it)
  * - allowedHosts: [] does not block network egress
+ * - STRIP_ENV only blocks 5 exact names, other env vars pass through
+ *   (low severity: server process.env typically has no credential env vars)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
@@ -174,25 +175,27 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     expect(env).not.toContain("USER=chenda");
   });
 
-  it("ATTACK: API key env vars pass through STRIP_ENV filter", async () => {
+  it("STRIP_ENV does not filter arbitrary env var names", async () => {
     if (!qemuAvailable) return;
 
-    // PROVEN: STRIP_ENV only filters HOME/USER/LOGNAME/SHELL/PATH.
-    // Env vars like ANTHROPIC_API_KEY pass straight through to the VM.
+    // STRIP_ENV only filters HOME/USER/LOGNAME/SHELL/PATH by exact name.
+    // Any other env var passes through. In practice, oppi reads API keys
+    // from auth.json (not env vars), so the server's process.env typically
+    // has no credential env vars. But if someone runs the server with
+    // ANTHROPIC_API_KEY=... in the environment, it would leak through.
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("env", hostDir, {
       onData: (d) => chunks.push(d),
       env: {
-        ANTHROPIC_API_KEY: "sk-ant-real-key-12345",
-        SECRET_TOKEN: "super-secret",
+        SOME_CUSTOM_VAR: "custom-value",
+        ANOTHER_VAR: "another-value",
       } as unknown as NodeJS.ProcessEnv,
     });
     const env = Buffer.concat(chunks).toString();
 
-    // Both leak through — STRIP_ENV doesn't filter by pattern, only exact names
-    expect(env).toContain("sk-ant-real-key-12345");
-    expect(env).toContain("super-secret");
+    expect(env).toContain("custom-value");
+    expect(env).toContain("another-value");
   });
 
   // ─── Attack Vector 6: Network egress ───
