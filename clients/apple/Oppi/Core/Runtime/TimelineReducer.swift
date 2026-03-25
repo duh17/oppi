@@ -929,11 +929,23 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
         // Ask tool — mark question row as done, inject answer as user message.
         if askToolEventIDs.remove(toolEventId) != nil {
-            // Freeze elapsed time and mark tool row done
+            // Freeze elapsed time and mark tool row done (with empty output).
             if let startedAt = toolStartTimes[toolEventId] {
                 toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
             }
-            updateToolCallDone(id: toolEventId, isError: isError)
+            // Clear any leaked output so the tool row doesn't show raw text.
+            toolOutputStore.clear(itemIDs: [toolEventId])
+            if let idx = indexForID(toolEventId),
+               case .toolCall(let id, let tool, let argsSummary, _, _, _, _) = items[idx] {
+                items[idx] = .toolCall(
+                    id: id, tool: tool, argsSummary: argsSummary,
+                    outputPreview: "", outputByteCount: 0,
+                    isError: isError, isDone: true
+                )
+                bumpItemsMutationSeq()
+            } else {
+                updateToolCallDone(id: toolEventId, isError: isError)
+            }
 
             let text = Self.formatAskAnswers(details: details)
             if !text.isEmpty {
