@@ -4,6 +4,7 @@ import type {
   SessionEventProcessor,
 } from "./session-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
+import type { Session } from "./types.js";
 
 /** Extension UI response sent to pi */
 export interface ExtensionUIResponse {
@@ -15,6 +16,7 @@ export interface ExtensionUIResponse {
 }
 
 export interface SessionUIState {
+  session: Session;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
   sdkBackend: SdkBackend;
   pendingAsk?: PendingAskState;
@@ -49,12 +51,7 @@ export class SessionUICoordinator {
         }
       }
 
-      this.deps.eventProcessor.resolveAskDeferred(
-        key,
-        active as any, // structural subset
-        answers,
-        cancelled,
-      );
+      this.deps.eventProcessor.resolveAskDeferred(key, active, answers, cancelled);
       return true;
     }
 

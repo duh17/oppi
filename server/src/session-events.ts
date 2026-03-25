@@ -348,7 +348,7 @@ export class SessionEventProcessor {
   /** Resolve deferred select/input requests using iOS ask answers. */
   resolveAskDeferred(
     key: string,
-    active: EventProcessorSessionState,
+    active: Pick<EventProcessorSessionState, "pendingAsk" | "session">,
     answers: Record<string, string | string[]>,
     cancelled: boolean,
   ): void {
