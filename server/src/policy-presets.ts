@@ -1,6 +1,6 @@
 import type { RuleDecision, RuleInput } from "./rules.js";
 import type {
-  PolicyConfig as DeclarativePolicyConfig,
+  PolicyConfig,
   PolicyPermission as DeclarativePolicyPermission,
   PolicyHeuristics,
   PolicyMatch as DeclarativePolicyMatch,
@@ -98,7 +98,7 @@ function resolveHeuristics(h?: PolicyHeuristics): ResolvedHeuristics {
   };
 }
 
-export function compileDeclarativePolicy(policy: DeclarativePolicyConfig): CompiledPolicy {
+export function compileDeclarativePolicy(policy: PolicyConfig): CompiledPolicy {
   return {
     name: policy.mode || "declarative",
     hardDeny: policy.guardrails
@@ -116,7 +116,7 @@ export function compileDeclarativePolicy(policy: DeclarativePolicyConfig): Compi
  *
  * This is a one-time bootstrap source. Runtime evaluation reads from RuleStore.
  */
-export function policyRulesFromDeclarativeConfig(policy: DeclarativePolicyConfig): RuleInput[] {
+export function policyRulesFromDeclarativeConfig(policy: PolicyConfig): RuleInput[] {
   return [...policy.guardrails, ...policy.permissions]
     .map((permission) => mapPermissionToRuleInput(permission))
     .filter((rule): rule is RuleInput => rule !== null);
@@ -126,7 +126,7 @@ export function policyRulesFromDeclarativeConfig(policy: DeclarativePolicyConfig
  * RuleStore is the runtime source of truth for allow/ask/deny rules.
  * Keep the policy engine focused on fallback + heuristic behavior only.
  */
-export function policyRuntimeConfig(policy: DeclarativePolicyConfig): DeclarativePolicyConfig {
+export function policyRuntimeConfig(policy: PolicyConfig): PolicyConfig {
   return {
     ...policy,
     guardrails: [],
@@ -151,7 +151,7 @@ export function defaultPresetRules(): RuleInput[] {
  * Structural heuristics (pipe-to-shell, data egress, secret checks)
  * are always active in evaluate() regardless of this config.
  */
-export function defaultPolicy(): DeclarativePolicyConfig {
+export function defaultPolicy(): PolicyConfig {
   return {
     schemaVersion: 1,
     mode: "default",

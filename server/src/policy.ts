@@ -40,12 +40,12 @@ import {
 } from "./policy-presets.js";
 import { literalPrefixLength, matcherTypeRank } from "./policy-types.js";
 import type { Rule } from "./rules.js";
-import type { PolicyConfig as DeclarativePolicyConfig } from "./types.js";
+import type { PolicyConfig } from "./types.js";
 import type {
   CompiledPolicy,
   GateRequest,
-  PolicyConfig,
-  PolicyDecision,
+  PolicyEngineConfig,
+  PolicyEvalResult,
   PolicyRule,
 } from "./policy-types.js";
 
@@ -69,8 +69,8 @@ export type {
   GateRequest,
   PathAccess,
   PolicyAction,
-  PolicyConfig,
-  PolicyDecision,
+  PolicyEngineConfig,
+  PolicyEvalResult,
   PolicyRule,
   ParsedCommand,
 } from "./policy-types.js";
@@ -412,13 +412,13 @@ interface ParsedRequestContext {
 
 export class PolicyEngine {
   private policy: CompiledPolicy;
-  private config: PolicyConfig;
+  private config: PolicyEngineConfig;
   private protectedPaths: string[] = [];
 
-  constructor(policyOrMode: string | DeclarativePolicyConfig = "default", config?: PolicyConfig) {
+  constructor(policyOrMode: string | PolicyConfig = "default", config?: PolicyEngineConfig) {
     if (typeof policyOrMode === "string") {
       // String modes resolve to built-in compiled profiles.
-      // Production always passes DeclarativePolicyConfig from JSON.
+      // Production always passes PolicyConfig from JSON.
       const builtInPolicy = resolveBuiltInPolicy(policyOrMode);
       if (!builtInPolicy) {
         // Unknown mode: fall back to compiling the default policy config
@@ -444,7 +444,7 @@ export class PolicyEngine {
    * Pipes and subshells are NOT auto-escalated. Read-only command composition
    * like `grep foo | wc -l` should not require phone approval.
    */
-  evaluate(req: GateRequest): PolicyDecision {
+  evaluate(req: GateRequest): PolicyEvalResult {
     const { tool, input } = req;
 
     // Layer 1: Hard denies
@@ -529,7 +529,7 @@ export class PolicyEngine {
     rules: Rule[],
     sessionId: string,
     workspaceId: string,
-  ): PolicyDecision {
+  ): PolicyEvalResult {
     if (req.tool.startsWith("policy.")) {
       return {
         action: "ask",
@@ -638,7 +638,7 @@ export class PolicyEngine {
     return null;
   }
 
-  private evaluateHeuristics(req: GateRequest): PolicyDecision | null {
+  private evaluateHeuristics(req: GateRequest): PolicyEvalResult | null {
     return evaluateConfiguredHeuristics(req, this.policy.heuristics);
   }
 
@@ -759,7 +759,7 @@ export class PolicyEngine {
     return best.rule;
   }
 
-  private layerForScope(scope: Rule["scope"]): PolicyDecision["layer"] {
+  private layerForScope(scope: Rule["scope"]): PolicyEvalResult["layer"] {
     if (scope === "session") return "session_rule";
     if (scope === "workspace") return "workspace_rule";
     return "global_rule";
@@ -769,11 +769,11 @@ export class PolicyEngine {
     return this.policy.name;
   }
 
-  getDefaultAction(): PolicyDecision["action"] {
+  getDefaultAction(): PolicyEvalResult["action"] {
     return this.policy.defaultAction;
   }
 
-  setDefaultAction(action: PolicyDecision["action"]): void {
+  setDefaultAction(action: PolicyEvalResult["action"]): void {
     this.policy.defaultAction = action;
   }
 

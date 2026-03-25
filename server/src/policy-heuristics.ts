@@ -2,7 +2,7 @@ import { parseBashCommand, splitBashCommandChain, splitPipelineStages } from "./
 import type {
   GateRequest,
   ParsedCommand,
-  PolicyDecision,
+  PolicyEvalResult,
   ResolvedHeuristics,
 } from "./policy-types.js";
 
@@ -267,7 +267,7 @@ export function isDataEgress(parsed: ParsedCommand): boolean {
 function evaluateSecretFileAccess(
   tool: string,
   input: Record<string, unknown>,
-): PolicyDecision | null {
+): PolicyEvalResult | null {
   if (tool === "read") {
     const path = (input as { path?: string }).path;
     if (path && isSecretPath(path)) {
@@ -320,7 +320,7 @@ function evaluateSecretFileAccess(
 export function evaluateConfiguredHeuristics(
   req: GateRequest,
   heuristics: ResolvedHeuristics,
-): PolicyDecision | null {
+): PolicyEvalResult | null {
   const { tool, input } = req;
 
   if (heuristics.secretFileAccess !== false) {

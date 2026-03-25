@@ -28,7 +28,7 @@ export interface CompiledPolicy {
   heuristics: ResolvedHeuristics;
 }
 
-export interface PolicyDecision {
+export interface PolicyEvalResult {
   action: PolicyAction;
   reason: string;
   layer:
@@ -69,7 +69,7 @@ export interface PathAccess {
  * Per-session policy configuration, derived from workspace settings.
  * Controls which directories are accessible and at what level.
  */
-export interface PolicyConfig {
+export interface PolicyEngineConfig {
   /** Directories the session may access. Order doesn't matter. */
   allowedPaths: PathAccess[];
 
