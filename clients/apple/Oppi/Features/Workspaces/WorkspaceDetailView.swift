@@ -216,7 +216,7 @@ struct WorkspaceDetailView: View {
                                     of: session.id, in: activeSessions,
                                     pendingForSession: { permissionStore.pending(for: $0).count }
                                 ),
-                                children: childSummary(for: session.id, in: activeSessions)
+                                children: childSummary(for: session.id, in: workspaceSessions)
                             )
                         }
                         .buttonStyle(.plain)
