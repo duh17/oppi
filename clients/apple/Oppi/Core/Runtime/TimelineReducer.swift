@@ -456,7 +456,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let matchId = event.toolCallId ?? event.id
 
             // Ask tool result — convert to user message, skip tool row update.
-            if askToolEventIDs.remove(matchId) != nil {
+            if askToolEventIDs.contains(matchId) {
                 let text = Self.formatAskAnswers(details: event.details)
                 if !text.isEmpty {
                     let ts = FastISO8601Parser.parse(event.timestamp, fallback: Self.sharedTraceDateFormatter)
@@ -928,7 +928,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
         // Ask tool — mark question row as done, inject answer as user message.
-        if askToolEventIDs.remove(toolEventId) != nil {
+        // Use contains (not remove) so the ID persists for reconnection suppression.
+        if askToolEventIDs.contains(toolEventId) {
             // Freeze elapsed time and mark tool row done (with empty output).
             if let startedAt = toolStartTimes[toolEventId] {
                 toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
@@ -947,10 +948,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 updateToolCallDone(id: toolEventId, isError: isError)
             }
 
+            let answerId = "ask-answer-\(toolEventId)"
             let text = Self.formatAskAnswers(details: details)
-            if !text.isEmpty {
+            // Only inject user message if not already present (reconnect dedup).
+            if !text.isEmpty, indexForID(answerId) == nil {
                 let item = ChatItem.userMessage(
-                    id: "ask-answer-\(toolEventId)",
+                    id: answerId,
                     text: text,
                     timestamp: Date()
                 )
