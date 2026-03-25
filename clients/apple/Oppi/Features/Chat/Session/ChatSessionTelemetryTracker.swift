@@ -20,6 +20,8 @@ final class ChatSessionTelemetryTracker {
     private var observedTransportPath: ConnectionTransportPath = .paired
     private var sessionLoadStartMs: Int64?
     private var sessionLoadRecorded = false
+    private var sessionSwitchStartMs: Int64?
+    private var sessionSwitchRecorded = false
 
     // MARK: - Session Load
 
@@ -39,6 +41,9 @@ final class ChatSessionTelemetryTracker {
             path: path,
             itemCount: itemCount
         )
+
+        // Session switch ends when session content first loads
+        recordSessionSwitchIfNeeded(sessionId: sessionId)
     }
 
     // MARK: - Fresh Content Lag
@@ -68,6 +73,24 @@ final class ChatSessionTelemetryTracker {
             reason: reason,
             cached: loadedFromCacheAtConnect,
             transport: observedTransportPath.rawValue
+        )
+    }
+
+    // MARK: - Session Switch
+
+    func startSessionSwitch() {
+        sessionSwitchStartMs = ChatSessionTelemetry.nowMs()
+        sessionSwitchRecorded = false
+    }
+
+    func recordSessionSwitchIfNeeded(sessionId: String) {
+        guard !sessionSwitchRecorded, let startMs = sessionSwitchStartMs else { return }
+        sessionSwitchRecorded = true
+        let durationMs = max(0, ChatSessionTelemetry.nowMs() - startMs)
+        ChatSessionTelemetry.recordSessionSwitch(
+            durationMs: durationMs,
+            sessionId: sessionId,
+            cached: loadedFromCacheAtConnect
         )
     }
 
@@ -108,6 +131,8 @@ final class ChatSessionTelemetryTracker {
         observedTransportPath = .paired
         sessionLoadStartMs = nil
         sessionLoadRecorded = false
+        sessionSwitchStartMs = nil
+        sessionSwitchRecorded = false
     }
 
     // MARK: - Helpers

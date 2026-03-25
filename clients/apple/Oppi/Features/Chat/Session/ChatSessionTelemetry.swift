@@ -139,6 +139,40 @@ enum ChatSessionTelemetry {
         )
     }
 
+    // MARK: - App Launch
+
+    static func recordAppLaunch(durationMs: Int64) {
+        emit(.appLaunchMs, Double(durationMs), .ms)
+    }
+
+    // MARK: - Session Switch
+
+    static func recordSessionSwitch(
+        durationMs: Int64,
+        sessionId: String,
+        cached: Bool
+    ) {
+        emit(
+            .sessionSwitchMs, Double(durationMs), .ms,
+            sessionId: sessionId,
+            tags: ["cached": cached ? "1" : "0"]
+        )
+    }
+
+    // MARK: - Permission Overlay
+
+    static func recordPermissionOverlay(
+        durationMs: Int64,
+        sessionId: String,
+        action: String
+    ) {
+        emit(
+            .permissionOverlayMs, Double(durationMs), .ms,
+            sessionId: sessionId,
+            tags: ["action": action]
+        )
+    }
+
     // MARK: - Private
 
     private static func emit(

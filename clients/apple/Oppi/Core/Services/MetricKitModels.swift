@@ -66,6 +66,9 @@ enum ChatMetricName: String, Codable, Sendable {
     case cellConfigureMs = "chat.cell_configure_ms"
     case renderStrategyMs = "chat.render_strategy_ms"
     case timelineHitch = "chat.timeline_hitch"
+    case appLaunchMs = "chat.app_launch_ms"
+    case sessionSwitchMs = "chat.session_switch_ms"
+    case permissionOverlayMs = "chat.permission_overlay_ms"
 }
 
 enum ChatMetricUnit: String, Codable, Sendable {

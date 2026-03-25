@@ -10,6 +10,8 @@ struct PermissionOverlay: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(PermissionStore.self) private var permissionStore
     @State private var showSheet = false
+    /// Timestamp when the current permission overlay first appeared.
+    @State private var overlayAppearedMs: Int64?
 
     private var pending: [PermissionRequest] {
         permissionStore.pending(for: sessionId)
@@ -41,6 +43,12 @@ struct PermissionOverlay: View {
             .onChange(of: pending.isEmpty) { _, isEmpty in
                 if isEmpty {
                     showSheet = false
+                    overlayAppearedMs = nil
+                }
+            }
+            .onAppear {
+                if overlayAppearedMs == nil {
+                    overlayAppearedMs = ChatSessionTelemetry.nowMs()
                 }
             }
             .accessibilityIdentifier("permission.overlay")
@@ -48,6 +56,18 @@ struct PermissionOverlay: View {
     }
 
     private func respond(id: String, choice: PermissionResponseChoice) {
+        // Record permission overlay latency
+        if let startMs = overlayAppearedMs {
+            let durationMs = max(0, ChatSessionTelemetry.nowMs() - startMs)
+            let action = choice.action == .allow ? "allow" : "deny"
+            ChatSessionTelemetry.recordPermissionOverlay(
+                durationMs: durationMs,
+                sessionId: sessionId,
+                action: action
+            )
+            overlayAppearedMs = nil
+        }
+
         Task { @MainActor in
             // Biometric gate: require Face ID for all approvals when enabled
             if choice.action == .allow, BiometricService.shared.requiresBiometric {
