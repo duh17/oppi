@@ -89,6 +89,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Computed once at tool_end so the displayed value doesn't drift on reconfiguration.
     private var toolElapsedSeconds: [String: Int] = [:]
 
+    /// Tool event IDs for ask tool calls — suppressed from timeline as tool rows,
+    /// converted to user messages when tool_end arrives with structured answers.
+    private var askToolEventIDs: Set<String> = []
+
     /// Start time recorded when a tool call began (running tools only).
     func toolStartTime(for id: String) -> Date? {
         toolStartTimes[id]
@@ -188,6 +192,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolDetailsStore.clearAll()
         toolStartTimes.removeAll()
         toolElapsedSeconds.removeAll()
+        askToolEventIDs.removeAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
@@ -412,6 +417,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return nil
 
         case .toolCall:
+            let tool = event.tool ?? "unknown"
+            // Ask tool — track for conversion to user message on toolResult.
+            if tool == "ask" {
+                askToolEventIDs.insert(event.id)
+                return nil
+            }
+
             let args = event.args ?? [:]
             // Build summary directly without intermediate array allocation.
             var argsSummary = ""
@@ -425,7 +437,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             insertItem(.toolCall(
                 id: event.id,
-                tool: event.tool ?? "unknown",
+                tool: tool,
                 argsSummary: ChatItem.preview(argsSummary),
                 outputPreview: "",
                 outputByteCount: 0,
@@ -442,6 +454,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .toolResult:
             let output = event.output ?? ""
             let matchId = event.toolCallId ?? event.id
+
+            // Ask tool result — convert to user message, skip tool row update.
+            if askToolEventIDs.remove(matchId) != nil {
+                let text = Self.formatAskAnswers(details: event.details)
+                if !text.isEmpty {
+                    let ts = FastISO8601Parser.parse(event.timestamp, fallback: Self.sharedTraceDateFormatter)
+                    insertItem(.userMessage(
+                        id: "ask-answer-\(matchId)",
+                        text: text,
+                        timestamp: ts
+                    ), appendOnly: appendOnly)
+                }
+                return nil
+            }
+
             toolOutputStore.append(output, to: matchId)
             // Store structured details so catch-up rendering matches streaming.
             if let details = event.details {
@@ -765,6 +792,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return handleToolStart(toolEventId: toolEventId, tool: tool, args: args, callSegments: callSegments)
 
         case .toolOutput(let payload):
+            // Suppress output for ask tool — no tool row to update.
+            if askToolEventIDs.contains(payload.toolEventId) { return false }
             let outputDidChange: Bool
             if payload.mode == .replace {
                 outputDidChange = toolOutputStore.replace(
@@ -828,6 +857,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // MARK: - Event Handlers (extracted from processInternal)
 
     private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?) -> Bool {
+        // Ask tool is a conversation facilitator, not a technical operation.
+        // Suppress the tool row — answers will appear as a user message on tool_end.
+        if tool == "ask" {
+            askToolEventIDs.insert(toolEventId)
+            finalizeAssistantMessage()
+            return false
+        }
+
         let before = renderMutationCheckpoint()
         let previousArgs = toolArgsStore.args(for: toolEventId)
         let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
@@ -892,6 +929,22 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
+        // Ask tool — convert result to a user message instead of a tool row.
+        if askToolEventIDs.remove(toolEventId) != nil {
+            let text = Self.formatAskAnswers(details: details)
+            if !text.isEmpty {
+                let item = ChatItem.userMessage(
+                    id: "ask-answer-\(toolEventId)",
+                    text: text,
+                    timestamp: Date()
+                )
+                items.append(item)
+                indexAppend(item)
+                bumpItemsMutationSeq()
+            }
+            return true
+        }
+
         let before = renderMutationCheckpoint()
         let previousDetails = toolDetailsStore.details(for: toolEventId)
         let previousResultSegments = toolSegmentStore.resultSegments(for: toolEventId)
@@ -1391,4 +1444,37 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return items.endIndex
     }
 
+    // MARK: - Ask Answer Formatting
+
+    /// Format ask tool details into a user-readable answer summary.
+    ///
+    /// Input: `{ questions: [...], answers: { id: value }, allIgnored: bool }`
+    /// Output: `"approach → Full rewrite\nscope → (skipped)"` or empty if all ignored.
+    static func formatAskAnswers(details: JSONValue?) -> String {
+        guard case .object(let payload) = details else { return "" }
+
+        if case .bool(true) = payload["allIgnored"] {
+            return ""
+        }
+
+        guard case .object(let answers) = payload["answers"] else { return "" }
+        guard case .array(let questions) = payload["questions"] else {
+            // No questions array — fall back to answers keys
+            return answers.map { key, val in
+                "\(key) → \(val.displayString)"
+            }.joined(separator: "\n")
+        }
+
+        var lines: [String] = []
+        for q in questions {
+            guard case .object(let qObj) = q,
+                  case .string(let qId) = qObj["id"] else { continue }
+            if let answer = answers[qId] {
+                lines.append("\(qId) → \(answer.displayString)")
+            } else {
+                lines.append("\(qId) → (skipped)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
 }

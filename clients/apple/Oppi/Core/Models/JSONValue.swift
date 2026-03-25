@@ -84,6 +84,18 @@ extension JSONValue {
     }
 
     /// One-line summary for tool args display. Truncated to `maxLength`.
+    /// Human-readable display for answer values.
+    /// Strings pass through, arrays join with ", ", others use summary().
+    var displayString: String {
+        switch self {
+        case .string(let s): return s
+        case .array(let a):
+            return a.map(\.displayString).joined(separator: ", ")
+        default:
+            return summary()
+        }
+    }
+
     func summary(maxLength: Int = 80) -> String {
         let raw: String
         switch self {
