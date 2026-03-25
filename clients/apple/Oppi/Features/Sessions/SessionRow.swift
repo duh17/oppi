@@ -182,10 +182,10 @@ struct SessionRow: View {
     }
 
     private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
-        if stats.filesChanged >= 25 || stats.mutatingToolCalls >= 80 {
+        if stats.filesChanged >= 25 {
             return .themeRed
         }
-        if stats.filesChanged >= 10 || stats.mutatingToolCalls >= 30 {
+        if stats.filesChanged >= 10 {
             return .themeOrange
         }
         return .themeGreen
