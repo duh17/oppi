@@ -130,6 +130,16 @@ final class StreamingTextRevealer {
             return
         }
 
+        // If textStorage was mutated externally (e.g. user cut/paste), bail out
+        // to avoid out-of-bounds access on the now-shorter storage.
+        let storageLength = textView.textStorage.length
+        guard storageLength >= totalCount else {
+            visibleCount = storageLength
+            totalCount = storageLength
+            stopDisplayLink()
+            return
+        }
+
         fractionalChars += charsPerFrame
         let charsToReveal = Int(fractionalChars)
         guard charsToReveal > 0 else { return }
@@ -153,9 +163,12 @@ final class StreamingTextRevealer {
         textView: UITextView,
         original: NSAttributedString
     ) {
-        guard range.length > 0, range.location + range.length <= original.length else { return }
+        let storageLength = textView.textStorage.length
+        guard range.length > 0,
+              range.location + range.length <= original.length,
+              range.location + range.length <= storageLength else { return }
         original.enumerateAttribute(.foregroundColor, in: range) { color, attrRange, _ in
-            if let color {
+            if let color, attrRange.location + attrRange.length <= storageLength {
                 textView.textStorage.addAttribute(.foregroundColor, value: color, range: attrRange)
             }
         }
