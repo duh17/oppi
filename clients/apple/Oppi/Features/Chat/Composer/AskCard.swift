@@ -122,6 +122,27 @@ struct AskCard: View {
             RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
                 .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
         )
+        .overlay(alignment: .topTrailing) {
+            Button {
+                isExpanded = true
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+        }
+        .fullScreenCover(isPresented: $isExpanded) {
+            AskCardExpanded(
+                request: request,
+                currentPage: $currentPage,
+                answers: $answers,
+                isExpanded: $isExpanded,
+                onSubmit: onSubmit,
+                onIgnoreAll: onIgnoreAll
+            )
+        }
     }
 
     // MARK: - Question Page
