@@ -12,6 +12,7 @@ struct WorkspaceDetailView: View {
     @Environment(PermissionStore.self) private var permissionStore
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(SessionActivityStore.self) private var activityStore
     @Environment(AppNavigation.self) private var navigation
 
     @State private var isCreating = false
@@ -270,14 +271,7 @@ struct WorkspaceDetailView: View {
                 Section("Your Turn") {
                     ForEach(data.yourTurnRoots) { session in
                         NavigationLink(value: session.id) {
-                            SessionRow(
-                                session: session,
-                                pendingCount: SessionTreeHelper.aggregatePendingCount(
-                                    of: session.id, in: activeSessions,
-                                    pendingForSession: { permissionStore.pending(for: $0).count }
-                                ),
-                                children: childSummary(for: session.id, in: workspaceSessions)
-                            )
+                            sessionRow(for: session)
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
@@ -297,14 +291,7 @@ struct WorkspaceDetailView: View {
                 Section("Working") {
                     ForEach(data.workingRoots) { session in
                         NavigationLink(value: session.id) {
-                            SessionRow(
-                                session: session,
-                                pendingCount: SessionTreeHelper.aggregatePendingCount(
-                                    of: session.id, in: activeSessions,
-                                    pendingForSession: { permissionStore.pending(for: $0).count }
-                                ),
-                                children: childSummary(for: session.id, in: workspaceSessions)
-                            )
+                            sessionRow(for: session)
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
@@ -504,6 +491,27 @@ struct WorkspaceDetailView: View {
                 policyFallback = fallback
             }
         }
+    }
+
+    /// Build a SessionRow with computed activity summary for the given session.
+    @ViewBuilder
+    private func sessionRow(for session: Session) -> some View {
+        let pending = SessionTreeHelper.aggregatePendingCount(
+            of: session.id, in: activeSessions,
+            pendingForSession: { permissionStore.pending(for: $0).count }
+        )
+        let summary = SessionActivitySummary.text(
+            session: session,
+            pendingCount: pending,
+            pendingPermissions: permissionStore.pending(for: session.id),
+            activity: activityStore.lastActivity(for: session.id)
+        )
+        SessionRow(
+            session: session,
+            pendingCount: pending,
+            activitySummary: summary,
+            children: childSummary(for: session.id, in: workspaceSessions)
+        )
     }
 
     /// Compute child summary for a root session (single-pass over descendants).
