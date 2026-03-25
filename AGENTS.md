@@ -32,10 +32,8 @@ cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodep
 cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
-# Default target: your device UDID
-# Note: repo clients/apple/scripts/install.sh is a compatibility wrapper to the canonical
-# install implementation in the personal oppi-dev skill.
-cd clients/apple && bash scripts/install.sh -d DEVICE_UDID --launch
+# Single canonical install script lives in the oppi-dev skill.
+bash ~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID --launch
 ```
 
 **sim-pool.sh** manages a pool of simulators with slot-based locking so multiple agents can build/test in parallel without colliding. It auto-injects `-destination` and `-derivedDataPath`. Do NOT pass your own `-destination` — the pool handles it. Simulators are lazy-created on first claim. Stale locks from crashed processes are auto-reaped.
@@ -64,7 +62,7 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - `git stash` — stashes ALL changes
 - `git push --force`
 - `xcrun devicectl device uninstall` — never uninstall the iOS app
-- Raw `devicectl device install` — use `clients/apple/scripts/install.sh -d DEVICE_UDID` instead (repo wrapper to the canonical oppi-dev install script)
+- Raw `devicectl device install` — use `~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID` instead
 
 ### GitHub Issues
 ```bash
