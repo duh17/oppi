@@ -456,6 +456,25 @@ struct ChatView: View {
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
+                    askRequest: connection.activeAskRequest,
+                    onAskSubmit: { answers in
+                        let value = AskResponseEncoder.encode(answers)
+                        Task {
+                            try? await connection.respondToExtensionUI(id: connection.activeAskRequest?.id ?? "", value: value)
+                        }
+                    },
+                    onAskIgnoreAll: {
+                        guard let askId = connection.activeAskRequest?.id else { return }
+                        Task {
+                            try? await connection.respondToExtensionUI(id: askId, cancelled: true)
+                        }
+                    },
+                    onAskEnterAnswerMode: {
+                        connection.askAnswerMode = true
+                    },
+                    onAskExitAnswerMode: {
+                        connection.askAnswerMode = false
+                    },
                     slashCommands: chatState.slashCommands,
                     fileSuggestions: chatState.fileSuggestions,
                     onFileSuggestionQuery: { query in

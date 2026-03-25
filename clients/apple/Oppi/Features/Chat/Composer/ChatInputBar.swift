@@ -32,6 +32,11 @@ struct ChatInputBar<ActionRow: View>: View {
     var voiceInputManager: VoiceInputManager?
     let showForceStop: Bool
     let isForceStopInFlight: Bool
+    var askRequest: AskRequest?
+    var onAskSubmit: (([String: AskAnswer]) -> Void)?
+    var onAskIgnoreAll: (() -> Void)?
+    var onAskEnterAnswerMode: (() -> Void)?
+    var onAskExitAnswerMode: (() -> Void)?
     let slashCommands: [SlashCommand]
     let fileSuggestions: [FileSuggestion]
     let onFileSuggestionQuery: ((String?) -> Void)?
@@ -250,6 +255,21 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var composerCapsule: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Ask card (inline question from agent)
+            if let askRequest {
+                AskCard(
+                    request: askRequest,
+                    onSubmit: { answers in onAskSubmit?(answers) },
+                    onIgnoreAll: { onAskIgnoreAll?() },
+                    onEnterAnswerMode: { onAskEnterAnswerMode?() },
+                    onExitAnswerMode: { onAskExitAnswerMode?() }
+                )
+                .padding(.horizontal, composerHorizontalPadding)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             // Context pill strip (display-only, review session context)
             if !contextPills.isEmpty {
                 contextPillStrip
