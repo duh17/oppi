@@ -174,6 +174,13 @@ export const SERVER_METRIC_REGISTRY = {
     description:
       "Auto-title generation duration. Tagged by model, status (success/error/timeout), tokens.",
   },
+
+  // ── Ask Extension ──
+  "server.ask_round_trip_ms": {
+    unit: "ms",
+    description:
+      "Ask extension round-trip: server interception to iOS answer resolution. Tagged by cancelled, questionCount.",
+  },
 } as const satisfies Readonly<Record<string, ServerMetricDefinition>>;
 
 export type ServerMetricName = keyof typeof SERVER_METRIC_REGISTRY;

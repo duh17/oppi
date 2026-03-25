@@ -341,7 +341,7 @@ export class Server {
     this.userSkillStore = new UserSkillStore();
     this.userSkillStore.init();
 
-    this.push = createPushClient(apnsConfig);
+    this.push = createPushClient(apnsConfig, this.opsMetrics);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage, this.gate);
     this.sessions = new SessionManager(storage, this.gate, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>

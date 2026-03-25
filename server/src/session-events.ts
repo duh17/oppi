@@ -51,6 +51,8 @@ export interface PendingAskState {
   deferred: Array<{ id: string; req: ExtensionUIRequest }>;
   /** Full broadcast message — stored for re-sending on client reconnect. */
   broadcastMessage: ServerMessage;
+  /** Timestamp when the ask flow was initiated (for round-trip timing). */
+  initiatedAt: number;
 }
 
 export interface EventProcessorSessionState {
@@ -330,6 +332,7 @@ export class SessionEventProcessor {
       })),
       deferred: [],
       broadcastMessage,
+      initiatedAt: Date.now(),
     };
 
     // Register as pending so the iOS response is accepted
@@ -351,6 +354,16 @@ export class SessionEventProcessor {
   ): void {
     const ask = active.pendingAsk;
     if (!ask) return;
+
+    // Record ask extension round-trip time
+    const metrics = this.deps.metrics;
+    if (metrics && ask.initiatedAt) {
+      metrics.record("server.ask_round_trip_ms", Date.now() - ask.initiatedAt, {
+        sessionId: active.session.id,
+        cancelled: cancelled ? "true" : "false",
+        questionCount: String(ask.questions.length),
+      });
+    }
 
     for (let i = 0; i < ask.deferred.length; i++) {
       const { id, req } = ask.deferred[i];

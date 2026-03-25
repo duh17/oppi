@@ -10,6 +10,7 @@
 import { connect as http2Connect, type ClientHttp2Session } from "node:http2";
 import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 
 // ─── Config ───
 
@@ -64,14 +65,16 @@ export class APNsClient {
   private config: APNsConfig;
   private privateKey: KeyObject;
   private host: string;
+  private metrics?: ServerMetricCollector;
 
   private connection: ClientHttp2Session | null = null;
   private jwt: string = "";
   private jwtExpiresAt = 0;
 
-  constructor(config: APNsConfig) {
+  constructor(config: APNsConfig, metrics?: ServerMetricCollector) {
     this.config = config;
     this.host = APNS_HOSTS[config.environment || "sandbox"];
+    this.metrics = metrics;
 
     const keyPem = readFileSync(config.keyPath, "utf-8");
     this.privateKey = createPrivateKey(keyPem);
@@ -212,6 +215,7 @@ export class APNsClient {
     payload: Record<string, unknown>,
     opts: { pushType: string; priority: number; expiration?: number; topic?: string },
   ): Promise<boolean> {
+    const sendStart = Date.now();
     const conn = await this.getConnection();
     const jwt = this.getJWT();
     const topic = opts.topic || this.config.bundleId;
@@ -247,6 +251,16 @@ export class APNsClient {
       });
 
       req.on("end", () => {
+        const pushType = opts.pushType;
+        if (this.metrics) {
+          this.metrics.record("server.push_send_ms", Date.now() - sendStart, {
+            push_type: pushType,
+          });
+          this.metrics.record("server.push_result", 1, {
+            push_type: pushType,
+            success: responseStatus === 200 ? "true" : "false",
+          });
+        }
         if (responseStatus === 200) {
           resolve(true);
         } else {
@@ -273,6 +287,15 @@ export class APNsClient {
 
       req.on("error", (err) => {
         console.error("[apns] Request error:", err.message);
+        if (this.metrics) {
+          this.metrics.record("server.push_send_ms", Date.now() - sendStart, {
+            push_type: opts.pushType,
+          });
+          this.metrics.record("server.push_result", 1, {
+            push_type: opts.pushType,
+            success: "false",
+          });
+        }
         resolve(false);
       });
 
@@ -380,7 +403,7 @@ export class NoopAPNsClient {
 
 export type PushClient = APNsClient | NoopAPNsClient;
 
-export function createPushClient(config?: APNsConfig): PushClient {
+export function createPushClient(config?: APNsConfig, metrics?: ServerMetricCollector): PushClient {
   if (!config) {
     console.log("APNs not configured", {
       enabled: false,
@@ -390,7 +413,7 @@ export function createPushClient(config?: APNsConfig): PushClient {
   }
 
   try {
-    const client = new APNsClient(config);
+    const client = new APNsClient(config, metrics);
     console.log("APNs configured", {
       environment: config.environment || "sandbox",
       enabled: true,

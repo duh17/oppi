@@ -770,6 +770,20 @@ export const CHAT_METRIC_REGISTRY = {
     description:
       "Internal render strategy time for tool row content. Tags: mode, input_bytes, language.",
   },
+
+  // ── App-level UX latency ──
+  "chat.app_launch_ms": {
+    unit: "ms",
+    description: "Cold/warm app launch to first meaningful content visible.",
+  },
+  "chat.session_switch_ms": {
+    unit: "ms",
+    description: "Session switch latency: tap session row to chat content visible. Tags: cached.",
+  },
+  "chat.permission_overlay_ms": {
+    unit: "ms",
+    description: "Permission overlay display to user tap (allow/deny). Tags: action.",
+  },
 } as const satisfies Readonly<Record<string, ChatMetricDefinition>>;
 
 export type ChatMetricName = keyof typeof CHAT_METRIC_REGISTRY;
