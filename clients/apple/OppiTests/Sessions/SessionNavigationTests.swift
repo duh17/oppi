@@ -60,6 +60,7 @@ struct SessionNavigationTests {
 
     private var baseTime: Date { Date(timeIntervalSince1970: 1_700_000_000) }
 
+    /// Mirrors WorkspaceDetailView stopped root filtering + search logic.
     private func visibleStoppedRootIds(
         in sessions: [Session],
         query: String? = nil
@@ -74,19 +75,22 @@ struct SessionNavigationTests {
             return FuzzyMatch.match(query: normalizedQuery, candidate: session.displayTitle) != nil
         }
 
-        func treeMatchesSearch(_ node: SessionTreeHelper.TreeNode) -> Bool {
-            if matches(node.session) { return true }
-            return node.children.contains { treeMatchesSearch($0) }
+        let allIds = Set(sessions.map(\.id))
+        let stopped = sessions.filter { $0.status == .stopped }
+        let roots = stopped.filter { session in
+            guard let parentId = session.parentSessionId else { return true }
+            return !allIds.contains(parentId)
         }
 
-        let stoppedTree = SessionTreeHelper.buildTree(from: sessions.filter { $0.status == .stopped })
-        let matchingRoots = hasQuery
-            ? stoppedTree.filter { treeMatchesSearch($0) }
-            : stoppedTree
+        let filtered = hasQuery
+            ? roots.filter { root in
+                if matches(root) { return true }
+                return SessionTreeHelper.allDescendants(of: root.id, in: stopped)
+                    .contains { matches($0) }
+            }
+            : roots
 
-        return matchingRoots
-            .map(\.session.id)
-            .sorted()
+        return filtered.map(\.id).sorted()
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -99,9 +103,8 @@ struct SessionNavigationTests {
             makeSession(id: "b"),
             makeSession(id: "c"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 3)
-        #expect(tree.allSatisfy { $0.depth == 0 })
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 3)
     }
 
     @Test func roots_childWithExistingParentIsNotRoot() {
@@ -109,19 +112,18 @@ struct SessionNavigationTests {
             makeSession(id: "parent"),
             makeSession(id: "child", parentId: "parent"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].session.id == "parent")
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "parent")
     }
 
     @Test func roots_orphanedChildBecomesRoot() {
         let sessions = [
             makeSession(id: "orphan", parentId: "deleted-parent"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].session.id == "orphan")
-        #expect(tree[0].depth == 0)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "orphan")
     }
 
     @Test func roots_mixedStandaloneParentChildOrphaned() {
@@ -131,17 +133,16 @@ struct SessionNavigationTests {
             makeSession(id: "child", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
             makeSession(id: "orphan", parentId: "gone", createdAt: baseTime.addingTimeInterval(30)),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rootIds = tree.map(\.session.id)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        let rootIds = Set(roots.map(\.id))
         #expect(rootIds.contains("standalone"))
         #expect(rootIds.contains("parent"))
         #expect(rootIds.contains("orphan"))
         #expect(!rootIds.contains("child"))
-        #expect(tree.count == 3)
+        #expect(roots.count == 3)
     }
 
     @Test func roots_detachedSessionsAlongsideChildren() {
-        // "Detached" = no parentSessionId, exists in same list as parent-child pairs
         let sessions = [
             makeSession(id: "detached1", createdAt: baseTime),
             makeSession(id: "detached2", createdAt: baseTime.addingTimeInterval(5)),
@@ -149,17 +150,17 @@ struct SessionNavigationTests {
             makeSession(id: "child1", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
             makeSession(id: "child2", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let rootIds = tree.map(\.session.id)
-        #expect(tree.count == 3)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        let rootIds = Set(roots.map(\.id))
+        #expect(roots.count == 3)
         #expect(rootIds.contains("detached1"))
         #expect(rootIds.contains("detached2"))
         #expect(rootIds.contains("parent"))
     }
 
     @Test func roots_emptyListReturnsEmpty() {
-        let tree = SessionTreeHelper.buildTree(from: [])
-        #expect(tree.isEmpty)
+        let roots = SessionTreeHelper.rootSessions(from: [], allSessions: [])
+        #expect(roots.isEmpty)
     }
 
     @Test func roots_multipleOrphanedChildrenAllBecomeRoots() {
@@ -168,18 +169,17 @@ struct SessionNavigationTests {
             makeSession(id: "orphan2", parentId: "gone-b", createdAt: baseTime.addingTimeInterval(10)),
             makeSession(id: "orphan3", parentId: "gone-c", createdAt: baseTime.addingTimeInterval(20)),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 3)
-        #expect(tree.allSatisfy { $0.children.isEmpty })
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 3)
     }
 
-    @Test func stoppedRoots_activeParentStoppedChildChildRemainsVisible() {
+    @Test func stoppedRoots_activeParentStoppedChildHidden() {
+        // Stopped child with active parent should NOT appear as stopped root
         let sessions = [
             makeSession(id: "parent", status: .busy, name: "Active Parent"),
             makeSession(id: "child", parentId: "parent", status: .stopped, name: "Stopped Child"),
         ]
-
-        #expect(visibleStoppedRootIds(in: sessions) == ["child"])
+        #expect(visibleStoppedRootIds(in: sessions) == [])
     }
 
     @Test func stoppedRoots_searchSurfacesStoppedParentWhenChildMatches() {
@@ -187,8 +187,16 @@ struct SessionNavigationTests {
             makeSession(id: "parent", status: .stopped, name: "Parent Session"),
             makeSession(id: "child", parentId: "parent", status: .stopped, name: "Compile regression fix"),
         ]
-
         #expect(visibleStoppedRootIds(in: sessions, query: "compile") == ["parent"])
+    }
+
+    @Test func stoppedRoots_bothStoppedParentShownChildHidden() {
+        // Both stopped: only parent shows in stopped list
+        let sessions = [
+            makeSession(id: "parent", status: .stopped),
+            makeSession(id: "child", parentId: "parent", status: .stopped),
+        ]
+        #expect(visibleStoppedRootIds(in: sessions) == ["parent"])
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -215,10 +223,7 @@ struct SessionNavigationTests {
             makeSession(id: "first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
             makeSession(id: "second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
         ]
-        // ChatView pattern: filter + sort
-        let sorted = sessions
-            .filter { $0.parentSessionId == "parent" }
-            .sorted { $0.createdAt < $1.createdAt }
+        let sorted = SessionTreeHelper.sortedChildSessions(of: "parent", in: sessions)
         #expect(sorted.map(\.id) == ["first", "second", "third"])
     }
 
@@ -231,7 +236,6 @@ struct SessionNavigationTests {
         let children = SessionTreeHelper.childSessions(of: "root", in: sessions)
         #expect(children.count == 1)
         #expect(children[0].id == "child")
-        // grandchild belongs to "child", not "root"
         let grandchildren = SessionTreeHelper.childSessions(of: "child", in: sessions)
         #expect(grandchildren.count == 1)
         #expect(grandchildren[0].id == "grandchild")
@@ -262,24 +266,18 @@ struct SessionNavigationTests {
         #expect(childrenB.allSatisfy { $0.parentSessionId == "parent-b" })
     }
 
-    @Test func children_selfReferentialNotOwnChild() {
+    @Test func children_selfReferentialEdgeCase() {
         let sessions = [
             makeSession(id: "self-ref", parentId: "self-ref"),
             makeSession(id: "normal"),
         ]
-        // The filter pattern returns self-ref as its own child because parentSessionId == id.
-        // This is a known data integrity edge case.
+        // Raw child lookup includes self-ref (parentSessionId == id)
         let children = SessionTreeHelper.childSessions(of: "self-ref", in: sessions)
-        // self-ref's parentSessionId is "self-ref", so filter includes it.
-        // buildTree handles this safely (filters it out), but raw lookup does not.
         #expect(children.count == 1)
         #expect(children[0].id == "self-ref")
-        // buildTree is the safe path — self-referential session is silently dropped
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let normalNode = tree.first { $0.session.id == "normal" }
-        #expect(normalNode != nil)
-        // self-ref should not appear as a root or as anyone's child in the tree
-        #expect(tree.count == 1)
+        // allDescendants handles this safely (pre-visits parentId)
+        let desc = SessionTreeHelper.allDescendants(of: "self-ref", in: sessions)
+        #expect(desc.isEmpty)
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -324,7 +322,7 @@ struct SessionNavigationTests {
         ]
         let pending = ["parent": 1, "c1": 4, "c2": 0, "c3": 7]
         let agg = aggregatePendingCount(sessionId: "parent", sessions: sessions, pendingCounts: pending)
-        #expect(agg == 12) // 1 + 4 + 0 + 7
+        #expect(agg == 12)
     }
 
     @Test func permissions_grandchildNotIncluded() {
@@ -335,7 +333,6 @@ struct SessionNavigationTests {
         ]
         let pending = ["root": 0, "child": 1, "grandchild": 5]
         let agg = aggregatePendingCount(sessionId: "root", sessions: sessions, pendingCounts: pending)
-        // Only root(0) + child(1) = 1. Grandchild is excluded.
         #expect(agg == 1)
     }
 
@@ -360,8 +357,7 @@ struct SessionNavigationTests {
             makeSession(id: "c2", parentId: "parent", status: .busy),
             makeSession(id: "c3", parentId: "parent", status: .busy),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 3)
         #expect(counts.done == 0)
         #expect(counts.error == 0)
@@ -374,8 +370,7 @@ struct SessionNavigationTests {
             makeSession(id: "c1", parentId: "parent", status: .stopped),
             makeSession(id: "c2", parentId: "parent", status: .stopped),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 0)
         #expect(counts.done == 2)
         #expect(counts.error == 0)
@@ -390,8 +385,7 @@ struct SessionNavigationTests {
             makeSession(id: "c3", parentId: "parent", status: .stopped),
             makeSession(id: "c4", parentId: "parent", status: .error),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
         #expect(counts.done == 1)
         #expect(counts.error == 2)
@@ -403,8 +397,7 @@ struct SessionNavigationTests {
             makeSession(id: "parent"),
             makeSession(id: "only-child", parentId: "parent", status: .starting),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
         #expect(counts.done == 0)
         #expect(counts.total == 1)
@@ -415,8 +408,7 @@ struct SessionNavigationTests {
             makeSession(id: "parent"),
             makeSession(id: "c1", parentId: "parent", status: .stopping),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
     }
 
@@ -451,7 +443,7 @@ struct SessionNavigationTests {
             makeSession(id: "grandchild", parentId: "child", cost: 3.00),
         ]
         let total = aggregateCost(sessionId: "root", sessions: sessions)
-        #expect(total == 6.00) // 1 + 2 + 3
+        #expect(total == 6.00)
     }
 
     @Test func cost_sessionWithNoCostAndNoChildren() {
@@ -475,8 +467,6 @@ struct SessionNavigationTests {
     // ──────────────────────────────────────────────────────────────
 
     @Test func navigation_childSessionRouteConstruction() {
-        // ChildSessionRoute in ChatView is just { id: String }.
-        // Verify a child session's id is sufficient to construct the route.
         let child = makeSession(id: "child-abc", parentId: "parent-xyz")
         let routeId = child.id
         #expect(routeId == "child-abc")
@@ -509,13 +499,10 @@ struct SessionNavigationTests {
         #expect(parent.displayTitle == "Refactor auth module")
 
         let unnamedParent = makeSession(id: "p2", name: nil)
-        // No name, no firstMessage → falls back to "Session <prefix>"
         #expect(unnamedParent.displayTitle == "Session p2")
     }
 
     @Test func navigation_breadcrumbDisplayTitleFromFirstMessage() {
-        // Session with no explicit name but a firstMessage
-        // Must construct directly to avoid makeSession's default name
         var session = Session(
             id: "fm1",
             workspaceId: "ws1",
@@ -533,55 +520,44 @@ struct SessionNavigationTests {
         #expect(session.displayTitle == "Help me fix the login bug")
     }
 
-    @Test func navigation_treePreservesParentChildRelationshipForNavigation() {
-        // After buildTree, navigating parent → child → grandchild should be traceable
+    @Test func navigation_descendantsPreserveParentChain() {
+        // Navigating parent → child → grandchild traceable via parentSessionId
         let sessions = [
             makeSession(id: "root", createdAt: baseTime),
             makeSession(id: "agent-1", parentId: "root", createdAt: baseTime.addingTimeInterval(10)),
             makeSession(id: "agent-2", parentId: "root", createdAt: baseTime.addingTimeInterval(20)),
             makeSession(id: "sub-agent", parentId: "agent-1", createdAt: baseTime.addingTimeInterval(30)),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "root")
 
-        // Root → agent-1, agent-2
-        let root = tree[0]
-        #expect(root.children.count == 2)
-        #expect(root.children[0].session.id == "agent-1")
-        #expect(root.children[1].session.id == "agent-2")
+        let rootChildren = SessionTreeHelper.sortedChildSessions(of: "root", in: sessions)
+        #expect(rootChildren.map(\.id) == ["agent-1", "agent-2"])
 
-        // agent-1 → sub-agent
-        let agent1 = root.children[0]
-        #expect(agent1.children.count == 1)
-        #expect(agent1.children[0].session.id == "sub-agent")
+        let agent1Children = SessionTreeHelper.sortedChildSessions(of: "agent-1", in: sessions)
+        #expect(agent1Children.count == 1)
+        #expect(agent1Children[0].id == "sub-agent")
 
-        // Verify we can trace back: sub-agent's parentSessionId → agent-1
-        let subAgent = agent1.children[0]
-        #expect(subAgent.session.parentSessionId == "agent-1")
-        // And agent-1's parentSessionId → root
-        #expect(agent1.session.parentSessionId == "root")
+        // Trace back: sub-agent → agent-1 → root
+        let subAgent = agent1Children[0]
+        #expect(subAgent.parentSessionId == "agent-1")
+        let agent1 = sessions.first { $0.id == subAgent.parentSessionId }
+        #expect(agent1?.parentSessionId == "root")
     }
 
     // ──────────────────────────────────────────────────────────────
     // MARK: 7 — Render window gate consistency
     // ──────────────────────────────────────────────────────────────
 
-    // Verifies that the render window policy produces consistent
-    // visible/hidden counts when the active session ID doesn't match.
-    // This is the data contract behind the ChatTimelineView gate.
-
     @Test func renderWindow_hiddenCountZeroWhenSessionMismatch() {
-        // Simulate: reducer has parent items, but we're rendering child view
         let parentItems = 233
         let childSessionId = "child-session"
-        let reducerActiveSessionId = "parent-session" // mismatch!
+        let reducerActiveSessionId = "parent-session"
         let renderWindow = TimelineRenderWindowPolicy.standardWindow
 
-        // Gate: activeSessionId != childSessionId → visibleItems empty
         let gateMatches = reducerActiveSessionId == childSessionId
         let visibleCount = gateMatches ? min(parentItems, renderWindow) : 0
-
-        // hiddenCount MUST also respect the gate
         let hiddenCount = gateMatches ? max(0, parentItems - visibleCount) : 0
 
         #expect(visibleCount == 0)
@@ -591,8 +567,8 @@ struct SessionNavigationTests {
     @Test func renderWindow_normalCountsWhenSessionMatches() {
         let totalItems = 233
         let sessionId = "current-session"
-        let reducerActiveSessionId = "current-session" // match!
-        let renderWindow = TimelineRenderWindowPolicy.standardWindow // 80
+        let reducerActiveSessionId = "current-session"
+        let renderWindow = TimelineRenderWindowPolicy.standardWindow
 
         let gateMatches = reducerActiveSessionId == sessionId
         let visibleCount = gateMatches ? min(totalItems, renderWindow) : 0
@@ -611,7 +587,6 @@ struct SessionNavigationTests {
             totalItems: totalItems
         )
 
-        // Window should clamp to total items, not exceed it
         #expect(synced <= totalItems)
         #expect(synced == 50)
     }
