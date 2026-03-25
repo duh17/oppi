@@ -280,6 +280,27 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).models
     }
 
+    // MARK: - Auto-Title
+
+    /// Server-side auto-title configuration.
+    struct AutoTitleConfig: Codable, Sendable {
+        var enabled: Bool
+        var model: String?
+    }
+
+    /// Fetch the current auto-title configuration.
+    func getAutoTitleConfig() async throws -> AutoTitleConfig {
+        let data = try await get("/server/auto-title")
+        return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
+    }
+
+    /// Update the auto-title configuration.
+    @discardableResult
+    func setAutoTitleConfig(_ config: AutoTitleConfig) async throws -> AutoTitleConfig {
+        let data = try await put("/server/auto-title", body: config)
+        return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
+    }
+
     // MARK: - Themes
 
     /// List available custom themes on the server.

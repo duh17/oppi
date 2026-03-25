@@ -678,7 +678,11 @@ struct ChatActionHandlerTests {
     @MainActor
     @Test func sendPromptAutoTitlesUnnamedSessionFromFirstMessage() async {
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -741,7 +745,11 @@ struct ChatActionHandlerTests {
     @MainActor
     @Test func sendPromptAutoTitleCapsLength() async {
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -802,7 +810,11 @@ struct ChatActionHandlerTests {
     @MainActor
     @Test func sendPromptDoesNotAutoTitleWhenSessionAlreadyNamed() async {
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -861,7 +873,11 @@ struct ChatActionHandlerTests {
     @MainActor
     @Test func sendPromptDoesNotAutoTitleWhenFeatureDisabled() async {
         UserDefaults.standard.set(false, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("off", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -927,7 +943,11 @@ struct ChatActionHandlerTests {
         // auto-title task should still apply the name as long as the session
         // remains untitled — it must not re-check messageCount <= 1.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -1003,7 +1023,11 @@ struct ChatActionHandlerTests {
         // re-trigger title generation. The title must always be derived from
         // session.firstMessage, not whatever the user typed on later turns.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -1073,7 +1097,11 @@ struct ChatActionHandlerTests {
         // When firstMessage is nil (e.g., server hasn't confirmed the first
         // message yet), the auto-title should not attempt generation.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -1130,7 +1158,11 @@ struct ChatActionHandlerTests {
         // message. The old code would generate a title from the second message.
         // Fixed: title always comes from session.firstMessage.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let connection = ServerConnection()
         let sessionStore = SessionStore()
@@ -1239,7 +1271,11 @@ struct ChatActionHandlerTests {
         // The old code cancelled them, causing the title to never be set
         // after navigation away from ChatView.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let handler = ChatActionHandler()
         let connection = ServerConnection()
@@ -1312,7 +1348,11 @@ struct ChatActionHandlerTests {
         // After a successful auto-title, a recreated handler must not
         // re-generate — the session.name guard blocks it.
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
 
         let connection = ServerConnection()
         let sessionStore = SessionStore()

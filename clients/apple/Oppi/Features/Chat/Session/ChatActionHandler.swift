@@ -54,6 +54,9 @@ final class ChatActionHandler {
     private static let autoTitleMaxLength = 48
     /// Backward-compat key reference for tests that set up UserDefaults directly.
     static let autoTitleEnabledDefaultsKey = AppPreferences.Session.autoTitleEnabledKey
+    /// Key for auto-title provider (server / onDevice / off). Tests use this
+    /// to select the on-device path that invokes the test hook.
+    static let autoTitleProviderDefaultsKey = AppPreferences.Session.autoTitleProviderKey
     private static var isAutoTitleEnabled: Bool {
         AppPreferences.Session.isAutoTitleEnabled
     }
@@ -509,7 +512,10 @@ final class ChatActionHandler {
         connection: ServerConnection,
         sessionStore: SessionStore?
     ) {
-        guard Self.isAutoTitleEnabled else { return }
+        let provider = AppPreferences.Session.autoTitleProvider
+
+        // Off → skip entirely. Server → server handles it via get_state sync.
+        guard provider == .onDevice else { return }
         guard let sessionStore else { return }
         guard !autoTitleAttemptedSessionIds.contains(sessionId) else { return }
 

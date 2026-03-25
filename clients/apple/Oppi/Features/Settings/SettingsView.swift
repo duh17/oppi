@@ -16,7 +16,7 @@ struct SettingsView: View {
 
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var biometricEnabled = BiometricService.shared.isEnabled
-    @State private var autoSessionTitleEnabled = AppPreferences.Session.isAutoTitleEnabled
+    @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
     @State private var cacheSizeText: String?
     @State private var showAddServer = false
@@ -119,10 +119,14 @@ struct SettingsView: View {
                         .id(spinnerStyle)
                 }
 
-                Toggle("Auto-name new sessions", isOn: $autoSessionTitleEnabled)
-                    .onChange(of: autoSessionTitleEnabled) { _, newValue in
-                        AppPreferences.Session.setAutoTitleEnabled(newValue)
+                NavigationLink {
+                    AutoTitleSettingsView()
+                } label: {
+                    LabeledContent("Auto-name Sessions") {
+                        Text(autoTitleProviderLabel)
+                            .foregroundStyle(.themeComment)
                     }
+                }
 
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
                     ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
@@ -207,6 +211,8 @@ struct SettingsView: View {
             }
         }
         .onAppear {
+            // Refresh provider label when returning from AutoTitleSettingsView
+            autoTitleProvider = AppPreferences.Session.autoTitleProvider
             Task {
                 await refreshRuntimeUpdateBadges()
             }
@@ -282,6 +288,14 @@ struct SettingsView: View {
                 NativePlotPreferences.setEnabled(newValue)
             }
         )
+    }
+
+    private var autoTitleProviderLabel: String {
+        switch autoTitleProvider {
+        case .server: return "Server"
+        case .onDevice: return "On-device"
+        case .off: return "Off"
+        }
     }
 
     private var screenAwakeFooter: String {

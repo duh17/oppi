@@ -366,16 +366,61 @@ enum AppPreferences {
 
     /// Session behavior preferences (auto-title, etc.).
     enum Session {
+
+        /// Which backend generates session titles.
+        enum AutoTitleProvider: String, CaseIterable {
+            /// Server generates the title using a configured model.
+            case server
+            /// On-device Foundation model generates the title.
+            case onDevice
+            /// Title generation disabled.
+            case off
+        }
+
         /// UserDefaults key for auto-title enabled state.
         /// Exposed (internal) so test helpers can set up UserDefaults directly.
         static let autoTitleEnabledKey = "\(AppIdentifiers.subsystem).session.autoTitle.enabled"
 
+        /// UserDefaults key for auto-title provider.
+        static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
+
+        /// The active auto-title provider.
+        ///
+        /// Backward compat: if no provider key exists yet but the legacy enabled
+        /// key is true, returns `.server`. If legacy key is explicitly false,
+        /// returns `.off`.
+        static var autoTitleProvider: AutoTitleProvider {
+            if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
+               let provider = AutoTitleProvider(rawValue: raw) {
+                return provider
+            }
+            // Legacy migration: old boolean key → new provider
+            if let legacyEnabled = UserDefaults.standard.object(forKey: autoTitleEnabledKey) as? Bool {
+                return legacyEnabled ? .server : .off
+            }
+            return .server
+        }
+
+        static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
+            UserDefaults.standard.set(provider.rawValue, forKey: autoTitleProviderKey)
+            // Keep legacy key in sync for any code that still reads it
+            UserDefaults.standard.set(provider != .off, forKey: autoTitleEnabledKey)
+        }
+
+        /// Convenience: true when any provider is active.
         static var isAutoTitleEnabled: Bool {
-            UserDefaults.standard.object(forKey: autoTitleEnabledKey) as? Bool ?? false
+            autoTitleProvider != .off
         }
 
         static func setAutoTitleEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: autoTitleEnabledKey)
+            if enabled {
+                // Only flip to server if currently off
+                if autoTitleProvider == .off {
+                    setAutoTitleProvider(.server)
+                }
+            } else {
+                setAutoTitleProvider(.off)
+            }
         }
     }
 
