@@ -147,6 +147,100 @@
         }
       ],
       "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "WebSocket Ping RTT (ms)",
+      "description": "Server-side ping/pong round-trip time. Key baseline for relay latency comparison.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 4,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Ping RTT" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_rtt_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "WebSocket Handshake (ms)",
+      "description": "Server-side WebSocket upgrade duration. Compare with iOS-side ws_connect_ms for full picture.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "handshake" }, "properties": [{ "id": "displayName", "value": "Handshake" }] },
+          { "matcher": { "id": "byName", "options": "first_msg" }, "properties": [{ "id": "displayName", "value": "First Message" }, { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.ws_handshake_ms' THEN value END AS handshake, CASE WHEN metric = 'server.ws_first_message_ms' THEN value END AS first_msg FROM server_ops_metric_samples WHERE metric IN ('server.ws_handshake_ms', 'server.ws_first_message_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "WebSocket Session Stats",
+      "description": "Messages sent/received per connection, session duration.",
+      "type": "table",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "time" }, "properties": [{ "id": "displayName", "value": "Closed At" }, { "id": "unit", "value": "dateTimeFromNow" }] },
+          { "matcher": { "id": "byName", "options": "duration_s" }, "properties": [{ "id": "displayName", "value": "Duration" }, { "id": "unit", "value": "s" }] },
+          { "matcher": { "id": "byName", "options": "sent" }, "properties": [{ "id": "displayName", "value": "Msgs Sent" }] },
+          { "matcher": { "id": "byName", "options": "received" }, "properties": [{ "id": "displayName", "value": "Msgs Received" }] },
+          { "matcher": { "id": "byName", "options": "close_code" }, "properties": [{ "id": "displayName", "value": "Close Code" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT d.ts_ms / 1000 AS time, ROUND(d.value / 1000.0, 1) AS duration_s, s.value AS sent, r.value AS received, json_extract(c.tags_json, '$.code') AS close_code FROM server_ops_metric_samples d LEFT JOIN server_ops_metric_samples s ON s.metric = 'server.ws_messages_sent' AND ABS(s.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples r ON r.metric = 'server.ws_messages_received' AND ABS(r.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples c ON c.metric = 'server.ws_close_code' AND ABS(c.ts_ms - d.ts_ms) < 100 WHERE d.metric = 'server.ws_session_duration_ms' AND d.ts_ms >= ${__from} AND d.ts_ms <= ${__to} ORDER BY d.ts_ms DESC LIMIT 50",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Closed At", "desc": true }] }
     }
   ],
   "schemaVersion": 39,

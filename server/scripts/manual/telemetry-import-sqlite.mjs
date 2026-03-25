@@ -15,6 +15,7 @@ const FILE_SUFFIX = ".jsonl";
 const CHAT_PREFIX = "chat-metrics-";
 const METRICKIT_PREFIX = "metrickit-";
 const SERVER_METRICS_PREFIX = "server-metrics-";
+const SERVER_OPS_PREFIX = "server-ops-metrics-";
 
 function getArg(name) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -102,6 +103,22 @@ function ensureDbSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_server_metric_ts
       ON server_metric_samples(ts_ms);
 
+    CREATE TABLE IF NOT EXISTS server_ops_metric_samples (
+      id TEXT PRIMARY KEY,
+      source_file TEXT NOT NULL,
+      line_number INTEGER NOT NULL,
+      sample_index INTEGER NOT NULL,
+      ts_ms INTEGER NOT NULL,
+      metric TEXT NOT NULL,
+      value REAL NOT NULL,
+      tags_json TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_ts
+      ON server_ops_metric_samples(metric, ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_server_ops_ts
+      ON server_ops_metric_samples(ts_ms);
+
     CREATE TABLE IF NOT EXISTS metrickit_payloads (
       id TEXT PRIMARY KEY,
       source_file TEXT NOT NULL,
@@ -126,6 +143,7 @@ function ensureDbSchema(db) {
 }
 
 function fileKind(name) {
+  if (name.startsWith(SERVER_OPS_PREFIX)) return "server-ops-metrics";
   if (name.startsWith(CHAT_PREFIX)) return "chat";
   if (name.startsWith(METRICKIT_PREFIX)) return "metrickit";
   if (name.startsWith(SERVER_METRICS_PREFIX)) return "server-metrics";
@@ -234,6 +252,24 @@ function importOnce({ telemetryDir, dbPath, verbose = false }) {
     "DELETE FROM server_metric_samples WHERE source_file = ?",
   );
 
+  const deleteServerOpsByFile = db.prepare(
+    "DELETE FROM server_ops_metric_samples WHERE source_file = ?",
+  );
+
+  const insertServerOps = db.prepare(`
+    INSERT OR REPLACE INTO server_ops_metric_samples (
+      id,
+      source_file,
+      line_number,
+      sample_index,
+      ts_ms,
+      metric,
+      value,
+      tags_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
   const insertServerMetric = db.prepare(`
     INSERT OR REPLACE INTO server_metric_samples (
       id,
@@ -265,6 +301,7 @@ function importOnce({ telemetryDir, dbPath, verbose = false }) {
     chatSamplesImported: 0,
     metrickitPayloadsImported: 0,
     serverMetricSamplesImported: 0,
+    serverOpsSamplesImported: 0,
     parseErrors: 0,
     invalidRecords: 0,
   };
@@ -292,6 +329,8 @@ function importOnce({ telemetryDir, dbPath, verbose = false }) {
         deleteMetricKitByFile.run(file.path);
       } else if (file.kind === "server-metrics") {
         deleteServerMetricsByFile.run(file.path);
+      } else if (file.kind === "server-ops-metrics") {
+        deleteServerOpsByFile.run(file.path);
       }
 
       const text = readFileSync(file.path, "utf8");
@@ -389,6 +428,38 @@ function importOnce({ telemetryDir, dbPath, verbose = false }) {
             Number(record.wsConnections) || 0,
           );
           summary.serverMetricSamplesImported += 1;
+        } else if (file.kind === "server-ops-metrics") {
+          // Server ops metrics: batched samples with flushedAt
+          const samples = Array.isArray(record.samples) ? record.samples : [];
+          for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
+            const sample = samples[sampleIndex];
+            if (!sample || typeof sample !== "object") {
+              summary.invalidRecords += 1;
+              continue;
+            }
+
+            const tsMs = Number.isFinite(sample.ts) ? Math.trunc(sample.ts) : null;
+            const value = Number.isFinite(sample.value) ? Number(sample.value) : null;
+            const metric = asOptionalString(sample.metric);
+
+            if (tsMs === null || value === null || !metric) {
+              summary.invalidRecords += 1;
+              continue;
+            }
+
+            const id = `${file.path}#${lineNumber}:${sampleIndex}`;
+            insertServerOps.run(
+              id,
+              file.path,
+              lineNumber,
+              sampleIndex,
+              tsMs,
+              metric,
+              value,
+              sample.tags && typeof sample.tags === "object" ? JSON.stringify(sample.tags) : null,
+            );
+            summary.serverOpsSamplesImported += 1;
+          }
         } else {
           const payloads = Array.isArray(record.payloads) ? record.payloads : [];
           const generatedAtMs = Number.isFinite(record.generatedAt)
@@ -518,7 +589,8 @@ async function main() {
       `[telemetry-import] files=${result.filesSeen} imported=${result.filesImported} `
         + `skipped=${result.filesSkipped} chatSamples=${result.chatSamplesImported} `
         + `metrickitPayloads=${result.metrickitPayloadsImported} `
-        + `serverMetrics=${result.serverMetricSamplesImported} parseErrors=${result.parseErrors} `
+        + `serverMetrics=${result.serverMetricSamplesImported} `
+        + `serverOps=${result.serverOpsSamplesImported} parseErrors=${result.parseErrors} `
         + `invalid=${result.invalidRecords} durationMs=${result.durationMs}`,
     );
   };
