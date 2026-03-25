@@ -264,6 +264,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     onEnterAnswerMode: { onAskEnterAnswerMode?() },
                     onExitAnswerMode: { onAskExitAnswerMode?() }
                 )
+                .id(askRequest.id)
                 .padding(.horizontal, composerHorizontalPadding)
                 .padding(.top, 8)
                 .padding(.bottom, 4)
