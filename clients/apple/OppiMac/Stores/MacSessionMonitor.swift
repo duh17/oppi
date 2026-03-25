@@ -71,14 +71,31 @@ final class MacSessionMonitor {
     private func fetchStats() async {
         guard let client = apiClient else { return }
         guard let fetched = await client.fetchStats(range: selectedRange) else { return }
-        // Skip update if totals haven't changed — prevents chart flicker on re-render
-        if let existing = stats,
-           existing.totals.sessions == fetched.totals.sessions,
-           existing.totals.cost == fetched.totals.cost,
-           existing.totals.tokens == fetched.totals.tokens,
-           existing.activeSessions.count == fetched.activeSessions.count {
+        if let existing = stats, Self.shouldSkipUpdate(existing: existing, fetched: fetched) {
             return
         }
         stats = fetched
     }
+
+    /// Deduplication check: returns true when totals and active session count match.
+    /// Extracted so unit tests can verify without hitting the network.
+    static func shouldSkipUpdate(existing: ServerStats, fetched: ServerStats) -> Bool {
+        existing.totals.sessions == fetched.totals.sessions
+            && existing.totals.cost == fetched.totals.cost
+            && existing.totals.tokens == fetched.totals.tokens
+            && existing.activeSessions.count == fetched.activeSessions.count
+    }
+
+    // MARK: - Test helpers
+
+    #if DEBUG
+    /// Test-only: set stats directly.
+    func _setStatsForTesting(_ newStats: ServerStats?) { stats = newStats }
+
+    /// Test-only: set client directly.
+    func _setClientForTesting(_ client: MacAPIClient?) { apiClient = client }
+
+    /// Test-only: read fast-polling flag.
+    var _isFastPollingForTesting: Bool { isFastPolling }
+    #endif
 }
