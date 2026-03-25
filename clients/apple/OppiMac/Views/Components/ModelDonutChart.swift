@@ -3,35 +3,66 @@ import SwiftUI
 
 /// Compact donut chart showing model share by cost.
 ///
-/// Uses `SectorMark` with a 60% inner radius for the donut hole.
-/// Overlays total cost in the center.
+/// Aggregates by display name so duplicate raw model names merge into
+/// one sector per logical model.
 struct ModelDonutChart: View {
 
     let modelBreakdown: [StatsModelBreakdown]
 
+    // MARK: - Aggregation
+
+    private struct DonutSlice: Identifiable {
+        let displayName: String
+        let representativeModel: String
+        let cost: Double
+        var id: String { displayName }
+    }
+
+    private var slices: [DonutSlice] {
+        var byName: [String: DonutSlice] = [:]
+        for item in modelBreakdown {
+            let name = displayModelName(item.model)
+            if let existing = byName[name] {
+                byName[name] = DonutSlice(
+                    displayName: name,
+                    representativeModel: existing.representativeModel,
+                    cost: existing.cost + item.cost
+                )
+            } else {
+                byName[name] = DonutSlice(
+                    displayName: name,
+                    representativeModel: item.model,
+                    cost: item.cost
+                )
+            }
+        }
+        return byName.values
+            .filter { $0.cost > 0.005 }
+            .sorted { $0.cost > $1.cost }
+    }
+
     private var totalCost: Double {
-        modelBreakdown.reduce(0) { $0 + $1.cost }
+        slices.reduce(0) { $0 + $1.cost }
     }
 
     var body: some View {
-        if modelBreakdown.isEmpty || totalCost == 0 {
+        if slices.isEmpty || totalCost == 0 {
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color.secondary.opacity(0.06))
                 .frame(width: 100, height: 100)
         } else {
             ZStack {
-                Chart(modelBreakdown, id: \.model) { item in
+                Chart(slices) { item in
                     SectorMark(
                         angle: .value("Cost", item.cost),
                         innerRadius: .ratio(0.6),
                         angularInset: 1.5
                     )
-                    .foregroundStyle(modelColor(item.model))
+                    .foregroundStyle(modelColor(item.representativeModel))
                 }
                 .chartLegend(.hidden)
                 .frame(width: 100, height: 100)
 
-                // Center overlay
                 VStack(spacing: 1) {
                     Text(String(format: "$%.2f", totalCost))
                         .font(.system(size: 10, weight: .semibold))

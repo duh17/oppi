@@ -28,7 +28,7 @@ struct MenuBarPopover: View {
                     if selectedTab == 0 {
                         SessionsTabView(monitor: sessionMonitor)
                     } else {
-                        StatsTabView(monitor: sessionMonitor)
+                        StatsTabView(monitor: sessionMonitor, healthMonitor: healthMonitor)
                     }
                 }
 

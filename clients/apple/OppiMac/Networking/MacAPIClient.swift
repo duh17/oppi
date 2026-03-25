@@ -128,6 +128,31 @@ final class MacAPIClient: Sendable {
         }
     }
 
+    // MARK: - Daily detail
+
+    /// Fetch `GET /server/stats/daily/:date?tz=N`. Returns parsed daily detail or nil.
+    nonisolated func fetchDailyDetail(date: String) async -> DailyDetail? {
+        let tz = TimeZone.current.secondsFromGMT() / 60
+        let url = baseURL
+            .appendingPathComponent("server/stats/daily/\(date)")
+            .appending(queryItems: [URLQueryItem(name: "tz", value: "\(tz)")])
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return nil
+            }
+            return try JSONDecoder().decode(DailyDetail.self, from: data)
+        } catch {
+            logger.debug("Daily detail fetch failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - Private
 
     private nonisolated func addAuth(_ request: inout URLRequest) {
