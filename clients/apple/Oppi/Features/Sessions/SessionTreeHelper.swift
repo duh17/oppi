@@ -1,75 +1,13 @@
 import Foundation
 
-/// Builds a parent-child tree from a flat list of sessions using `parentSessionId`.
+/// Helpers for parent-child session relationships using flat session lists.
 ///
-/// Sessions without a `parentSessionId` are root nodes. Children are grouped under
-/// their parent. Grandchildren nest under their child-parent. The tree depth
-/// in practice is limited to 2 by the spawn_agent server implementation.
+/// Sessions form a logical tree via `parentSessionId`. These helpers extract
+/// roots, children, descendants, and aggregates directly from the flat list
+/// without building an intermediate tree structure.
 enum SessionTreeHelper {
 
-    /// A node in the session tree.
-    struct TreeNode: Identifiable {
-        let session: Session
-        let depth: Int
-        let children: [Self]
-        /// Whether this node is the last child of its parent at this depth.
-        let isLastChild: Bool
-
-        var id: String { session.id }
-        var hasChildren: Bool { !children.isEmpty }
-    }
-
-    /// Build tree nodes from a flat session list.
-    /// Only root sessions (no parentSessionId, or parent not in the list) appear as top-level nodes.
-    static func buildTree(from sessions: [Session]) -> [TreeNode] {
-        let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-        let childrenByParent = Dictionary(grouping: sessions.filter { $0.parentSessionId != nil }) {
-            $0.parentSessionId ?? ""
-        }
-
-        // A session is a root if it has no parent, or its parent isn't in this list
-        let roots = sessions.filter { session in
-            guard let parentId = session.parentSessionId else { return true }
-            return byId[parentId] == nil
-        }.sorted { $0.createdAt < $1.createdAt }
-
-        func buildNode(session: Session, depth: Int, isLast: Bool, visited: inout Set<String>) -> TreeNode {
-            // Guard against circular references and self-referential parentSessionId
-            guard !visited.contains(session.id) else {
-                // If we've already visited this session, return a node with no children to break the cycle
-                return TreeNode(session: session, depth: depth, children: [], isLastChild: isLast)
-            }
-
-            visited.insert(session.id)
-            defer { visited.remove(session.id) }
-            let kids = (childrenByParent[session.id] ?? []).sorted { $0.createdAt < $1.createdAt }
-            let childNodes = kids.enumerated().map { index, child in
-                buildNode(session: child, depth: depth + 1, isLast: index == kids.count - 1, visited: &visited)
-            }
-            return TreeNode(session: session, depth: depth, children: childNodes, isLastChild: isLast)
-        }
-
-        return roots.enumerated().map { index, session in
-            var visited = Set<String>()
-            return buildNode(session: session, depth: 0, isLast: index == roots.count - 1, visited: &visited)
-        }
-    }
-
-    /// Count all descendants (children + grandchildren) of a node.
-    static func countAllChildren(_ node: TreeNode) -> Int {
-        node.children.reduce(0) { $0 + 1 + countAllChildren($1) }
-    }
-
-    /// Determine default expansion: expanded if any child (recursive) is not stopped.
-    static func hasActiveChild(_ node: TreeNode) -> Bool {
-        for child in node.children {
-            if child.session.status != .stopped { return true }
-            if hasActiveChild(child) { return true }
-        }
-        return false
-    }
-
-    /// Aggregate child status counts for a collapsed badge.
+    /// Aggregate child status counts for badges.
     struct StatusCounts: Equatable {
         var working: Int = 0
         var done: Int = 0
@@ -77,29 +15,10 @@ enum SessionTreeHelper {
         var total: Int = 0
     }
 
-    /// Count child statuses recursively.
-    static func childStatusCounts(_ node: TreeNode) -> StatusCounts {
-        var counts = StatusCounts()
-        func visit(_ n: TreeNode) {
-            for child in n.children {
-                counts.total += 1
-                switch child.session.status {
-                case .starting, .busy, .stopping:
-                    counts.working += 1
-                case .ready, .stopped:
-                    counts.done += 1
-                case .error:
-                    counts.error += 1
-                }
-                visit(child)
-            }
-        }
-        visit(node)
-        return counts
-    }
+    // MARK: - Direct children
 
+    /// Get all immediate child sessions for a given parent.
     // periphery:ignore - used by SessionTreeHelperTests via @testable import
-    /// Get all immediate child session IDs for a given parent session.
     static func childSessions(of parentId: String, in sessions: [Session]) -> [Session] {
         sessions.filter { $0.parentSessionId == parentId }
     }
@@ -109,9 +28,10 @@ enum SessionTreeHelper {
         childSessions(of: parentId, in: sessions).sorted { $0.createdAt < $1.createdAt }
     }
 
+    // MARK: - Root filtering
+
     /// Filter sessions to only roots, checking parent existence against a broader session list.
     /// A root has no parentSessionId, or its parent is not in allSessions.
-    /// Useful for stopped sessions where the parent may be in a different status group.
     static func rootSessions(from sessions: [Session], allSessions: [Session]) -> [Session] {
         let allIds = Set(allSessions.map(\.id))
         return sessions.filter { session in
@@ -120,19 +40,63 @@ enum SessionTreeHelper {
         }
     }
 
-    /// Compute aggregate cost for a tree node (parent + all descendants, recursive).
-    static func aggregateCost(_ node: TreeNode) -> Double {
-        node.session.cost + node.children.reduce(0.0) { $0 + aggregateCost($1) }
+    // MARK: - Descendants
+
+    /// All descendants (children, grandchildren, etc.) of a session.
+    /// Guards against circular references via a visited set.
+    static func allDescendants(of parentId: String, in sessions: [Session]) -> [Session] {
+        let childrenByParent = Dictionary(grouping: sessions.filter { $0.parentSessionId != nil }) {
+            $0.parentSessionId ?? ""
+        }
+        var result: [Session] = []
+        var visited = Set<String>([parentId])
+        var queue = childrenByParent[parentId] ?? []
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            guard !visited.contains(current.id) else { continue }
+            visited.insert(current.id)
+            result.append(current)
+            queue.append(contentsOf: childrenByParent[current.id] ?? [])
+        }
+        return result
     }
 
-    /// Compute aggregate pending count for a tree node (parent + direct children only).
+    /// Count of all descendants.
+    // periphery:ignore - used by SessionTreeHelperTests via @testable import
+    static func descendantCount(of parentId: String, in sessions: [Session]) -> Int {
+        allDescendants(of: parentId, in: sessions).count
+    }
+
+    /// Status counts for all descendants.
+    static func descendantStatusCounts(of parentId: String, in sessions: [Session]) -> StatusCounts {
+        var counts = StatusCounts()
+        for session in allDescendants(of: parentId, in: sessions) {
+            counts.total += 1
+            switch session.status {
+            case .starting, .busy, .stopping: counts.working += 1
+            case .ready, .stopped: counts.done += 1
+            case .error: counts.error += 1
+            }
+        }
+        return counts
+    }
+
+    /// Aggregate cost: session + all descendants.
+    static func descendantCost(of sessionId: String, in sessions: [Session]) -> Double {
+        let own = sessions.first { $0.id == sessionId }?.cost ?? 0
+        return own + allDescendants(of: sessionId, in: sessions).reduce(0.0) { $0 + $1.cost }
+    }
+
+    /// Aggregate pending count: session + direct children only.
     /// Grandchildren are not included — matches the one-level-deep spawn_agent UX.
     static func aggregatePendingCount(
-        node: TreeNode,
+        of sessionId: String,
+        in sessions: [Session],
         pendingForSession: (String) -> Int
     ) -> Int {
-        let own = pendingForSession(node.session.id)
-        let childPending = node.children.reduce(0) { $0 + pendingForSession($1.session.id) }
+        let own = pendingForSession(sessionId)
+        let childPending = childSessions(of: sessionId, in: sessions)
+            .reduce(0) { $0 + pendingForSession($1.id) }
         return own + childPending
     }
 }

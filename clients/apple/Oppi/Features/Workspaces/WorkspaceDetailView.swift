@@ -93,10 +93,11 @@ struct WorkspaceDetailView: View {
         workspaceSessions.filter { $0.status != .stopped }
     }
 
-    /// Whether any node in the subtree matches the current search query.
-    private func treeMatchesSearch(_ node: SessionTreeHelper.TreeNode) -> Bool {
-        if matchesSessionSearch(node.session) { return true }
-        return node.children.contains { treeMatchesSearch($0) }
+    /// Whether a root session or any of its descendants match the current search query.
+    private func rootOrDescendantMatchesSearch(_ session: Session, in allSessions: [Session]) -> Bool {
+        if matchesSessionSearch(session) { return true }
+        return SessionTreeHelper.allDescendants(of: session.id, in: allSessions)
+            .contains { matchesSessionSearch($0) }
     }
 
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
@@ -145,56 +146,57 @@ struct WorkspaceDetailView: View {
     // MARK: - Body
 
     private struct ViewData {
-        let rootNodes: [SessionTreeHelper.TreeNode]
-        let stopped: [Session]
-        let stoppedRootNodesById: [String: SessionTreeHelper.TreeNode]
+        let activeRoots: [Session]
+        let stoppedRoots: [Session]
         let localFiltered: [LocalSession]
         let wsEmpty: Bool
     }
 
     private var viewData: ViewData {
-        // Build tree from all active sessions, then filter roots by search.
-        // Searching for a child name surfaces its parent root.
-        let allTreeNodes = SessionTreeHelper.buildTree(from: activeSessions)
-        let treeNodes = hasSessionSearchQuery
-            ? allTreeNodes.filter { treeMatchesSearch($0) }
-            : allTreeNodes
-        let rootNodes = treeNodes.sorted { lhs, rhs in
-            // Sessions with pending permissions (parent or child) float to top
-            let lhsAttn = SessionTreeHelper.aggregatePendingCount(
-                node: lhs, pendingForSession: { permissionStore.pending(for: $0).count }
-            ) > 0
-            let rhsAttn = SessionTreeHelper.aggregatePendingCount(
-                node: rhs, pendingForSession: { permissionStore.pending(for: $0).count }
-            ) > 0
-            if lhsAttn != rhsAttn { return lhsAttn }
-            let lhsSort = sessionStore.turnEndedDate(for: lhs.session.id) ?? lhs.session.createdAt
-            let rhsSort = sessionStore.turnEndedDate(for: rhs.session.id) ?? rhs.session.createdAt
-            return lhsSort > rhsSort
-        }
-
-        let allStoppedTreeNodes = SessionTreeHelper.buildTree(
-            from: workspaceSessions.filter { $0.status == .stopped }
-        )
-        // Filter out stopped children whose parent exists in any workspace session
-        // (active or stopped). Children are only accessible through the parent's chat view.
         let allWorkspaceIds = Set(workspaceSessions.map(\.id))
-        let rootStoppedTreeNodes = allStoppedTreeNodes.filter { node in
-            guard let parentId = node.session.parentSessionId else { return true }
-            return !allWorkspaceIds.contains(parentId)
-        }
-        let matchingStoppedTreeNodes = hasSessionSearchQuery
-            ? rootStoppedTreeNodes.filter { treeMatchesSearch($0) }
-            : rootStoppedTreeNodes
+
+        // Active: filter to roots, children accessible through parent's chat view.
+        // Searching for a child name surfaces its parent root.
+        let activeRoots: [Session] = {
+            let roots = activeSessions.filter { session in
+                guard let parentId = session.parentSessionId else { return true }
+                return !allWorkspaceIds.contains(parentId)
+            }
+            let filtered = hasSessionSearchQuery
+                ? roots.filter { rootOrDescendantMatchesSearch($0, in: activeSessions) }
+                : roots
+            return filtered.sorted { lhs, rhs in
+                let lhsAttn = SessionTreeHelper.aggregatePendingCount(
+                    of: lhs.id, in: activeSessions,
+                    pendingForSession: { permissionStore.pending(for: $0).count }
+                ) > 0
+                let rhsAttn = SessionTreeHelper.aggregatePendingCount(
+                    of: rhs.id, in: activeSessions,
+                    pendingForSession: { permissionStore.pending(for: $0).count }
+                ) > 0
+                if lhsAttn != rhsAttn { return lhsAttn }
+                let lhsSort = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
+                let rhsSort = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
+                return lhsSort > rhsSort
+            }
+        }()
+
+        // Stopped: filter to true roots (children only via parent's chat view).
+        let stoppedSessions = workspaceSessions.filter { $0.status == .stopped }
+        let stoppedRoots: [Session] = {
+            let roots = stoppedSessions.filter { session in
+                guard let parentId = session.parentSessionId else { return true }
+                return !allWorkspaceIds.contains(parentId)
+            }
+            let filtered = hasSessionSearchQuery
+                ? roots.filter { rootOrDescendantMatchesSearch($0, in: stoppedSessions) }
+                : roots
+            return filtered.sorted { $0.lastActivity > $1.lastActivity }
+        }()
 
         return ViewData(
-            rootNodes: rootNodes,
-            stopped: matchingStoppedTreeNodes
-                .map(\.session)
-                .sorted { $0.lastActivity > $1.lastActivity },
-            stoppedRootNodesById: Dictionary(
-                uniqueKeysWithValues: rootStoppedTreeNodes.map { ($0.session.id, $0) }
-            ),
+            activeRoots: activeRoots,
+            stoppedRoots: stoppedRoots,
             localFiltered: filteredLocalSessions,
             wsEmpty: workspaceSessions.isEmpty
         )
@@ -204,28 +206,24 @@ struct WorkspaceDetailView: View {
         let data = viewData
 
         List {
-            if !data.rootNodes.isEmpty {
+            if !data.activeRoots.isEmpty {
                 Section("Active") {
-                    ForEach(data.rootNodes) { node in
-                        NavigationLink(value: node.session.id) {
+                    ForEach(data.activeRoots) { session in
+                        NavigationLink(value: session.id) {
                             SessionRow(
-                                session: node.session,
+                                session: session,
                                 pendingCount: SessionTreeHelper.aggregatePendingCount(
-                                    node: node,
+                                    of: session.id, in: activeSessions,
                                     pendingForSession: { permissionStore.pending(for: $0).count }
                                 ),
-                                children: node.hasChildren ? .init(
-                                    childCount: SessionTreeHelper.countAllChildren(node),
-                                    statusCounts: SessionTreeHelper.childStatusCounts(node),
-                                    aggregateCost: SessionTreeHelper.aggregateCost(node)
-                                ) : nil
+                                children: childSummary(for: session.id, in: activeSessions)
                             )
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
-                                Task { await stopSession(node.session) }
+                                Task { await stopSession(session) }
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
@@ -236,19 +234,15 @@ struct WorkspaceDetailView: View {
             }
 
             WorkspaceStoppedSessionsSection(
-                stoppedSessions: data.stopped,
+                stoppedSessions: data.stoppedRoots,
                 localSessions: data.localFiltered,
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
                 lineageHint: { session in lineageHint(for: session) },
                 childSummary: { session in
-                    guard let node = data.stoppedRootNodesById[session.id], node.hasChildren else {
-                        return nil
-                    }
-                    return .init(
-                        childCount: SessionTreeHelper.countAllChildren(node),
-                        statusCounts: SessionTreeHelper.childStatusCounts(node),
-                        aggregateCost: SessionTreeHelper.aggregateCost(node)
+                    childSummary(
+                        for: session.id,
+                        in: workspaceSessions.filter { $0.status == .stopped }
                     )
                 },
                 onResumeSession: { session in
@@ -274,8 +268,8 @@ struct WorkspaceDetailView: View {
                     .listRowBackground(Color.themeBg)
                 }
             } else if hasSessionSearchQuery,
-                      data.rootNodes.isEmpty,
-                      data.stopped.isEmpty,
+                      data.activeRoots.isEmpty,
+                      data.stoppedRoots.isEmpty,
                       data.localFiltered.isEmpty {
                 Section {
                     ContentUnavailableView(
@@ -422,6 +416,30 @@ struct WorkspaceDetailView: View {
                 policyFallback = fallback
             }
         }
+    }
+
+    /// Compute child summary for a root session (single-pass over descendants).
+    private func childSummary(for sessionId: String, in sessions: [Session]) -> SessionRow.ChildSummary? {
+        let descendants = SessionTreeHelper.allDescendants(of: sessionId, in: sessions)
+        guard !descendants.isEmpty else { return nil }
+
+        var counts = SessionTreeHelper.StatusCounts()
+        var totalCost = sessions.first { $0.id == sessionId }?.cost ?? 0
+        for desc in descendants {
+            counts.total += 1
+            switch desc.status {
+            case .starting, .busy, .stopping: counts.working += 1
+            case .ready, .stopped: counts.done += 1
+            case .error: counts.error += 1
+            }
+            totalCost += desc.cost
+        }
+
+        return .init(
+            childCount: descendants.count,
+            statusCounts: counts,
+            aggregateCost: totalCost
+        )
     }
 
     private func matchesSessionSearch(_ session: Session) -> Bool {

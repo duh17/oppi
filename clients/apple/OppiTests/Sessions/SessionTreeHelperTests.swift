@@ -12,6 +12,7 @@ struct SessionTreeHelperTests {
         parentId: String? = nil,
         status: SessionStatus = .busy,
         name: String? = nil,
+        cost: Double = 0.10,
         createdAt: Date = Date()
     ) -> Session {
         Session(
@@ -25,97 +26,56 @@ struct SessionTreeHelperTests {
             model: "test/model",
             messageCount: 5,
             tokens: TokenUsage(input: 100, output: 50),
-            cost: 0.10,
+            cost: cost,
             parentSessionId: parentId
         )
     }
 
-    // MARK: - buildTree
+    // MARK: - rootSessions
 
-    @Test func buildTree_standaloneSessionsAreRoots() {
+    @Test func rootSessions_standaloneSessionsAreRoots() {
         let sessions = [
             makeSession(id: "a"),
             makeSession(id: "b"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 2)
-        #expect(tree[0].children.isEmpty)
-        #expect(tree[1].children.isEmpty)
-        #expect(tree[0].depth == 0)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 2)
     }
 
-    @Test func buildTree_parentChildRelationship() {
+    @Test func rootSessions_childWithExistingParentExcluded() {
         let sessions = [
             makeSession(id: "parent"),
-            makeSession(id: "child1", parentId: "parent"),
-            makeSession(id: "child2", parentId: "parent"),
+            makeSession(id: "child", parentId: "parent"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].session.id == "parent")
-        #expect(tree[0].children.count == 2)
-        #expect(tree[0].children[0].depth == 1)
-        #expect(tree[0].children[1].depth == 1)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "parent")
     }
 
-    @Test func buildTree_grandchildRelationship() {
-        let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child", parentId: "root"),
-            makeSession(id: "grandchild", parentId: "child"),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].children.count == 1)
-        #expect(tree[0].children[0].children.count == 1)
-        #expect(tree[0].children[0].children[0].session.id == "grandchild")
-        #expect(tree[0].children[0].children[0].depth == 2)
-    }
-
-    @Test func buildTree_orphanedChildIsRoot() {
-        // Parent not in the list → child becomes a root
+    @Test func rootSessions_orphanedChildIsRoot() {
         let sessions = [
             makeSession(id: "child", parentId: "missing-parent"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].session.id == "child")
-        #expect(tree[0].depth == 0)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "child")
     }
 
-    @Test func buildTree_mixedStandaloneAndTree() {
+    @Test func rootSessions_mixedStandaloneAndTree() {
         let sessions = [
             makeSession(id: "standalone"),
             makeSession(id: "parent"),
             makeSession(id: "child", parentId: "parent"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 2)
-        // Standalone has no children
-        let standaloneNode = tree.first { $0.session.id == "standalone" }
-        #expect(standaloneNode?.children.isEmpty == true)
-        // Parent has child
-        let parentNode = tree.first { $0.session.id == "parent" }
-        #expect(parentNode?.children.count == 1)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 2)
+        let rootIds = Set(roots.map(\.id))
+        #expect(rootIds.contains("standalone"))
+        #expect(rootIds.contains("parent"))
+        #expect(!rootIds.contains("child"))
     }
 
-    // MARK: - sortedChildSessions
-
-    @Test func sortedChildSessions_orderedByCreatedAt() {
-        let baseTime = Date()
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "third", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
-            makeSession(id: "first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
-            makeSession(id: "second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
-        ]
-        let sorted = SessionTreeHelper.sortedChildSessions(of: "parent", in: sessions)
-        #expect(sorted.map(\.id) == ["first", "second", "third"])
-    }
-
-    // MARK: - rootSessions
-
-    @Test func rootSessions_excludesChildrenWithParentInAllSessions() {
+    @Test func rootSessions_stoppedChildWithActiveParent() {
         let all = [
             makeSession(id: "parent", status: .busy),
             makeSession(id: "child", parentId: "parent", status: .stopped),
@@ -123,141 +83,44 @@ struct SessionTreeHelperTests {
         ]
         let stopped = all.filter { $0.status == .stopped }
         let roots = SessionTreeHelper.rootSessions(from: stopped, allSessions: all)
-        // child's parent exists in allSessions → filtered out
         #expect(roots.count == 1)
         #expect(roots[0].id == "standalone")
     }
 
-    // MARK: - aggregatePendingCount
-
-    @Test func aggregatePendingCount_includesDirectChildrenOnly() {
+    @Test func rootSessions_selfReferentialExcluded() {
         let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child", parentId: "root"),
-            makeSession(id: "grandchild", parentId: "child"),
+            makeSession(id: "self-ref", parentId: "self-ref"),
+            makeSession(id: "normal"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let pending: [String: Int] = ["root": 1, "child": 2, "grandchild": 5]
-        let count = SessionTreeHelper.aggregatePendingCount(
-            node: tree[0],
-            pendingForSession: { pending[$0] ?? 0 }
-        )
-        // root(1) + child(2) = 3. Grandchild excluded.
-        #expect(count == 3)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "normal")
     }
 
-    // MARK: - aggregateCost
-
-    @Test func aggregateCost_recursiveSum() {
+    @Test func rootSessions_circularReferencesExcluded() {
         let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child", parentId: "root"),
-            makeSession(id: "grandchild", parentId: "child"),
+            makeSession(id: "a", parentId: "b"),
+            makeSession(id: "b", parentId: "a"),
+            makeSession(id: "normal"),
         ]
-        // Need cost on sessions — use the tree helper's cost field
-        var withCost = sessions
-        withCost[0] = Session(
-            id: "root", workspaceId: "ws1", workspaceName: "T",
-            name: "R", status: .busy, createdAt: Date(), lastActivity: Date(),
-            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
-            cost: 1.00, parentSessionId: nil
-        )
-        withCost[1] = Session(
-            id: "child", workspaceId: "ws1", workspaceName: "T",
-            name: "C", status: .busy, createdAt: Date(), lastActivity: Date(),
-            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
-            cost: 2.00, parentSessionId: "root"
-        )
-        withCost[2] = Session(
-            id: "grandchild", workspaceId: "ws1", workspaceName: "T",
-            name: "G", status: .busy, createdAt: Date(), lastActivity: Date(),
-            model: "m", messageCount: 0, tokens: TokenUsage(input: 0, output: 0),
-            cost: 3.00, parentSessionId: "child"
-        )
-        let tree = SessionTreeHelper.buildTree(from: withCost)
-        #expect(SessionTreeHelper.aggregateCost(tree[0]) == 6.00) // 1 + 2 + 3
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 1)
+        #expect(roots[0].id == "normal")
     }
 
-    // MARK: - hasActiveChild
-
-    @Test func hasActiveChild_allStopped() {
+    @Test func rootSessions_multipleOrphansAllRoots() {
         let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "child1", parentId: "parent", status: .stopped),
-            makeSession(id: "child2", parentId: "parent", status: .stopped),
+            makeSession(id: "orphan1", parentId: "gone-a"),
+            makeSession(id: "orphan2", parentId: "gone-b"),
+            makeSession(id: "orphan3", parentId: "gone-c"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(SessionTreeHelper.hasActiveChild(tree[0]) == false)
+        let roots = SessionTreeHelper.rootSessions(from: sessions, allSessions: sessions)
+        #expect(roots.count == 3)
     }
 
-    @Test func hasActiveChild_oneActive() {
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "child1", parentId: "parent", status: .stopped),
-            makeSession(id: "child2", parentId: "parent", status: .busy),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(SessionTreeHelper.hasActiveChild(tree[0]) == true)
-    }
-
-    @Test func hasActiveChild_activeGrandchild() {
-        let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child", parentId: "root", status: .stopped),
-            makeSession(id: "grandchild", parentId: "child", status: .busy),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(SessionTreeHelper.hasActiveChild(tree[0]) == true)
-    }
-
-    // MARK: - childStatusCounts
-
-    @Test func childStatusCounts_mixed() {
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "c1", parentId: "parent", status: .busy),
-            makeSession(id: "c2", parentId: "parent", status: .stopped),
-            makeSession(id: "c3", parentId: "parent", status: .error),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
-        #expect(counts.working == 1)
-        #expect(counts.done == 1)
-        #expect(counts.error == 1)
-        #expect(counts.total == 3)
-    }
-
-    @Test func childStatusCounts_includesGrandchildren() {
-        let sessions = [
-            makeSession(id: "root"),
-            makeSession(id: "child", parentId: "root", status: .busy),
-            makeSession(id: "grandchild", parentId: "child", status: .error),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
-        #expect(counts.working == 1)
-        #expect(counts.error == 1)
-        #expect(counts.total == 2)
-    }
-
-    @Test func childStatusCounts_readyIsDone() {
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "c1", parentId: "parent", status: .ready),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
-        #expect(counts.done == 1)
-    }
-
-    @Test func childStatusCounts_startingIsWorking() {
-        let sessions = [
-            makeSession(id: "parent"),
-            makeSession(id: "c1", parentId: "parent", status: .starting),
-        ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        let counts = SessionTreeHelper.childStatusCounts(tree[0])
-        #expect(counts.working == 1)
+    @Test func rootSessions_emptyList() {
+        let roots = SessionTreeHelper.rootSessions(from: [], allSessions: [])
+        #expect(roots.isEmpty)
     }
 
     // MARK: - childSessions
@@ -285,106 +148,208 @@ struct SessionTreeHelperTests {
         #expect(children[0].id == "child")
     }
 
-    // MARK: - countAllChildren
+    // MARK: - sortedChildSessions
 
-    @Test func countAllChildren_recursive() {
+    @Test func sortedChildSessions_orderedByCreatedAt() {
+        let baseTime = Date()
+        let sessions = [
+            makeSession(id: "parent"),
+            makeSession(id: "third", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
+            makeSession(id: "first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
+            makeSession(id: "second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
+        ]
+        let sorted = SessionTreeHelper.sortedChildSessions(of: "parent", in: sessions)
+        #expect(sorted.map(\.id) == ["first", "second", "third"])
+    }
+
+    // MARK: - allDescendants
+
+    @Test func allDescendants_directChildren() {
+        let sessions = [
+            makeSession(id: "parent"),
+            makeSession(id: "c1", parentId: "parent"),
+            makeSession(id: "c2", parentId: "parent"),
+            makeSession(id: "other"),
+        ]
+        let desc = SessionTreeHelper.allDescendants(of: "parent", in: sessions)
+        #expect(desc.count == 2)
+        #expect(Set(desc.map(\.id)) == ["c1", "c2"])
+    }
+
+    @Test func allDescendants_includesGrandchildren() {
         let sessions = [
             makeSession(id: "root"),
             makeSession(id: "child", parentId: "root"),
             makeSession(id: "grandchild", parentId: "child"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(SessionTreeHelper.countAllChildren(tree[0]) == 2)
+        let desc = SessionTreeHelper.allDescendants(of: "root", in: sessions)
+        #expect(desc.count == 2)
+        #expect(Set(desc.map(\.id)) == ["child", "grandchild"])
     }
 
-    // MARK: - Safety and determinism tests
-
-    @Test func buildTree_selfReferentialParent() {
-        // Session with parentId pointing to itself should not crash and should be filtered out
+    @Test func allDescendants_noChildren() {
         let sessions = [
-            makeSession(id: "self-ref", parentId: "self-ref"),
+            makeSession(id: "lonely"),
+            makeSession(id: "other"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        // Self-referential session is filtered out because its parent exists in the list (itself)
-        #expect(tree.isEmpty)
+        let desc = SessionTreeHelper.allDescendants(of: "lonely", in: sessions)
+        #expect(desc.isEmpty)
     }
 
-    @Test func buildTree_circularReferences() {
-        // A→B, B→A circular reference should not crash
+    @Test func allDescendants_circularReferencesSafe() {
         let sessions = [
             makeSession(id: "a", parentId: "b"),
             makeSession(id: "b", parentId: "a"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        // Both sessions are filtered out because their parents exist in the list
-        #expect(tree.isEmpty)
+        // Should not hang. "a" is the starting parent, so "b" (child of "a") is found.
+        // Then "a" (child of "b") is already visited → stops.
+        let desc = SessionTreeHelper.allDescendants(of: "a", in: sessions)
+        #expect(desc.count == 1)
+        #expect(desc[0].id == "b")
     }
 
-    @Test func buildTree_multipleIndependentTrees() {
-        // Multiple root sessions each with their own children
+    @Test func allDescendants_selfReferentialSafe() {
+        let sessions = [
+            makeSession(id: "self-ref", parentId: "self-ref"),
+        ]
+        // parentId == id, but id is pre-visited → empty
+        let desc = SessionTreeHelper.allDescendants(of: "self-ref", in: sessions)
+        #expect(desc.isEmpty)
+    }
+
+    @Test func allDescendants_multipleIndependentTrees() {
         let sessions = [
             makeSession(id: "root1"),
-            makeSession(id: "child1a", parentId: "root1"),
-            makeSession(id: "child1b", parentId: "root1"),
+            makeSession(id: "c1a", parentId: "root1"),
+            makeSession(id: "c1b", parentId: "root1"),
             makeSession(id: "root2"),
-            makeSession(id: "child2a", parentId: "root2"),
-            makeSession(id: "root3"),
-            makeSession(id: "child3a", parentId: "root3"),
-            makeSession(id: "child3b", parentId: "root3"),
-            makeSession(id: "child3c", parentId: "root3"),
+            makeSession(id: "c2a", parentId: "root2"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 3) // Three independent trees
-
-        let tree1 = tree.first { $0.session.id == "root1" }
-        let tree2 = tree.first { $0.session.id == "root2" }
-        let tree3 = tree.first { $0.session.id == "root3" }
-
-        #expect(tree1?.children.count == 2)
-        #expect(tree2?.children.count == 1)
-        #expect(tree3?.children.count == 3)
+        let desc1 = SessionTreeHelper.allDescendants(of: "root1", in: sessions)
+        let desc2 = SessionTreeHelper.allDescendants(of: "root2", in: sessions)
+        #expect(desc1.count == 2)
+        #expect(desc2.count == 1)
+        // No cross-contamination
+        #expect(desc1.allSatisfy { $0.parentSessionId == "root1" })
+        #expect(desc2.allSatisfy { $0.parentSessionId == "root2" })
     }
 
-    @Test func buildTree_childOrderingStability() {
-        // Children should be sorted by createdAt in ascending order
-        let baseTime = Date()
+    // MARK: - descendantCount
+
+    @Test func descendantCount_recursive() {
         let sessions = [
-            makeSession(id: "parent", createdAt: baseTime),
-            makeSession(id: "child-third", parentId: "parent", createdAt: baseTime.addingTimeInterval(30)),
-            makeSession(id: "child-first", parentId: "parent", createdAt: baseTime.addingTimeInterval(10)),
-            makeSession(id: "child-second", parentId: "parent", createdAt: baseTime.addingTimeInterval(20)),
+            makeSession(id: "root"),
+            makeSession(id: "child", parentId: "root"),
+            makeSession(id: "grandchild", parentId: "child"),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 1)
-        #expect(tree[0].children.count == 3)
-
-        // Should be ordered by createdAt: first, second, third
-        #expect(tree[0].children[0].session.id == "child-first")
-        #expect(tree[0].children[1].session.id == "child-second")
-        #expect(tree[0].children[2].session.id == "child-third")
+        #expect(SessionTreeHelper.descendantCount(of: "root", in: sessions) == 2)
     }
 
-    @Test func buildTree_rootOrderingStability() {
-        // Root sessions should be sorted by createdAt in ascending order
-        let baseTime = Date()
+    // MARK: - descendantStatusCounts
+
+    @Test func descendantStatusCounts_mixed() {
         let sessions = [
-            makeSession(id: "root-third", createdAt: baseTime.addingTimeInterval(30)),
-            makeSession(id: "root-first", createdAt: baseTime.addingTimeInterval(10)),
-            makeSession(id: "root-second", createdAt: baseTime.addingTimeInterval(20)),
+            makeSession(id: "parent"),
+            makeSession(id: "c1", parentId: "parent", status: .busy),
+            makeSession(id: "c2", parentId: "parent", status: .stopped),
+            makeSession(id: "c3", parentId: "parent", status: .error),
         ]
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.count == 3)
-
-        // Should be ordered by createdAt: first, second, third
-        #expect(tree[0].session.id == "root-first")
-        #expect(tree[1].session.id == "root-second")
-        #expect(tree[2].session.id == "root-third")
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
+        #expect(counts.working == 1)
+        #expect(counts.done == 1)
+        #expect(counts.error == 1)
+        #expect(counts.total == 3)
     }
 
-    @Test func buildTree_emptySessions() {
-        // Empty sessions array should return empty tree
-        let sessions: [Session] = []
-        let tree = SessionTreeHelper.buildTree(from: sessions)
-        #expect(tree.isEmpty)
+    @Test func descendantStatusCounts_includesGrandchildren() {
+        let sessions = [
+            makeSession(id: "root"),
+            makeSession(id: "child", parentId: "root", status: .busy),
+            makeSession(id: "grandchild", parentId: "child", status: .error),
+        ]
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "root", in: sessions)
+        #expect(counts.working == 1)
+        #expect(counts.error == 1)
+        #expect(counts.total == 2)
+    }
+
+    @Test func descendantStatusCounts_readyIsDone() {
+        let sessions = [
+            makeSession(id: "parent"),
+            makeSession(id: "c1", parentId: "parent", status: .ready),
+        ]
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
+        #expect(counts.done == 1)
+    }
+
+    @Test func descendantStatusCounts_startingIsWorking() {
+        let sessions = [
+            makeSession(id: "parent"),
+            makeSession(id: "c1", parentId: "parent", status: .starting),
+        ]
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
+        #expect(counts.working == 1)
+    }
+
+    @Test func descendantStatusCounts_stoppingIsWorking() {
+        let sessions = [
+            makeSession(id: "parent"),
+            makeSession(id: "c1", parentId: "parent", status: .stopping),
+        ]
+        let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
+        #expect(counts.working == 1)
+    }
+
+    // MARK: - descendantCost
+
+    @Test func descendantCost_recursiveSum() {
+        let sessions = [
+            makeSession(id: "root", cost: 1.00),
+            makeSession(id: "child", parentId: "root", cost: 2.00),
+            makeSession(id: "grandchild", parentId: "child", cost: 3.00),
+        ]
+        #expect(SessionTreeHelper.descendantCost(of: "root", in: sessions) == 6.00)
+    }
+
+    @Test func descendantCost_noChildren() {
+        let sessions = [
+            makeSession(id: "lonely", cost: 5.00),
+        ]
+        #expect(SessionTreeHelper.descendantCost(of: "lonely", in: sessions) == 5.00)
+    }
+
+    @Test func descendantCost_missingSession() {
+        let sessions = [
+            makeSession(id: "exists", cost: 5.00),
+        ]
+        #expect(SessionTreeHelper.descendantCost(of: "no-such-id", in: sessions) == 0.0)
+    }
+
+    // MARK: - aggregatePendingCount
+
+    @Test func aggregatePendingCount_includesDirectChildrenOnly() {
+        let sessions = [
+            makeSession(id: "root"),
+            makeSession(id: "child", parentId: "root"),
+            makeSession(id: "grandchild", parentId: "child"),
+        ]
+        let pending: [String: Int] = ["root": 1, "child": 2, "grandchild": 5]
+        let count = SessionTreeHelper.aggregatePendingCount(
+            of: "root", in: sessions,
+            pendingForSession: { pending[$0] ?? 0 }
+        )
+        // root(1) + child(2) = 3. Grandchild excluded.
+        #expect(count == 3)
+    }
+
+    @Test func aggregatePendingCount_noChildren() {
+        let sessions = [
+            makeSession(id: "solo"),
+        ]
+        let count = SessionTreeHelper.aggregatePendingCount(
+            of: "solo", in: sessions,
+            pendingForSession: { _ in 3 }
+        )
+        #expect(count == 3)
     }
 }
