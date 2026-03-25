@@ -343,7 +343,7 @@ export class Server {
 
     this.push = createPushClient(apnsConfig);
     this.liveActivity = new LiveActivityBridge(this.push, this.storage, this.gate);
-    this.sessions = new SessionManager(storage, this.gate);
+    this.sessions = new SessionManager(storage, this.gate, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
@@ -389,6 +389,8 @@ export class Server {
         return { busy, ready, starting, total: ids.size };
       },
       getWebSocketCount: () => this.connections.size,
+      recordOpsMetric: (metric, value) =>
+        this.opsMetrics.record(metric as Parameters<typeof this.opsMetrics.record>[0], value),
     });
 
     // Auto-title generator — generates concise task titles on first user message

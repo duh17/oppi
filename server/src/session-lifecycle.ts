@@ -1,6 +1,7 @@
 import type { ExtensionUIRequest } from "./session-events.js";
 import type { PendingStop, StopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 
 export interface SessionLifecycleSessionState {
@@ -23,10 +24,13 @@ export interface SessionLifecycleCoordinatorDeps {
   stopSession: (sessionId: string) => Promise<void>;
   getSessionIdleTimeoutMs: () => number;
   hasActiveChildren: (sessionId: string) => boolean;
+  metrics?: ServerMetricCollector;
 }
 
 export class SessionLifecycleCoordinator {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** Keys pending idle-timeout stop — consumed in handleSessionEnd to tag the metric. */
+  private pendingIdleTimeoutKeys: Set<string> = new Set();
 
   constructor(private readonly deps: SessionLifecycleCoordinatorDeps) {}
 
@@ -35,6 +39,10 @@ export class SessionLifecycleCoordinator {
     if (!active) {
       return;
     }
+
+    const isIdleTimeout = this.pendingIdleTimeoutKeys.delete(key);
+    const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
+    this.deps.metrics?.record("server.session_end", 1, { reason: metricReason });
 
     const pendingStop = this.deps.clearPendingStop(active as StopSessionState);
     if (pendingStop?.mode === "terminate") {
@@ -93,6 +101,7 @@ export class SessionLifecycleCoordinator {
           sessionId: active.session.id,
           parent: active.session.parentSessionId,
         });
+        this.pendingIdleTimeoutKeys.add(key);
         setTimeout(() => {
           void this.deps.stopSession(active.session.id);
         }, 0);
@@ -109,6 +118,7 @@ export class SessionLifecycleCoordinator {
             sessionId: current.session.id,
             parent: current.session.parentSessionId,
           });
+          this.pendingIdleTimeoutKeys.add(key);
           void this.deps.stopSession(current.session.id);
         }
       }, CHILD_GRACE_MS);
@@ -137,6 +147,7 @@ export class SessionLifecycleCoordinator {
       console.log("[session] idle timeout", {
         key,
       });
+      this.pendingIdleTimeoutKeys.add(key);
       void this.deps.stopSession(active.session.id);
     }, timeoutMs);
 
@@ -150,4 +161,13 @@ export class SessionLifecycleCoordinator {
       this.idleTimers.delete(key);
     }
   }
+}
+
+/** Map SDK/server reason strings to metric tag values. */
+function normalizeEndReason(reason: string): string {
+  const lower = reason.toLowerCase();
+  if (lower === "completed" || lower === "done") return "completed";
+  if (lower === "stopped" || lower === "terminated") return "stopped";
+  if (lower.includes("error")) return "error";
+  return reason;
 }

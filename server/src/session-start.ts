@@ -5,6 +5,7 @@ import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend, resolveSdkSessionCwd } from "./sdk-backend.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIRequest, PendingAskState } from "./session-events.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
@@ -73,6 +74,7 @@ export interface SessionStartCoordinatorDeps {
     message: string,
     behavior?: "steer" | "followUp",
   ) => Promise<void>;
+  metrics?: ServerMetricCollector;
 }
 
 export class SessionStartCoordinator {
@@ -130,6 +132,7 @@ export class SessionStartCoordinator {
           );
         }
 
+        const createStart = Date.now();
         const sdkBackend = await SdkBackend.create({
           session,
           workspace,
@@ -142,7 +145,9 @@ export class SessionStartCoordinator {
           storage: this.deps.storage,
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
+          metrics: this.deps.metrics,
         });
+        this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 
         const activeSession: SessionStartActiveSession = {
           session,

@@ -297,6 +297,8 @@ export class UserStreamMux {
       requestId?: string,
       sinceSeq?: number,
     ): Promise<void> => {
+      const subscribeStart = Date.now();
+
       if (sinceSeq !== undefined && (!Number.isInteger(sinceSeq) || sinceSeq < 0)) {
         send({
           type: "command_result",
@@ -423,6 +425,10 @@ export class UserStreamMux {
         if (pendingAskMsg) {
           send(pendingAskMsg);
         }
+
+        metrics?.record("server.session_subscribe_ms", Date.now() - subscribeStart, {
+          level,
+        });
 
         send({
           type: "command_result",
