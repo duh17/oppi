@@ -8,6 +8,13 @@ struct WorkspaceNavTarget: Hashable {
 
 /// Tracks whether app launch metric has been recorded this process.
 /// Only fires once — on the first appearance of WorkspaceHomeView.
+/// Process-start timestamp captured once for app launch metric.
+nonisolated(unsafe) private var processStartTime: CFAbsoluteTime = {
+    // Approximate process start: current time minus system uptime gives wall-clock boot,
+    // then add system uptime at process start (~ ProcessInfo.systemUptime at first static init).
+    // Simpler: just capture now at static init time (runs very early in process lifecycle).
+    CFAbsoluteTimeGetCurrent()
+}()
 nonisolated(unsafe) private var appLaunchMetricRecorded = false
 
 /// Top-level workspace list — primary navigation tab.
@@ -72,8 +79,7 @@ struct WorkspaceHomeView: View {
         .onAppear {
             if !appLaunchMetricRecorded {
                 appLaunchMetricRecorded = true
-                let processStartDate = ProcessInfo.processInfo.processStartDate
-                let launchMs = Int64(max(0, Date().timeIntervalSince(processStartDate) * 1_000))
+                let launchMs = Int64(max(0, (CFAbsoluteTimeGetCurrent() - processStartTime) * 1_000))
                 ChatSessionTelemetry.recordAppLaunch(durationMs: launchMs)
             }
             Task { await refresh(force: false) }
