@@ -72,6 +72,9 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server to return available model IDs for spawn_agent validation. */
   availableModelIdsResolver: (() => string[]) | null = null;
 
+  /** Injected by the server for auto-title generation on first message. */
+  onFirstMessage: ((session: Session) => void) | null = null;
+
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
 
@@ -130,6 +133,7 @@ export class SessionManager extends EventEmitter {
       getAvailableModelIds: () => this.getAvailableModelIds(),
       sendMessage: (sessionId, message, behavior) =>
         this.sendMessageToSession(sessionId, message, behavior),
+      onFirstMessage: (session) => this.onFirstMessage?.(session),
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -186,7 +190,19 @@ export class SessionManager extends EventEmitter {
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
     this.ensureMobileRenderersLoaded();
-    return this.activationCoordinator.startSession(key, sessionId, workspace);
+    const session = await this.activationCoordinator.startSession(key, sessionId, workspace);
+
+    // Notify the parent session's subscribers so the iOS context bar updates.
+    // When a child is stopped, iOS unsubscribes from its event stream. On
+    // resume, the per-session subscription callback is gone, so the child's
+    // state transitions (stopped → ready → busy) never reach the client.
+    // Broadcasting on the parent's key ensures the context bar sees it.
+    if (session.parentSessionId) {
+      const parentKey = this.sessionKey(session.parentSessionId);
+      this.broadcast(parentKey, { type: "state", session });
+    }
+
+    return session;
   }
 
   /** Process a pi agent event from the SDK subscribe callback. */
