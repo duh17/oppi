@@ -1140,7 +1140,8 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           "Use for non-urgent additions like 'when you're done, also check Z'.",
         "If the target is idle (not busy), the message starts a new turn regardless of behavior.",
         "If the target is stopped, it is automatically resumed and the message is delivered as a new prompt. " +
-          "This is useful for continuing work on a completed sub-agent.",
+          "Resume quickly (within ~5 minutes of the child stopping) to benefit from prompt cache hits (90% cheaper). " +
+          "After 5 minutes the cache expires and resume costs the same as a fresh spawn.",
         "Use check_agents first to find the session ID.",
       ],
       parameters: sendMessageParams,
@@ -1305,6 +1306,7 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         }
 
         const allSessions = ctx.listWorkspaceSessions();
+        const childrenById = new Map(children.map((c) => [c.id, c]));
         const lines = agents.map((a) => {
           const icon = STATUS_ICONS[a.status] ?? "?";
           const duration = formatDuration(a.durationMs);
@@ -1313,7 +1315,20 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           // Show grandchild count if this child has its own children
           const grandchildren = allSessions.filter((s) => s.parentSessionId === a.id);
           const gcMark = grandchildren.length > 0 ? ` (+${grandchildren.length} children)` : "";
-          return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}${gcMark}`;
+          // For stopped sessions, show how long ago they stopped and cache hint
+          let cacheHint = "";
+          if (a.status === "stopped" || a.status === "ready") {
+            const child = childrenById.get(a.id);
+            if (child) {
+              const stoppedAgoMs = Date.now() - (child.lastActivity ?? child.createdAt);
+              const stoppedAgo = formatDuration(stoppedAgoMs);
+              const cacheWarm = stoppedAgoMs < 5 * 60 * 1000; // 5-minute cache TTL
+              cacheHint = cacheWarm
+                ? `  (stopped ${stoppedAgo} ago, cache likely warm)`
+                : `  (stopped ${stoppedAgo} ago, cache likely cold)`;
+            }
+          }
+          return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}${gcMark}${cacheHint}`;
         });
 
         const busyCount = agents.filter(
