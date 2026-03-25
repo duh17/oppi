@@ -44,6 +44,7 @@ function makeDeps(
     releaseSession: vi.fn(),
     stopSession: vi.fn(async () => {}),
     getSessionIdleTimeoutMs: () => 300_000,
+    hasActiveChildren: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -187,6 +188,53 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
 
     // 10 more seconds → new timer's 60s expires
     vi.advanceTimersByTime(10_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("defers idle timeout when parent has active children", () => {
+    const active = makeActiveSession({
+      status: "ready",
+      messageCount: 10,
+      tokens: { input: 5000, output: 2000, cacheRead: 0, cacheWrite: 0 },
+    });
+    // No parentSessionId — this is a root session
+    const deps = makeDeps(active, {
+      hasActiveChildren: vi.fn(() => true),
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    // Normal idle timeout (300s) fires but should be deferred
+    vi.advanceTimersByTime(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+    expect(deps.hasActiveChildren).toHaveBeenCalledWith("child-1");
+  });
+
+  it("stops parent after children finish", () => {
+    const active = makeActiveSession({
+      status: "ready",
+      messageCount: 10,
+      tokens: { input: 5000, output: 2000, cacheRead: 0, cacheWrite: 0 },
+    });
+    // No parentSessionId — root session
+    let childrenActive = true;
+    const deps = makeDeps(active, {
+      hasActiveChildren: vi.fn(() => childrenActive),
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    // First timeout fires → children active → deferred
+    vi.advanceTimersByTime(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // Children finish
+    childrenActive = false;
+
+    // Second timeout fires → no children → stops
+    vi.advanceTimersByTime(300_000);
     expect(deps.stopSession).toHaveBeenCalledWith("child-1");
   });
 });
