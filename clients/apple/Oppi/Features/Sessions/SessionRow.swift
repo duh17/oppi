@@ -155,21 +155,15 @@ struct SessionRow: View {
     @ViewBuilder
     private func childBadge(children: ChildSummary) -> some View {
         HStack(spacing: 3) {
-            Text("\(children.childCount) agents")
-                .foregroundStyle(.themeCyan)
-
             let counts = children.statusCounts
             if counts.working > 0 {
                 Text("\u{23F3}\(counts.working)")
                     .foregroundStyle(.themeOrange)
             }
-            if counts.ready > 0 {
-                Text("\u{2713}\(counts.ready)")
+            let done = counts.ready + counts.stopped
+            if done > 0 {
+                Text("\u{2713}\(done)")
                     .foregroundStyle(.themeGreen)
-            }
-            if counts.stopped > 0 {
-                Text("\u{25CF}\(counts.stopped)")
-                    .foregroundStyle(.themeComment)
             }
             if counts.error > 0 {
                 Text("\u{2717}\(counts.error)")
