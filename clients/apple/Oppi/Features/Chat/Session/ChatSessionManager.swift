@@ -234,6 +234,7 @@ final class ChatSessionManager {
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId
         telemetry.cancelTTFT()
+        telemetry.startSessionSwitch()
         telemetry.startSessionLoad()
         markSyncStarted()
 

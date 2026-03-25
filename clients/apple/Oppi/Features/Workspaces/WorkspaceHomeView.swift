@@ -6,6 +6,10 @@ struct WorkspaceNavTarget: Hashable {
     let workspace: Workspace
 }
 
+/// Tracks whether app launch metric has been recorded this process.
+/// Only fires once — on the first appearance of WorkspaceHomeView.
+nonisolated(unsafe) private var appLaunchMetricRecorded = false
+
 /// Top-level workspace list — primary navigation tab.
 ///
 /// Shows workspaces grouped by server. Each server section has a tappable header
@@ -66,6 +70,12 @@ struct WorkspaceHomeView: View {
             triggerGuidedCreateIfNeeded()
         }
         .onAppear {
+            if !appLaunchMetricRecorded {
+                appLaunchMetricRecorded = true
+                let processStartDate = ProcessInfo.processInfo.processStartDate
+                let launchMs = Int64(max(0, Date().timeIntervalSince(processStartDate) * 1_000))
+                ChatSessionTelemetry.recordAppLaunch(durationMs: launchMs)
+            }
             Task { await refresh(force: false) }
         }
     }
