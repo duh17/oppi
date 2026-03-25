@@ -7,7 +7,7 @@ clients/apple/build/
 clients/apple/.build/
 clients/apple/docs/
 clients/apple/*.xcodeproj/
-clients/apple/OppiMacTests/
+# clients/apple/OppiMacTests/  # Un-ignored: Mac tests should be tracked
 clients/apple/.env.testflight.local
 
 # Scripts (private build/ops tooling)
