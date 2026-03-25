@@ -99,6 +99,8 @@ export interface SessionCoordinatorBundleDeps {
     message: string,
     behavior?: "steer" | "followUp",
   ) => Promise<void>;
+  /** Called when a session's firstMessage is first captured. */
+  onFirstMessage?: (session: Session) => void;
 }
 
 export function createSessionCoordinatorBundle(
@@ -229,6 +231,7 @@ export function createSessionCoordinatorBundle(
     sendCommand: (key, command) => deps.sendCommand(key, command),
     enqueueQueuedMessage: (key, kind, message, images, idHint) =>
       queueCoordinator.enqueueQueuedMessage(key, kind, message, images, idHint),
+    onFirstMessage: deps.onFirstMessage,
   });
 
   const agentEventCoordinator = new SessionAgentEventCoordinator({
