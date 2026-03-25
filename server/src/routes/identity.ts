@@ -271,6 +271,28 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
 
+    if (path === "/server/auto-title" && method === "GET") {
+      const config = ctx.storage.getConfig();
+      helpers.json(res, config.autoTitle ?? { enabled: false });
+      return true;
+    }
+    if (path === "/server/auto-title" && method === "PUT") {
+      const body = await helpers.parseBody<{ enabled?: boolean; model?: string }>(req);
+      const current = ctx.storage.getConfig().autoTitle ?? { enabled: false };
+      const updated = {
+        enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
+        model:
+          typeof body.model === "string" && body.model.trim().length > 0
+            ? body.model.trim()
+            : body.model === null
+              ? undefined
+              : current.model,
+      };
+      ctx.storage.updateConfig({ autoTitle: updated });
+      helpers.json(res, updated);
+      return true;
+    }
+
     return false;
   };
 }

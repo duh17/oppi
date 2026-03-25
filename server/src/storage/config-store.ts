@@ -99,6 +99,7 @@ function normalizeConfig(
     "pushDeviceTokens",
     "liveActivityToken",
     "thinkingLevelByModel",
+    "autoTitle",
   ]);
 
   if (strictUnknown) {
@@ -667,6 +668,18 @@ function normalizeConfig(
       if (typeof v === "string") map[k] = v;
     }
     config.thinkingLevelByModel = map;
+  }
+
+  // Auto-title configuration
+  if ("autoTitle" in obj && isRecord(obj.autoTitle)) {
+    const at = obj.autoTitle;
+    const autoTitle: NonNullable<ServerConfig["autoTitle"]> = {
+      enabled: typeof at.enabled === "boolean" ? at.enabled : false,
+    };
+    if (typeof at.model === "string" && at.model.trim().length > 0) {
+      autoTitle.model = at.model.trim();
+    }
+    config.autoTitle = autoTitle;
   }
 
   return { valid: errors.length === 0, errors, warnings, config, changed };

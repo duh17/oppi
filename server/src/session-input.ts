@@ -31,6 +31,7 @@ export interface SessionInputCoordinatorDeps {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
     idHint?: string,
   ) => void;
+  onFirstMessage?: (session: Session) => void;
 }
 
 export class SessionInputCoordinator {
@@ -70,11 +71,15 @@ export class SessionInputCoordinator {
       return;
     }
 
-    appendSessionMessage(active.session, {
+    const capturedFirst = appendSessionMessage(active.session, {
       role: "user",
       content: message,
       timestamp: opts?.timestamp ?? Date.now(),
     });
+
+    if (capturedFirst) {
+      this.deps.onFirstMessage?.(active.session);
+    }
 
     const outboundMessage = buildOutboundPrompt(opts?.preamble, message, opts?.images);
 

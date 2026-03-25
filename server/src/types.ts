@@ -241,6 +241,15 @@ export interface ServerConfig {
    * Format: array of "provider/model-id" strings.
    */
   modelAllowlist?: string[];
+
+  /**
+   * Auto-title configuration. When enabled, generates concise task titles
+   * for sessions using a configurable model provider.
+   */
+  autoTitle?: {
+    enabled: boolean;
+    model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
+  };
 }
 
 // ─── API Types ───

@@ -898,18 +898,21 @@ function countLines(text: string): number {
 
 /**
  * Update in-memory session counters from a user/assistant message.
+ * Returns true if this call captured the session's firstMessage (first user message).
  */
 export function appendSessionMessage(
   session: Session,
   message: Omit<SessionMessage, "id" | "sessionId">,
-): void {
+): boolean {
   session.messageCount += 1;
   session.lastMessage = message.content.slice(0, 100);
   session.lastActivity = message.timestamp;
 
   // Capture first user message (immutable once set)
+  let capturedFirstMessage = false;
   if (!session.firstMessage && message.role === "user") {
     session.firstMessage = message.content.slice(0, 200);
+    capturedFirstMessage = true;
   }
 
   if (message.tokens) {
@@ -922,6 +925,8 @@ export function appendSessionMessage(
   if (message.cost) {
     session.cost += message.cost;
   }
+
+  return capturedFirstMessage;
 }
 
 /**

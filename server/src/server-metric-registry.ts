@@ -168,6 +168,12 @@ export const SERVER_METRIC_REGISTRY = {
     unit: "count",
     description: "Compaction outcomes. Tagged by result (success, aborted, will_retry).",
   },
+  // ── Session Auto-Title ──
+  "server.session_title_gen_ms": {
+    unit: "ms",
+    description:
+      "Auto-title generation duration. Tagged by model, status (success/error/timeout), tokens.",
+  },
 } as const satisfies Readonly<Record<string, ServerMetricDefinition>>;
 
 export type ServerMetricName = keyof typeof SERVER_METRIC_REGISTRY;

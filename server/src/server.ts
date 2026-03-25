@@ -58,6 +58,7 @@ import {
 import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
+import { SessionTitleGenerator } from "./session-title-generator.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -261,6 +262,7 @@ export class Server {
   private modelRegistry: ModelRegistry;
   private models: ModelCatalog;
   private runtimeUpdates: RuntimeUpdateManager;
+  private titleGenerator: SessionTitleGenerator;
 
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
@@ -386,6 +388,34 @@ export class Server {
       },
       getWebSocketCount: () => this.connections.size,
     });
+
+    // Auto-title generator — generates concise task titles on first user message
+    this.titleGenerator = new SessionTitleGenerator({
+      getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
+      modelRegistry: this.modelRegistry,
+      getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
+      updateSessionName: (sessionId, name) => {
+        const session = this.storage.getSession(sessionId);
+        if (session) {
+          session.name = name;
+          this.storage.saveSession(session);
+        }
+      },
+      broadcastSessionUpdate: (sessionId) => {
+        const session = this.storage.getSession(sessionId);
+        if (session) {
+          this.broadcastToUser({ type: "state", session, sessionId });
+        }
+      },
+      onMetrics: (metrics) => {
+        this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
+          model: metrics.model,
+          status: metrics.status,
+          tokens: String(metrics.tokens),
+        });
+      },
+    });
+    this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
       this.liveActivity.handleSessionEvent(payload);
