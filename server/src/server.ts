@@ -27,6 +27,8 @@ import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { ServerMetricsCollector } from "./server-metrics.js";
+import { ServerMetricCollector } from "./server-metric-collector.js";
+import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
@@ -266,6 +268,9 @@ export class Server {
   // Server resource utilization metrics (CPU, memory, sessions)
   private metricsCollector: ServerMetricsCollector;
 
+  // Server operational metrics (latencies, counts, errors)
+  private opsMetrics: ServerMetricCollector;
+
   // Live Activity push bridge (debounced APNs updates)
   private liveActivity: LiveActivityBridge;
 
@@ -343,11 +348,17 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
 
+    // Server operational metrics collector (event-driven latencies, counts)
+    this.opsMetrics = new ServerMetricCollector(
+      new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
+    );
+
     // Create the user stream mux (handles /stream WS, event rings, replay)
     this.streamMux = new UserStreamMux({
       storage: this.storage,
       sessions: this.sessions,
       gate: this.gate,
+      metrics: this.opsMetrics,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       handleClientMessage: (session, msg, send) =>
@@ -567,6 +578,7 @@ export class Server {
         }
 
         this.metricsCollector.start();
+        this.opsMetrics.start();
 
         resolve();
       });
@@ -585,6 +597,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.opsMetrics.stop();
     this.metricsCollector.stop();
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
@@ -962,8 +975,9 @@ export class Server {
     }
 
     if (url.pathname === "/stream") {
+      const upgradeReceivedAt = Date.now();
       this.wss.handleUpgrade(req, socket, head, (ws) => {
-        this.streamMux.handleWebSocket(ws);
+        this.streamMux.handleWebSocket(ws, upgradeReceivedAt);
       });
       return;
     }

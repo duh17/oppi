@@ -12,6 +12,7 @@ import type { SessionManager } from "./sessions.js";
 import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 
 // ─── Types ───
 
@@ -27,6 +28,7 @@ export interface StreamContext {
   storage: Storage;
   sessions: SessionManager;
   gate: GateServer;
+  metrics?: ServerMetricCollector;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   handleClientMessage: (
@@ -111,15 +113,21 @@ export function startServerPing(
   ws: WebSocket,
   label: string,
   intervalMs = PING_INTERVAL_MS,
+  metrics?: ServerMetricCollector,
 ): () => void {
   let alive = true;
+  let lastPingSentAt = 0;
 
   ws.on("pong", () => {
     alive = true;
+    if (lastPingSentAt > 0 && metrics) {
+      metrics.record("server.ws_ping_rtt_ms", Date.now() - lastPingSentAt);
+    }
   });
 
   const timer = setInterval(() => {
     if (!alive) {
+      metrics?.record("server.ws_ping_timeout", 1);
       console.log("[ws] Ping timeout — terminating", {
         label,
       });
@@ -128,6 +136,7 @@ export function startServerPing(
       return;
     }
     alive = false;
+    lastPingSentAt = Date.now();
     ws.ping();
   }, intervalMs);
 
@@ -224,16 +233,29 @@ export class UserStreamMux {
 
   // ─── WebSocket Handler ───
 
-  async handleWebSocket(ws: WebSocket): Promise<void> {
+  async handleWebSocket(ws: WebSocket, upgradeReceivedAt?: number): Promise<void> {
+    const connectedAt = Date.now();
+    const metrics = this.ctx.metrics;
+
+    if (upgradeReceivedAt && metrics) {
+      metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt);
+    }
+
     console.log("[ws] Connected: /stream", {
       owner: this.ctx.storage.getOwnerName(),
     });
     this.ctx.trackConnection(ws);
 
-    const stopPing = startServerPing(ws, `/stream (${this.ctx.storage.getOwnerName()})`);
+    const stopPing = startServerPing(
+      ws,
+      `/stream (${this.ctx.storage.getOwnerName()})`,
+      PING_INTERVAL_MS,
+      metrics,
+    );
 
     let msgSent = 0;
     let msgRecv = 0;
+    let firstMessageRecorded = false;
     const subscriptions = new Map<string, UserStreamSubscription>();
     let queue: Promise<void> = Promise.resolve();
 
@@ -447,6 +469,11 @@ export class UserStreamMux {
         .then(async () => {
           msgRecv++;
 
+          if (!firstMessageRecorded && metrics) {
+            firstMessageRecorded = true;
+            metrics.record("server.ws_first_message_ms", Date.now() - connectedAt);
+          }
+
           const parsed = parseIncomingClientMessage(data);
           if (!parsed.ok) {
             if (parsed.command) {
@@ -593,6 +620,14 @@ export class UserStreamMux {
         sent: msgSent,
         recv: msgRecv,
       });
+
+      if (metrics) {
+        metrics.record("server.ws_session_duration_ms", Date.now() - connectedAt);
+        metrics.record("server.ws_messages_sent", msgSent);
+        metrics.record("server.ws_messages_received", msgRecv);
+        metrics.record("server.ws_close_code", 1, { code: String(code) });
+      }
+
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);
     });
