@@ -71,11 +71,17 @@ struct AskCard: View {
     let onEnterAnswerMode: () -> Void
     let onExitAnswerMode: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     @State private var currentPage: Int = 0
     @State private var answers: [String: AskAnswer] = [:]
     @State private var isExpanded: Bool = false
 
-    private let optionCardWidth: CGFloat = 120
+    /// Scales option card width for accessibility Dynamic Type sizes.
+    private var optionCardWidth: CGFloat {
+        Self.optionCardWidth(for: dynamicTypeSize)
+    }
+
     private let optionCornerRadius: CGFloat = 12
     private let cardCornerRadius: CGFloat = 14
     private let autoAdvanceDelay: Duration = .milliseconds(200)
@@ -122,6 +128,22 @@ struct AskCard: View {
             RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
                 .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
         )
+        // Timeout: auto-dismiss when server timeout expires
+        .task(id: request.id) {
+            guard let timeout = request.timeout, timeout > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(timeout))
+            guard !Task.isCancelled else { return }
+            onIgnoreAll()
+        }
+        // Announce page changes for VoiceOver
+        .onChange(of: currentPage) {
+            let text = Self.pageAnnouncementText(
+                page: currentPage,
+                questions: request.questions,
+                isSingleQuestionSingleSelect: isSingleQuestionSingleSelect
+            )
+            UIAccessibility.post(notification: .announcement, argument: text)
+        }
         .overlay(alignment: .topTrailing) {
             Button {
                 isExpanded = true
@@ -156,6 +178,7 @@ struct AskCard: View {
                 .foregroundStyle(.themeFg)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 12)
+                .accessibilityLabel("Question: \(question.question)")
 
             // Option cards — horizontal scroll
             optionStrip(for: question)
@@ -465,5 +488,32 @@ extension AskCard {
     static func pageCount(for request: AskRequest) -> Int {
         let isSingleSingle = request.questions.count == 1 && !request.questions[0].multiSelect
         return isSingleSingle ? 1 : request.questions.count + 1
+    }
+
+    /// Option card width scaled for Dynamic Type accessibility sizes.
+    static func optionCardWidth(for size: DynamicTypeSize) -> CGFloat {
+        switch size {
+        case .accessibility1, .accessibility2, .accessibility3,
+             .accessibility4, .accessibility5:
+            return 200
+        case .xxxLarge, .xxLarge:
+            return 160
+        default:
+            return 120
+        }
+    }
+
+    /// VoiceOver announcement text when the page changes.
+    static func pageAnnouncementText(
+        page: Int,
+        questions: [AskQuestion],
+        isSingleQuestionSingleSelect: Bool
+    ) -> String {
+        guard !isSingleQuestionSingleSelect else { return questions[0].question }
+        if page < questions.count {
+            return "Question \(page + 1) of \(questions.count): \(questions[page].question)"
+        } else {
+            return "Review and submit answers"
+        }
     }
 }
