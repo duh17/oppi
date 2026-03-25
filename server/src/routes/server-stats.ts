@@ -3,6 +3,7 @@
  *
  * Pure functions — no side effects — so we can unit-test without HTTP.
  */
+import { round2 } from "../metric-utils.js";
 import type { Session, Workspace } from "../types.js";
 
 // ─── Response types ───
@@ -137,10 +138,6 @@ function sessionTokens(s: Session): number {
     (s.tokens?.cacheRead ?? 0) +
     (s.tokens?.cacheWrite ?? 0)
   );
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 // ─── Memory ───
