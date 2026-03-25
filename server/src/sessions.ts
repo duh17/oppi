@@ -120,6 +120,7 @@ export class SessionManager extends EventEmitter {
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
+      resumeSession: (sessionId) => this.startSession(sessionId),
       spawnChildSession: (parentSessionId, params) =>
         this.spawnChildSession(parentSessionId, params),
       spawnDetachedSession: (originSessionId, params) =>

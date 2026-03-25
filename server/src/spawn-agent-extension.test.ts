@@ -172,6 +172,14 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
       }
     },
 
+    async resumeSession(sessionId: string) {
+      const session = ctx.sessions.get(sessionId);
+      if (!session) throw new Error(`Session not found: ${sessionId}`);
+      const resumed = makeSession({ ...session, status: "ready" });
+      ctx.sessions.set(sessionId, resumed);
+      return resumed;
+    },
+
     async sendMessage(sessionId: string, message: string, behavior?: "steer" | "followUp") {
       if (ctx.sendMessageError) throw ctx.sendMessageError;
       ctx.sendMessageCalls.push({ sessionId, message, behavior });
@@ -891,8 +899,13 @@ describe("spawn-agent-extension", () => {
         id: "c1",
         message: "hello",
       });
-      expect(result.content[0].text).toContain("stopped");
-      expect(result.content[0].text).toContain("Cannot send messages");
+      expect(result.content[0].text).toContain("auto-resuming");
+      expect(result.content[0].text).toContain("Done Worker");
+      // Verify the session was resumed (status changed from stopped → ready)
+      expect(ctx.sessions.get("c1")!.status).toBe("ready");
+      // Verify message was sent
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].message).toBe("hello");
     });
 
     it("rejects messages to errored sessions", async () => {
@@ -910,7 +923,8 @@ describe("spawn-agent-extension", () => {
         id: "c1",
         message: "hello",
       });
-      expect(result.content[0].text).toContain("Cannot send messages");
+      expect(result.content[0].text).toContain("error state");
+      expect(result.content[0].text).toContain("Spawn a new agent");
     });
 
     it("handles sendMessage errors gracefully", async () => {

@@ -80,6 +80,7 @@ export interface SessionCoordinatorBundleDeps {
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
+  resumeSession: (sessionId: string) => Promise<Session>;
   // spawn_agent support
   spawnChildSession: (
     parentSessionId: string,
@@ -171,6 +172,7 @@ export function createSessionCoordinatorBundle(
     subscribeToSession: (sessionId, callback) => deps.subscribeToSession(sessionId, callback),
     getAvailableModelIds: () => deps.getAvailableModelIds(),
     stopSession: (sessionId) => deps.stopSession(sessionId),
+    resumeSession: (sessionId) => deps.resumeSession(sessionId),
     sendMessage: (sessionId, message, behavior) => deps.sendMessage(sessionId, message, behavior),
   });
 

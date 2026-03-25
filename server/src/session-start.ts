@@ -62,6 +62,8 @@ export interface SessionStartCoordinatorDeps {
   subscribeToSession: (sessionId: string, callback: (msg: ServerMessage) => void) => () => void;
   getAvailableModelIds: () => string[];
   stopSession: (sessionId: string) => Promise<void>;
+  /** Resume a stopped session (restart its SDK process). */
+  resumeSession: (sessionId: string) => Promise<Session>;
   /** Send a message to a session. Dispatches as prompt, steer, or follow-up based on state. */
   sendMessage: (
     sessionId: string,
@@ -119,6 +121,7 @@ export class SessionStartCoordinator {
               subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
               getAvailableModelIds: () => this.deps.getAvailableModelIds(),
               stopSession: (id) => this.deps.stopSession(id),
+              resumeSession: (id) => this.deps.resumeSession(id),
               sendMessage: (id, message, behavior) => this.deps.sendMessage(id, message, behavior),
             }),
           );
