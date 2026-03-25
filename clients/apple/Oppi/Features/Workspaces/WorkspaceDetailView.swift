@@ -146,42 +146,101 @@ struct WorkspaceDetailView: View {
     // MARK: - Body
 
     private struct ViewData {
-        let activeRoots: [Session]
+        let yourTurnRoots: [Session]
+        let workingRoots: [Session]
         let stoppedRoots: [Session]
         let localFiltered: [LocalSession]
         let wsEmpty: Bool
     }
 
+    /// Classify a root session into Your Turn / Working / Stopped.
+    ///
+    /// Priority:
+    /// 1. `aggregatePendingCount > 0` → Your Turn (even if parent is busy)
+    /// 2. status == .error → Your Turn
+    /// 3. status == .ready → Your Turn
+    /// 4. status == .busy / .starting / .stopping → Working
+    /// 5. status == .stopped → Stopped
+    private enum SessionSection {
+        case yourTurn
+        case working
+        case stopped
+    }
+
+    private func classifySession(_ session: Session) -> SessionSection {
+        if session.status == .stopped { return .stopped }
+
+        let pendingCount = SessionTreeHelper.aggregatePendingCount(
+            of: session.id, in: activeSessions,
+            pendingForSession: { permissionStore.pending(for: $0).count }
+        )
+        if pendingCount > 0 { return .yourTurn }
+
+        switch session.status {
+        case .error, .ready:
+            return .yourTurn
+        case .busy, .starting, .stopping:
+            return .working
+        case .stopped:
+            return .stopped
+        }
+    }
+
     private var viewData: ViewData {
         let allWorkspaceIds = Set(workspaceSessions.map(\.id))
 
-        // Active: filter to roots, children accessible through parent's chat view.
+        // Filter to roots: children accessible through parent's chat view.
         // Searching for a child name surfaces its parent root.
-        let activeRoots: [Session] = {
-            let roots = activeSessions.filter { session in
-                guard let parentId = session.parentSessionId else { return true }
-                return !allWorkspaceIds.contains(parentId)
+        let allRoots = workspaceSessions.filter { session in
+            guard let parentId = session.parentSessionId else { return true }
+            return !allWorkspaceIds.contains(parentId)
+        }
+
+        // Partition roots into three sections
+        var yourTurnUnfiltered: [Session] = []
+        var workingUnfiltered: [Session] = []
+        var stoppedUnfiltered: [Session] = []
+
+        for root in allRoots {
+            switch classifySession(root) {
+            case .yourTurn: yourTurnUnfiltered.append(root)
+            case .working: workingUnfiltered.append(root)
+            case .stopped: stoppedUnfiltered.append(root)
             }
+        }
+
+        // Your Turn: apply search, sort by pending-first then oldest turnEndedDate (FIFO)
+        let yourTurnRoots: [Session] = {
             let filtered = hasSessionSearchQuery
-                ? roots.filter { rootOrDescendantMatchesSearch($0, in: activeSessions) }
-                : roots
+                ? yourTurnUnfiltered.filter { rootOrDescendantMatchesSearch($0, in: activeSessions) }
+                : yourTurnUnfiltered
             return filtered.sorted { lhs, rhs in
-                let lhsAttn = SessionTreeHelper.aggregatePendingCount(
+                let lhsPending = SessionTreeHelper.aggregatePendingCount(
                     of: lhs.id, in: activeSessions,
                     pendingForSession: { permissionStore.pending(for: $0).count }
                 ) > 0
-                let rhsAttn = SessionTreeHelper.aggregatePendingCount(
+                let rhsPending = SessionTreeHelper.aggregatePendingCount(
                     of: rhs.id, in: activeSessions,
                     pendingForSession: { permissionStore.pending(for: $0).count }
                 ) > 0
-                if lhsAttn != rhsAttn { return lhsAttn }
-                let lhsSort = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
-                let rhsSort = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
-                return lhsSort > rhsSort
+                if lhsPending != rhsPending { return lhsPending }
+
+                // Within same priority: oldest turnEndedDate first (FIFO queue)
+                let lhsDate = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
+                let rhsDate = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
+                return lhsDate < rhsDate
             }
         }()
 
-        // Stopped: filter to true roots (children only via parent's chat view).
+        // Working: apply search, sort newest first
+        let workingRoots: [Session] = {
+            let filtered = hasSessionSearchQuery
+                ? workingUnfiltered.filter { rootOrDescendantMatchesSearch($0, in: activeSessions) }
+                : workingUnfiltered
+            return filtered.sorted { $0.createdAt > $1.createdAt }
+        }()
+
+        // Stopped: filter to true roots, apply search, most recently stopped first
         let stoppedSessions = workspaceSessions.filter { $0.status == .stopped }
         let stoppedRoots: [Session] = {
             let roots = stoppedSessions.filter { session in
@@ -195,7 +254,8 @@ struct WorkspaceDetailView: View {
         }()
 
         return ViewData(
-            activeRoots: activeRoots,
+            yourTurnRoots: yourTurnRoots,
+            workingRoots: workingRoots,
             stoppedRoots: stoppedRoots,
             localFiltered: filteredLocalSessions,
             wsEmpty: workspaceSessions.isEmpty
@@ -206,9 +266,36 @@ struct WorkspaceDetailView: View {
         let data = viewData
 
         List {
-            if !data.activeRoots.isEmpty {
-                Section("Active") {
-                    ForEach(data.activeRoots) { session in
+            if !data.yourTurnRoots.isEmpty {
+                Section("Your Turn") {
+                    ForEach(data.yourTurnRoots) { session in
+                        NavigationLink(value: session.id) {
+                            SessionRow(
+                                session: session,
+                                pendingCount: SessionTreeHelper.aggregatePendingCount(
+                                    of: session.id, in: activeSessions,
+                                    pendingForSession: { permissionStore.pending(for: $0).count }
+                                ),
+                                children: childSummary(for: session.id, in: workspaceSessions)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.themeBg)
+                        .swipeActions(edge: .trailing) {
+                            Button {
+                                Task { await stopSession(session) }
+                            } label: {
+                                Label("Stop", systemImage: "stop.fill")
+                            }
+                            .tint(.themeOrange)
+                        }
+                    }
+                }
+            }
+
+            if !data.workingRoots.isEmpty {
+                Section("Working") {
+                    ForEach(data.workingRoots) { session in
                         NavigationLink(value: session.id) {
                             SessionRow(
                                 session: session,
@@ -268,7 +355,8 @@ struct WorkspaceDetailView: View {
                     .listRowBackground(Color.themeBg)
                 }
             } else if hasSessionSearchQuery,
-                      data.activeRoots.isEmpty,
+                      data.yourTurnRoots.isEmpty,
+                      data.workingRoots.isEmpty,
                       data.stoppedRoots.isEmpty,
                       data.localFiltered.isEmpty {
                 Section {
