@@ -242,7 +242,8 @@ struct AskCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(width: optionCardWidth, alignment: .leading)
+            .frame(width: optionCardWidth, alignment: .topLeading)
+            .frame(minHeight: 56)
             .padding(10)
             .background(
                 isSelected ? Color.themeBlue.opacity(0.15) : Color.themeBgHighlight,
@@ -263,7 +264,7 @@ struct AskCard: View {
         HStack {
             if request.allowCustom {
                 Button {
-                    onEnterAnswerMode()
+                    isExpanded = true
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "pencil")
