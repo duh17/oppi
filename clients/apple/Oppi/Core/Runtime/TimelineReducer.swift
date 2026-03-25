@@ -418,10 +418,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .toolCall:
             let tool = event.tool ?? "unknown"
-            // Ask tool — track for conversion to user message on toolResult.
+            // Ask tool — track for user message conversion on toolResult,
+            // but still render the tool row to show the questions.
             if tool == "ask" {
                 askToolEventIDs.insert(event.id)
-                return nil
             }
 
             let args = event.args ?? [:]
@@ -857,12 +857,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // MARK: - Event Handlers (extracted from processInternal)
 
     private func handleToolStart(toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]?) -> Bool {
-        // Ask tool is a conversation facilitator, not a technical operation.
-        // Suppress the tool row — answers will appear as a user message on tool_end.
+        // Ask tool: show the tool row for questions, but suppress the tool_end
+        // (answers appear as a user message instead). Track the ID for tool_end interception.
         if tool == "ask" {
             askToolEventIDs.insert(toolEventId)
-            finalizeAssistantMessage()
-            return false
         }
 
         let before = renderMutationCheckpoint()
@@ -929,8 +927,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func handleToolEnd(toolEventId: String, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?) -> Bool {
-        // Ask tool — convert result to a user message instead of a tool row.
+        // Ask tool — mark question row as done, inject answer as user message.
         if askToolEventIDs.remove(toolEventId) != nil {
+            // Freeze elapsed time and mark tool row done
+            if let startedAt = toolStartTimes[toolEventId] {
+                toolElapsedSeconds[toolEventId] = max(0, Int(Date().timeIntervalSince(startedAt)))
+            }
+            updateToolCallDone(id: toolEventId, isError: isError)
+
             let text = Self.formatAskAnswers(details: details)
             if !text.isEmpty {
                 let item = ChatItem.userMessage(
