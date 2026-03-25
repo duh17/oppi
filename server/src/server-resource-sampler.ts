@@ -59,7 +59,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-export class ServerMetricsCollector {
+export class ServerResourceSampler {
   private timer: NodeJS.Timeout | null = null;
   private lastCpu: CpuSnapshot | null = null;
   /** Peak active session count since last sample — reset each interval. */

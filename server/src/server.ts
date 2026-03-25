@@ -26,7 +26,7 @@ import { UserStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
-import { ServerMetricsCollector } from "./server-metrics.js";
+import { ServerResourceSampler } from "./server-resource-sampler.js";
 import { ServerMetricCollector } from "./server-metric-collector.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
@@ -267,8 +267,8 @@ export class Server {
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
 
-  // Server resource utilization metrics (CPU, memory, sessions)
-  private metricsCollector: ServerMetricsCollector;
+  // Server resource utilization sampler (CPU, memory, sessions)
+  private resourceSampler: ServerResourceSampler;
 
   // Server operational metrics (latencies, counts, errors)
   private opsMetrics: ServerMetricCollector;
@@ -371,8 +371,8 @@ export class Server {
       untrackConnection: (ws) => this.untrackConnection(ws),
     });
 
-    // Server resource utilization metrics collector
-    this.metricsCollector = new ServerMetricsCollector({
+    // Server resource utilization sampler
+    this.resourceSampler = new ServerResourceSampler({
       telemetryDir: join(dataDir, "diagnostics", "telemetry"),
       getSessionCounts: () => {
         const ids = this.sessions.getActiveSessionIds();
@@ -611,7 +611,7 @@ export class Server {
           console.warn(`[bonjour] advertisement disabled: ${message}`);
         }
 
-        this.metricsCollector.start();
+        this.resourceSampler.start();
         this.opsMetrics.start();
 
         resolve();
@@ -632,7 +632,7 @@ export class Server {
 
   async stop(): Promise<void> {
     this.opsMetrics.stop();
-    this.metricsCollector.stop();
+    this.resourceSampler.stop();
     this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
