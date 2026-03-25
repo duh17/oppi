@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   applyMessageEndToSession,
   updateSessionChangeStats,
@@ -67,6 +68,12 @@ export interface EventProcessorSessionState {
   streamingArgPreviews: Set<string>;
   /** Active ask tool — defers extension select() calls until iOS responds. */
   pendingAsk?: PendingAskState;
+  /** Timestamp (ms) when the current turn started (agent_start). */
+  turnStartedAt?: number;
+  /** Whether the first text/thinking token has been recorded for the current turn. */
+  turnFirstTokenRecorded?: boolean;
+  /** Number of tool_execution_start events in the current turn. */
+  turnToolCallCount?: number;
 }
 
 export interface SessionEventProcessorDeps {
@@ -80,6 +87,8 @@ export interface SessionEventProcessorDeps {
     key: string,
     response: { type: "extension_ui_response"; id: string; value?: string; cancelled?: boolean },
   ) => boolean;
+  /** Server operational metric collector (metrics silently skipped when absent). */
+  metrics?: ServerMetricCollector;
 }
 
 export class SessionEventProcessor {
@@ -165,24 +174,74 @@ export class SessionEventProcessor {
     const session = active.session;
     let shouldFlushNow = false;
     const pendingStopMode = active.pendingStop?.mode;
+    const metrics = this.deps.metrics;
+    const sessionId = session.id;
 
     switch (event.type) {
       case "agent_start":
         if (session.status !== "stopping") {
           session.status = "busy";
         }
+        active.turnStartedAt = Date.now();
+        active.turnFirstTokenRecorded = false;
+        active.turnToolCallCount = 0;
         break;
 
       case "agent_end":
         session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
         shouldFlushNow = true;
+
+        // Turn duration
+        if (metrics && active.turnStartedAt) {
+          metrics.record("server.turn_duration_ms", Date.now() - active.turnStartedAt, {
+            sessionId,
+          });
+        }
+
+        // Tool call count for this turn
+        if (metrics && active.turnToolCallCount !== undefined) {
+          metrics.record("server.turn_tool_calls", active.turnToolCallCount, { sessionId });
+        }
+
+        // Check for error: last message in agent_end has stopReason "error"
+        if (metrics && "messages" in event && Array.isArray(event.messages)) {
+          const lastMsg = event.messages[event.messages.length - 1];
+          if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error") {
+            const category =
+              "errorMessage" in lastMsg && typeof lastMsg.errorMessage === "string"
+                ? lastMsg.errorMessage.slice(0, 64)
+                : "unknown";
+            metrics.record("server.turn_error", 1, { sessionId, category });
+          }
+        }
+
+        active.turnStartedAt = undefined;
         break;
+
+      case "message_update": {
+        // Track server-side TTFT: first text_delta or thinking_delta in the turn
+        const evt = "assistantMessageEvent" in event ? event.assistantMessageEvent : undefined;
+        if (
+          metrics &&
+          active.turnStartedAt &&
+          !active.turnFirstTokenRecorded &&
+          evt &&
+          (evt.type === "text_delta" || evt.type === "thinking_delta")
+        ) {
+          metrics.record("server.turn_ttft_ms", Date.now() - active.turnStartedAt, { sessionId });
+          active.turnFirstTokenRecorded = true;
+        }
+        break;
+      }
 
       case "tool_execution_start":
         updateSessionChangeStats(session, event.toolName, event.args);
         this.maybeEmitGitStatus(key, session, event.toolName);
         if (event.toolName === "ask" && event.args?.questions) {
           this.initiateAskFlow(key, active, event.args);
+        }
+        if (active.turnToolCallCount !== undefined) {
+          active.turnToolCallCount++;
         }
         break;
 
@@ -194,6 +253,30 @@ export class SessionEventProcessor {
 
       case "message_end":
         applyMessageEndToSession(session, event.message);
+
+        // Record token usage and cost from message_end
+        if (metrics && event.message) {
+          const msg = event.message as unknown as Record<string, unknown>;
+          const usage =
+            msg.usage && typeof msg.usage === "object"
+              ? (msg.usage as Record<string, unknown>)
+              : null;
+          if (usage) {
+            if (typeof usage.input === "number") {
+              metrics.record("server.turn_input_tokens", usage.input, { sessionId });
+            }
+            if (typeof usage.output === "number") {
+              metrics.record("server.turn_output_tokens", usage.output, { sessionId });
+            }
+            const cost =
+              usage.cost && typeof usage.cost === "object"
+                ? (usage.cost as Record<string, unknown>)
+                : null;
+            if (cost && typeof cost.total === "number") {
+              metrics.record("server.turn_cost", Math.round(cost.total * 1_000_000), { sessionId });
+            }
+          }
+        }
         break;
     }
 

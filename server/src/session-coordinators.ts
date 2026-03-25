@@ -1,6 +1,7 @@
 import type { GateServer } from "./gate.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   SessionActivationCoordinator,
   type SessionActivationActiveSession,
@@ -62,6 +63,8 @@ export interface SessionCoordinatorBundleDeps {
   runtimeManager: WorkspaceRuntime;
   active: Map<string, SessionStartActiveSession>;
   mobileRenderers: MobileRendererRegistry;
+  /** Lazy accessor for server operational metric collector. */
+  getMetrics?: () => ServerMetricCollector | null;
   eventRingCapacity: number;
   stopAbortTimeoutMs: number;
   stopAbortRetryTimeoutMs: number;
@@ -101,6 +104,8 @@ export interface SessionCoordinatorBundleDeps {
   ) => Promise<void>;
   /** Called when a session's firstMessage is first captured. */
   onFirstMessage?: (session: Session) => void;
+  /** Operational metrics collector for session lifecycle timing. */
+  metrics?: ServerMetricCollector;
 }
 
 export function createSessionCoordinatorBundle(
@@ -120,6 +125,7 @@ export function createSessionCoordinatorBundle(
     markSessionDirty: (key) => deps.markSessionDirty(key),
     // Lazy — uiCoordinator created later in this function
     respondToUIRequest: (key, response): boolean => uiCoordinator.respondToUIRequest(key, response),
+    metrics: deps.metrics,
   });
 
   const stopCoordinator = new SessionStopCoordinator(
@@ -178,6 +184,7 @@ export function createSessionCoordinatorBundle(
     stopSession: (sessionId) => deps.stopSession(sessionId),
     resumeSession: (sessionId) => deps.resumeSession(sessionId),
     sendMessage: (sessionId, message, behavior) => deps.sendMessage(sessionId, message, behavior),
+    metrics: deps.metrics,
   });
 
   const activationCoordinator = new SessionActivationCoordinator({
@@ -206,6 +213,7 @@ export function createSessionCoordinatorBundle(
       }
       return false;
     },
+    metrics: deps.metrics,
   });
 
   const turnCoordinator = new SessionTurnCoordinator({

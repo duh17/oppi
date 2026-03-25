@@ -27,6 +27,7 @@ import type { GateServer } from "./gate.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
 import { type PiStateSnapshot, type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   createSessionCoordinatorBundle,
   type SessionCoordinatorBundle,
@@ -75,6 +76,9 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server for auto-title generation on first message. */
   onFirstMessage: ((session: Session) => void) | null = null;
 
+  /** Injected by the server for per-turn operational metrics. */
+  opsMetrics: ServerMetricCollector | null = null;
+
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
 
@@ -89,9 +93,10 @@ export class SessionManager extends EventEmitter {
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
   private readonly uiCoordinator: SessionCoordinatorBundle["uiCoordinator"];
 
-  constructor(storage: Storage, gate: GateServer) {
+  constructor(storage: Storage, gate: GateServer, metrics?: ServerMetricCollector) {
     super();
     this.storage = storage;
+    if (metrics) this.opsMetrics = metrics;
     const config = storage.getConfig();
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
     this.mobileRenderers = new MobileRendererRegistry();
@@ -134,6 +139,7 @@ export class SessionManager extends EventEmitter {
       sendMessage: (sessionId, message, behavior) =>
         this.sendMessageToSession(sessionId, message, behavior),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
+      metrics: this.opsMetrics ?? undefined,
     });
 
     this.broadcaster = bundle.broadcaster;
