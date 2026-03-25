@@ -194,6 +194,14 @@ export function createSessionCoordinatorBundle(
     releaseSession: (identity) => deps.runtimeManager.releaseSession(identity),
     stopSession: (sessionId) => deps.stopSession(sessionId),
     getSessionIdleTimeoutMs: () => deps.runtimeManager.getLimits().sessionIdleTimeoutMs,
+    hasActiveChildren: (sessionId) => {
+      for (const active of deps.active.values()) {
+        if (active.session.parentSessionId === sessionId) {
+          return true;
+        }
+      }
+      return false;
+    },
   });
 
   const turnCoordinator = new SessionTurnCoordinator({

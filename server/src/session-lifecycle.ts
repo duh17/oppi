@@ -20,6 +20,7 @@ export interface SessionLifecycleCoordinatorDeps {
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
   stopSession: (sessionId: string) => Promise<void>;
   getSessionIdleTimeoutMs: () => number;
+  hasActiveChildren: (sessionId: string) => boolean;
 }
 
 export class SessionLifecycleCoordinator {
@@ -113,14 +114,25 @@ export class SessionLifecycleCoordinator {
 
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
-      console.log("[session] idle timeout", {
-        key,
-      });
       const active = this.deps.getActiveSession(key);
       if (!active) {
         return;
       }
 
+      // Don't idle-stop a parent while any of its children are still active.
+      // The parent needs to stay alive to receive child results and coordinate.
+      if (this.deps.hasActiveChildren(active.session.id)) {
+        console.log("[session] idle timeout deferred — active children", {
+          sessionId: active.session.id,
+        });
+        // Re-arm the timer so we check again later.
+        this.resetIdleTimer(key);
+        return;
+      }
+
+      console.log("[session] idle timeout", {
+        key,
+      });
       void this.deps.stopSession(active.session.id);
     }, timeoutMs);
 
