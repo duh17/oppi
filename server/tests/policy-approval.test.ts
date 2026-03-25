@@ -1,15 +1,22 @@
 import { describe, expect, it } from "vitest";
-import {
-  POLICY_APPROVAL_OPTIONS,
-  STANDARD_APPROVAL_OPTIONS,
-  approvalOptionsForTool,
-  normalizeApprovalChoice,
-} from "../src/policy-approval.js";
+import { approvalOptionsForTool, normalizeApprovalChoice } from "../src/policy-approval.js";
 
 describe("policy approval mapping", () => {
   it("exposes policy-specific approval options", () => {
-    expect(approvalOptionsForTool("policy.update")).toEqual(POLICY_APPROVAL_OPTIONS);
-    expect(approvalOptionsForTool("bash")).toEqual(STANDARD_APPROVAL_OPTIONS);
+    const policyOptions = approvalOptionsForTool("policy.update");
+    expect(policyOptions).toEqual([
+      { id: "approve", label: "Approve", action: "allow", scope: "once" },
+      { id: "reject", label: "Reject", action: "deny", scope: "once" },
+    ]);
+
+    const standardOptions = approvalOptionsForTool("bash");
+    expect(standardOptions).toEqual([
+      { id: "allow-once", label: "Allow once", action: "allow", scope: "once" },
+      { id: "allow-session", label: "Allow this session", action: "allow", scope: "session" },
+      { id: "allow-global", label: "Allow always", action: "allow", scope: "global" },
+      { id: "deny-once", label: "Deny", action: "deny", scope: "once" },
+      { id: "deny-global", label: "Deny always", action: "deny", scope: "global" },
+    ]);
   });
 
   it("forces policy tools to one-shot approvals", () => {

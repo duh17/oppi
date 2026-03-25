@@ -17,8 +17,8 @@ const MAX_FIELD_NAME_LENGTH = 64;
 const MAX_ROW_STRING_LENGTH = 256;
 const MAX_DATA_URI_LENGTH = 512 * 1024;
 
-export const CHART_HEIGHT_MIN = 120;
-export const CHART_HEIGHT_MAX = 480;
+const CHART_HEIGHT_MIN = 120;
+const CHART_HEIGHT_MAX = 480;
 
 const CHART_MARK_TYPES = new Set(["line", "area", "bar", "point", "rectangle", "rule", "sector"]);
 
@@ -52,7 +52,7 @@ const MAX_ANNOTATION_TEXT_LENGTH = 80;
 const ANNOTATION_ANCHORS = new Set(["top", "bottom", "leading", "trailing"]);
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
-export interface ToolResultDetailsSanitization {
+interface ToolResultDetailsSanitization {
   details: unknown;
   warnings: string[];
 }

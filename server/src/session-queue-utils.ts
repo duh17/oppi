@@ -14,7 +14,7 @@ export interface QueueImageContent {
   mimeType: string;
 }
 
-export interface SessionMessageQueueStoreLike {
+interface SessionMessageQueueStoreLike {
   version: number;
   steering: MessageQueueItem[];
   followUp: MessageQueueItem[];

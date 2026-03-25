@@ -18,12 +18,12 @@ export interface ApprovalOption extends ApprovalChoice {
   label: string;
 }
 
-export interface NormalizedApprovalChoice extends ApprovalChoice {
+interface NormalizedApprovalChoice extends ApprovalChoice {
   /** True when the requested scope was downgraded for safety/contract reasons. */
   normalized: boolean;
 }
 
-export const STANDARD_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
+const STANDARD_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
   { id: "allow-once", label: "Allow once", action: "allow", scope: "once" },
   { id: "allow-session", label: "Allow this session", action: "allow", scope: "session" },
   { id: "allow-global", label: "Allow always", action: "allow", scope: "global" },
@@ -31,7 +31,7 @@ export const STANDARD_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
   { id: "deny-global", label: "Deny always", action: "deny", scope: "global" },
 ];
 
-export const POLICY_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
+const POLICY_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
   { id: "approve", label: "Approve", action: "allow", scope: "once" },
   { id: "reject", label: "Reject", action: "deny", scope: "once" },
 ];
