@@ -63,7 +63,7 @@ enum AskResponseEncoder {
 ///
 /// No text is truncated — question text, option labels, and descriptions
 /// all size to content. If inline height exceeds ~40% of screen, an expand
-/// button appears (expand view itself is WS5).
+/// button appears which opens `AskCardExpanded` via `.fullScreenCover`.
 struct AskCard: View {
     let request: AskRequest
     let onSubmit: ([String: AskAnswer]) -> Void
