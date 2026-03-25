@@ -295,9 +295,21 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             serverBaseURL: configuration.serverBaseURL
         ))
 
-        // Quick crossfade from streaming text to rendered markdown.
+        // Clear streaming content before the layout pass. The streaming text
+        // view's bottom constraint competes with the markdown view's for the
+        // bubble height. If the raw streaming text is taller than the rendered
+        // markdown (code blocks are more compact than raw fences), the cell
+        // stays oversized and code blocks stretch to fill the surplus. Clearing
+        // the streaming text removes its height contribution so the cell sizes
+        // to the markdown view's natural height. The 0.15s crossfade hides the
+        // empty streaming view — it fades from alpha 1→0 while the markdown
+        // view fades in.
+        streamingTextView.attributedText = nil
+
         markdownView.alpha = 0
         markdownView.isHidden = false
+        setNeedsLayout()
+        layoutIfNeeded()
 
         UIView.animate(withDuration: 0.15, delay: 0, options: .curveEaseInOut) {
             self.markdownView.alpha = 1
@@ -305,7 +317,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         } completion: { _ in
             self.streamingTextView.isHidden = true
             self.streamingTextView.alpha = 1
-            self.streamingTextView.attributedText = nil
             self.isShowingStreamingView = false
             self.streamingCharCount = 0
             self.streamingRevealer.reset()
