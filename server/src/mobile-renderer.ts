@@ -373,12 +373,13 @@ const ask: MobileToolRenderer = {
     const qs = Array.isArray(args.questions)
       ? (args.questions as Array<Record<string, unknown>>)
       : [];
-    const segs: StyledSegment[] = [{ text: "ask ", style: "bold" }];
+    const segs: StyledSegment[] = [];
 
-    if (qs.length === 1) {
-      segs.push({ text: firstLine(str(qs[0]?.question), 60), style: "muted" });
-    } else if (qs.length > 1) {
-      segs.push({ text: `${qs.length} questions`, style: "muted" });
+    for (let i = 0; i < qs.length; i++) {
+      const q = qs[i];
+      const qText = firstLine(str(q?.question), 80);
+      segs.push({ text: qText, style: "muted" });
+      if (i < qs.length - 1) segs.push({ text: "\n", style: "dim" });
     }
     return segs;
   },
