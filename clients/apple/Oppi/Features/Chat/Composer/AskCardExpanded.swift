@@ -299,6 +299,7 @@ struct AskCardExpanded: View {
                 if isSubmitPage {
                     Button {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        isExpanded = false
                         onIgnoreAll()
                     } label: {
                         Text("Ignore All")
@@ -326,6 +327,7 @@ struct AskCardExpanded: View {
 
                 if isSubmitPage {
                     Button {
+                        isExpanded = false
                         onSubmit(answers)
                     } label: {
                         Text("Submit")
@@ -421,6 +423,7 @@ struct AskCardExpanded: View {
             answers[question.id] = .single(option.value)
 
             if isSingleQuestionSingleSelect {
+                isExpanded = false
                 onSubmit(answers)
             }
         }
@@ -439,6 +442,7 @@ struct AskCardExpanded: View {
         }
 
         if isSingleQuestionSingleSelect {
+            isExpanded = false
             onIgnoreAll()
         } else {
             navigateForward()
