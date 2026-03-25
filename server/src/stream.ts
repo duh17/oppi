@@ -418,6 +418,12 @@ export class UserStreamMux {
           send(buildPermissionMessage(pending));
         }
 
+        // Re-send pending ask request so iOS can restore the AskCard
+        const pendingAskMsg = this.ctx.sessions.getPendingAskMessage(sessionId);
+        if (pendingAskMsg) {
+          send(pendingAskMsg);
+        }
+
         send({
           type: "command_result",
           command: "subscribe",

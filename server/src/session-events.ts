@@ -48,6 +48,8 @@ export interface PendingAskState {
   questions: Array<{ id: string; question: string; multiSelect?: boolean }>;
   /** Extension select/input requests deferred until iOS responds. */
   deferred: Array<{ id: string; req: ExtensionUIRequest }>;
+  /** Full broadcast message — stored for re-sending on client reconnect. */
+  broadcastMessage: ServerMessage;
 }
 
 export interface EventProcessorSessionState {
@@ -220,16 +222,8 @@ export class SessionEventProcessor {
     if (!Array.isArray(questions) || questions.length === 0) return;
 
     const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    active.pendingAsk = {
-      requestId,
-      questions: questions.map((q) => ({ id: q.id, question: q.question, multiSelect: q.multiSelect })),
-      deferred: [],
-    };
 
-    // Register as pending so the iOS response is accepted
-    active.pendingUIRequests.set(requestId, { type: "extension_ui_request", id: requestId, method: "ask" });
-
-    this.deps.broadcast(key, {
+    const broadcastMessage: ServerMessage = {
       type: "extension_ui_request",
       id: requestId,
       sessionId: active.session.id,
@@ -242,7 +236,27 @@ export class SessionEventProcessor {
       })),
       allowCustom: (args.allowCustom as boolean) ?? true,
       timeout: 120000,
+    };
+
+    active.pendingAsk = {
+      requestId,
+      questions: questions.map((q) => ({
+        id: q.id,
+        question: q.question,
+        multiSelect: q.multiSelect,
+      })),
+      deferred: [],
+      broadcastMessage,
+    };
+
+    // Register as pending so the iOS response is accepted
+    active.pendingUIRequests.set(requestId, {
+      type: "extension_ui_request",
+      id: requestId,
+      method: "ask",
     });
+
+    this.deps.broadcast(key, broadcastMessage);
   }
 
   /** Resolve deferred select/input requests using iOS ask answers. */

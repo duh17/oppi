@@ -1,4 +1,8 @@
-import type { ExtensionUIRequest, PendingAskState, SessionEventProcessor } from "./session-events.js";
+import type {
+  ExtensionUIRequest,
+  PendingAskState,
+  SessionEventProcessor,
+} from "./session-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
 
 /** Extension UI response sent to pi */

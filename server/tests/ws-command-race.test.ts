@@ -100,6 +100,7 @@ function makeHarness(options?: {
       getActiveSession: vi.fn((sessionId: string) => sessionsById.get(sessionId)),
       getCurrentSeq,
       getCatchUp,
+      getPendingAskMessage: () => undefined,
     } as unknown as StreamContext["sessions"],
     storage: {
       getSession: vi.fn((sessionId: string) => sessionsById.get(sessionId)),

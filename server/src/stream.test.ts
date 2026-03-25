@@ -99,6 +99,7 @@ function createMockContext(sessions: Session[]): {
       getActiveSession: (id: string) => sessionMap.get(id) ?? null,
       getCurrentSeq: () => 0,
       getCatchUp: () => null,
+      getPendingAskMessage: () => undefined,
     } as unknown as StreamContext["sessions"],
 
     gate: {

@@ -448,6 +448,10 @@ export class SessionManager extends EventEmitter {
    * stays alive and ready for the next prompt.
    */
   async sendAbort(sessionId: string): Promise<void> {
+    // Cancel pending ask before aborting — resolve deferred selects as
+    // cancelled so the pi process unblocks from waiting for extension UI
+    // responses and can process the abort signal.
+    this.cancelPendingAsk(sessionId);
     const key = this.sessionKey(sessionId);
     await this.stopFlowCoordinator.sendAbort(key, sessionId);
   }
@@ -536,6 +540,31 @@ export class SessionManager extends EventEmitter {
 
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(this.sessionKey(sessionId))?.session;
+  }
+
+  /** Return the stored ask broadcast message if this session has a pending ask. */
+  getPendingAskMessage(sessionId: string): ServerMessage | undefined {
+    return this.active.get(this.sessionKey(sessionId))?.pendingAsk?.broadcastMessage;
+  }
+
+  /** Cancel pending ask and resolve all deferred selects as cancelled. */
+  cancelPendingAsk(sessionId: string): void {
+    const key = this.sessionKey(sessionId);
+    const active = this.active.get(key);
+    if (!active?.pendingAsk) return;
+
+    const ask = active.pendingAsk;
+    for (const { id } of ask.deferred) {
+      this.respondToUIRequest(sessionId, {
+        type: "extension_ui_response",
+        id,
+        cancelled: true,
+      });
+    }
+
+    // Also cancel the synthetic ask request itself
+    active.pendingUIRequests.delete(ask.requestId);
+    active.pendingAsk = undefined;
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
