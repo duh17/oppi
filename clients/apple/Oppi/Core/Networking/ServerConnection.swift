@@ -34,6 +34,7 @@ final class ServerConnection {
     let gitStatusStore = GitStatusStore()
     let fileIndexStore = FileIndexStore()
     let messageQueueStore = MessageQueueStore()
+    let activityStore = SessionActivityStore()
 
     // Audio
     let audioPlayer = AudioPlayerService()

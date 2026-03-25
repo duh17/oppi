@@ -4,11 +4,20 @@ import SwiftUI
 
 /// Unified session row used in both active and stopped sections.
 ///
-/// Child session summary (agent count + status badge) is opt-in via the `children`
-/// parameter. When nil, the row renders as a simple flat row.
+/// Three-line layout:
+/// ```
+/// [dot] Title (bold if needs attention)          [time]
+///       [StatusPill] activity summary text
+///       3 files · ▬ 25% · $27.45    [child badge if any]
+/// ```
+///
+/// Activity summary is passed in by the caller (computed from
+/// SessionActivityStore + PermissionStore) to keep this view
+/// testable and avoid environment collisions with parallel work.
 struct SessionRow: View {
     let session: Session
     let pendingCount: Int
+    let activitySummary: String?
     let lineageHint: String?
     let children: ChildSummary?
 
@@ -19,19 +28,22 @@ struct SessionRow: View {
         let aggregateCost: Double
     }
 
-    init(session: Session, pendingCount: Int, lineageHint: String? = nil, children: ChildSummary? = nil) {
+    init(
+        session: Session,
+        pendingCount: Int,
+        activitySummary: String? = nil,
+        lineageHint: String? = nil,
+        children: ChildSummary? = nil
+    ) {
         self.session = session
         self.pendingCount = pendingCount
+        self.activitySummary = activitySummary
         self.lineageHint = lineageHint
         self.children = children
     }
 
     private var title: String {
         session.displayTitle
-    }
-
-    private var modelShort: String? {
-        SessionFormatting.shortModelName(session.model)
     }
 
     private var contextPercent: Double? {
@@ -41,9 +53,13 @@ struct SessionRow: View {
         return min(max(Double(used) / Double(window), 0), 1)
     }
 
+    private var pillVariant: SessionPillVariant {
+        .from(status: session.status, pendingCount: pendingCount)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            // Status dot
+            // Status dot — leading visual accent
             Circle()
                 .fill(session.status.color)
                 .frame(width: 10, height: 10)
@@ -57,14 +73,14 @@ struct SessionRow: View {
 
             // Content
             VStack(alignment: .leading, spacing: 3) {
-                // Row 1: name
+                // Row 1: title
                 Text(title)
                     .font(.body)
                     .fontWeight(pendingCount > 0 ? .semibold : .regular)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
 
-                // Row 2: lineage hint (stopped sessions only)
+                // Row 1.5: lineage hint (stopped sessions only)
                 if let lineageHint, !lineageHint.isEmpty {
                     Text(lineageHint)
                         .font(.caption)
@@ -72,38 +88,24 @@ struct SessionRow: View {
                         .lineLimit(1)
                 }
 
-                // Row 3: change stats + child badge
-                if session.changeStats != nil || children != nil {
-                    HStack(spacing: 8) {
-                        if let stats = session.changeStats {
-                            Text(filesTouchedSummary(stats.filesChanged))
-                                .foregroundStyle(changeSummaryColor(stats))
+                // Row 2: status pill + activity summary
+                HStack(spacing: 6) {
+                    SessionStatusPill(pillVariant)
 
-                            Text("+\(stats.addedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeDiffAdded)
-
-                            Text("-\(stats.removedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeDiffRemoved)
-                        }
-
-                        if let children {
-                            childBadge(children: children)
-                        }
+                    if let activitySummary, !activitySummary.isEmpty {
+                        Text(activitySummary)
+                            .font(.caption2)
+                            .foregroundStyle(.themeFgDim)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    .font(.caption2)
-                    .lineLimit(1)
                 }
 
-                // Row 4: model + compact metrics
+                // Row 3: files + context gauge + cost + child badge
                 HStack(spacing: 6) {
-                    if let model = modelShort {
-                        Text(model)
-                    }
-
-                    if session.messageCount > 0 {
-                        Text("\(session.messageCount) msgs")
+                    if let stats = session.changeStats, stats.filesChanged > 0 {
+                        Text(filesTouchedSummary(stats.filesChanged))
+                            .foregroundStyle(changeSummaryColor(stats))
                     }
 
                     if let pct = contextPercent {
@@ -113,6 +115,12 @@ struct SessionRow: View {
                     let displayCost = children?.aggregateCost ?? session.cost
                     if displayCost > 0 {
                         Text(costString(displayCost))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let children {
+                        childBadge(children: children)
                     }
                 }
                 .font(.caption)
@@ -147,8 +155,7 @@ struct SessionRow: View {
     @ViewBuilder
     private func childBadge(children: ChildSummary) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: "arrow.triangle.branch")
-                .font(.appBadge)
+            Text("\(children.childCount) agents")
                 .foregroundStyle(.themeCyan)
 
             let counts = children.statusCounts
@@ -193,6 +200,96 @@ struct SessionRow: View {
             return .themeOrange
         }
         return .themeGreen
+    }
+}
+
+// MARK: - Activity Summary
+
+/// Generate activity summary text from session state and activity data.
+///
+/// Called by the parent view (WorkspaceDetailView) to compute the summary
+/// before passing it to SessionRow. Keeps SessionRow pure and testable.
+enum SessionActivitySummary {
+
+    static func text(
+        session: Session,
+        pendingCount: Int,
+        pendingPermissions: [PermissionRequest],
+        activity: SessionActivityStore.Activity?
+    ) -> String? {
+        // Pending permissions take priority
+        if pendingCount > 0, let first = pendingPermissions.first {
+            return permissionDescription(first)
+        }
+
+        // Working: show current tool
+        if session.status == .busy || session.status == .starting || session.status == .stopping {
+            if let activity {
+                return formatToolActivity(activity)
+            }
+            return nil
+        }
+
+        // Idle: turn ended
+        if session.status == .ready {
+            return "turn ended"
+        }
+
+        // Stopped: show file summary if available
+        if session.status == .stopped {
+            if let stats = session.changeStats, stats.filesChanged > 0 {
+                return "\(stats.filesChanged) files changed"
+            }
+            return nil
+        }
+
+        // Error
+        if session.status == .error {
+            return "agent error"
+        }
+
+        return nil
+    }
+
+    private static func permissionDescription(_ perm: PermissionRequest) -> String {
+        let tool = perm.tool.lowercased()
+        if let path = perm.input["path"]?.stringValue {
+            return "permission: \(tool) \(shortenPath(path))"
+        }
+        if let cmd = perm.input["command"]?.stringValue {
+            let truncated = cmd.count > 30 ? String(cmd.prefix(30)) + "..." : cmd
+            return "permission: \(truncated)"
+        }
+        return "permission: \(perm.tool)"
+    }
+
+    static func formatToolActivity(_ activity: SessionActivityStore.Activity) -> String {
+        let verb = toolVerb(activity.toolName)
+        if let arg = activity.keyArg {
+            return "\(verb) \(shortenPath(arg))"
+        }
+        return verb
+    }
+
+    private static func toolVerb(_ tool: String) -> String {
+        switch tool.lowercased() {
+        case "read": return "reading"
+        case "write": return "writing"
+        case "edit": return "editing"
+        case "bash", "execute": return "running"
+        case "search", "grep": return "searching"
+        case "glob", "find": return "finding"
+        default: return tool.lowercased()
+        }
+    }
+
+    private static func shortenPath(_ path: String) -> String {
+        // Show last two path components for readability
+        let components = path.split(separator: "/")
+        if components.count <= 2 {
+            return path
+        }
+        return components.suffix(2).joined(separator: "/")
     }
 }
 

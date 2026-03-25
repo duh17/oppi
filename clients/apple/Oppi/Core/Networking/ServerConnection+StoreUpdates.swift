@@ -54,6 +54,12 @@ extension ServerConnection {
             syncLiveActivityPermissions()
             return StoreUpdateResult(takenPermission: request, handled: true)
 
+        // MARK: Tool activity tracking
+
+        case .toolStart(let tool, let args, _, _):
+            activityStore.recordToolStart(sessionId: sessionId, tool: tool, args: args)
+            return .notHandled  // let active-session path also process (watchdog, coalescer)
+
         // MARK: Agent lifecycle
 
         case .agentStart:
@@ -75,6 +81,7 @@ extension ServerConnection {
                 sessionStore.upsert(current)
             }
             sessionStore.recordTurnEnded(sessionId: sessionId)
+            activityStore.clear(sessionId: sessionId)
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
@@ -112,6 +119,7 @@ extension ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            activityStore.clear(sessionId: sessionId)
             screenAwakeController.clearSessionActivity(sessionId: sessionId)
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
@@ -120,6 +128,7 @@ extension ServerConnection {
             sessionStore.remove(id: deletedId)
             notificationSessionIds.remove(deletedId)
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
+            activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
