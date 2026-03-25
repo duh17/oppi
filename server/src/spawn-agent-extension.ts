@@ -50,6 +50,8 @@ export interface SpawnAgentContext {
   getAvailableModelIds(): string[];
   /** Stop a session by ID. Used by stop_agent to terminate child sessions. */
   stopSession(sessionId: string): Promise<void>;
+  /** Resume a stopped session (restart its SDK process). */
+  resumeSession(sessionId: string): Promise<Session>;
   /**
    * Send a message to a session. Semantics depend on session state:
    * - Idle session: sends as a prompt (starts a new turn).
@@ -1126,7 +1128,8 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "Send a message to a child agent session. " +
         "If the target is idle, the message starts a new turn (prompt). " +
         "If the target is busy, the message is delivered as a steer (mid-turn) " +
-        "or follow-up (after turn), controlled by the behavior parameter.",
+        "or follow-up (after turn), controlled by the behavior parameter. " +
+        "If the target is stopped, it is automatically resumed before delivering the message.",
       promptSnippet:
         "send_message(id, message, behavior?) — send a message to a child agent session",
       promptGuidelines: [
@@ -1136,7 +1139,9 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
         "behavior='followUp': queued until the agent finishes its current turn. " +
           "Use for non-urgent additions like 'when you're done, also check Z'.",
         "If the target is idle (not busy), the message starts a new turn regardless of behavior.",
-        "Use check_agents first to find the session ID and confirm the child is running.",
+        "If the target is stopped, it is automatically resumed and the message is delivered as a new prompt. " +
+          "This is useful for continuing work on a completed sub-agent.",
+        "Use check_agents first to find the session ID.",
       ],
       parameters: sendMessageParams,
 
@@ -1173,15 +1178,16 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
-        // Check if session is terminal
-        if (isTerminal(session.status)) {
+        // Auto-resume stopped sessions, then deliver message as a new prompt.
+        // Error sessions cannot be resumed — they indicate a fatal failure.
+        if (session.status === "error") {
           return {
             content: [
               {
                 type: "text" as const,
                 text:
-                  `Agent "${session.name ?? params.id}" is ${session.status}. ` +
-                  `Cannot send messages to a terminated session.`,
+                  `Agent "${session.name ?? params.id}" is in error state. ` +
+                  `Cannot send messages to an errored session. Spawn a new agent instead.`,
               },
             ],
             details: {
@@ -1193,20 +1199,50 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
+        // Auto-resume: restart the stopped session's SDK process, then send as prompt.
+        let autoResumed = false;
+        if (session.status === "stopped") {
+          try {
+            await ctx.resumeSession(params.id);
+            autoResumed = true;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Resume failed";
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text:
+                    `Failed to resume agent "${session.name ?? params.id}": ${msg}. ` +
+                    `Spawn a new agent instead.`,
+                },
+              ],
+              details: {
+                agentId: params.id,
+                name: session.name ?? undefined,
+                status: "error",
+                deliveredAs: "prompt" as const,
+              },
+            };
+          }
+        }
+
         // Determine delivery mode based on session status
-        const isBusy = session.status === "busy";
+        const isBusy = !autoResumed && session.status === "busy";
         const behavior = params.behavior ?? "steer";
-        const deliveredAs: "prompt" | "steer" | "follow_up" = isBusy
-          ? behavior === "followUp"
-            ? "follow_up"
-            : "steer"
-          : "prompt";
+        const deliveredAs: "prompt" | "steer" | "follow_up" = autoResumed
+          ? "prompt"
+          : isBusy
+            ? behavior === "followUp"
+              ? "follow_up"
+              : "steer"
+            : "prompt";
 
         try {
           await ctx.sendMessage(params.id, params.message, behavior);
 
-          const modeLabel =
-            deliveredAs === "prompt"
+          const modeLabel = autoResumed
+            ? "as a new turn after auto-resuming the stopped session"
+            : deliveredAs === "prompt"
               ? "as a new turn (prompt)"
               : deliveredAs === "steer"
                 ? "as a steer (mid-turn, before next LLM call)"
@@ -1222,7 +1258,7 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
             details: {
               agentId: params.id,
               name: session.name ?? undefined,
-              status: session.status,
+              status: autoResumed ? "resumed" : session.status,
               deliveredAs,
             },
           };
