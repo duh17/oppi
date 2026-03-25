@@ -368,9 +368,63 @@ const log_experiment: MobileToolRenderer = {
   },
 };
 
+const ask: MobileToolRenderer = {
+  renderCall(args) {
+    const qs = Array.isArray(args.questions)
+      ? (args.questions as Array<Record<string, unknown>>)
+      : [];
+    const segs: StyledSegment[] = [{ text: "ask ", style: "bold" }];
+
+    if (qs.length === 1) {
+      segs.push({ text: firstLine(str(qs[0]?.question), 60), style: "muted" });
+    } else if (qs.length > 1) {
+      segs.push({ text: `${qs.length} questions`, style: "muted" });
+    }
+    return segs;
+  },
+  renderResult(details: unknown, isError) {
+    if (isError) return [];
+    const payload = asRecord(details);
+    if (payload?.allIgnored === true) {
+      return [{ text: "all ignored", style: "dim" }];
+    }
+    const answers = asRecord(payload?.answers) ?? {};
+    const questions = Array.isArray(payload?.questions)
+      ? (payload.questions as Array<Record<string, unknown>>)
+      : [];
+    const keys = Object.keys(answers);
+    if (keys.length === 0) return [{ text: "no answers", style: "warning" }];
+
+    const segs: StyledSegment[] = [];
+    for (const q of questions) {
+      const qId = str(q?.id);
+      const a = answers[qId];
+      if (a === undefined) {
+        segs.push({ text: qId, style: "dim" }, { text: ": skipped\n", style: "dim" });
+        continue;
+      }
+      const display = Array.isArray(a) ? (a as string[]).join(", ") : str(a);
+      segs.push(
+        { text: "\u2713 ", style: "success" },
+        { text: qId, style: "muted" },
+        { text: ": ", style: "dim" },
+        { text: display, style: "accent" },
+        { text: "\n", style: "dim" },
+      );
+    }
+    // Trim trailing newline
+    if (segs.length > 0) {
+      const last = segs[segs.length - 1];
+      if (last.text === "\n") segs.pop();
+    }
+    return segs;
+  },
+};
+
 // ─── Registry ───
 
 const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
+  ask,
   bash,
   read,
   edit,
