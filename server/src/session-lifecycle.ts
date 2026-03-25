@@ -77,9 +77,13 @@ export class SessionLifecycleCoordinator {
     // in sandbox mode where VM boot adds latency before the first turn).
     const active = this.deps.getActiveSession(key);
     if (active?.session.parentSessionId && active.session.status === "ready") {
-      // Only auto-stop if the child has done at least one turn.
-      // Before that, it's still initializing — let it run.
-      if (active.session.messageCount > 0) {
+      // Has the child actually produced LLM output? messageCount alone is
+      // unreliable — sendPrompt increments it before the SDK processes the
+      // prompt, so a resetIdleTimer call from sendCommand sees messageCount > 0
+      // while the agent hasn't started yet.
+      const hasCompletedWork = active.session.tokens.output > 0;
+
+      if (hasCompletedWork) {
         console.log("[session] auto-stopping idle child", {
           sessionId: active.session.id,
           parent: active.session.parentSessionId,
@@ -89,8 +93,10 @@ export class SessionLifecycleCoordinator {
         }, 0);
         return;
       }
-      // First idle: grace period for prompt dispatch + LLM response.
-      const CHILD_GRACE_MS = 30_000;
+
+      // Child hasn't produced output yet — either still initializing,
+      // waiting for the LLM, or in sandbox VM boot. Give it time.
+      const CHILD_GRACE_MS = 60_000;
       const timer = setTimeout(() => {
         const current = this.deps.getActiveSession(key);
         if (current?.session.parentSessionId && current.session.status === "ready") {
