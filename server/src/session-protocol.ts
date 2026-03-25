@@ -503,9 +503,13 @@ export function translatePiEvent(
       if (!Array.isArray(contents) || contents.length === 0) return EMPTY_MESSAGES;
 
       const toolCallId = resolveToolCallId(event);
-      const messages: ServerMessage[] = [];
       const key = toolCallId ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
+
+      // Ask tool: no streaming output to iOS.
+      if (toolName === "ask") return EMPTY_MESSAGES;
+
+      const messages: ServerMessage[] = [];
       const shellTool = isShellLikeTool(toolName);
 
       for (const block of contents) {
@@ -565,12 +569,18 @@ export function translatePiEvent(
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
       const shellTool = isShellLikeTool(toolName);
 
+      // Ask tool output is only for the LLM — suppress it from iOS broadcast.
+      // The structured details (answers) are delivered via tool_end, and iOS
+      // renders them as a user message. This avoids scattered output suppression
+      // checks on the iOS side (processInternal, processBatch, trace replay).
+      const isAskTool = toolName === "ask";
+
       // Extract final text/media from result — some tools only include output
       // at end (no partial updates), so emit missing delta here.
       const resultContents = event.result?.content;
       const messages: ServerMessage[] = [];
 
-      if (Array.isArray(resultContents) && resultContents.length > 0) {
+      if (!isAskTool && Array.isArray(resultContents) && resultContents.length > 0) {
         const finalText = resultContents
           .map((block) => {
             const record = asRecord(block);

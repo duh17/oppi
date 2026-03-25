@@ -675,8 +675,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 }
 
             case .toolOutput(let payload):
-                // Suppress output for ask tool — no tool row to update.
-                if askToolEventIDs.contains(payload.toolEventId) { continue }
                 let toolEventId = payload.toolEventId
                 if pendingToolOutputChunksByID[toolEventId] == nil {
                     pendingToolOutputOrder.append(toolEventId)
@@ -794,8 +792,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return handleToolStart(toolEventId: toolEventId, tool: tool, args: args, callSegments: callSegments)
 
         case .toolOutput(let payload):
-            // Suppress output for ask tool — no tool row to update.
-            if askToolEventIDs.contains(payload.toolEventId) { return false }
             let outputDidChange: Bool
             if payload.mode == .replace {
                 outputDidChange = toolOutputStore.replace(

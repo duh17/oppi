@@ -102,20 +102,35 @@ struct TimelineReducerAskTests {
         #expect(foundText == "approach → full_rewrite")
     }
 
-    @Test("ask toolOutput is suppressed")
-    func askToolOutputSuppressed() {
+    @Test("ask toolEnd clears any leaked output from tool row")
+    func askToolEndClearsOutput() {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(
             sessionId: "s1", toolEventId: "ask-evt-1", tool: "ask", args: [:]
         ))
-        let countBefore = reducer.items.count
+        // Simulate output arriving (server normally suppresses this, but test defensive path)
         reducer.process(.toolOutput(.init(
             sessionId: "s1", toolEventId: "ask-evt-1",
             output: "approach: full_rewrite",
             isError: false, mode: .append, truncated: false, totalBytes: nil
         )))
-        // Item count shouldn't change (output suppressed)
-        #expect(reducer.items.count == countBefore)
+        // toolEnd should clear the output and mark done with empty preview
+        reducer.process(.toolEnd(
+            sessionId: "s1", toolEventId: "ask-evt-1",
+            details: .object([
+                "questions": .array([.object(["id": .string("approach")])]),
+                "answers": .object(["approach": .string("full_rewrite")]),
+                "allIgnored": .bool(false),
+            ])
+        ))
+        // Tool row should be done with no output
+        for item in reducer.items {
+            if case .toolCall(let id, _, _, let preview, let byteCount, _, let isDone) = item, id == "ask-evt-1" {
+                #expect(isDone)
+                #expect(preview.isEmpty)
+                #expect(byteCount == 0)
+            }
+        }
     }
 
     @Test("ask toolEnd marks tool row as done")
