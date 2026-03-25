@@ -8,8 +8,9 @@
  * File pattern: server-metrics-YYYY-MM-DD.jsonl
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv, round2 } from "./metric-utils.js";
 
 const FILE_PREFIX = "server-metrics-";
 const FILE_SUFFIX = ".jsonl";
@@ -33,30 +34,11 @@ interface CpuSnapshot {
   timestamp: number; // Date.now()
 }
 
-function retentionDaysFromEnv(): number {
-  const raw = process.env.OPPI_SERVER_METRICS_RETENTION_DAYS?.trim() ?? "";
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return DEFAULT_RETENTION_DAYS;
-}
-
 function intervalFromEnv(): number {
   const raw = process.env.OPPI_SERVER_METRICS_INTERVAL_MS?.trim() ?? "";
   const parsed = Number.parseInt(raw, 10);
   if (Number.isFinite(parsed) && parsed >= 5000) return parsed;
   return DEFAULT_INTERVAL_MS;
-}
-
-function dateString(ts: number): string {
-  const d = new Date(ts);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 export class ServerResourceSampler {
@@ -169,29 +151,11 @@ export class ServerResourceSampler {
   }
 
   private pruneOldFiles(): void {
-    const retentionMs = retentionDaysFromEnv() * 24 * 60 * 60 * 1000;
-    const cutoffMs = Date.now() - retentionMs;
-    const dir = this.deps.telemetryDir;
-
-    if (!existsSync(dir)) return;
-
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (!entry.startsWith(FILE_PREFIX) || !entry.endsWith(FILE_SUFFIX)) continue;
-      const datePart = entry.slice(FILE_PREFIX.length, -FILE_SUFFIX.length);
-      const fileDate = Date.parse(`${datePart}T00:00:00.000Z`);
-      if (Number.isNaN(fileDate) || fileDate >= cutoffMs) continue;
-      try {
-        unlinkSync(join(dir, entry));
-      } catch {
-        // Best effort
-      }
-    }
+    pruneOldJsonlFiles(
+      this.deps.telemetryDir,
+      FILE_PREFIX,
+      FILE_SUFFIX,
+      retentionDaysFromEnv("OPPI_SERVER_METRICS_RETENTION_DAYS", DEFAULT_RETENTION_DAYS),
+    );
   }
 }
