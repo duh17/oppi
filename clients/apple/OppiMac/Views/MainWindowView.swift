@@ -1,4 +1,9 @@
+import Combine
 import SwiftUI
+
+extension Notification.Name {
+    static let navigateToTab = Notification.Name("OppiMac.navigateToTab")
+}
 
 struct MainWindowView: View {
 
@@ -24,6 +29,11 @@ struct MainWindowView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
+        .onReceive(NotificationCenter.default.publisher(for: .navigateToTab)) { note in
+            if let tab = note.object as? SidebarTab {
+                selectedTab = tab
+            }
+        }
     }
 
     @ViewBuilder

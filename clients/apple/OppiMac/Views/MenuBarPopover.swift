@@ -56,6 +56,15 @@ struct MenuBarPopover: View {
 
                 serverControls
 
+                Button("Pair New Device...") {
+                    NotificationCenter.default.post(
+                        name: .navigateToTab,
+                        object: SidebarTab.pair
+                    )
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "main")
+                }
+
                 Divider()
 
                 Button("Check for Updates...") {
