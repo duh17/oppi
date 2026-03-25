@@ -97,6 +97,9 @@ final class ServerConnection {
     // Ask extension
     var activeAskRequest: AskRequest?
     var askAnswerMode: Bool = false
+    /// Pending ask requests for sessions the user isn't currently viewing.
+    /// Restored to activeAskRequest when the user enters the session.
+    var pendingAskRequests: [String: AskRequest] = [:]
 
     /// Per-connection chat UI state (composer, caches, thinking level).
     /// Views observe this directly via `@Environment(ChatSessionState.self)`.
@@ -599,11 +602,17 @@ final class ServerConnection {
         sender.activeSessionId = sessionId
         // Reset per-connection UI state for the new focused session
         activeExtensionDialog = nil
-        activeAskRequest = nil
         askAnswerMode = false
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
         chatState.resetSessionState()
+
+        // Restore pending ask request if one was stashed for this session
+        if let pending = pendingAskRequests.removeValue(forKey: sessionId) {
+            activeAskRequest = pending
+        } else {
+            activeAskRequest = nil
+        }
     }
 
     /// Disconnect from the current session stream.

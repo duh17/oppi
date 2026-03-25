@@ -16,7 +16,22 @@ extension ServerConnection {
     /// Timeline mutations (coalescer/reducer) are handled by the per-session
     /// ChatSessionManager.routeToTimeline() instead.
     func handleActiveSessionUI(_ message: ServerMessage, sessionId: String) {
-        guard sessionId == activeSessionId else { return }
+        // Stash ask requests for non-active sessions so they're available on entry.
+        if sessionId != activeSessionId {
+            if case .extensionUIRequest(let request) = message,
+               request.method == "ask",
+               let questions = request.askQuestions,
+               !questions.isEmpty {
+                pendingAskRequests[sessionId] = AskRequest(
+                    id: request.id,
+                    sessionId: request.sessionId,
+                    questions: questions,
+                    allowCustom: request.allowCustom ?? true,
+                    timeout: request.timeout
+                )
+            }
+            return
+        }
 
         switch message {
         case .connected(let session):
