@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
@@ -288,14 +288,20 @@ export class SdkBackend {
         // Auth extraction failed — proceed without secrets
       }
 
-      // Mount skill directories + agentDir read-only so the agent can read
-      // SKILL.md files and AGENTS.md at the paths referenced in the system prompt.
+      // Mount specific subdirectories read-only so the agent can read
+      // SKILL.md files and extensions at the paths referenced in the system prompt.
+      // Do NOT mount agentDir itself — it contains auth.json (API keys).
       const readonlyMounts: string[] = [];
       if (config.skillPaths) {
         readonlyMounts.push(...config.skillPaths);
       }
-      // Mount agentDir so AGENTS.md, extensions, etc. are accessible
-      readonlyMounts.push(agentDir);
+      // Mount only safe subdirectories, not the whole agentDir.
+      // skills/ is already covered by skillPaths above.
+      // extensions/ is needed for loaded extensions to resolve their own files.
+      const extensionsDir = join(agentDir, "extensions");
+      if (existsSync(extensionsDir)) {
+        readonlyMounts.push(extensionsDir);
+      }
 
       const vm = await manager.ensureWorkspaceVm(workspace, cwd, secrets, readonlyMounts);
 
