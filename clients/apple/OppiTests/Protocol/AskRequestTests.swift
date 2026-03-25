@@ -211,14 +211,14 @@ struct AskRequestTests {
             id: "ask-r1",
             sessionId: "s1",
             method: "ask",
+            timeout: 60000,
             askQuestions: [
                 AskQuestion(id: "q1", question: "Pick one", options: [
                     AskOption(value: "a", label: "A"),
                     AskOption(value: "b", label: "B"),
                 ], multiSelect: false),
             ],
-            allowCustom: true,
-            timeout: 60000
+            allowCustom: true
         )
 
         let message = ServerMessage.extensionUIRequest(request)
