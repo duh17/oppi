@@ -429,7 +429,8 @@ struct WorkspaceDetailView: View {
             counts.total += 1
             switch desc.status {
             case .starting, .busy, .stopping: counts.working += 1
-            case .ready, .stopped: counts.done += 1
+            case .ready: counts.ready += 1
+            case .stopped: counts.stopped += 1
             case .error: counts.error += 1
             }
             totalCost += desc.cost

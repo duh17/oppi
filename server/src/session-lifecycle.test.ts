@@ -21,12 +21,17 @@ function makeSession(overrides?: Partial<Session>): Session {
   };
 }
 
-function makeActiveSession(overrides?: Partial<Session>): SessionLifecycleSessionState {
+function makeActiveSession(
+  overrides?: Partial<Session>,
+  extraState?: { outputTokensAtStart?: number },
+): SessionLifecycleSessionState {
+  const session = makeSession(overrides);
   return {
-    session: makeSession(overrides),
+    session,
     sdkBackend: { isDisposed: false, dispose: vi.fn() } as never,
     workspaceId: "ws-1",
     pendingUIRequests: new Map(),
+    outputTokensAtStart: extraState?.outputTokensAtStart ?? 0,
   };
 }
 
@@ -88,13 +93,65 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).toHaveBeenCalledWith("child-1");
   });
 
-  it("immediately stops a child that has produced output tokens", () => {
-    const active = makeActiveSession({
-      parentSessionId: "parent-1",
-      status: "ready",
-      messageCount: 4,
-      tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
-    });
+  it("immediately stops a child that has produced output tokens since start", () => {
+    const active = makeActiveSession(
+      {
+        parentSessionId: "parent-1",
+        status: "ready",
+        messageCount: 4,
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+      },
+      { outputTokensAtStart: 0 },
+    );
+    const deps = makeDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    vi.advanceTimersByTime(0);
+    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("does NOT auto-stop a resumed child that has not done new work", () => {
+    // Child had 500 output tokens before being stopped, then was resumed.
+    // outputTokensAtStart matches current output — no new work done yet.
+    const active = makeActiveSession(
+      {
+        parentSessionId: "parent-1",
+        status: "ready",
+        messageCount: 4,
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+      },
+      { outputTokensAtStart: 500 },
+    );
+    const deps = makeDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    // Should NOT immediately stop — no new work since resume
+    vi.advanceTimersByTime(0);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // Should use grace period instead
+    vi.advanceTimersByTime(59_999);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("auto-stops a resumed child after it completes new work", () => {
+    // Child had 500 output tokens at resume, now has 800 — did new work.
+    const active = makeActiveSession(
+      {
+        parentSessionId: "parent-1",
+        status: "ready",
+        messageCount: 6,
+        tokens: { input: 2000, output: 800, cacheRead: 0, cacheWrite: 0 },
+      },
+      { outputTokensAtStart: 500 },
+    );
     const deps = makeDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 

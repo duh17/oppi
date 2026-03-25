@@ -156,9 +156,13 @@ struct SessionRow: View {
                 Text("\u{23F3}\(counts.working)")
                     .foregroundStyle(.themeOrange)
             }
-            if counts.done > 0 {
-                Text("\u{2713}\(counts.done)")
+            if counts.ready > 0 {
+                Text("\u{2713}\(counts.ready)")
                     .foregroundStyle(.themeGreen)
+            }
+            if counts.stopped > 0 {
+                Text("\u{25CF}\(counts.stopped)")
+                    .foregroundStyle(.themeComment)
             }
             if counts.error > 0 {
                 Text("\u{2717}\(counts.error)")

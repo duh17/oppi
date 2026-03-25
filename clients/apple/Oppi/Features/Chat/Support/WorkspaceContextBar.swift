@@ -179,8 +179,12 @@ struct WorkspaceContextBar: View {
         childSessions.count { $0.status == .starting || $0.status == .busy || $0.status == .stopping }
     }
 
-    private var agentDoneCount: Int {
-        childSessions.count { $0.status == .ready || $0.status == .stopped }
+    private var agentReadyCount: Int {
+        childSessions.count { $0.status == .ready }
+    }
+
+    private var agentStoppedCount: Int {
+        childSessions.count { $0.status == .stopped }
     }
 
     private var agentErrorCount: Int {
@@ -709,12 +713,20 @@ struct WorkspaceContextBar: View {
                     accessibilityLabel: "\(agentWorkingCount) working"
                 )
             }
-            if agentDoneCount > 0 {
+            if agentReadyCount > 0 {
                 compactAgentStatusPill(
-                    count: agentDoneCount,
+                    count: agentReadyCount,
                     foreground: .themeGreen,
                     background: Color.themeGreen.opacity(0.12),
-                    accessibilityLabel: "\(agentDoneCount) done"
+                    accessibilityLabel: "\(agentReadyCount) ready"
+                )
+            }
+            if agentStoppedCount > 0 {
+                compactAgentStatusPill(
+                    count: agentStoppedCount,
+                    foreground: .themeComment,
+                    background: Color.themeComment.opacity(0.1),
+                    accessibilityLabel: "\(agentStoppedCount) stopped"
                 )
             }
             if agentErrorCount > 0 {

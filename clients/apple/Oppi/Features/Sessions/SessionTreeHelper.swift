@@ -10,7 +10,8 @@ enum SessionTreeHelper {
     /// Aggregate child status counts for badges.
     struct StatusCounts: Equatable {
         var working: Int = 0
-        var done: Int = 0
+        var ready: Int = 0
+        var stopped: Int = 0
         var error: Int = 0
         var total: Int = 0
     }
@@ -74,7 +75,8 @@ enum SessionTreeHelper {
             counts.total += 1
             switch session.status {
             case .starting, .busy, .stopping: counts.working += 1
-            case .ready, .stopped: counts.done += 1
+            case .ready: counts.ready += 1
+            case .stopped: counts.stopped += 1
             case .error: counts.error += 1
             }
         }

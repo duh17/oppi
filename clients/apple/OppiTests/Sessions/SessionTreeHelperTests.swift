@@ -256,7 +256,7 @@ struct SessionTreeHelperTests {
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
-        #expect(counts.done == 1)
+        #expect(counts.stopped == 1)
         #expect(counts.error == 1)
         #expect(counts.total == 3)
     }
@@ -273,13 +273,13 @@ struct SessionTreeHelperTests {
         #expect(counts.total == 2)
     }
 
-    @Test func descendantStatusCounts_readyIsDone() {
+    @Test func descendantStatusCounts_readyIsReady() {
         let sessions = [
             makeSession(id: "parent"),
             makeSession(id: "c1", parentId: "parent", status: .ready),
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
-        #expect(counts.done == 1)
+        #expect(counts.ready == 1)
     }
 
     @Test func descendantStatusCounts_startingIsWorking() {

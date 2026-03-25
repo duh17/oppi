@@ -33,6 +33,8 @@ export interface SessionStartActiveSession {
   pendingStop?: PendingStop;
   seq: number;
   eventRing: EventRing;
+  /** Output tokens when this activation started. Used to detect new work vs. prior-life tokens. */
+  outputTokensAtStart: number;
 }
 
 export interface SessionStartCoordinatorDeps {
@@ -163,6 +165,7 @@ export class SessionStartCoordinator {
           pendingTurnStarts: [],
           seq: 0,
           eventRing: new EventRing(this.deps.eventRingCapacity),
+          outputTokensAtStart: session.tokens.output,
         };
 
         this.deps.registerActiveSession(key, activeSession);

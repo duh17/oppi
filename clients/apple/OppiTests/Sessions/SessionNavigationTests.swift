@@ -359,7 +359,8 @@ struct SessionNavigationTests {
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 3)
-        #expect(counts.done == 0)
+        #expect(counts.ready == 0)
+        #expect(counts.stopped == 0)
         #expect(counts.error == 0)
         #expect(counts.total == 3)
     }
@@ -372,7 +373,7 @@ struct SessionNavigationTests {
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 0)
-        #expect(counts.done == 2)
+        #expect(counts.stopped == 2)
         #expect(counts.error == 0)
         #expect(counts.total == 2)
     }
@@ -387,7 +388,7 @@ struct SessionNavigationTests {
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
-        #expect(counts.done == 1)
+        #expect(counts.stopped == 1)
         #expect(counts.error == 2)
         #expect(counts.total == 4)
     }
@@ -399,7 +400,8 @@ struct SessionNavigationTests {
         ]
         let counts = SessionTreeHelper.descendantStatusCounts(of: "parent", in: sessions)
         #expect(counts.working == 1)
-        #expect(counts.done == 0)
+        #expect(counts.ready == 0)
+        #expect(counts.stopped == 0)
         #expect(counts.total == 1)
     }
 

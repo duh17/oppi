@@ -8,6 +8,8 @@ export interface SessionLifecycleSessionState {
   sdkBackend: SdkBackend;
   workspaceId: string;
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  /** Output tokens when this activation started. Used to detect new work vs. prior-life tokens. */
+  outputTokensAtStart: number;
 }
 
 export interface SessionLifecycleCoordinatorDeps {
@@ -78,11 +80,13 @@ export class SessionLifecycleCoordinator {
     // in sandbox mode where VM boot adds latency before the first turn).
     const active = this.deps.getActiveSession(key);
     if (active?.session.parentSessionId && active.session.status === "ready") {
-      // Has the child actually produced LLM output? messageCount alone is
-      // unreliable — sendPrompt increments it before the SDK processes the
-      // prompt, so a resetIdleTimer call from sendCommand sees messageCount > 0
-      // while the agent hasn't started yet.
-      const hasCompletedWork = active.session.tokens.output > 0;
+      // Has the child produced NEW LLM output since this activation started?
+      // Compare against outputTokensAtStart to distinguish fresh work from
+      // tokens inherited from a previous activation (i.e. before stop+resume).
+      // messageCount alone is unreliable — sendPrompt increments it before the
+      // SDK processes the prompt, so a resetIdleTimer call from sendCommand
+      // sees messageCount > 0 while the agent hasn't started yet.
+      const hasCompletedWork = active.session.tokens.output > active.outputTokensAtStart;
 
       if (hasCompletedWork) {
         console.log("[session] auto-stopping idle child", {
