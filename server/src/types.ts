@@ -937,6 +937,21 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     sessionId?: string;
   };
 
+/** Structured option for the ask extension UI. */
+export interface AskOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** A single question in an ask request, with its own options and selection mode. */
+export interface AskQuestion {
+  id: string;
+  question: string;
+  options: AskOption[];
+  multiSelect?: boolean;
+}
+
 // Server → Client
 export type ServerMessage = // ── Connection ──
   (
@@ -1054,6 +1069,9 @@ export type ServerMessage = // ── Connection ──
         placeholder?: string;
         prefill?: string;
         timeout?: number;
+        // ── Ask extension fields (method: "ask") ──
+        questions?: AskQuestion[];
+        allowCustom?: boolean;
       }
     | {
         type: "extension_ui_notification";
