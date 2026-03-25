@@ -398,6 +398,10 @@ export class SessionEventProcessor {
     }
 
     ask.deferred = [];
+    // Clear pendingAsk so subsequent select() calls (if the extension
+    // calls them sequentially) go through the normal UI path instead of
+    // being deferred into a dead queue that nobody resolves.
+    active.pendingAsk = undefined;
   }
 
   /**
