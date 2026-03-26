@@ -223,7 +223,6 @@ extension NativeFullScreenCodeBody: UITextViewDelegate {
 // MARK: - Diff Body
 
 final class NativeFullScreenDiffBody: UIView {
-    private let statsBar = UIView()
     private let scrollView = UIScrollView()
     private let diffTextView = UITextView()
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
@@ -244,38 +243,6 @@ final class NativeFullScreenDiffBody: UIView {
         backgroundColor = UIColor(palette.bgDark)
 
         let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
-        let stats = DiffEngine.stats(lines)
-
-        // Stats bar
-        let statsStack = UIStackView()
-        statsStack.axis = .horizontal
-        statsStack.spacing = 12
-        statsStack.translatesAutoresizingMaskIntoConstraints = false
-
-        if stats.added > 0 {
-            let addedLabel = UILabel()
-            addedLabel.text = "+\(stats.added)"
-            addedLabel.font = AppFont.monoMediumBold
-            addedLabel.textColor = UIColor(palette.green)
-            statsStack.addArrangedSubview(addedLabel)
-        }
-        if stats.removed > 0 {
-            let removedLabel = UILabel()
-            removedLabel.text = "-\(stats.removed)"
-            removedLabel.font = AppFont.monoMediumBold
-            removedLabel.textColor = UIColor(palette.red)
-            statsStack.addArrangedSubview(removedLabel)
-        }
-        let countLabel = UILabel()
-        countLabel.text = "\(lines.count) lines"
-        countLabel.font = AppFont.systemSmall
-        countLabel.textColor = UIColor(palette.comment)
-        statsStack.addArrangedSubview(countLabel)
-        statsStack.addArrangedSubview(UIView()) // spacer
-
-        statsBar.translatesAutoresizingMaskIntoConstraints = false
-        statsBar.backgroundColor = UIColor(palette.bgHighlight)
-        statsBar.addSubview(statsStack)
 
         // Scroll view with selectable diff text.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -297,7 +264,7 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
         let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
-        let diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath ?? "diff.txt")
+        let diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath ?? "diff.txt", includeStats: true)
         diffTextView.attributedText = diffText
 
         let measured = diffText.boundingRect(
@@ -308,22 +275,12 @@ final class NativeFullScreenDiffBody: UIView {
         let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: ceil(measured.width) + 24)
 
         scrollView.addSubview(diffTextView)
-        addSubview(statsBar)
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            statsBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            statsBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            statsBar.topAnchor.constraint(equalTo: topAnchor),
-
-            statsStack.leadingAnchor.constraint(equalTo: statsBar.leadingAnchor, constant: 12),
-            statsStack.trailingAnchor.constraint(equalTo: statsBar.trailingAnchor, constant: -12),
-            statsStack.topAnchor.constraint(equalTo: statsBar.topAnchor, constant: 6),
-            statsStack.bottomAnchor.constraint(equalTo: statsBar.bottomAnchor, constant: -6),
-
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: statsBar.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             diffTextView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
