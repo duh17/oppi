@@ -132,7 +132,7 @@ struct ModelBreakdownSection: View {
                 .frame(width: 140, height: 140)
 
                 VStack(spacing: 2) {
-                    Text(formatCost(totalCost))
+                    Text(SessionFormatting.costString(totalCost))
                         .font(.caption.weight(.semibold))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -207,7 +207,7 @@ struct ModelBreakdownSection: View {
                 }
                 .frame(height: 5)
 
-                Text(formatCost(item.cost))
+                Text(SessionFormatting.costString(item.cost))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.themeComment)
@@ -245,13 +245,6 @@ struct ModelBreakdownSection: View {
     }
 
     // MARK: - Formatting
-
-    private func formatCost(_ value: Double) -> String {
-        if value >= 1000 {
-            return String(format: "$%.0f", value)
-        }
-        return String(format: "$%.2f", value)
-    }
 
     private func formatTokens(_ value: Int) -> String {
         if value >= 1_000_000_000 {

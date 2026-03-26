@@ -83,7 +83,7 @@ struct DailyDetailView: View {
                     Text(dayTitle)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.themeFg)
-                    Text("\(detail.totals.sessions) sessions — \(formatCost(detail.totals.cost))")
+                    Text("\(detail.totals.sessions) sessions — \(SessionFormatting.costString(detail.totals.cost))")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }
@@ -139,7 +139,7 @@ struct DailyDetailView: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(v < 1 ? String(format: "$%.2f", v) : String(format: "$%.0f", v))
+                        Text(SessionFormatting.costString(v))
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
                     }
@@ -203,7 +203,7 @@ struct DailyDetailView: View {
             Spacer(minLength: 4)
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(formatCost(session.cost))
+                Text(SessionFormatting.costString(session.cost))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.themeFg)
 
@@ -222,11 +222,6 @@ struct DailyDetailView: View {
         if hour < 12 { return "\(hour)a" }
         if hour == 12 { return "12p" }
         return "\(hour - 12)p"
-    }
-
-    private func formatCost(_ value: Double) -> String {
-        if value >= 1000 { return String(format: "$%.0f", value) }
-        return String(format: "$%.2f", value)
     }
 
     private func formatTime(_ epochMs: Double) -> String {

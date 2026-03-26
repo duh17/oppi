@@ -252,7 +252,7 @@ struct DailyCostChart: View {
     private func yAxisLabel(_ v: Double) -> String {
         switch metric {
         case .cost:
-            return v < 1.0 ? String(format: "$%.2f", v) : String(format: "$%.1f", v)
+            return SessionFormatting.costString(v)
         case .sessions:
             return String(format: "%.0f", v)
         case .tokens:
@@ -265,7 +265,7 @@ struct DailyCostChart: View {
     private func formatValue(_ v: Double) -> String {
         switch metric {
         case .cost:
-            return String(format: "$%.3f", v)
+            return SessionFormatting.costString(v)
         case .sessions:
             return String(format: "%.0f", v)
         case .tokens:

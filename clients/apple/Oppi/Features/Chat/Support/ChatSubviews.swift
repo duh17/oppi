@@ -123,7 +123,7 @@ struct SessionEndedFooter: View {
                     }
 
                     if session.cost > 0 {
-                        Text(String(format: "$%.3f", session.cost))
+                        Text(SessionFormatting.costString(session.cost))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.themeComment)
                     }

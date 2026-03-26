@@ -80,7 +80,7 @@ struct MacDailyDetailView: View {
                     Text(dayTitle)
                         .font(.caption)
                         .fontWeight(.semibold)
-                    Text("\(detail.totals.sessions) sessions — \(formatCost(detail.totals.cost))")
+                    Text("\(detail.totals.sessions) sessions — \(SessionFormatting.costString(detail.totals.cost))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -136,7 +136,7 @@ struct MacDailyDetailView: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(v < 1 ? String(format: "$%.2f", v) : String(format: "$%.0f", v))
+                        Text(SessionFormatting.costString(v))
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
@@ -199,7 +199,7 @@ struct MacDailyDetailView: View {
             Spacer(minLength: 4)
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(formatCost(session.cost))
+                Text(SessionFormatting.costString(session.cost))
                     .font(.caption2.monospacedDigit())
 
                 Text(formatTime(session.createdAt))
@@ -217,11 +217,6 @@ struct MacDailyDetailView: View {
         if hour < 12 { return "\(hour)a" }
         if hour == 12 { return "12p" }
         return "\(hour - 12)p"
-    }
-
-    private func formatCost(_ value: Double) -> String {
-        if value >= 1000 { return String(format: "$%.0f", value) }
-        return String(format: "$%.2f", value)
     }
 
     private func formatTime(_ epochMs: Double) -> String {

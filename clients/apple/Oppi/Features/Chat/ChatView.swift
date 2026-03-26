@@ -608,7 +608,7 @@ struct ChatView: View {
                     .truncationMode(.tail)
 
                 if let cost = session?.cost, cost > 0 {
-                    Text(String(format: "$%.2f", cost))
+                    Text(SessionFormatting.costString(cost))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.themeComment)
                         .fixedSize()

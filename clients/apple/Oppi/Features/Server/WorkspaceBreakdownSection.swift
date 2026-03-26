@@ -48,7 +48,7 @@ struct WorkspaceBreakdownSection: View {
                 .foregroundStyle(.themeComment)
                 .monospacedDigit()
 
-            Text(String(format: "$%.2f", ws.cost))
+            Text(SessionFormatting.costString(ws.cost))
                 .font(.caption)
                 .foregroundStyle(.themeComment)
                 .monospacedDigit()

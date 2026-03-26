@@ -125,7 +125,7 @@ struct StatsTabView: View {
             Divider().frame(height: 40)
             heroBox(
                 title: "Cost",
-                value: formatCost(stats.totals.cost),
+                value: SessionFormatting.costString(stats.totals.cost),
                 trend: trendInfo(values: stats.daily.map { $0.cost }, costMetric: true),
                 metric: .cost
             )
@@ -233,10 +233,6 @@ struct StatsTabView: View {
     }
 
     // MARK: - Formatting
-
-    private func formatCost(_ value: Double) -> String {
-        String(format: "$%.2f", value)
-    }
 
     private func formatTokens(_ value: Int) -> String {
         if value >= 1_000_000 {

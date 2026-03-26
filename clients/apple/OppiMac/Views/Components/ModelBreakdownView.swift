@@ -148,7 +148,7 @@ struct ModelBreakdownView: View {
                 }
                 .frame(height: 4)
 
-                Text(String(format: "$%.2f", item.cost))
+                Text(SessionFormatting.costString(item.cost))
                     .font(.caption2)
                     .monospacedDigit()
                     .frame(width: 52, alignment: .trailing)

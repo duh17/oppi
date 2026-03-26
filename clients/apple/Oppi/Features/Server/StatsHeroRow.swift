@@ -26,7 +26,7 @@ struct StatsHeroRow: View {
                     trend: trendInfo(values: daily.map { Double($0.sessions) }, costMetric: false),
                     metric: .sessions)
             Divider().frame(height: 44)
-            heroBox(title: "Cost", value: formatCost(totals.cost),
+            heroBox(title: "Cost", value: SessionFormatting.costString(totals.cost),
                     trend: trendInfo(values: daily.map { $0.cost }, costMetric: true),
                     metric: .cost)
             Divider().frame(height: 44)
@@ -111,10 +111,6 @@ struct StatsHeroRow: View {
     }
 
     // MARK: - Formatting
-
-    private func formatCost(_ value: Double) -> String {
-        String(format: "$%.2f", value)
-    }
 
     private func formatTokens(_ value: Int) -> String {
         if value >= 1_000_000 {

@@ -64,7 +64,7 @@ struct ModelDonutChart: View {
                 .frame(width: 100, height: 100)
 
                 VStack(spacing: 1) {
-                    Text(String(format: "$%.2f", totalCost))
+                    Text(SessionFormatting.costString(totalCost))
                         .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                         .lineLimit(1)
