@@ -77,8 +77,14 @@ struct AutoTitleSettingsView: View {
 
     // MARK: - Grouped Models
 
+    /// Providers whose APIs don't support standard chat completions
+    /// (system + user messages). These models return empty responses
+    /// when called via completeSimple.
+    private static let incompatibleProviders: Set<String> = ["openai-codex"]
+
     private var groupedModels: [ModelGroup] {
-        let byProvider = Dictionary(grouping: models, by: \.provider)
+        let compatible = models.filter { !Self.incompatibleProviders.contains($0.provider) }
+        let byProvider = Dictionary(grouping: compatible, by: \.provider)
         return byProvider
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
             .map { provider, items in
