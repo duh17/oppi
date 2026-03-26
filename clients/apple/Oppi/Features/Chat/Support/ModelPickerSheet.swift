@@ -192,7 +192,7 @@ private struct ModelRow: View {
             // Right: context window + checkmark, fixed trailing column
             HStack(spacing: 8) {
                 if model.contextWindow > 0 {
-                    Text(formatTokenCount(model.contextWindow))
+                    Text(SessionFormatting.tokenCount(model.contextWindow))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.themeFgDim)
                 }

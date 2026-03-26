@@ -158,11 +158,9 @@ enum ToolCallFormatting {
         return String(after)
     }
 
-    /// Format byte count for display (e.g. "1.2KB", "3.4MB").
+    /// Format byte count for display (e.g. "1.2 KB", "3.4 MB").
     static func formatBytes(_ bytes: Int) -> String {
-        if bytes < 1024 { return "\(bytes)B" }
-        if bytes < 1024 * 1024 { return "\(bytes / 1024)KB" }
-        return String(format: "%.1fMB", Double(bytes) / (1024 * 1024))
+        SessionFormatting.byteCount(bytes)
     }
 
     // MARK: - Tool Name Normalization

@@ -16,8 +16,8 @@ struct ContextUsageSnapshot: Sendable, Equatable {
 
     var usageText: String {
         guard let window, window > 0 else { return "Unknown" }
-        guard let tokens else { return "— / \(formatTokenCount(window))" }
-        return "\(formatTokenCount(tokens)) / \(formatTokenCount(window))"
+        guard let tokens else { return "— / \(SessionFormatting.tokenCount(window))" }
+        return "\(SessionFormatting.tokenCount(tokens)) / \(SessionFormatting.tokenCount(window))"
     }
 
     var accessibilityLabel: String {

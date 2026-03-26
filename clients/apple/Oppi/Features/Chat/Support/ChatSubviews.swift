@@ -117,7 +117,7 @@ struct SessionEndedFooter: View {
 
                     let totalTokens = session.tokens.input + session.tokens.output
                     if totalTokens > 0 {
-                        Text(formatTokenCount(totalTokens) + " tokens")
+                        Text(SessionFormatting.tokenCount(totalTokens) + " tokens")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.themeComment)
                     }

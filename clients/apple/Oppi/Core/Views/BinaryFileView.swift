@@ -37,8 +37,6 @@ struct BinaryFileView: View {
     }
 
     private var formattedSize: String {
-        if contentLength < 1024 { return "\(contentLength) B" }
-        if contentLength < 1024 * 1024 { return "\(contentLength / 1024) KB" }
-        return String(format: "%.1f MB", Double(contentLength) / (1024 * 1024))
+        SessionFormatting.byteCount(contentLength)
     }
 }

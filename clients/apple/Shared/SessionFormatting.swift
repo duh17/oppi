@@ -25,6 +25,33 @@ enum SessionFormatting {
         }
     }
 
+    /// Format token count as compact string: 200000 → "200k", 1500000 → "1.5M".
+    static func tokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            let m = Double(count) / 1_000_000
+            return m == m.rounded() ? String(format: "%.0fM", m) : String(format: "%.1fM", m)
+        }
+        if count >= 1_000 {
+            let k = Double(count) / 1_000
+            return k == k.rounded() ? String(format: "%.0fk", k) : String(format: "%.1fk", k)
+        }
+        return "\(count)"
+    }
+
+    /// Format token count with locale-aware decimal separators: 200000 → "200,000".
+    static func tokenCountDecimal(_ count: Int) -> String {
+        NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
+    }
+
+    /// Format byte count for display: 1234 → "1.2 KB", 5242880 → "5.0 MB".
+    static func byteCount(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.1f KB", kb) }
+        let mb = kb / 1024
+        return String(format: "%.1f MB", mb)
+    }
+
     /// Format elapsed time since a date as a compact string (e.g. "3s", "5m", "2h14m").
     static func durationString(since date: Date) -> String {
         let elapsed = Int(Date().timeIntervalSince(date))

@@ -190,7 +190,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
         if let tokensBefore = configuration.presentation.tokensBefore,
            tokensBefore > 0 {
             tokensLabel.isHidden = false
-            tokensLabel.text = "\(Self.formatTokenCount(tokensBefore)) tokens"
+            tokensLabel.text = "\(SessionFormatting.tokenCountDecimal(tokensBefore)) tokens"
             tokensLabel.textColor = UIColor(palette.comment)
         } else {
             tokensLabel.isHidden = true
@@ -295,10 +295,6 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                 backgroundAlpha: 0.16
             )
         }
-    }
-
-    private static func formatTokenCount(_ value: Int) -> String {
-        NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
     }
 
     // MARK: - TimelineRowInteractionProvider

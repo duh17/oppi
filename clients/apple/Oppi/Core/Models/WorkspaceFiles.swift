@@ -20,11 +20,7 @@ struct FileEntry: Decodable, Sendable, Equatable, Identifiable, Hashable {
     /// Human-readable file size.
     var formattedSize: String {
         if isDirectory { return "" }
-        if size < 1024 { return "\(size) B" }
-        let kb = Double(size) / 1024
-        if kb < 1024 { return String(format: "%.1f KB", kb) }
-        let mb = kb / 1024
-        return String(format: "%.1f MB", mb)
+        return SessionFormatting.byteCount(size)
     }
 }
 

@@ -254,13 +254,13 @@ struct ContextInspectorView: View {
             .padding(.vertical, 2)
 
             HStack(spacing: 10) {
-                Text("Used: \(formatTokenCount(contextUsedTokens))")
+                Text("Used: \(SessionFormatting.tokenCount(contextUsedTokens))")
                     .font(.caption)
                     .foregroundStyle(.themeFg)
 
                 Spacer(minLength: 8)
 
-                Text("Remaining: \(formatTokenCount(contextRemainingTokens))")
+                Text("Remaining: \(SessionFormatting.tokenCount(contextRemainingTokens))")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -288,7 +288,7 @@ struct ContextInspectorView: View {
 
             Spacer(minLength: 8)
 
-            Text(formatTokenCount(segment.tokens))
+            Text(SessionFormatting.tokenCount(segment.tokens))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeFg)
         }
@@ -306,7 +306,7 @@ struct ContextInspectorView: View {
 
                 Spacer(minLength: 8)
 
-                Text("~\(formatTokenCount(skill.estimatedTokens))")
+                Text("~\(SessionFormatting.tokenCount(skill.estimatedTokens))")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeComment)
             }

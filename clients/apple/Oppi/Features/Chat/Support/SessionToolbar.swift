@@ -152,27 +152,6 @@ private struct PillLabel<LeadingIcon: View>: View {
     }
 }
 
-// MARK: - Token Formatting (shared)
-
-/// Format token count as compact string: 200000 -> "200k", 1000000 -> "1M".
-func formatTokenCount(_ count: Int) -> String {
-    if count >= 1_000_000 {
-        let m = Double(count) / 1_000_000
-        if m == m.rounded() {
-            return String(format: "%.0fM", m)
-        }
-        return String(format: "%.1fM", m)
-    }
-    if count >= 1_000 {
-        let k = Double(count) / 1_000
-        if k == k.rounded() {
-            return String(format: "%.0fk", k)
-        }
-        return String(format: "%.1fk", k)
-    }
-    return "\(count)"
-}
-
 /// Best-effort context window fallback when older sessions lack the field.
 /// Static lookup table for known model context windows.
 /// Allocated once, shared across all calls.

@@ -1016,7 +1016,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         } else if willRetry {
             message = String(localized: "Context compacted — retrying...")
         } else {
-            let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(formatTokenCountDecimal(tokensBefore ?? 0)) tokens)" : ""
+            let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(SessionFormatting.tokenCountDecimal(tokensBefore ?? 0)) tokens)" : ""
             let cleanedSummary = summary?.trimmingCharacters(in: .whitespacesAndNewlines)
             message = if let cleanedSummary, !cleanedSummary.isEmpty {
                 "Context compacted\(tokenBadge): \(cleanedSummary)"

@@ -24,9 +24,6 @@ struct VideoFileView: View {
     }
 
     private var formattedSize: String {
-        let bytes = content.utf8.count
-        if bytes < 1024 { return "\(bytes) B" }
-        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
-        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+        SessionFormatting.byteCount(content.utf8.count)
     }
 }
