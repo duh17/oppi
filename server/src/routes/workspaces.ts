@@ -3,7 +3,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { DefaultResourceLoader, SettingsManager, getAgentDir } from "@mariozechner/pi-coding-agent";
 
 import { isValidExtensionName } from "../extension-loader.js";
-import { CommitDiffError, getCommitDetail, getCommitFileDiff, getCommitLog } from "../git-commits.js";
+import {
+  CommitDiffError,
+  getCommitDetail,
+  getCommitFileDiff,
+  getCommitLog,
+} from "../git-commits.js";
 import { buildWorkspaceGraph } from "../graph.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
@@ -301,7 +306,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
-    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "20", 10) || 20));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(url.searchParams.get("limit") ?? "20", 10) || 20),
+    );
 
     const result = await getCommitLog(workspace.hostMount, offset, limit);
     helpers.json(res, result);
@@ -602,13 +610,23 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const wsGitCommitDetailMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits\/([^/]+)$/);
     if (wsGitCommitDetailMatch && method === "GET") {
-      await handleGetWorkspaceCommitDetail(wsGitCommitDetailMatch[1], wsGitCommitDetailMatch[2], res);
+      await handleGetWorkspaceCommitDetail(
+        wsGitCommitDetailMatch[1],
+        wsGitCommitDetailMatch[2],
+        res,
+      );
       return true;
     }
 
     const wsGitCommitDiffMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits\/([^/]+)\/diff$/);
     if (wsGitCommitDiffMatch && method === "GET") {
-      await handleGetWorkspaceCommitFileDiff(wsGitCommitDiffMatch[1], wsGitCommitDiffMatch[2], url, req, res);
+      await handleGetWorkspaceCommitFileDiff(
+        wsGitCommitDiffMatch[1],
+        wsGitCommitDiffMatch[2],
+        url,
+        req,
+        res,
+      );
       return true;
     }
 

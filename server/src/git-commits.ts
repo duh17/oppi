@@ -114,7 +114,12 @@ export async function getCommitDetail(dir: string, sha: string): Promise<GitComm
   const resolved = resolveHomePath(dir);
 
   const [metaOut, numstatOut, nameStatusOut] = await Promise.all([
-    git(resolved, ["log", "-1", `--format=%h${FIELD_SEP}%s${FIELD_SEP}%aI${FIELD_SEP}%an <%ae>`, sha]),
+    git(resolved, [
+      "log",
+      "-1",
+      `--format=%h${FIELD_SEP}%s${FIELD_SEP}%aI${FIELD_SEP}%an <%ae>`,
+      sha,
+    ]),
     git(resolved, ["diff-tree", "--no-commit-id", "-r", "--numstat", sha]),
     git(resolved, ["diff-tree", "--no-commit-id", "-r", "--name-status", sha]),
   ]);
