@@ -566,6 +566,7 @@ export function createWorkspaceFileRoutes(
   async function handleListDirectory(
     wsId: string,
     requestedPath: string,
+    url: URL,
     res: ServerResponse,
   ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
@@ -584,9 +585,19 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
+    // Pagination: offset (default 0) and limit (default all)
+    const offsetParam = url.searchParams.get("offset");
+    const limitParam = url.searchParams.get("limit");
+    const total = result.entries.length;
+    const offset = offsetParam !== null ? Math.max(0, Math.floor(Number(offsetParam)) || 0) : 0;
+    const limit =
+      limitParam !== null ? Math.max(1, Math.floor(Number(limitParam)) || total) : total;
+    const paged = result.entries.slice(offset, offset + limit);
+
     const response: DirectoryListingResponse = {
       path: requestedPath || "/",
-      entries: result.entries,
+      entries: paged,
+      total,
       truncated: result.truncated,
     };
     helpers.json(res, response);
@@ -646,7 +657,7 @@ export function createWorkspaceFileRoutes(
       const requestedPath = match[2];
 
       if (requestedPath === "" || requestedPath.endsWith("/")) {
-        await handleListDirectory(wsId, requestedPath, res);
+        await handleListDirectory(wsId, requestedPath, url, res);
         return true;
       }
 
