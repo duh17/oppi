@@ -642,6 +642,10 @@ enum ToolRowTextRenderer {
             return .json
         case .html:
             return .html
+        case .latex: return .latex
+        case .orgMode: return .orgMode
+        case .mermaid: return .mermaid
+        case .graphviz: return .dot
         case .plain, .markdown, .image, .audio, .video, .pdf, .binary:
             return nil
         }

@@ -172,6 +172,10 @@ struct SessionFilesListView: View {
             default: return .themeFgDim
             }
         case .image: return .themePurple
+        case .latex: return .themeGreen
+        case .orgMode: return .themeCyan
+        case .mermaid: return .themePurple
+        case .graphviz: return .themeOrange
         default: return .themeComment
         }
     }

@@ -168,6 +168,14 @@ final class SourceTraceStream {
             return "terminal"
         case .liveSource:
             return "liveSource"
+        case .latex:
+            return "latex"
+        case .orgMode:
+            return "orgMode"
+        case .mermaid:
+            return "mermaid"
+        case .graphviz:
+            return "graphviz"
         case nil:
             return nil
         }
@@ -189,6 +197,12 @@ indirect enum FullScreenCodeContent {
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(content: String, command: String?, stream: TerminalTraceStream? = nil)
     case liveSource(snapshot: SourceTraceStream.Snapshot, stream: SourceTraceStream)
+
+    // Notebook renderers
+    case latex(content: String, filePath: String?)
+    case orgMode(content: String, filePath: String?)
+    case mermaid(content: String, filePath: String?)
+    case graphviz(content: String, filePath: String?)
 }
 
 /// SwiftUI wrapper around ``FullScreenCodeViewController``.

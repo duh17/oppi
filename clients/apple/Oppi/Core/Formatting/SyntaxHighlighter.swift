@@ -33,6 +33,10 @@ enum SyntaxLanguage: Sendable, Hashable {
     case protobuf
     case graphql
     case diff
+    case latex
+    case orgMode
+    case mermaid
+    case dot
     case unknown
 
     /// Detect language from file extension or code fence name.
@@ -62,6 +66,10 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "proto", "protobuf": return .protobuf
         case "graphql", "gql": return .graphql
         case "diff", "patch": return .diff
+        case "tex", "latex": return .latex
+        case "org": return .orgMode
+        case "mmd", "mermaid": return .mermaid
+        case "dot", "gv": return .dot
         default: return .unknown
         }
     }
@@ -91,6 +99,10 @@ enum SyntaxLanguage: Sendable, Hashable {
         case .protobuf: return "Protobuf"
         case .graphql: return "GraphQL"
         case .diff: return "Diff"
+        case .latex: return "LaTeX"
+        case .orgMode: return "Org"
+        case .mermaid: return "Mermaid"
+        case .dot: return "Graphviz"
         case .unknown: return "Text"
         }
     }
@@ -104,6 +116,14 @@ enum SyntaxLanguage: Sendable, Hashable {
             return ["#"]
         case .sql:
             return ["-", "-"]
+        case .latex:
+            return ["%"]
+        case .orgMode:
+            return ["#"]
+        case .mermaid:
+            return ["%", "%"]
+        case .dot:
+            return ["/", "/"]
         case .html, .json, .xml, .diff, .unknown:
             return nil
         }
@@ -112,7 +132,7 @@ enum SyntaxLanguage: Sendable, Hashable {
     var hasBlockComments: Bool {
         switch self {
         case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
-             .protobuf, .graphql:
+             .protobuf, .graphql, .dot:
             return true
         case .xml:
             return true // <!-- --> handled by XML scanner
@@ -151,6 +171,14 @@ enum SyntaxLanguage: Sendable, Hashable {
             return protobufKeywords
         case .graphql:
             return graphqlKeywords
+        case .latex:
+            return latexKeywords
+        case .orgMode:
+            return orgModeKeywords
+        case .mermaid:
+            return mermaidKeywords
+        case .dot:
+            return dotKeywords
         case .html, .css, .json, .yaml, .toml, .xml, .diff, .unknown:
             return []
         }
