@@ -119,10 +119,10 @@ struct OrgModeFileView: View {
             if showRaw {
                 NativeCodeBodyView(
                     content: content,
-                    language: SyntaxLanguage.orgMode.name,
+                    language: SyntaxLanguage.orgMode.displayName,
                     startLine: 1,
                     selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.orgMode.name)
+                        ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.orgMode.displayName)
                         : nil
                 )
             } else {
@@ -147,40 +147,19 @@ private struct OrgModeRenderedView: View {
     let content: String
     let textSelectionEnabled: Bool
 
-    @State private var attributedString: NSAttributedString?
-
-    var body: some View {
-        Group {
-            if let attrStr = attributedString {
-                AttributedStringTextView(
-                    attributedString: attrStr,
-                    textSelectionEnabled: textSelectionEnabled
-                )
-            } else {
-                Text(content)
-                    .font(.appCaption)
-                    .foregroundStyle(.themeFg)
-            }
-        }
-        .task(id: content) {
-            await renderOrgContent()
-        }
+    private var attributedString: NSAttributedString {
+        let parser = OrgParser()
+        let renderer = OrgAttributedStringRenderer()
+        let blocks = parser.parse(content)
+        let config = RenderConfiguration.default(maxWidth: 600)
+        return renderer.renderAttributedString(blocks, configuration: config)
     }
 
-    private func renderOrgContent() async {
-        let source = content
-        let result = await Task.detached {
-            let parser = OrgParser()
-            let renderer = OrgAttributedStringRenderer()
-            let blocks = parser.parse(source)
-            let config = RenderConfiguration(
-                baseFontSize: 15,
-                displayScale: 2.0,
-                maxWidth: 600
-            )
-            return renderer.renderAttributedString(blocks, configuration: config)
-        }.value
-        attributedString = result
+    var body: some View {
+        AttributedStringTextView(
+            attributedString: attributedString,
+            textSelectionEnabled: textSelectionEnabled
+        )
     }
 }
 
