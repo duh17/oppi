@@ -135,11 +135,31 @@ struct LaTeXFileView: View {
 private struct LaTeXRenderedView: View {
     let content: String
 
+    /// Split input by blank lines and render each as a separate expression.
+    private var expressions: [String] {
+        content
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(Array(expressions.enumerated()), id: \.offset) { _, expr in
+                LaTeXExpressionView(expression: expr)
+            }
+        }
+    }
+}
+
+private struct LaTeXExpressionView: View {
+    let expression: String
+
     private var renderResult: (CGSize, (CGContext, CGPoint) -> Void) {
         let parser = TeXMathParser()
         let renderer = MathCoreGraphicsRenderer()
-        let nodes = parser.parse(content)
-        let config = RenderConfiguration.default(maxWidth: 600)
+        let nodes = parser.parse(expression)
+        let config = RenderConfiguration(fontSize: 20, maxWidth: 600, theme: .fallback, displayMode: .document)
         let layoutResult = renderer.layout(nodes, configuration: config)
         let size = renderer.boundingBox(layoutResult)
         let draw: (CGContext, CGPoint) -> Void = { ctx, origin in

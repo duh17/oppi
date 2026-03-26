@@ -834,10 +834,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         case .orgMode(let text):
             contentView = makeOrgView(text: text)
         case .latex(let text):
-            contentView = makeGraphicalView(
-                parser: TeXMathParser(), renderer: MathCoreGraphicsRenderer(),
-                text: text, fontSize: 20
-            )
+            contentView = makeLatexView(text: text)
         case .mermaid(let text):
             contentView = makeGraphicalView(
                 parser: MermaidParser(), renderer: MermaidFlowchartRenderer(),
@@ -863,6 +860,39 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    private func makeLatexView(text: String) -> UIView {
+        let expressions = text
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.alignment = .leading
+
+        let parser = TeXMathParser()
+        let renderer = MathCoreGraphicsRenderer()
+        let config = RenderConfiguration(fontSize: 20, maxWidth: 800, theme: .fallback, displayMode: .document)
+
+        for expr in expressions {
+            let nodes = parser.parse(expr)
+            let layoutResult = renderer.layout(nodes, configuration: config)
+            let size = renderer.boundingBox(layoutResult)
+
+            let drawView = GraphicalRendererUIView()
+            drawView.configure(size: size) { ctx, origin in
+                renderer.draw(layoutResult, in: ctx, at: origin)
+            }
+            drawView.translatesAutoresizingMaskIntoConstraints = false
+            drawView.widthAnchor.constraint(equalToConstant: max(size.width, 1)).isActive = true
+            drawView.heightAnchor.constraint(equalToConstant: max(size.height, 1)).isActive = true
+            stack.addArrangedSubview(drawView)
+        }
+
+        return stack
+    }
 
     private func makeOrgView(text: String) -> UIView {
         let parser = OrgParser()
