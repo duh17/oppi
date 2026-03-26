@@ -36,9 +36,7 @@ cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodep
 bash ~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID --launch
 ```
 
-**sim-pool.sh** manages a pool of simulators with slot-based locking so multiple agents can build/test in parallel without colliding. It auto-injects `-destination` and `-derivedDataPath`. Do NOT pass your own `-destination` — the pool handles it. Simulators are lazy-created on first claim. Stale locks from crashed processes are auto-reaped.
-
-**Build failure output:** On failure, sim-pool.sh automatically prints a `BUILD FAILED` summary with deduped compiler errors, linker errors, and error/warning counts. It also prints the full log path (e.g. `/tmp/sim-pool-build-XXXXXX.log`). Do NOT pipe build output through `grep`, `tail`, `head`, or other filters — the summary is already agent-friendly. To investigate further, use `read(path="/tmp/sim-pool-build-XXXXXX.log")` with the path from the summary.
+**sim-pool.sh** wraps xcodebuild with slot-based simulator locking for parallel agents. It auto-injects `-destination` and `-derivedDataPath` — do NOT pass your own. On failure it prints a `BUILD FAILED` summary with the full log path. Do not pipe build output through `grep`/`tail` — use `read(path=...)` on the log path from the summary.
 
 After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
 
@@ -70,6 +68,20 @@ gh issue view <number> --json title,body,comments,labels,state
 ```
 When closing via commit: include `fixes #<number>` or `closes #<number>`.
 
+## Complexity Guardrails
+
+Before writing new code, search for existing implementations:
+```bash
+# Server utilities
+rg 'export function' server/src/metric-utils.ts server/src/log-utils.ts
+# iOS formatting
+rg 'static func\|func format' -t swift clients/apple/Oppi/Core/Formatting/
+# Type/interface names — check for collisions
+rg 'export (type|interface) YourName' server/src/types.ts server/src/policy-types.ts
+```
+
+When adding files: if the directory already has 10+ files with the same prefix (e.g. `session-*.ts`), pause and check whether the new code belongs in an existing file.
+
 ## Protocol Discipline
 
 When changing client/server message contracts:
@@ -86,6 +98,9 @@ No partial protocol updates.
 - Check `node_modules` for external API type definitions instead of guessing
 - Validate at boundaries — parse incoming external data before internal use
 - Keep behavior observable — structured logs, deterministic error messages
+- No new coordinator class for less than ~100 lines of logic — use a function
+- No new Deps interface for a single method — inline the dependency
+- No `as SomeType` casts in session coordinator wiring — narrow the method signature instead
 
 ### Swift (Apple clients)
 - Swift 6 strict concurrency (`SWIFT_STRICT_CONCURRENCY: complete`)
@@ -111,34 +126,13 @@ No partial protocol updates.
 
 ## iOS Architecture
 
-**Event pipeline (core data flow):**
-```
-ServerMessage (WebSocket)
-  → ServerConnection.handleServerMessage()
-  → DeltaCoalescer (batches text/thinking at 33ms)
-  → TimelineReducer (state machine → [ChatItem])
-  → ChatTimelineCollectionView (UIKit)
-```
+See `.internal/ARCHITECTURE.md` for the full data flow, environment injection table, and store inventory.
 
-**Observable stores:** `SessionStore`, `WorkspaceStore`, `PermissionStore`, `ChatSessionState`, `TimelineReducer`, `ToolOutputStore`, `ToolArgsStore` — separate `@Observable` objects to prevent cross-store re-renders.
-
-**ServerConnection** is the per-server transport coordinator. Decomposed into focused sub-objects:
-- `MessageSender` — send/ack/retry protocol (owns CommandTracker)
-- `ChatSessionState` — UI state (composer, caches, thinking level)
-- `SessionStreamCoordinator` — stream lifecycle state machine
-- Stores (SessionStore, WorkspaceStore, etc.) — injected into SwiftUI environment separately
-
-Views prefer the most focused dependency: `@Environment(\.apiClient)` for REST-only, `@Environment(ChatSessionState.self)` for UI state, `@Environment(ServerConnection.self)` only when transport/send/cross-store coordination is needed. See `.internal/ARCHITECTURE.md` for the full environment injection table.
-
-**Forward-compatible decoding.** `ServerMessage` has `.unknown(type:)`. Unknown server types are logged and skipped.
-
-## Server Navigation
-
-- `src/types.ts` — client/server protocol contract
-- `src/server.ts` — app wiring and runtime startup
-- `src/policy.ts` + `config/policy-modes/` — policy engine + presets
-- `src/spawn-agent-extension.ts` — spawn_agent, check_agents, inspect_agent tools
-- `src/session-protocol.ts` — pi session lifecycle, message handling, counters
+Key principles:
+- **Many small stores on purpose.** Each `@Observable` store is separate to prevent cross-store re-renders. Do not merge stores. To list them: `rg 'final class .*(Store|Reducer|Coalescer)\b' -t swift clients/apple/Oppi/ | sort`
+- **Prefer focused dependencies.** Views should use the narrowest environment object that works (`\.apiClient` > `ChatSessionState` > `ServerConnection`).
+- **iOS/Mac sharing.** Shared types and helpers go in `Shared/`. Do not duplicate logic between `Oppi/` and `OppiMac/`. If you're writing a view that exists in one target, check the other target first.
+- **Forward-compatible decoding.** `ServerMessage` has `.unknown(type:)`. Unknown server types are logged and skipped.
 
 ## Style
 
