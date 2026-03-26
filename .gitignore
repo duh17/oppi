@@ -28,6 +28,7 @@ clients/apple/scripts/*
 !clients/apple/scripts/appcast/
 !clients/apple/scripts/appcast/appcast.xml
 !clients/apple/scripts/e2e.sh
+!clients/apple/scripts/sim-pool.sh
 !server/docker/entrypoint.sh
 
 # CI / internal tooling
