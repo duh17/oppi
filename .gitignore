@@ -10,7 +10,7 @@ clients/apple/*.xcodeproj/
 # clients/apple/OppiMacTests/  # Un-ignored: Mac tests should be tracked
 clients/apple/.env.testflight.local
 
-# Scripts — build-wired scripts stay in server/scripts/, everything else in oppi-dev skill
+# Scripts — only build-wired scripts are tracked
 scripts/
 server/scripts/*
 !server/scripts/architecture-layer-rules.mjs

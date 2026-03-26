@@ -2,14 +2,6 @@
 
 Oppi monorepo — iOS/macOS app + self-hosted server for mobile-supervised [pi](https://github.com/badlogic/pi-mono) sessions.
 
-## First Message
-
-If no concrete task given, read this file and `README.md`, then ask what to work on.
-For context on specific areas, read the relevant docs:
-- Root: `README.md`
-- Architecture map: `.internal/ARCHITECTURE.md`
-- Server: `server/README.md`
-
 ## Structure
 
 ```
@@ -23,49 +15,18 @@ server/        Server runtime (Node.js/TypeScript)
 # Server
 cd server && npm install        # also builds via prepare script
 cd server && npm test
-cd server && npm run check    # typecheck + lint + format — fix ALL errors before committing
+cd server && npm run check      # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 
-# Apple — all dev scripts live in the oppi-dev skill (~/.pi/agent/skills/oppi-dev/scripts/)
+# Apple
 cd clients/apple && xcodegen generate
-~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
-~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
-
-# iOS device deploy (ALWAYS use this script — never call devicectl directly)
-bash ~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID --launch
+xcodebuild -project clients/apple/Oppi.xcodeproj -scheme Oppi build
+xcodebuild -project clients/apple/Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 ```
-
-**sim-pool.sh** (`~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh`) wraps xcodebuild with slot-based simulator locking for parallel agents. It auto-injects `-destination` and `-derivedDataPath` — do NOT pass your own. All output goes to a log file; on completion it prints a summary with the log path. Use `read(path=...)` on the log path to investigate failures — do NOT re-run builds to find errors.
-
-After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Fix all errors, warnings, and infos before committing.
-
-See [`.internal/testing/`](.internal/testing/) for full test strategy, pyramid, and required gates by change type.
 
 The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.
 
-## Git Rules
-
-- **ONLY commit files YOU changed in THIS session**
-- ALWAYS use `git add <specific-file-paths>` — list only files you modified
-- Before committing, run `git status` and verify you are only staging your files
-- NEVER push unless user asks
-- Always ask before removing functionality that appears intentional
-
-### Forbidden Operations
-- `git add -A` / `git add .` — stages everything, including other agents' work
-- `git reset --hard` — destroys uncommitted changes
-- `git checkout .` — destroys uncommitted changes
-- `git clean -fd` — deletes untracked files
-- `git stash` — stashes ALL changes
-- `git push --force`
-- `xcrun devicectl device uninstall` — never uninstall the iOS app
-- Raw `devicectl device install` — use `~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID` instead
-
-### GitHub Issues
-```bash
-gh issue view <number> --json title,body,comments,labels,state
-```
-When closing via commit: include `fixes #<number>` or `closes #<number>`.
+After code changes: run `npm run check` (server) and/or build + test (Apple). Fix all errors before committing.
 
 ## Complexity Guardrails
 
@@ -108,24 +69,18 @@ No partial protocol updates.
 - No force unwraps in production code
 - Liquid Glass for navigation chrome only. Never for scrollable content.
 
-### Rendering Performance (iOS)
-- See [`.internal/golden-principles.md`](.internal/golden-principles.md) (Rendering section) for enforced invariants.
-
 ### Testing (Apple clients)
 - Use Swift Testing (`import Testing`, `@Test`, `#expect`) for all unit tests. No XCTest for unit tests.
 - XCTest is only allowed for UI tests (`XCUIApplication` requires it — Swift Testing has no UI testing support).
 - Use `@Suite("Name")` to group related tests in a struct.
 - Use `@MainActor` on the struct (not individual tests) when all tests need main actor isolation.
 - Use `Issue.record()` instead of `XCTFail()`. Use `#expect()` instead of `XCTAssert*`.
-- `#filePath` works in Swift Testing for bundle-free fixture resolution — no need for `Bundle(for:)`.
 - **xcodebuild `-only-testing` with Swift Testing**: xcodebuild strips one trailing `()` from identifiers. Add double parentheses `()()` for function-level filters:
   - Suite: `-only-testing:OppiTests/MySuiteStruct` (use struct name, not `@Suite` display name)
   - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
   - Multiple: repeat `-only-testing:` for each test
 
 ## iOS Architecture
-
-See `.internal/ARCHITECTURE.md` for the full data flow, environment injection table, and store inventory.
 
 Key principles:
 - **Many small stores on purpose.** Each `@Observable` store is separate to prevent cross-store re-renders. Do not merge stores. To list them: `rg 'final class .*(Store|Reducer|Coalescer)\b' -t swift clients/apple/Oppi/ | sort`
@@ -136,17 +91,10 @@ Key principles:
 ## Style
 
 - No emojis in commits or code
-- Keep answers short and concise
 - Technical prose, direct
-
-## Tool Usage
-
-- Always read a file in full before editing it
-- Never use `sed`/`cat` to read files — use the read tool
 
 ## Definition of Done
 
-A task is done when:
-1. `npm run check` passes (server) and/or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` pass (Apple)
+1. `npm run check` passes (server) and/or xcodebuild build + test pass (Apple)
 2. Protocol changes are mirrored on both sides with tests
 3. `xcodegen generate` was run if Apple client file structure changed
