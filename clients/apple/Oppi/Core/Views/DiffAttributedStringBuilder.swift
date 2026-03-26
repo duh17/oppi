@@ -176,8 +176,8 @@ enum DiffAttributedStringBuilder {
             for line in hunk.lines {
                 let gutterStart = text.length
                 switch line.kind {
-                case .added: text.append("▎+ ")
-                case .removed: text.append("▎− ")
+                case .added: text.append(" + ")
+                case .removed: text.append(" - ")
                 case .context: text.append("   ")
                 }
 

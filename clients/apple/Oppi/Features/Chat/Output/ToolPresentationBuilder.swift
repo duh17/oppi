@@ -471,7 +471,8 @@ enum ToolPresentationBuilder {
             language = .json
         case .html:
             language = .html
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .none:
+        case .markdown, .image, .audio, .video, .pdf, .binary, .plain,
+             .latex, .orgMode, .mermaid, .graphviz, .none:
             language = nil
         }
 
@@ -496,7 +497,8 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .html, .plain, .code, .json, .pdf, .binary, .none:
+        case .html, .plain, .code, .json, .pdf, .binary,
+             .latex, .orgMode, .mermaid, .graphviz, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -522,7 +524,8 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath,
                 startLine: startLine
             )
-        case .html, .plain, .code, .json, .pdf, .binary, .none:
+        case .html, .plain, .code, .json, .pdf, .binary,
+             .latex, .orgMode, .mermaid, .graphviz, .none:
             return .code(
                 text: text,
                 language: metadata.language,
@@ -659,6 +662,10 @@ enum ToolPresentationBuilder {
         case .code(let language): return language
         case .json: return .json
         case .html: return .html
+        case .latex: return .latex
+        case .orgMode: return .orgMode
+        case .mermaid: return .mermaid
+        case .graphviz: return .dot
         case .markdown, .image, .audio, .video, .pdf, .binary, .plain: return nil
         }
     }

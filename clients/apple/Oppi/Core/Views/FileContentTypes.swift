@@ -15,6 +15,12 @@ enum FileType: Equatable {
     case binary
     case plain
 
+    // Notebook renderers — native rendering from spec
+    case latex
+    case orgMode
+    case mermaid
+    case graphviz
+
     /// Detect from file path extension (or well-known filenames), with
     /// optional shebang fallback for extensionless scripts.
     static func detect(from path: String?, content: String? = nil) -> Self {
@@ -60,6 +66,16 @@ enum FileType: Equatable {
         }
 
         switch ext {
+        // Notebook renderers
+        case "tex", "latex":
+            return .latex
+        case "org":
+            return .orgMode
+        case "mmd", "mermaid":
+            return .mermaid
+        case "dot", "gv":
+            return .graphviz
+
         case "md", "mdx", "markdown":
             return .markdown
         case "html", "htm":
@@ -143,6 +159,10 @@ enum FileType: Equatable {
         case .pdf: return "PDF"
         case .binary: return "Binary"
         case .plain: return "Text"
+        case .latex: return "LaTeX"
+        case .orgMode: return "Org"
+        case .mermaid: return "Mermaid"
+        case .graphviz: return "Graphviz"
         }
     }
 }

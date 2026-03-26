@@ -68,6 +68,16 @@ struct FileContentView: View {
             BinaryFileView(filePath: filePath, contentLength: content.count)
         case .plain:
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
+
+        // Notebook renderers — source view until native renderers land
+        case .latex:
+            CodeFileView(content: content, language: .latex, startLine: startLine, presentation: presentation, filePath: filePath)
+        case .orgMode:
+            CodeFileView(content: content, language: .orgMode, startLine: startLine, presentation: presentation, filePath: filePath)
+        case .mermaid:
+            CodeFileView(content: content, language: .mermaid, startLine: startLine, presentation: presentation, filePath: filePath)
+        case .graphviz:
+            CodeFileView(content: content, language: .dot, startLine: startLine, presentation: presentation, filePath: filePath)
         }
     }
 

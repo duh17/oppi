@@ -268,6 +268,60 @@ final class FullScreenCodeViewController: UIViewController {
             )
         case .liveSource(let snapshot, _):
             return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
+
+        // Notebook renderers — source view until native renderers land
+        case .latex(let text, let filePath):
+            return NativeFullScreenCodeBody(
+                content: text,
+                language: "latex",
+                startLine: 1,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeSourceContext(
+                    surface: .fullScreenCode,
+                    filePath: filePath,
+                    languageHint: "latex"
+                )
+            )
+        case .orgMode(let text, let filePath):
+            return NativeFullScreenCodeBody(
+                content: text,
+                language: "org",
+                startLine: 1,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeSourceContext(
+                    surface: .fullScreenCode,
+                    filePath: filePath,
+                    languageHint: "org"
+                )
+            )
+        case .mermaid(let text, let filePath):
+            return NativeFullScreenCodeBody(
+                content: text,
+                language: "mermaid",
+                startLine: 1,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeSourceContext(
+                    surface: .fullScreenCode,
+                    filePath: filePath,
+                    languageHint: "mermaid"
+                )
+            )
+        case .graphviz(let text, let filePath):
+            return NativeFullScreenCodeBody(
+                content: text,
+                language: "dot",
+                startLine: 1,
+                palette: palette,
+                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextSourceContext: makeSourceContext(
+                    surface: .fullScreenCode,
+                    filePath: filePath,
+                    languageHint: "dot"
+                )
+            )
         }
     }
 
@@ -403,6 +457,9 @@ final class FullScreenCodeViewController: UIViewController {
             return stream?.snapshot.output ?? text
         case .liveSource(let snapshot, _):
             return copyText(for: semanticContent(for: snapshot))
+        case .latex(let text, _), .orgMode(let text, _),
+             .mermaid(let text, _), .graphviz(let text, _):
+            return text
         }
     }
 

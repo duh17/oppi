@@ -136,3 +136,60 @@ let graphqlKeywords: Set<String> = [
     "directive", "fragment", "on", "true", "false", "null",
     "repeatable",
 ]
+
+// MARK: - Notebook Renderer Languages
+
+let latexKeywords: Set<String> = [
+    "begin", "end", "frac", "sqrt", "sum", "prod", "int",
+    "left", "right", "text", "mathrm", "mathbf", "mathbb",
+    "mathcal", "mathfrak", "overline", "underline", "hat",
+    "bar", "vec", "dot", "tilde", "overbrace", "underbrace",
+    "alpha", "beta", "gamma", "delta", "epsilon", "theta",
+    "lambda", "mu", "pi", "sigma", "omega", "infty",
+    "partial", "nabla", "forall", "exists", "in", "notin",
+    "subset", "supset", "cup", "cap", "leq", "geq", "neq",
+    "approx", "equiv", "times", "div", "cdot", "pm",
+    "lim", "sin", "cos", "tan", "log", "ln", "exp",
+    "documentclass", "usepackage", "newcommand", "renewcommand",
+    "section", "subsection", "label", "ref", "cite",
+    "item", "caption", "includegraphics", "input",
+]
+
+let orgModeKeywords: Set<String> = [
+    "TODO", "DONE", "NEXT", "WAITING", "CANCELLED", "HOLD",
+    "DEADLINE", "SCHEDULED", "CLOSED", "CLOCK",
+    "PROPERTIES", "END",
+    "TITLE", "AUTHOR", "DATE", "OPTIONS", "STARTUP",
+    "CATEGORY", "TAGS", "FILETAGS", "ARCHIVE",
+    "begin_src", "end_src", "begin_quote", "end_quote",
+    "begin_example", "end_example", "begin_export", "end_export",
+    "begin_center", "end_center", "begin_verse", "end_verse",
+    "RESULTS", "CALL", "NAME", "HEADER",
+    "CAPTION", "ATTR_HTML", "ATTR_LATEX",
+]
+
+let mermaidKeywords: Set<String> = [
+    "flowchart", "graph", "sequenceDiagram", "classDiagram",
+    "stateDiagram", "stateDiagram-v2", "erDiagram",
+    "gantt", "pie", "gitgraph", "mindmap", "timeline",
+    "subgraph", "end", "participant", "actor",
+    "activate", "deactivate", "loop", "alt", "else", "opt",
+    "par", "critical", "break", "rect", "note",
+    "class", "direction", "style", "classDef",
+    "click", "link", "callback",
+    "TB", "TD", "BT", "RL", "LR",
+]
+
+let dotKeywords: Set<String> = [
+    "graph", "digraph", "subgraph", "strict",
+    "node", "edge",
+    "label", "shape", "style", "color", "fillcolor",
+    "fontname", "fontsize", "fontcolor",
+    "rankdir", "rank", "nodesep", "ranksep",
+    "arrowhead", "arrowtail", "dir",
+    "weight", "constraint", "penwidth",
+    "same", "min", "max", "source", "sink",
+    "box", "circle", "ellipse", "diamond", "record",
+    "plaintext", "point", "doublecircle", "tripleoctagon",
+    "solid", "dashed", "dotted", "bold", "invis", "filled",
+]

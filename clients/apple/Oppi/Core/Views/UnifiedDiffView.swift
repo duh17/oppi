@@ -98,14 +98,18 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
         let addedBg = UIColor(Color.themeDiffAdded.opacity(0.10))
         let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.08))
         let headerBg = UIColor(Color.themeBgHighlight)
+        let addedBar = UIColor(Color.themeDiffAdded)
+        let removedBar = UIColor(Color.themeDiffRemoved)
+        let barWidth: CGFloat = 2.5
 
         textStorage.enumerateAttribute(diffLineKindAttributeKey, in: NSRange(location: 0, length: textStorage.length), options: []) { value, attrRange, _ in
             guard let kind = value as? String else { return }
             let bg: UIColor
+            let bar: UIColor?
             switch kind {
-            case "added": bg = addedBg
-            case "removed": bg = removedBg
-            case "header": bg = headerBg
+            case "added": bg = addedBg; bar = addedBar
+            case "removed": bg = removedBg; bar = removedBar
+            case "header": bg = headerBg; bar = nil
             default: return
             }
 
@@ -118,6 +122,14 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
                 fillRect.origin.y += origin.y
                 bg.setFill()
                 UIRectFillUsingBlendMode(fillRect, .normal)
+
+                // Draw left gutter bar for added/removed lines
+                if let bar {
+                    var barRect = fillRect
+                    barRect.size.width = barWidth
+                    bar.setFill()
+                    UIRectFillUsingBlendMode(barRect, .normal)
+                }
             }
         }
     }
