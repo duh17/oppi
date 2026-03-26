@@ -12,6 +12,16 @@ import UIKit
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // Force-capture process start timestamp before any SwiftUI views load.
+        // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
+        ChatSessionTelemetry.warmProcessStartTime()
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         guard ReleaseFeatures.pushNotificationsEnabled else {
