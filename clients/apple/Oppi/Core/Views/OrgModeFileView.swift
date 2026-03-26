@@ -173,7 +173,7 @@ private struct AttributedStringTextView: UIViewRepresentable {
         textView.isEditable = false
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
-        textView.textContainerInset = UIEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
         textView.textContainer.lineFragmentPadding = 0
         textView.isSelectable = textSelectionEnabled
         textView.dataDetectorTypes = .link
