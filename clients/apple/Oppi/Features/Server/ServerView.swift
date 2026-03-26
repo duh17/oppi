@@ -26,11 +26,7 @@ struct ServerView: View {
 
     /// Resolves selected server, falling back to first available.
     private var selectedServer: PairedServer? {
-        let servers = serverStore.servers
-        if let selectedServerId, let match = servers.first(where: { $0.id == selectedServerId }) {
-            return match
-        }
-        return servers.first
+        Self.resolveServer(selectedId: selectedServerId, from: serverStore.servers)
     }
 
     /// Build an `APIClient` for a specific server, or nil if URL is invalid.
@@ -41,7 +37,19 @@ struct ServerView: View {
 
     /// Combined task identity — reloads when server or range changes.
     private var taskIdentity: String {
-        "\(selectedServerId ?? "")-\(selectedRange)"
+        Self.taskIdentity(selectedId: selectedServerId, range: selectedRange)
+    }
+
+    // MARK: - Testable Logic
+
+    /// Resolve the selected server by ID, falling back to the first server.
+    static func resolveServer(selectedId: String?, from servers: [PairedServer]) -> PairedServer? {
+        ServerSelection.resolve(selectedId: selectedId, from: servers)
+    }
+
+    /// Build task identity string from server ID and range.
+    static func taskIdentity(selectedId: String?, range: Int) -> String {
+        ServerSelection.taskIdentity(selectedId: selectedId, range: range)
     }
 
     var body: some View {
