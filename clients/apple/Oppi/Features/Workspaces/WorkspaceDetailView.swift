@@ -158,10 +158,11 @@ struct WorkspaceDetailView: View {
     ///
     /// Priority:
     /// 1. `aggregatePendingCount > 0` → Your Turn (even if parent is busy)
-    /// 2. status == .error → Your Turn
-    /// 3. status == .ready → Your Turn
-    /// 4. status == .busy / .starting / .stopping → Working
-    /// 5. status == .stopped → Stopped
+    /// 2. Any descendant working → Working (tree still active)
+    /// 3. status == .error → Your Turn
+    /// 4. status == .ready → Your Turn
+    /// 5. status == .busy / .starting / .stopping → Working
+    /// 6. status == .stopped → Stopped
     private enum SessionSection {
         case yourTurn
         case working
@@ -176,6 +177,12 @@ struct WorkspaceDetailView: View {
             pendingForSession: { permissionStore.pending(for: $0).count }
         )
         if pendingCount > 0 { return .yourTurn }
+
+        // Parent is idle but has working children → tree is still working.
+        let childStatuses = SessionTreeHelper.descendantStatusCounts(
+            of: session.id, in: activeSessions
+        )
+        if childStatuses.working > 0 { return .working }
 
         switch session.status {
         case .error, .ready:

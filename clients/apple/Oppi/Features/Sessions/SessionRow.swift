@@ -157,7 +157,7 @@ struct SessionRow: View {
         HStack(spacing: 3) {
             let counts = children.statusCounts
             if counts.working > 0 {
-                Text("\u{23F3}\(counts.working)")
+                Text("\u{1F527}\(counts.working)")
                     .foregroundStyle(.themeOrange)
             }
             let done = counts.ready + counts.stopped
