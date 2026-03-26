@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 /// Fire-and-forget telemetry helpers for ChatSessionManager.
@@ -7,6 +8,16 @@ import Foundation
 /// This keeps the session lifecycle code free of 10-line telemetry
 /// blocks that obscure the actual control flow.
 enum ChatSessionTelemetry {
+
+    /// Process start timestamp for app launch metric.
+    /// Static let is lazy (dispatch_once) — call `warmProcessStartTime()` from
+    /// AppDelegate.didFinishLaunchingWithOptions to force capture before any views load.
+    static let processStartTime: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+
+    /// Force-evaluate `processStartTime`. Call once from AppDelegate.
+    static func warmProcessStartTime() {
+        _ = processStartTime
+    }
 
     // MARK: - Timing helpers
 
@@ -141,8 +152,9 @@ enum ChatSessionTelemetry {
 
     // MARK: - App Launch
 
-    static func recordAppLaunch(durationMs: Int64) {
-        emit(.appLaunchMs, Double(durationMs), .ms)
+    static func recordAppLaunch() {
+        let launchMs = Int64(max(0, (CFAbsoluteTimeGetCurrent() - processStartTime) * 1_000))
+        emit(.appLaunchMs, Double(launchMs), .ms)
     }
 
     // MARK: - Session Switch
