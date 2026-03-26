@@ -832,7 +832,8 @@ struct MermaidParser: DocumentParser, Sendable {
 
                 // Split on `:` for target and message text.
                 let parts = afterArrow.split(separator: ":", maxSplits: 1).map(String.init)
-                let to = parts[0].trimmingCharacters(in: .whitespaces)
+                guard let firstPart = parts.first else { continue }
+                let to = firstPart.trimmingCharacters(in: .whitespaces)
                 let text = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
 
                 if !from.isEmpty, !to.isEmpty {
