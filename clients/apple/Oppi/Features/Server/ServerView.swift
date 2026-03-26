@@ -1,17 +1,18 @@
 import SwiftUI
 
 /// Main Server tab view showing stats dashboard and health info
-/// for the currently connected server.
+/// for paired servers.
 ///
 /// Data flow:
-/// - Stats from `GET /server/stats?range=N` via `APIClient.fetchStats(range:)`
-/// - Server info from `GET /server/info` via `APIClient.serverInfo()`
-/// - Pull-to-refresh + `.task(id: selectedRange)` (no background polling)
+/// - Stats from `GET /server/stats?range=N` via per-server `APIClient`
+/// - Server info from `GET /server/info` via per-server `APIClient`
+/// - Pull-to-refresh + `.task(id:)` keyed on server + range
+/// - Multi-server picker when 2+ servers are paired
 struct ServerView: View {
-    @Environment(\.apiClient) private var apiClient
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
 
+    @State private var selectedServerId: String?
     @State private var stats: ServerStats?
     @State private var serverInfo: ServerInfo?
     @State private var selectedRange: Int = 7
@@ -19,17 +20,97 @@ struct ServerView: View {
     @State private var error: String?
     @State private var dailyDetail: DailyDetail?
     @State private var isLoadingDetail = false
-    /// Cache fetched daily details to avoid refetching on re-selection.
     @State private var dailyDetailCache: [String: DailyDetail] = [:]
     @State private var selectedMetric: StatsMetric = .cost
+    @State private var showAddServer = false
 
-    private var activeServer: PairedServer? {
-        serverStore.servers.first
+    /// Resolves selected server, falling back to first available.
+    private var selectedServer: PairedServer? {
+        let servers = serverStore.servers
+        if let selectedServerId, let match = servers.first(where: { $0.id == selectedServerId }) {
+            return match
+        }
+        return servers.first
+    }
+
+    /// Build an `APIClient` for a specific server, or nil if URL is invalid.
+    private func apiClient(for server: PairedServer) -> APIClient? {
+        guard let baseURL = server.baseURL else { return nil }
+        return APIClient(baseURL: baseURL, token: server.token, tlsCertFingerprint: server.tlsCertFingerprint)
+    }
+
+    /// Combined task identity — reloads when server or range changes.
+    private var taskIdentity: String {
+        "\(selectedServerId ?? "")-\(selectedRange)"
     }
 
     var body: some View {
+        Group {
+            if serverStore.servers.isEmpty {
+                emptyState
+            } else {
+                dashboard
+            }
+        }
+        .navigationTitle(selectedServer?.name ?? "Server")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if let server = selectedServer {
+                        NavigationLink(value: server) {
+                            Label("Server Details", systemImage: "info.circle")
+                        }
+                    }
+                    Button {
+                        showAddServer = true
+                    } label: {
+                        Label("Add Server", systemImage: "plus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .navigationDestination(for: PairedServer.self) { server in
+            ServerDetailView(server: server)
+        }
+        .sheet(isPresented: $showAddServer) {
+            OnboardingView(mode: .addServer)
+        }
+        .onChange(of: serverStore.servers) { _, newServers in
+            // If selected server was removed, reset to first
+            if let selectedServerId,
+               !newServers.contains(where: { $0.id == selectedServerId })
+            {
+                self.selectedServerId = newServers.first?.id
+            }
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No Servers", systemImage: "server.rack")
+        } description: {
+            Text("Pair a server to view stats and health information.")
+        } actions: {
+            Button("Add Server") {
+                showAddServer = true
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    // MARK: - Dashboard
+
+    private var dashboard: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if serverStore.servers.count > 1 {
+                    serverPicker
+                }
+
                 rangePicker
 
                 if isLoading, stats == nil {
@@ -45,14 +126,11 @@ struct ServerView: View {
             .padding(.bottom, 24)
         }
         .themedScrollSurface()
-        .navigationTitle(activeServer?.name ?? "Server")
-        .task(id: selectedRange) {
-            dailyDetail = nil
-            dailyDetailCache = [:]
-            await loadStats()
-        }
-        .task {
-            await loadServerInfo()
+        .task(id: taskIdentity) {
+            clearStatsState()
+            async let s: () = loadStats()
+            async let i: () = loadServerInfo()
+            _ = await (s, i)
         }
         .refreshable {
             dailyDetailCache = [:]
@@ -60,6 +138,36 @@ struct ServerView: View {
             async let s: () = loadStats()
             async let i: () = loadServerInfo()
             _ = await (s, i)
+        }
+    }
+
+    // MARK: - Server Picker
+
+    private var serverPicker: some View {
+        let servers = serverStore.servers
+        let binding = Binding<String>(
+            get: { selectedServer?.id ?? "" },
+            set: { selectedServerId = $0 }
+        )
+
+        return Group {
+            if servers.count <= 3 {
+                Picker("Server", selection: binding) {
+                    ForEach(servers) { server in
+                        Text(server.name).tag(server.id)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            } else {
+                Picker("Server", selection: binding) {
+                    ForEach(servers) { server in
+                        Text(server.name).tag(server.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
         }
     }
 
@@ -146,17 +254,30 @@ struct ServerView: View {
         }
     }
 
+    // MARK: - State Management
+
+    private func clearStatsState() {
+        dailyDetail = nil
+        dailyDetailCache = [:]
+        stats = nil
+        serverInfo = nil
+        error = nil
+        isLoading = true
+    }
+
     // MARK: - Data Loading
 
     private func loadStats() async {
-        guard let apiClient else {
+        guard let server = selectedServer,
+              let client = apiClient(for: server)
+        else {
             error = "Not connected to a server"
             isLoading = false
             return
         }
 
         do {
-            let result = try await apiClient.fetchStats(range: selectedRange)
+            let result = try await client.fetchStats(range: selectedRange)
             stats = result
             error = nil
         } catch {
@@ -169,17 +290,18 @@ struct ServerView: View {
     }
 
     private func loadServerInfo() async {
-        guard let apiClient else { return }
+        guard let server = selectedServer,
+              let client = apiClient(for: server)
+        else { return }
 
         do {
-            serverInfo = try await apiClient.serverInfo()
+            serverInfo = try await client.serverInfo()
         } catch {
             // Non-fatal — stats still show without server info
         }
     }
 
     private func loadDailyDetail(date: String) async {
-        // Return cached detail if available
         if let cached = dailyDetailCache[date] {
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = cached
@@ -187,12 +309,14 @@ struct ServerView: View {
             return
         }
 
-        guard let apiClient else { return }
+        guard let server = selectedServer,
+              let client = apiClient(for: server)
+        else { return }
 
         isLoadingDetail = true
 
         do {
-            let result = try await apiClient.fetchDailyDetail(date: date)
+            let result = try await client.fetchDailyDetail(date: date)
             dailyDetailCache[date] = result
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = result
