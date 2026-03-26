@@ -45,25 +45,33 @@ interface RegisteredTool {
     params: Record<string, unknown>,
     signal?: AbortSignal,
     onUpdate?: (update: unknown) => void,
-  ) => Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }>;
+  ) => Promise<{
+    content: Array<{ type: string; text: string }>;
+    details: Record<string, unknown>;
+  }>;
 }
 
 /**
  * Create a mock context + pi, register tools, return tool executors.
  */
-function setup(opts: {
-  sessionId?: string;
-  sessions?: Session[];
-  models?: string[];
-  subscribers?: Map<string, (msg: ServerMessage) => void>;
-} = {}) {
+function setup(
+  opts: {
+    sessionId?: string;
+    sessions?: Session[];
+    models?: string[];
+    subscribers?: Map<string, (msg: ServerMessage) => void>;
+  } = {},
+) {
   const sessions = new Map<string, Session>();
   for (const s of opts.sessions ?? []) sessions.set(s.id, s);
 
   // Ensure the "current" session exists for depth checks
   const parentId = opts.sessionId ?? "parent-1";
   if (!sessions.has(parentId)) {
-    sessions.set(parentId, makeSession({ id: parentId, status: "busy", parentSessionId: undefined }));
+    sessions.set(
+      parentId,
+      makeSession({ id: parentId, status: "busy", parentSessionId: undefined }),
+    );
   }
 
   const subscriberCallbacks = opts.subscribers ?? new Map<string, (msg: ServerMessage) => void>();
@@ -114,7 +122,9 @@ function setup(opts: {
     },
 
     getAvailableModelIds() {
-      return opts.models ?? ["anthropic/claude-sonnet-4-0", "anthropic/claude-opus-4-0", "openai/gpt-4o"];
+      return (
+        opts.models ?? ["anthropic/claude-sonnet-4-0", "anthropic/claude-opus-4-0", "openai/gpt-4o"]
+      );
     },
   };
 
@@ -313,7 +323,9 @@ describe("spawn_agent", () => {
           sessions.set(child.id, child);
           return child;
         },
-        async spawnDetached() { throw new Error("unused"); },
+        async spawnDetached() {
+          throw new Error("unused");
+        },
         listChildren: () => [...sessions.values()].filter((s) => s.parentSessionId === "parent-1"),
         getSession: (id) => sessions.get(id),
         listWorkspaceSessions: () => [...sessions.values()].filter((s) => s.workspaceId === "ws-1"),
@@ -411,7 +423,7 @@ describe("spawn_agent", () => {
       },
       listChildren: () => [],
       getSession: (id) => sessions.get(id),
-      listWorkspaceSessions: () => [...sessions.values()],
+      listWorkspaceSessions: () => [...sessions.values()].filter((s) => s.workspaceId === "ws-1"),
       subscribe: () => () => {},
       getAvailableModelIds: () => [],
     };
@@ -433,15 +445,15 @@ describe("spawn_agent", () => {
   it("sends creating progress update", async () => {
     const { spawn } = setup();
     const updates: unknown[] = [];
-    await spawn.execute(
-      "tc-1",
-      { message: "test", name: "my-agent" },
-      undefined,
-      (update) => updates.push(update),
+    await spawn.execute("tc-1", { message: "test", name: "my-agent" }, undefined, (update) =>
+      updates.push(update),
     );
 
     expect(updates.length).toBeGreaterThanOrEqual(1);
-    const firstUpdate = updates[0] as { content: Array<{ text: string }>; details: Record<string, unknown> };
+    const firstUpdate = updates[0] as {
+      content: Array<{ text: string }>;
+      details: Record<string, unknown>;
+    };
     expect(firstUpdate.content[0].text).toContain('Creating session "my-agent"');
   });
 });
@@ -460,9 +472,27 @@ describe("check_agents", () => {
 
   it("lists child sessions with status icons", async () => {
     const children = [
-      makeSession({ id: "c1", name: "auth-tests", status: "busy", parentSessionId: "parent-1", cost: 0.12 }),
-      makeSession({ id: "c2", name: "db-refactor", status: "stopped", parentSessionId: "parent-1", cost: 0.45 }),
-      makeSession({ id: "c3", name: "broken", status: "error", parentSessionId: "parent-1", cost: 0.01 }),
+      makeSession({
+        id: "c1",
+        name: "auth-tests",
+        status: "busy",
+        parentSessionId: "parent-1",
+        cost: 0.12,
+      }),
+      makeSession({
+        id: "c2",
+        name: "db-refactor",
+        status: "stopped",
+        parentSessionId: "parent-1",
+        cost: 0.45,
+      }),
+      makeSession({
+        id: "c3",
+        name: "broken",
+        status: "error",
+        parentSessionId: "parent-1",
+        cost: 0.01,
+      }),
     ];
     const { check } = setup({ sessions: children });
 
@@ -516,7 +546,7 @@ describe("check_agents", () => {
     const children = [
       makeSession({ id: "c1", parentSessionId: "parent-1", cost: 0 }),
       makeSession({ id: "c2", parentSessionId: "parent-1", cost: 0.001 }),
-      makeSession({ id: "c3", parentSessionId: "parent-1", cost: 1.50 }),
+      makeSession({ id: "c3", parentSessionId: "parent-1", cost: 1.5 }),
     ];
     const { check } = setup({ sessions: children });
 
@@ -530,7 +560,14 @@ describe("check_agents", () => {
 
   it("includes all agent summaries in details", async () => {
     const children = [
-      makeSession({ id: "c1", name: "task-a", status: "busy", parentSessionId: "parent-1", cost: 0.5, messageCount: 7 }),
+      makeSession({
+        id: "c1",
+        name: "task-a",
+        status: "busy",
+        parentSessionId: "parent-1",
+        cost: 0.5,
+        messageCount: 7,
+      }),
     ];
     const { check } = setup({ sessions: children });
 
@@ -626,8 +663,13 @@ describe("inspect_agent", () => {
           { type: "toolCall", name: "read", arguments: { path: "/src/app.ts" }, id: "tc1" },
           { type: "toolCall", name: "edit", arguments: { path: "/src/app.ts" }, id: "tc2" },
         ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "file content" }], { toolCallId: "tc1" }),
-        makeTraceEntry("toolResult", [{ type: "text", text: "error: not found" }], { toolCallId: "tc2", isError: true }),
+        makeTraceEntry("toolResult", [{ type: "text", text: "file content" }], {
+          toolCallId: "tc1",
+        }),
+        makeTraceEntry("toolResult", [{ type: "text", text: "error: not found" }], {
+          toolCallId: "tc2",
+          isError: true,
+        }),
         makeTraceEntry("assistant", [{ type: "text", text: "Fixed the bug." }]),
       ];
       const child = makeSession({
@@ -654,7 +696,12 @@ describe("inspect_agent", () => {
         makeTraceEntry("assistant", [
           { type: "toolCall", name: "read", arguments: { path: "/src/a.ts" }, id: "t1" },
           { type: "toolCall", name: "read", arguments: { path: "/src/b.ts" }, id: "t2" },
-          { type: "toolCall", name: "write", arguments: { path: "/src/c.ts", content: "new" }, id: "t3" },
+          {
+            type: "toolCall",
+            name: "write",
+            arguments: { path: "/src/c.ts", content: "new" },
+            id: "t3",
+          },
         ]),
         makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t1" }),
         makeTraceEntry("toolResult", [{ type: "text", text: "ok" }], { toolCallId: "t2" }),
@@ -680,7 +727,9 @@ describe("inspect_agent", () => {
     it("shows last response preview", async () => {
       const trace = [
         makeTraceEntry("user", [{ type: "text", text: "explain" }]),
-        makeTraceEntry("assistant", [{ type: "text", text: "Here is my detailed explanation of the system." }]),
+        makeTraceEntry("assistant", [
+          { type: "text", text: "Here is my detailed explanation of the system." },
+        ]),
       ];
       const child = makeSession({
         id: "my-child",
@@ -702,7 +751,9 @@ describe("inspect_agent", () => {
         makeTraceEntry("assistant", [
           { type: "toolCall", name: "bash", arguments: { command: "npm test" }, id: "t1" },
         ]),
-        makeTraceEntry("toolResult", [{ type: "text", text: "3 tests passed" }], { toolCallId: "t1" }),
+        makeTraceEntry("toolResult", [{ type: "text", text: "3 tests passed" }], {
+          toolCallId: "t1",
+        }),
         makeTraceEntry("assistant", [{ type: "text", text: "Tests pass now." }]),
       ];
       const child = makeSession({
@@ -744,7 +795,12 @@ describe("inspect_agent", () => {
       const trace = [
         makeTraceEntry("user", [{ type: "text", text: "read the file" }]),
         makeTraceEntry("assistant", [
-          { type: "toolCall", name: "read", arguments: { path: "/src/main.ts", offset: 1, limit: 50 }, id: "t1" },
+          {
+            type: "toolCall",
+            name: "read",
+            arguments: { path: "/src/main.ts", offset: 1, limit: 50 },
+            id: "t1",
+          },
         ]),
         makeTraceEntry("toolResult", [{ type: "text", text: longContent }], { toolCallId: "t1" }),
         makeTraceEntry("assistant", [{ type: "text", text: "Got it." }]),
