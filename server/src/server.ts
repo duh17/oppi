@@ -429,14 +429,24 @@ export class Server {
       modelRegistry: this.modelRegistry,
       getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
       updateSessionName: (sessionId, name) => {
-        const session = this.storage.getSession(sessionId);
-        if (session) {
-          session.name = name;
-          this.storage.saveSession(session);
+        // Update the active session object (authoritative in-memory reference)
+        // so subsequent lifecycle persists carry the name. Falling back to the
+        // storage copy handles stopped/inactive sessions.
+        const active = this.sessions.getActiveSession(sessionId);
+        if (active) {
+          active.name = name;
+          this.storage.saveSession(active);
+        } else {
+          const session = this.storage.getSession(sessionId);
+          if (session) {
+            session.name = name;
+            this.storage.saveSession(session);
+          }
         }
       },
       broadcastSessionUpdate: (sessionId) => {
-        const session = this.storage.getSession(sessionId);
+        const active = this.sessions.getActiveSession(sessionId);
+        const session = active ?? this.storage.getSession(sessionId);
         if (session) {
           this.broadcastToUser({ type: "state", session, sessionId });
         }
