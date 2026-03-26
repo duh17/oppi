@@ -48,6 +48,11 @@ const SLO_THRESHOLDS = {
   "chat.voice_setup_ms":       { p95: 400,    label: "Voice setup",               group: "Voice" },
   "chat.voice_first_result_ms":{ p95: 8_000,  label: "Voice first result",        group: "Voice" },
   "chat.voice_prewarm_ms":     { p95: 200,    label: "Voice prewarm",             group: "Voice" },
+
+  // Session list
+  "chat.session_list_compute_ms":    { p95: 4,    label: "List viewData compute",    group: "Session List" },
+  "chat.session_list_row_compute_ms":{ p95: 2,    label: "List row compute",         group: "Session List" },
+  "chat.session_list_body_rate":     { p95: 20,   label: "List body evals per 5s",   group: "Session List" },
 };
 
 // ─── CLI ───

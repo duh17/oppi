@@ -812,6 +812,23 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Permission overlay display to user tap (allow/deny). Tags: action.",
   },
+
+  // ── Session list rendering ──
+  "chat.session_list_compute_ms": {
+    unit: "ms",
+    description:
+      "Session list viewData computation latency. Tags: active_count, stopped_count, workspace_id.",
+  },
+  "chat.session_list_body_rate": {
+    unit: "count",
+    description:
+      "Session list body evaluation count per 5-second window. High values indicate store churn.",
+  },
+  "chat.session_list_row_compute_ms": {
+    unit: "ms",
+    description:
+      "Aggregate per-row computation latency for visible session rows. Tags: row_count, workspace_id.",
+  },
 } as const satisfies Readonly<Record<string, ChatMetricDefinition>>;
 
 export type ChatMetricName = keyof typeof CHAT_METRIC_REGISTRY;

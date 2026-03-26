@@ -69,6 +69,9 @@ enum ChatMetricName: String, Codable, Sendable {
     case appLaunchMs = "chat.app_launch_ms"
     case sessionSwitchMs = "chat.session_switch_ms"
     case permissionOverlayMs = "chat.permission_overlay_ms"
+    case sessionListComputeMs = "chat.session_list_compute_ms"
+    case sessionListBodyRate = "chat.session_list_body_rate"
+    case sessionListRowComputeMs = "chat.session_list_row_compute_ms"
 }
 
 enum ChatMetricUnit: String, Codable, Sendable {
