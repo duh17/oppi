@@ -587,6 +587,13 @@ export class SessionManager extends EventEmitter {
     return active.toolFullOutputPaths.get(normalizedToolCallId) ?? null;
   }
 
+  /** Return the event ring for an active session (for utilization sampling). */
+  getEventRing(sessionId: string): { length: number; capacity: number } | null {
+    const active = this.active.get(this.sessionKey(sessionId));
+    if (!active) return null;
+    return { length: active.eventRing.length, capacity: active.eventRing.capacity };
+  }
+
   getCurrentSeq(sessionId: string): number {
     return this.broadcaster.getCurrentSeq(this.sessionKey(sessionId));
   }

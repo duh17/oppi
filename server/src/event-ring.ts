@@ -98,4 +98,14 @@ export class EventRing {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- head always occupied when len > 0
     return this.len === 0 || sinceSeq >= this.buf[this.head]!.seq - 1;
   }
+
+  /** Number of events currently stored. */
+  get length(): number {
+    return this.len;
+  }
+
+  /** Maximum capacity of the ring buffer. */
+  get capacity(): number {
+    return this.cap;
+  }
 }

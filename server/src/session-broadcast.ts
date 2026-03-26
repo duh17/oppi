@@ -1,4 +1,5 @@
 import type { EventRing } from "./event-ring.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 
 export interface SessionCatchUpResponse {
@@ -25,6 +26,7 @@ export interface SessionBroadcasterDeps {
   getActiveSession: (key: string) => BroadcastSessionState | undefined;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   saveSession: (session: Session) => void;
+  metrics?: ServerMetricCollector;
 }
 
 export class SessionBroadcaster {
@@ -76,6 +78,16 @@ export class SessionBroadcaster {
 
     const canServe = active.eventRing.canServe(sinceSeq);
     const events = canServe ? active.eventRing.since(sinceSeq).map((entry) => entry.event) : [];
+
+    const metrics = this.deps.metrics;
+    if (metrics) {
+      if (canServe && events.length > 0) {
+        metrics.record("server.catchup_events", events.length, { ring: "session" });
+      }
+      if (!canServe) {
+        metrics.record("server.catchup_miss", 1, { ring: "session" });
+      }
+    }
 
     return {
       events,
@@ -146,6 +158,8 @@ export class SessionBroadcaster {
       event: sequenced,
       durable: true,
     });
+
+    this.deps.metrics?.record("server.broadcast_fanout", active.subscribers.size);
 
     for (const cb of active.subscribers) {
       try {

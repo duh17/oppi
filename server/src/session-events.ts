@@ -76,6 +76,8 @@ export interface EventProcessorSessionState {
   turnFirstTokenRecorded?: boolean;
   /** Number of tool_execution_start events in the current turn. */
   turnToolCallCount?: number;
+  /** Timestamp (ms) when auto-compaction started (for duration tracking). */
+  compactionStartedAt?: number;
 }
 
 export interface SessionEventProcessorDeps {
@@ -280,6 +282,36 @@ export class SessionEventProcessor {
           }
         }
         break;
+
+      case "auto_retry_start":
+        if (metrics) {
+          const attempt =
+            "attempt" in event && typeof event.attempt === "number" ? event.attempt : 1;
+          metrics.record("server.auto_retry", 1, { sessionId, attempt: String(attempt) });
+        }
+        break;
+
+      case "auto_compaction_start":
+        active.compactionStartedAt = Date.now();
+        break;
+
+      case "auto_compaction_end": {
+        if (metrics) {
+          // Duration
+          if (active.compactionStartedAt) {
+            metrics.record("server.compaction_ms", Date.now() - active.compactionStartedAt, {
+              sessionId,
+            });
+          }
+          // Result
+          const aborted = "aborted" in event && event.aborted === true;
+          const willRetry = "willRetry" in event && event.willRetry === true;
+          const result = aborted ? "aborted" : willRetry ? "will_retry" : "success";
+          metrics.record("server.compaction_result", 1, { sessionId, result });
+        }
+        active.compactionStartedAt = undefined;
+        break;
+      }
     }
 
     session.lastActivity = Date.now();
