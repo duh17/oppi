@@ -64,7 +64,7 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     return empty;
   }
 
-  const RECENT_COMMITS_CAP = 5;
+  const RECENT_COMMITS_CAP = 20;
   const COMMIT_RECORD_SEP = "---commit-sep---";
 
   // Run all git commands in parallel
