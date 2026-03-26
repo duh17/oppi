@@ -1,15 +1,56 @@
 flowchart TD
-    A[Parse Source] --> B{File Type?}
-    B -->|.org| C[OrgParser]
-    B -->|.tex| D[TeXMathParser]
-    B -->|.mmd| E[MermaidParser]
-    C --> F([Attributed String])
-    D --> G((Core Graphics))
-    E --> G
-    F --> H[UITextView]
-    G --> I[CGContext Draw]
-    H --> J{Display}
-    I --> J
+    Start([User opens Oppi]) --> Auth{Authenticated?}
+    Auth -->|Yes| LoadSessions[Load Active Sessions]
+    Auth -->|No| Login[Show Login Screen]
+    Login --> OAuth[OAuth Flow]
+    OAuth --> Auth
 
-    style A fill:#4a9eff,stroke:#333
-    style J fill:#4ade80,stroke:#333
+    LoadSessions --> SessionList[Session List View]
+    SessionList --> NewSession[Create New Session]
+    SessionList --> ExistingSession[Open Existing Session]
+
+    NewSession --> SelectWorkspace{Select Workspace}
+    SelectWorkspace -->|Existing| PickRepo[Pick Repository]
+    SelectWorkspace -->|New| CreateWorkspace[Create Workspace]
+    CreateWorkspace --> PickRepo
+
+    PickRepo --> SelectModel[Select Model]
+    SelectModel --> StartSession[Start Agent Session]
+
+    ExistingSession --> ChatView[Chat Timeline View]
+    StartSession --> ChatView
+
+    ChatView --> UserMessage[User Sends Message]
+    ChatView --> ViewFiles[Browse Workspace Files]
+    ChatView --> ViewTools[Inspect Tool Calls]
+
+    UserMessage --> AgentProcessing[Agent Processing]
+    AgentProcessing --> ToolExecution{Tool Type}
+
+    ToolExecution -->|read_file| FileRead[Read File]
+    ToolExecution -->|write_file| FileWrite[Write File]
+    ToolExecution -->|bash| BashExec[Execute Command]
+    ToolExecution -->|spawn_agent| SpawnChild[Spawn Child Agent]
+
+    FileRead --> RenderResult[Render Result]
+    FileWrite --> RenderResult
+    BashExec --> RenderResult
+    SpawnChild --> ChildSession[Child Session]
+
+    RenderResult --> ChatView
+    ChildSession --> AgentProcessing
+
+    ViewFiles --> FileBrowser[File Browser]
+    FileBrowser --> FilePreview{File Type}
+    FilePreview -->|.md| MarkdownView[Markdown Renderer]
+    FilePreview -->|.org| OrgView[Org Mode Renderer]
+    FilePreview -->|.tex| LaTeXView[LaTeX Math Renderer]
+    FilePreview -->|.mmd| MermaidView[Mermaid Diagram Renderer]
+    FilePreview -->|.swift/.ts| CodeView[Syntax Highlighted Code]
+    FilePreview -->|.html| HTMLView[HTML Preview]
+
+    style Start fill:#4CAF50,stroke:#333,color:#fff
+    style Auth fill:#FF9800,stroke:#333,color:#fff
+    style ChatView fill:#2196F3,stroke:#333,color:#fff
+    style AgentProcessing fill:#9C27B0,stroke:#333,color:#fff
+    style ChildSession fill:#9C27B0,stroke:#333,color:#fff
