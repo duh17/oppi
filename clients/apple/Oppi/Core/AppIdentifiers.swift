@@ -22,11 +22,7 @@ enum ReleaseFeatures {
 
     /// Live Activity codepath availability (runtime opt-in handled by
     /// `LiveActivityPreferences`).
-    static let liveActivitiesEnabled = true
-
-    /// Native chart rendering for `plot` tool output (runtime opt-in handled
-    /// by `NativePlotPreferences`).
-    static let nativePlotRenderingEnabled = true
+    static let liveActivitiesEnabled = false
 
     /// Composer microphone button + on-device speech-to-text via SpeechAnalyzer.
     static let voiceInputEnabled = true

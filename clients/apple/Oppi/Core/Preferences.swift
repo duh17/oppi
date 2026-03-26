@@ -47,36 +47,6 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - Native Plot
-
-    /// User-facing preference for native chart rendering of `plot` tool output.
-    ///
-    /// Default is ON in DEBUG builds and tests, OFF in release builds.
-    /// When off, plot output falls back to raw JSON text display.
-    enum NativePlot {
-        private static let enabledKey = "\(AppIdentifiers.subsystem).nativePlot.enabled"
-
-        private static var defaultEnabled: Bool {
-            #if DEBUG
-                true
-            #else
-                ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-                    || NSClassFromString("XCTestCase") != nil
-            #endif
-        }
-
-        static var isEnabled: Bool {
-            if let stored = UserDefaults.standard.object(forKey: enabledKey) as? Bool {
-                return stored
-            }
-            return defaultEnabled
-        }
-
-        static func setEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: enabledKey)
-        }
-    }
-
     // MARK: - Screen Awake
 
     /// User-facing preference for keeping the screen awake during active chat work.
@@ -446,7 +416,6 @@ enum AppPreferences {
 /// Source-compatibility aliases for consumers that reference the old type names.
 /// New code should prefer `AppPreferences.LiveActivity`, `AppPreferences.Voice`, etc.
 typealias LiveActivityPreferences = AppPreferences.LiveActivity
-typealias NativePlotPreferences = AppPreferences.NativePlot
 typealias ScreenAwakePreferences = AppPreferences.ScreenAwake
 typealias VoiceInputPreferences = AppPreferences.Voice
 typealias KeyboardLanguageStore = AppPreferences.Keyboard

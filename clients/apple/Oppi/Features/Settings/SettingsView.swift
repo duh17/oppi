@@ -110,14 +110,9 @@ struct SettingsView: View {
                 }
             }
 
-            if ReleaseFeatures.liveActivitiesEnabled || ReleaseFeatures.nativePlotRenderingEnabled {
+            if ReleaseFeatures.liveActivitiesEnabled {
                 Section {
-                    if ReleaseFeatures.liveActivitiesEnabled {
-                        Toggle("Live Activities", isOn: liveActivityToggle)
-                    }
-                    if ReleaseFeatures.nativePlotRenderingEnabled {
-                        Toggle("Native Chart Rendering", isOn: nativePlotToggle)
-                    }
+                    Toggle("Live Activities", isOn: liveActivityToggle)
                 } header: {
                     Text("Experiments")
                 } footer: {
@@ -163,16 +158,6 @@ struct SettingsView: View {
                     _ = KeychainService.migrateLegacyServersToSharedGroup()
                 }
                 LiveActivityManager.shared.recoverIfNeeded()
-            }
-        )
-    }
-
-    private var nativePlotToggle: Binding<Bool> {
-        Binding(
-            get: { NativePlotPreferences.isEnabled },
-            set: { newValue in
-                guard newValue != NativePlotPreferences.isEnabled else { return }
-                NativePlotPreferences.setEnabled(newValue)
             }
         )
     }
