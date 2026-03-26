@@ -1,6 +1,33 @@
 import SwiftUI
 import UIKit
 
+/// Shared chrome convention for all fullscreen viewer controllers.
+///
+/// Fullscreen viewers use immersive presentation: content extends
+/// behind the navigation bar, and bar items render as floating
+/// Liquid Glass pills (the iOS 26 default when no custom
+/// `UINavigationBarAppearance` is set).
+///
+/// The convention:
+/// 1. Do NOT set a custom `UINavigationBarAppearance` on the content VC.
+/// 2. Pin the body view's top to `view.topAnchor` (not `safeAreaLayoutGuide`).
+/// 3. Do NOT set a `titleView` — only left/right bar button items.
+///
+/// Scroll views inside body views use `contentInsetAdjustmentBehavior = .automatic`
+/// (the default) so content starts below the bar but scrolls behind it.
+///
+/// To revert to an opaque header:
+/// 1. Set a `UINavigationBarAppearance` with `configureWithOpaqueBackground()`
+/// 2. Pin content to `safeAreaLayoutGuide.topAnchor`
+/// 3. Optionally restore `titleView`
+///
+/// Both ``FullScreenCodeViewController`` and ``FullScreenImageViewController``
+/// follow this pattern.
+enum FullScreenViewerChrome {
+    // Marker enum — the convention is documented above.
+    // Grep for `FullScreenViewerChrome` to find all adopters.
+}
+
 enum FullScreenCodeTypography {
     static let codeFont = AppFont.monoMedium
 }

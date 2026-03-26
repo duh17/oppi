@@ -10,20 +10,14 @@ import UIKit
 final class FullScreenCodeViewController: UIViewController {
     private struct Presentation {
         let bodyContent: FullScreenCodeContent
-        let titlePath: String?
-        let titleSubtitle: String
         let copyText: String
         let sourceToggleTitle: String?
     }
 
     private struct NavigationPresentation: Equatable {
-        let titlePath: String?
-        let titleSubtitle: String
         let sourceToggleTitle: String?
 
         init(_ presentation: Presentation) {
-            titlePath = presentation.titlePath
-            titleSubtitle = presentation.titleSubtitle
             sourceToggleTitle = presentation.sourceToggleTitle
         }
     }
@@ -101,12 +95,8 @@ final class FullScreenCodeViewController: UIViewController {
 
         contentHostController = vc
 
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(palette.bgHighlight)
-        appearance.titleTextAttributes = [.foregroundColor: UIColor(palette.fg)]
-        vc.navigationItem.standardAppearance = appearance
-        vc.navigationItem.scrollEdgeAppearance = appearance
+        // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
+        // bar items as floating glass pills. See FullScreenViewerChrome.
 
         installInitialBody(on: vc, palette: palette)
         configureNavigation(on: vc, palette: palette)
@@ -135,10 +125,12 @@ final class FullScreenCodeViewController: UIViewController {
         installedBodyView = bodyView
         bodyView.translatesAutoresizingMaskIntoConstraints = false
         viewController.view.addSubview(bodyView)
+        // Top pinned to view edge (not safe area) so content scrolls behind
+        // the navigation bar's Liquid Glass pills. See FullScreenViewerChrome.
         NSLayoutConstraint.activate([
             bodyView.leadingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.leadingAnchor),
             bodyView.trailingAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.trailingAnchor),
-            bodyView.topAnchor.constraint(equalTo: viewController.view.safeAreaLayoutGuide.topAnchor),
+            bodyView.topAnchor.constraint(equalTo: viewController.view.topAnchor),
             bodyView.bottomAnchor.constraint(equalTo: viewController.view.bottomAnchor),
         ])
     }
@@ -151,11 +143,8 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         lastNavigationPresentation = navigationPresentation
-        viewController.navigationItem.titleView = makeTitleView(
-            path: presentation.titlePath,
-            subtitle: presentation.titleSubtitle,
-            palette: palette
-        )
+        // No titleView — immersive mode shows only floating glass pills.
+        // See FullScreenViewerChrome.
 
         var rightItems: [UIBarButtonItem] = []
         let copy = UIBarButtonItem(
@@ -184,61 +173,11 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func makePresentation() -> Presentation {
         let semanticContent = currentSemanticContent()
-        let titleMetadata = titleMetadata(for: semanticContent)
         return Presentation(
             bodyContent: bodyContent(for: semanticContent),
-            titlePath: titleMetadata.path,
-            titleSubtitle: titleMetadata.subtitle,
             copyText: copyText(for: semanticContent),
             sourceToggleTitle: sourceToggleTitle(for: semanticContent)
         )
-    }
-
-    // MARK: - Title
-
-    private func makeTitleView(path: String?, subtitle: String, palette: ThemePalette) -> UIView {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 1
-
-        if let path {
-            let pathLabel = UILabel()
-            pathLabel.text = path.shortenedPath
-            pathLabel.font = AppFont.monoMedium
-            pathLabel.textColor = UIColor(palette.fg)
-            pathLabel.lineBreakMode = .byTruncatingMiddle
-            stack.addArrangedSubview(pathLabel)
-        }
-
-        let subtitleLabel = UILabel()
-        subtitleLabel.text = subtitle
-        subtitleLabel.font = AppFont.systemSmall
-        subtitleLabel.textColor = UIColor(palette.comment)
-        stack.addArrangedSubview(subtitleLabel)
-
-        return stack
-    }
-
-    private func titleMetadata(for content: FullScreenCodeContent) -> (path: String?, subtitle: String) {
-        switch content {
-        case .code(_, let language, let filePath, _):
-            return (filePath, language ?? "code")
-        case .plainText(_, let filePath):
-            return (filePath, String(localized: "text"))
-        case .diff(_, _, let filePath, _):
-            return (filePath, String(localized: "Diff"))
-        case .markdown(_, let filePath):
-            return (filePath, String(localized: "Markdown"))
-        case .html(_, let filePath):
-            return (filePath, String(localized: "HTML"))
-        case .thinking:
-            return (nil, String(localized: "Thinking"))
-        case .terminal(_, let command, _):
-            return (nil, command == nil ? String(localized: "Terminal") : String(localized: "Terminal output"))
-        case .liveSource(let snapshot, _):
-            return titleMetadata(for: semanticContent(for: snapshot))
-        }
     }
 
     // MARK: - Body

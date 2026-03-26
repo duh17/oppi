@@ -47,17 +47,8 @@ final class FullScreenImageViewController: UIViewController {
         doneButton.accessibilityIdentifier = "fullscreen-image.dismiss"
         navigationItem.leftBarButtonItem = doneButton
 
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(palette.bgHighlight)
-        appearance.titleTextAttributes = [.foregroundColor: UIColor(palette.fg)]
-        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
-
-        navigationController?.view.backgroundColor = UIColor(palette.bgDark)
-        navigationController?.navigationBar.tintColor = UIColor(palette.cyan)
-        navigationController?.navigationBar.standardAppearance = appearance
-        navigationController?.navigationBar.scrollEdgeAppearance = appearance
-        navigationController?.navigationBar.compactAppearance = appearance
+        // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
+        // bar items as floating glass pills. See FullScreenViewerChrome.
     }
 
     private func setupScrollView() {
@@ -80,7 +71,9 @@ final class FullScreenImageViewController: UIViewController {
 
     private func setupConstraints() {
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // Top pinned to view edge (not safe area) so content extends behind
+            // the navigation bar's Liquid Glass pills. See FullScreenViewerChrome.
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
