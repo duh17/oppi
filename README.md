@@ -9,6 +9,8 @@
   <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
+Agents wrote most of this code and I didn't review it. I use it every day and vouch for the product, not the internals.
+
 ## Mac App (recommended on macOS)
 
 **Oppi for Mac** is a menu bar companion app that manages the local server and handles onboarding. It's the easiest way to get started.
