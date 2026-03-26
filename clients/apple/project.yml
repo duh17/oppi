@@ -138,7 +138,7 @@ targets:
         showEnvVars: false
       - script: |
           if command -v node >/dev/null 2>&1; then
-            node "$SRCROOT/../../server/scripts/check-architecture-boundaries.mjs" --scope ios --format xcode
+            bun "$SRCROOT/../../server/scripts/check-architecture-boundaries.mjs" --scope ios --format xcode
           else
             echo "error: Node.js is required for architecture boundary checks (ARCHITECTURE.md#ios-layers)"
             exit 1

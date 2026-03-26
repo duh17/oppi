@@ -10,25 +10,14 @@ clients/apple/*.xcodeproj/
 # clients/apple/OppiMacTests/  # Un-ignored: Mac tests should be tracked
 clients/apple/.env.testflight.local
 
-# Scripts (private build/ops tooling)
-clients/apple/scripts/
-scripts/*
-!scripts/autoresearch-dashboard.py
-!server/scripts/
+# Scripts — build-wired scripts stay in server/scripts/, everything else in oppi-dev skill
+scripts/
 server/scripts/*
+!server/scripts/architecture-layer-rules.mjs
+!server/scripts/check-architecture-boundaries.mjs
+!server/scripts/check-testing-policy.mjs
 !server/scripts/telemetry-review.mjs
-!server/scripts/manual/
-!server/scripts/manual/telemetry-import-sqlite.mjs
-!clients/apple/scripts/
-clients/apple/scripts/*
-!clients/apple/scripts/check-coverage.sh
-!clients/apple/scripts/release-mac.sh
-!clients/apple/scripts/prepare-worktree.sh
-!clients/apple/scripts/SIGNING-SETUP.md
-!clients/apple/scripts/appcast/
-!clients/apple/scripts/appcast/appcast.xml
-!clients/apple/scripts/e2e.sh
-!clients/apple/scripts/sim-pool.sh
+clients/apple/scripts/
 !server/docker/entrypoint.sh
 
 # CI / internal tooling
