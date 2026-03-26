@@ -32,7 +32,12 @@ enum FileEntryType: String, Decodable, Sendable, Equatable, Hashable {
 struct DirectoryListingResponse: Decodable, Sendable, Equatable {
     let path: String
     let entries: [FileEntry]
+    /// Total entries in the directory (before pagination, after filtering).
+    let total: Int
     let truncated: Bool
+
+    /// Whether there are more entries beyond the current page.
+    var hasMore: Bool { entries.count < total }
 }
 
 // periphery:ignore

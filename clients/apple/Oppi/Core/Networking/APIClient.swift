@@ -785,12 +785,22 @@ actor APIClient {
     ///
     /// Pass an empty string or "/" for the workspace root. Subdirectory paths
     /// should include a trailing slash (e.g. "src/").
-    func listWorkspaceDirectory(workspaceId: String, path: String = "") async throws -> DirectoryListingResponse {
-        let route = if path.isEmpty || path == "/" {
+    /// Use `offset` and `limit` for pagination.
+    func listWorkspaceDirectory(
+        workspaceId: String,
+        path: String = "",
+        offset: Int? = nil,
+        limit: Int? = nil
+    ) async throws -> DirectoryListingResponse {
+        var route = if path.isEmpty || path == "/" {
             "/workspaces/\(workspaceId)/files/"
         } else {
             "/workspaces/\(workspaceId)/files/\(path)"
         }
+        var params: [String] = []
+        if let offset { params.append("offset=\(offset)") }
+        if let limit { params.append("limit=\(limit)") }
+        if !params.isEmpty { route += "?\(params.joined(separator: "&"))" }
         let data = try await get(route)
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
     }
