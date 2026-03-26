@@ -29,7 +29,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/appcast/appcast.xml
 !clients/apple/scripts/e2e.sh
 !server/docker/entrypoint.sh
-!server/skills/agent-sessions/scripts/
 
 # CI / internal tooling
 .github/
@@ -69,9 +68,6 @@ server/coverage/
 ScreenRecording_*.mov
 
 server/extensions/
-
-# Internal tooling (private skills, build scripts)
-server/skills/
 
 # Autoresearch session artifacts (regenerated each run)
 **/autoresearch.md
