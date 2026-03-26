@@ -516,8 +516,8 @@ struct WritePresentationBuilderStreamingTests {
         #expect(language == .swift)
     }
 
-    @Test("write markdown file during streaming produces text (not markdown)")
-    func writeMarkdownStreamingProducesText() {
+    @Test("write markdown file during streaming produces markdown (incremental pipeline)")
+    func writeMarkdownStreamingProducesMarkdown() {
         let config = ToolPresentationBuilder.build(
             itemID: "tool-1",
             tool: "write",
@@ -536,8 +536,8 @@ struct WritePresentationBuilderStreamingTests {
             )
         )
 
-        guard case .text(let text, _) = config.expandedContent else {
-            Issue.record("Expected .text expanded content for streaming markdown write, got \(String(describing: config.expandedContent))")
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown expanded content for streaming markdown write, got \(String(describing: config.expandedContent))")
             return
         }
         #expect(text == "# Title\n\nBody text\n")

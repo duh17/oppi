@@ -351,7 +351,7 @@ struct ToolPresentationBuilderTests {
         #expect(config.copyOutputText == nil)
     }
 
-    @Test("write streaming markdown shows plain text, not rendered markdown")
+    @Test("write streaming markdown uses incremental markdown pipeline")
     func writeStreamingMarkdown() {
         let content = "# Hello\n\nSome **bold** text."
         let config = ToolPresentationBuilder.build(
@@ -368,17 +368,16 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        // While streaming, markdown files use plain text (not rendered markdown)
-        // to avoid expensive CommonMark rendering on every delta.
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content during streaming, got \(String(describing: config.expandedContent))")
+        // Streaming markdown files use the incremental markdown pipeline
+        // (tail-only CommonMark parse) instead of plain text downgrade.
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content during streaming, got \(String(describing: config.expandedContent))")
             return
         }
         #expect(text == content)
-        #expect(language == nil)
     }
 
-    @Test("write streaming-to-done transition switches markdown from text to rendered")
+    @Test("write streaming and done both use markdown for .md files")
     func writeStreamingToDoneMarkdownTransition() {
         let content = "# Hello\n\nSome **bold** text."
         let args: [String: JSONValue] = [
@@ -386,7 +385,7 @@ struct ToolPresentationBuilderTests {
             "content": .string(content),
         ]
 
-        // Phase 1: streaming — should be .text
+        // Phase 1: streaming — should be .markdown (incremental pipeline)
         let streaming = ToolPresentationBuilder.build(
             itemID: "t1", tool: "write",
             argsSummary: "path: docs/guide.md",
@@ -394,10 +393,10 @@ struct ToolPresentationBuilderTests {
             isError: false, isDone: false,
             context: emptyContext(args: args, expanded: ["t1"])
         )
-        #expect(modeName(streaming.expandedContent) == "text",
-                "Streaming write of .md should use text mode")
+        #expect(modeName(streaming.expandedContent) == "markdown",
+                "Streaming write of .md should use markdown mode (incremental pipeline)")
 
-        // Phase 2: done — should switch to .markdown
+        // Phase 2: done — still .markdown
         let done = ToolPresentationBuilder.build(
             itemID: "t1", tool: "write",
             argsSummary: "path: docs/guide.md",
@@ -727,8 +726,8 @@ struct ToolPresentationBuilderTests {
         #expect(text == markdown)
     }
 
-    @Test("extension streaming downgrades markdown to plain text")
-    func extensionStreamingDowngradesMarkdown() {
+    @Test("extension streaming uses markdown pipeline (not plain text downgrade)")
+    func extensionStreamingUsesMarkdown() {
         let markdown = """
         ## Related
 
@@ -747,13 +746,13 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        // While streaming, markdown-like output should be plain text, not rendered markdown.
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content for streaming extension with markdown output, got \(String(describing: config.expandedContent))")
+        // Streaming extension tools with markdown output use the incremental
+        // markdown pipeline instead of downgrading to plain text.
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content for streaming extension with markdown output, got \(String(describing: config.expandedContent))")
             return
         }
         #expect(text == markdown)
-        #expect(language == nil)
     }
 
     @Test("extension done renders markdown normally")

@@ -485,7 +485,7 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func expandedStreamingWriteMarkdownStaysOnCheapTextSurface() throws {
+    @Test func expandedStreamingWriteMarkdownUsesIncrementalMarkdownPipeline() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("write-md-streaming")
         harness.toolArgsStore.set([
@@ -504,12 +504,11 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected streaming markdown write to stay on cheap .text surface")
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected streaming markdown write to use .markdown (incremental pipeline), got \(String(describing: config.expandedContent))")
             return
         }
         #expect(text == "# Title\n\nBody")
-        #expect(language == nil)
         #expect(config.languageBadge == "Markdown")
     }
 

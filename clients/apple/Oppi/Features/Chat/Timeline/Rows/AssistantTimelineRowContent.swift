@@ -2,8 +2,11 @@ import UIKit
 
 /// Native UIKit assistant row — unified renderer for all assistant content.
 ///
-/// Handles both plain text and rich markdown (headings, lists, code blocks,
-/// tables, inline formatting) via `AssistantMarkdownContentView`.
+/// Uses `AssistantMarkdownContentView` for both streaming and done states.
+/// During streaming, the incremental markdown pipeline (tail-only CommonMark
+/// parse + structural segment diffing) renders formatted content at 30fps.
+/// The `StreamingTextRevealer` inside the segment applier handles smooth
+/// character reveal for the growing tail segment.
 struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let isStreaming: Bool
@@ -53,28 +56,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     private let bubbleContainer = UIView()
     private let iconLabel = UILabel()
     private let markdownView = AssistantMarkdownContentView()
-
-    /// Lightweight streaming text view — plain UITextView with no markdown.
-    /// Shown during streaming, hidden when done. Avoids the full segment
-    /// pipeline cost on every 33ms tick.
-    private let streamingTextView: UITextView = {
-        let tv = UITextView()
-        tv.isEditable = false
-        tv.isSelectable = false
-        tv.isScrollEnabled = false
-        tv.backgroundColor = .clear
-        tv.textContainerInset = .zero
-        tv.textContainer.lineFragmentPadding = 0
-        tv.translatesAutoresizingMaskIntoConstraints = false
-        return tv
-    }()
-
-    /// Character reveal for streaming text — fades in new characters.
-    private let streamingRevealer = StreamingTextRevealer()
-    /// Character count from the last streaming apply cycle.
-    private var streamingCharCount: Int = 0
-    /// Whether we're currently showing the streaming text view.
-    private var isShowingStreamingView = false
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
     private var interactionHandlers: TimelineRowInteractionHandlers?
@@ -176,17 +157,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         addSubview(bubbleContainer)
         bubbleContainer.addSubview(iconLabel)
         bubbleContainer.addSubview(markdownView)
-        bubbleContainer.addSubview(streamingTextView)
         interactionHandlers = TimelineRowInteractionInstaller.install(
             on: bubbleContainer,
             provider: self
         )
-
-        // Streaming text view shares the same frame as markdown view.
-        // Only one is visible at a time.
-        streamingTextView.isHidden = true
-        streamingTextView.font = AppFont.messageBody
-        streamingTextView.textColor = UIColor(ThemeRuntimeState.currentPalette().fg)
 
         NSLayoutConstraint.activate([
             bubbleContainer.topAnchor.constraint(equalTo: topAnchor),
@@ -203,16 +177,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             markdownView.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
             markdownView.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
             markdownView.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
-
-            streamingTextView.leadingAnchor.constraint(equalTo: markdownView.leadingAnchor),
-            streamingTextView.topAnchor.constraint(equalTo: markdownView.topAnchor),
-            streamingTextView.trailingAnchor.constraint(equalTo: markdownView.trailingAnchor),
-            streamingTextView.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
         ])
     }
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {
-        let wasStreaming = currentConfiguration.isStreaming
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
@@ -221,127 +189,23 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
 
         let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if configuration.isStreaming {
-            // Streaming phase: use the lightweight text view (no markdown parsing).
-            applyStreamingText(trimmedText, palette: palette)
-        } else if wasStreaming && isShowingStreamingView {
-            // Transition: streaming just ended. Build final markdown and crossfade.
-            applyStreamingToMarkdownTransition(trimmedText, configuration: configuration, palette: palette)
-        } else {
-            // Idle: full markdown rendering (history load, re-entry).
-            showMarkdownView()
-            markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
-            markdownView.apply(configuration: .init(
-                content: trimmedText,
-                isStreaming: false,
-                themeID: ThemeRuntimeState.currentThemeID(),
-                selectedTextPiRouter: configuration.interactionContext?.selectedTextPiRouter,
-                selectedTextSourceContext: configuration.interactionContext?.sourceContext(
-                    surface: .assistantProse
-                ),
-                workspaceID: configuration.workspaceID,
-                serverBaseURL: configuration.serverBaseURL
-            ))
-        }
-    }
-
-    // MARK: - Streaming / Markdown Switch
-
-    private func applyStreamingText(_ text: String, palette: ThemePalette) {
-        showStreamingView()
-
-        let fgColor = UIColor(palette.fg)
-        streamingTextView.font = AppFont.messageBody
-        streamingTextView.textColor = fgColor
-
-        let attrText = NSAttributedString(
-            string: text,
-            attributes: [
-                .font: AppFont.messageBody,
-                .foregroundColor: fgColor,
-            ]
-        )
-        let prevCount = streamingCharCount
-        streamingTextView.attributedText = attrText
-
-        // Reveal new characters with a gentle fade.
-        let currentCount = attrText.length
-        if currentCount > prevCount {
-            streamingRevealer.reveal(
-                in: streamingTextView,
-                normalizedText: attrText,
-                previousVisibleCount: prevCount
-            )
-        }
-        streamingCharCount = currentCount
-    }
-
-    private func applyStreamingToMarkdownTransition(
-        _ text: String,
-        configuration: AssistantTimelineRowConfiguration,
-        palette: ThemePalette
-    ) {
-        // Build final markdown while streaming view is still visible.
+        // Unified markdown path for both streaming and done states.
+        // During streaming, the incremental parser (tail-only CommonMark parse
+        // with FNV-1a prefix caching) keeps main-thread cost low. The segment
+        // applier does structural diffing and only updates the growing tail.
+        // StreamingTextRevealer inside the applier handles smooth character fade.
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.apply(configuration: .init(
-            content: text,
-            isStreaming: false,
+            content: trimmedText,
+            isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
             selectedTextPiRouter: configuration.interactionContext?.selectedTextPiRouter,
             selectedTextSourceContext: configuration.interactionContext?.sourceContext(
                 surface: .assistantProse
             ),
             workspaceID: configuration.workspaceID,
-            serverBaseURL: configuration.serverBaseURL
+            serverBaseURL: configuration.serverBaseURL,
+            perfSurface: .inlineAssistant
         ))
-
-        // Clear streaming content before the layout pass. The streaming text
-        // view's bottom constraint competes with the markdown view's for the
-        // bubble height. If the raw streaming text is taller than the rendered
-        // markdown (code blocks are more compact than raw fences), the cell
-        // stays oversized and code blocks stretch to fill the surplus. Clearing
-        // the streaming text removes its height contribution so the cell sizes
-        // to the markdown view's natural height. The 0.15s crossfade hides the
-        // empty streaming view — it fades from alpha 1→0 while the markdown
-        // view fades in.
-        streamingTextView.attributedText = nil
-
-        markdownView.alpha = 0
-        markdownView.isHidden = false
-        setNeedsLayout()
-        layoutIfNeeded()
-
-        UIView.animate(withDuration: 0.15, delay: 0, options: .curveEaseInOut) {
-            self.markdownView.alpha = 1
-            self.streamingTextView.alpha = 0
-        } completion: { _ in
-            self.streamingTextView.isHidden = true
-            self.streamingTextView.alpha = 1
-            self.isShowingStreamingView = false
-            self.streamingCharCount = 0
-            self.streamingRevealer.reset()
-        }
     }
-
-    private func showStreamingView() {
-        guard !isShowingStreamingView else { return }
-        isShowingStreamingView = true
-        streamingTextView.isHidden = false
-        streamingTextView.alpha = 1
-        markdownView.isHidden = true
-        markdownView.clearContent()
-    }
-
-    private func showMarkdownView() {
-        if isShowingStreamingView {
-            isShowingStreamingView = false
-            streamingTextView.isHidden = true
-            streamingTextView.attributedText = nil
-            streamingCharCount = 0
-            streamingRevealer.reset()
-        }
-        markdownView.isHidden = false
-        markdownView.alpha = 1
-    }
-
 }
