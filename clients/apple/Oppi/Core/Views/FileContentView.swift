@@ -71,11 +71,11 @@ struct FileContentView: View {
 
         // Notebook renderers — source view until native renderers land
         case .latex:
-            CodeFileView(content: content, language: .latex, startLine: startLine, presentation: presentation, filePath: filePath)
+            LaTeXFileView(content: content, filePath: filePath, presentation: presentation)
         case .orgMode:
             OrgModeFileView(content: content, filePath: filePath, presentation: presentation)
         case .mermaid:
-            CodeFileView(content: content, language: .mermaid, startLine: startLine, presentation: presentation, filePath: filePath)
+            MermaidFileView(content: content, filePath: filePath, presentation: presentation)
         case .graphviz:
             CodeFileView(content: content, language: .dot, startLine: startLine, presentation: presentation, filePath: filePath)
         }
