@@ -45,10 +45,9 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         context.saveGState()
         defer { context.restoreGState() }
 
-        // Set up coordinate system — Core Graphics has origin at bottom-left,
-        // but our layout uses top-left origin. Flip Y.
-        context.translateBy(x: origin.x, y: origin.y + layout.rootBox.size.height)
-        context.scaleBy(x: 1, y: -1)
+        // Translate to origin. Layout uses top-left coordinates which match
+        // UIKit's context (Y-down). Text is drawn with local Y-flips via drawGlyph.
+        context.translateBy(x: origin.x, y: origin.y)
 
         drawBox(layout.rootBox, in: context, foreground: layout.configuration.theme.foreground)
     }
@@ -102,12 +101,15 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
         let attrString = NSAttributedString(string: text, attributes: attributes)
         let line = CTLineCreateWithAttributedString(attrString)
 
-        // Position at baseline — the layout box origin is at top-left,
-        // and in our flipped coordinate system Y increases downward.
-        // CTLineDraw expects the pen at the baseline.
-        let descent = CTFontGetDescent(font)
-        context.textPosition = CGPoint(x: 0, y: descent)
+        // CTLineDraw expects CG coordinates (Y-up), but UIKit context is Y-down.
+        // Flip locally around the text position.
+        context.saveGState()
+        context.translateBy(x: 0, y: fontSize)
+        context.scaleBy(x: 1, y: -1)
+        context.textMatrix = .identity
+        context.textPosition = .zero
         CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     // MARK: - Line Drawing

@@ -240,11 +240,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let attrString = NSAttributedString(string: text, attributes: attributes)
         let line = CTLineCreateWithAttributedString(attrString)
 
-        ctx.saveGState()
-        ctx.textMatrix = .identity
-        ctx.textPosition = CGPoint(x: origin.x + 10, y: origin.y + 25)
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
+        drawCTLine(line, at: CGPoint(x: origin.x + 10, y: origin.y + 10), fontSize: 14, in: ctx)
     }
 
     // MARK: - Drawing: Flowchart
@@ -396,13 +392,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
         // Center text in the rect.
         let textX = rect.midX - bounds.width / 2
-        let textY = rect.midY - bounds.height / 2 + CTFontGetDescent(font)
+        let textY = rect.midY - bounds.height / 2
 
-        ctx.saveGState()
-        ctx.textMatrix = .identity
-        ctx.textPosition = CGPoint(x: textX, y: textY)
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
+        drawCTLine(line, at: CGPoint(x: textX, y: textY), fontSize: layout.fontSize, in: ctx)
     }
 
     // MARK: - Edges
@@ -532,12 +524,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         ctx.fill(labelRect)
 
         // Draw text.
-        ctx.textMatrix = .identity
-        ctx.textPosition = CGPoint(
-            x: midPoint.x - bounds.width / 2,
-            y: midPoint.y - bounds.height / 2 + CTFontGetDescent(font)
+        drawCTLine(
+            line,
+            at: CGPoint(x: midPoint.x - bounds.width / 2, y: midPoint.y - bounds.height / 2),
+            fontSize: layout.fontSize * 0.85,
+            in: ctx
         )
-        CTLineDraw(line, ctx)
         ctx.restoreGState()
     }
 
@@ -568,5 +560,19 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         guard let value else { return nil }
         let numeric = value.replacingOccurrences(of: "px", with: "")
         return Double(numeric).map { CGFloat($0) }
+    }
+
+    /// Draw a CTLine at (x, y) in UIKit top-left coordinates.
+    ///
+    /// CTLineDraw expects standard CG coords (Y-up), but UIKit gives Y-down.
+    /// This flips locally around the text position so text renders right-side-up.
+    private func drawCTLine(_ line: CTLine, at point: CGPoint, fontSize: CGFloat, in ctx: CGContext) {
+        ctx.saveGState()
+        ctx.translateBy(x: point.x, y: point.y + fontSize)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.textMatrix = .identity
+        ctx.textPosition = .zero
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
     }
 }

@@ -1,0 +1,15 @@
+flowchart TD
+    A[Parse Source] --> B{File Type?}
+    B -->|.org| C[OrgParser]
+    B -->|.tex| D[TeXMathParser]
+    B -->|.mmd| E[MermaidParser]
+    C --> F([Attributed String])
+    D --> G((Core Graphics))
+    E --> G
+    F --> H[UITextView]
+    G --> I[CGContext Draw]
+    H --> J{Display}
+    I --> J
+
+    style A fill:#4a9eff,stroke:#333
+    style J fill:#4ade80,stroke:#333
