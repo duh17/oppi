@@ -628,6 +628,14 @@ final class ServerConnection {
             screenAwakeController.clearSessionActivity(sessionId: activeSessionId)
         }
 
+        // Stash pending ask request before clearing activeSessionId so it can
+        // be restored on focusSession(). Without this, navigating away loses
+        // the ask card permanently.
+        if let activeSessionId, let ask = activeAskRequest {
+            pendingAskRequests[activeSessionId] = ask
+        }
+        activeAskRequest = nil
+
         activeSessionId = nil
         sender.activeSessionId = nil
         sessionStreamCoordinator.noteStreamDisconnected()
@@ -636,12 +644,6 @@ final class ServerConnection {
         }
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
-        // Stash pending ask request so it can be restored on focusSession().
-        // Without this, navigating away loses the ask card permanently.
-        if let activeSessionId, let ask = activeAskRequest {
-            pendingAskRequests[activeSessionId] = ask
-        }
-        activeAskRequest = nil
         askAnswerMode = false
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
