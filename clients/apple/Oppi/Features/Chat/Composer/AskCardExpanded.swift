@@ -235,10 +235,14 @@ struct AskCardExpanded: View {
                 .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
                 .focused($focusedQuestionId, equals: question.id)
                 .lineLimit(1...5)
-                .submitLabel(.done)
+                .submitLabel(isSingleQuestionSingleSelect ? .send : .done)
                 .onSubmit {
                     commitCustomText(for: question)
                     focusedQuestionId = nil
+                    if isSingleQuestionSingleSelect {
+                        isExpanded = false
+                        onSubmit(answers)
+                    }
                 }
         }
     }
@@ -338,7 +342,24 @@ struct AskCardExpanded: View {
                             .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
-                } else if !isSingleQuestionSingleSelect {
+                } else if isSingleQuestionSingleSelect {
+                    // Single-question single-select: show Send when custom text is entered
+                    if hasCustomTextForCurrentQuestion {
+                        Button {
+                            commitCustomTextIfNeeded()
+                            isExpanded = false
+                            onSubmit(answers)
+                        } label: {
+                            Text("Send")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 10)
+                                .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
                     Button {
                         navigateForward()
                     } label: {
@@ -447,6 +468,13 @@ struct AskCardExpanded: View {
         } else {
             navigateForward()
         }
+    }
+
+    /// True when the current question has non-empty custom text entered.
+    private var hasCustomTextForCurrentQuestion: Bool {
+        guard let question = currentQuestion else { return false }
+        let text = (customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty
     }
 
     // MARK: - Custom Text
