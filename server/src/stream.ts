@@ -210,11 +210,27 @@ export class UserStreamMux {
       expected = seq;
     }
 
+    const metrics = this.ctx.metrics;
+    if (metrics) {
+      if (catchUpComplete && events.length > 0) {
+        metrics.record("server.catchup_events", events.length, { ring: "user_stream" });
+      }
+      if (!catchUpComplete) {
+        metrics.record("server.catchup_miss", 1, { ring: "user_stream" });
+      }
+    }
+
     return {
       events,
       currentSeq: this.streamSeq || ring.currentSeq,
       catchUpComplete,
     };
+  }
+
+  /** Return event ring stats for utilization sampling. */
+  getEventRingStats(): { length: number; capacity: number } | null {
+    if (!this.streamRing) return null;
+    return { length: this.streamRing.length, capacity: this.streamRing.capacity };
   }
 
   recordUserStreamEvent(sessionId: string, msg: ServerMessage): number {

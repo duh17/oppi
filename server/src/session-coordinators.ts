@@ -115,6 +115,7 @@ export function createSessionCoordinatorBundle(
     getActiveSession: (key) => deps.active.get(key),
     emitSessionEvent: (payload) => deps.emitSessionEvent(payload),
     saveSession: (session) => deps.storage.saveSession(session),
+    metrics: deps.metrics,
   });
 
   const eventProcessor = new SessionEventProcessor({

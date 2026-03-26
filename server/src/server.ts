@@ -104,6 +104,16 @@ export function formatPermissionRequestLog(opts: {
   return `${ts()} [gate] Permission request ${opts.requestId} (session=${opts.sessionId}, tool=${opts.tool}, summaryChars=${opts.displaySummary.length})`;
 }
 
+/**
+ * Collapse dynamic path segments (UUIDs, hex IDs) into `:id` placeholders
+ * so HTTP request metrics aggregate by route pattern, not by resource.
+ */
+function normalizePathPattern(path: string): string {
+  return path
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")
+    .replace(/\/[0-9a-f]{16,}/gi, "/:id");
+}
+
 function normalizeBindHost(host: string): string {
   const trimmed = host.trim().toLowerCase();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
@@ -389,8 +399,28 @@ export class Server {
         return { busy, ready, starting, total: ids.size };
       },
       getWebSocketCount: () => this.connections.size,
-      recordOpsMetric: (metric, value) =>
-        this.opsMetrics.record(metric as Parameters<typeof this.opsMetrics.record>[0], value),
+      recordOpsMetric: (metric, value, tags) =>
+        this.opsMetrics.record(metric as Parameters<typeof this.opsMetrics.record>[0], value, tags),
+      getEventRingSnapshots: () => {
+        const snapshots: Array<{ ring: string; length: number; capacity: number }> = [];
+        // Per-session event rings
+        for (const id of this.sessions.getActiveSessionIds()) {
+          const ring = this.sessions.getEventRing(id);
+          if (ring) {
+            snapshots.push({ ring: "session", length: ring.length, capacity: ring.capacity });
+          }
+        }
+        // User-stream event ring
+        const userRing = this.streamMux.getEventRingStats();
+        if (userRing) {
+          snapshots.push({
+            ring: "user_stream",
+            length: userRing.length,
+            capacity: userRing.capacity,
+          });
+        }
+        return snapshots;
+      },
     });
 
     // Auto-title generator — generates concise task titles on first user message
@@ -915,6 +945,7 @@ export class Server {
   // ─── HTTP Router ───
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startTime = Date.now();
     const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
     const path = url.pathname;
     const method = req.method || "GET";
@@ -923,6 +954,15 @@ export class Server {
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("X-Oppi-Protocol", "2");
+
+    // Record HTTP request duration when the response finishes
+    res.on("finish", () => {
+      this.opsMetrics.record("server.http_request_ms", Date.now() - startTime, {
+        method,
+        path_pattern: normalizePathPattern(path),
+        status_code: String(res.statusCode),
+      });
+    });
 
     if (method === "OPTIONS") {
       res.writeHead(204);

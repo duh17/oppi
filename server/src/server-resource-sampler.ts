@@ -17,6 +17,12 @@ const FILE_SUFFIX = ".jsonl";
 const DEFAULT_INTERVAL_MS = 30_000; // 30s
 const DEFAULT_RETENTION_DAYS = 30;
 
+export interface EventRingSnapshot {
+  ring: string;
+  length: number;
+  capacity: number;
+}
+
 export interface ServerMetricsDeps {
   /** Absolute path to diagnostics/telemetry directory. */
   telemetryDir: string;
@@ -25,7 +31,9 @@ export interface ServerMetricsDeps {
   /** Returns count of open WebSocket connections. */
   getWebSocketCount: () => number;
   /** Optional: record to the operational metrics collector (for session_active_peak). */
-  recordOpsMetric?: (metric: string, value: number) => void;
+  recordOpsMetric?: (metric: string, value: number, tags?: Record<string, string>) => void;
+  /** Returns event ring snapshots for utilization sampling. */
+  getEventRingSnapshots?: () => EventRingSnapshot[];
 }
 
 interface CpuSnapshot {
@@ -109,6 +117,18 @@ export class ServerResourceSampler {
 
       if (peak > 0) {
         this.deps.recordOpsMetric?.("server.session_active_peak", peak);
+      }
+
+      // Sample event ring utilization
+      const ringSnapshots = this.deps.getEventRingSnapshots?.() ?? [];
+      for (const snap of ringSnapshots) {
+        if (snap.capacity > 0) {
+          this.deps.recordOpsMetric?.(
+            "server.event_ring_utilization",
+            round2(snap.length / snap.capacity),
+            { ring: snap.ring },
+          );
+        }
       }
 
       const record = {
