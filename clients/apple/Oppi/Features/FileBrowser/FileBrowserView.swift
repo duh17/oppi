@@ -14,12 +14,9 @@ struct FileBrowserView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(FileIndexStore.self) private var fileIndexStore
     @State private var listing: DirectoryListingResponse?
-    @State private var isLoadingMore = false
     @State private var error: String?
     @State private var searchText = ""
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
-
-    private static let pageSize = 100
 
     private var isRoot: Bool {
         initialPath.isEmpty || initialPath == "/"
@@ -82,25 +79,8 @@ struct FileBrowserView: View {
                 ForEach(response.entries) { entry in
                     fileEntryRow(entry, relativeTo: initialPath)
                 }
-                if response.hasMore {
-                    HStack {
-                        if isLoadingMore {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Loading...")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                        } else {
-                            Text("\(response.entries.count) of \(response.total) items")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .task { await loadMore() }
-                }
                 if response.truncated {
-                    Text("Directory listing capped at \(response.total) entries")
+                    Text("Showing first \(response.entries.count) entries")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }
@@ -213,37 +193,9 @@ struct FileBrowserView: View {
             return
         }
         do {
-            listing = try await api.listWorkspaceDirectory(
-                workspaceId: workspaceId,
-                path: initialPath,
-                offset: 0,
-                limit: Self.pageSize
-            )
+            listing = try await api.listWorkspaceDirectory(workspaceId: workspaceId, path: initialPath)
         } catch {
             self.error = error.localizedDescription
-        }
-    }
-
-    private func loadMore() async {
-        guard let api = apiClient, let current = listing, current.hasMore else { return }
-        guard !isLoadingMore else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-        do {
-            let next = try await api.listWorkspaceDirectory(
-                workspaceId: workspaceId,
-                path: initialPath,
-                offset: current.entries.count,
-                limit: Self.pageSize
-            )
-            listing = DirectoryListingResponse(
-                path: current.path,
-                entries: current.entries + next.entries,
-                total: next.total,
-                truncated: next.truncated
-            )
-        } catch {
-            // Silently fail — the user can scroll again to retry
         }
     }
 

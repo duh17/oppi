@@ -463,9 +463,6 @@ export interface FileEntry {
 export interface DirectoryListingResponse {
   path: string;
   entries: FileEntry[];
-  /** Total entries in the directory (before pagination, after filtering). */
-  total: number;
-  /** True when the directory has more entries than the server-side cap (MAX_DIR_ENTRIES). */
   truncated: boolean;
 }
 
