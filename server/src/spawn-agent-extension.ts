@@ -201,7 +201,15 @@ const spawnAgentParams = Type.Object({
   ),
 });
 
-const checkAgentsParams = Type.Object({});
+const checkAgentsParams = Type.Object({
+  scope: Type.Optional(
+    Type.Union([Type.Literal("children"), Type.Literal("workspace")], {
+      description:
+        'What to list. "children" (default): direct child sessions of this session. ' +
+        '"workspace": all alive sessions in the workspace (id, name, status, task, files touched).',
+    }),
+  ),
+});
 
 const stopAgentParams = Type.Object({
   id: Type.String({
@@ -806,118 +814,245 @@ function waitForChildCompletion(
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactory {
+// ---------------------------------------------------------------------------
+// Workspace-scoped helpers
+// ---------------------------------------------------------------------------
+
+/** Check if a session is in the same workspace. */
+function isInWorkspace(ctx: SpawnAgentContext, sessionId: string): boolean {
+  return ctx.listWorkspaceSessions().some((s) => s.id === sessionId);
+}
+
+/** Alive statuses for workspace listing: actively running or idle. */
+const ALIVE_STATUSES = new Set(["busy", "starting", "ready"]);
+
+/** Build agent-origin preamble for inter-session messages. */
+function buildAgentPreamble(ctx: SpawnAgentContext): string {
+  const sender = ctx.getSession(ctx.sessionId);
+  const name = sender?.name;
+  return name ? `[From agent "${name}" (${ctx.sessionId})]` : `[From agent ${ctx.sessionId}]`;
+}
+
+// ---------------------------------------------------------------------------
+// Factory options
+// ---------------------------------------------------------------------------
+
+export interface SpawnAgentFactoryOptions {
+  /** If true, only register check_agents, send_message, inspect_agent (no spawn/stop). */
+  childMode?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+export function createSpawnAgentFactory(
+  ctx: SpawnAgentContext,
+  options?: SpawnAgentFactoryOptions,
+): ExtensionFactory {
   return (pi) => {
-    // ─── spawn_agent ───
+    const childMode = options?.childMode ?? false;
 
-    pi.registerTool<typeof spawnAgentParams, SpawnAgentDetails>({
-      name: "spawn_agent",
-      label: "Spawn Agent",
-      description:
-        "Create a new agent session in the current workspace. The child session runs " +
-        "independently with its own context window. The user monitors spawned sessions " +
-        "from their phone. Use for parallelizable tasks, delegation, or specialized work " +
-        "that benefits from a fresh context. Set wait=true to block until the child " +
-        "finishes and get its result inline.",
-      promptSnippet:
-        "spawn_agent(message, name?, model?, thinking?, detached?, wait?, timeout_seconds?) — spawn a child agent session",
-      promptGuidelines: [
-        "Use spawn_agent for tasks that can run independently without blocking the current conversation.",
-        "Give each spawned agent a clear, self-contained task description with all needed context.",
-        "The child agent cannot see the parent's conversation history — include relevant context in the message.",
-        "Use check_agents to poll child status, inspect_agent to drill into a child's execution trace.",
-        "Set wait=true when you need the child's result before continuing (sequential dependency). Default is fire-and-forget.",
-        "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
-        "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
-        "Child sessions cannot spawn their own agents. Use detached=true to create a fully independent session with its own spawn capability.",
-        "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
-        "Thinking selection: omit to inherit from parent (usually best). Only override when the user explicitly requests a specific thinking level.",
-      ],
-      parameters: spawnAgentParams,
+    // ─── spawn_agent (root/detached only) ───
 
-      async execute(
-        _toolCallId: string,
-        params: Static<typeof spawnAgentParams>,
-        signal: AbortSignal | undefined,
-        onUpdate,
-      ) {
-        const name = params.name || params.message.slice(0, 80);
+    if (!childMode) {
+      pi.registerTool<typeof spawnAgentParams, SpawnAgentDetails>({
+        name: "spawn_agent",
+        label: "Spawn Agent",
+        description:
+          "Create a new agent session in the current workspace. The child session runs " +
+          "independently with its own context window. The user monitors spawned sessions " +
+          "from their phone. Use for parallelizable tasks, delegation, or specialized work " +
+          "that benefits from a fresh context. Set wait=true to block until the child " +
+          "finishes and get its result inline.",
+        promptSnippet:
+          "spawn_agent(message, name?, model?, thinking?, detached?, wait?, timeout_seconds?) — spawn a child agent session",
+        promptGuidelines: [
+          "Use spawn_agent for tasks that can run independently without blocking the current conversation.",
+          "Give each spawned agent a clear, self-contained task description with all needed context.",
+          "The child agent cannot see the parent's conversation history — include relevant context in the message.",
+          "Use check_agents to poll child status, inspect_agent to drill into a child's execution trace.",
+          "Set wait=true when you need the child's result before continuing (sequential dependency). Default is fire-and-forget.",
+          "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
+          "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
+          "Child sessions cannot spawn their own agents. Use detached=true to create a fully independent session with its own spawn capability.",
+          "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
+          "Thinking selection: omit to inherit from parent (usually best). Only override when the user explicitly requests a specific thinking level.",
+        ],
+        parameters: spawnAgentParams,
 
-        // Depth check: prevent unbounded recursive spawning
-        const currentDepth = getSpawnDepth(ctx);
-        if (currentDepth >= MAX_SPAWN_DEPTH) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text:
-                  `Cannot spawn: max depth reached (${MAX_SPAWN_DEPTH}). ` +
-                  `This session is at depth ${currentDepth} in the spawn tree. ` +
-                  `Do the work directly instead of delegating further.`,
-              },
-            ],
-            details: { agentId: "", name, status: "error" },
-          };
-        }
+        async execute(
+          _toolCallId: string,
+          params: Static<typeof spawnAgentParams>,
+          signal: AbortSignal | undefined,
+          onUpdate,
+        ) {
+          const name = params.name || params.message.slice(0, 80);
 
-        // Model validation: reject unknown model IDs early
-        if (params.model) {
-          const available = ctx.getAvailableModelIds();
-          if (available.length > 0 && !available.includes(params.model)) {
+          // Depth check: prevent unbounded recursive spawning
+          const currentDepth = getSpawnDepth(ctx);
+          if (currentDepth >= MAX_SPAWN_DEPTH) {
             return {
               content: [
                 {
                   type: "text" as const,
                   text:
-                    `Unknown model "${params.model}". Available models:\n` +
-                    available
-                      .sort()
-                      .map((id) => `  - ${id}`)
-                      .join("\n"),
+                    `Cannot spawn: max depth reached (${MAX_SPAWN_DEPTH}). ` +
+                    `This session is at depth ${currentDepth} in the spawn tree. ` +
+                    `Do the work directly instead of delegating further.`,
                 },
               ],
               details: { agentId: "", name, status: "error" },
             };
           }
-        }
 
-        onUpdate?.({
-          content: [{ type: "text", text: `Creating session "${name}"...` }],
-          details: {
-            agentId: "",
-            name,
-            status: "creating",
-            model: params.model,
-          },
-        });
+          // Model validation: reject unknown model IDs early
+          if (params.model) {
+            const available = ctx.getAvailableModelIds();
+            if (available.length > 0 && !available.includes(params.model)) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text:
+                      `Unknown model "${params.model}". Available models:\n` +
+                      available
+                        .sort()
+                        .map((id) => `  - ${id}`)
+                        .join("\n"),
+                  },
+                ],
+                details: { agentId: "", name, status: "error" },
+              };
+            }
+          }
 
-        try {
-          const spawnParams = {
-            name,
-            model: params.model,
-            thinking: params.thinking,
-            prompt: params.message,
-          };
-          const session = params.detached
-            ? await ctx.spawnDetached(spawnParams)
-            : await ctx.spawnChild(spawnParams);
-          const isDetached = params.detached ?? false;
+          onUpdate?.({
+            content: [{ type: "text", text: `Creating session "${name}"...` }],
+            details: {
+              agentId: "",
+              name,
+              status: "creating",
+              model: params.model,
+            },
+          });
 
-          // ─── Fire-and-forget (default) ───
-          if (!params.wait) {
-            const lines = [
-              `Spawned ${isDetached ? "detached " : ""}agent "${session.name ?? name}" (${session.id}).`,
-              `Status: ${session.status}, Model: ${session.model ?? "inherited"}`,
-            ];
-            if (isDetached) {
+          try {
+            const spawnParams = {
+              name,
+              model: params.model,
+              thinking: params.thinking,
+              prompt: params.message,
+            };
+            const session = params.detached
+              ? await ctx.spawnDetached(spawnParams)
+              : await ctx.spawnChild(spawnParams);
+            const isDetached = params.detached ?? false;
+
+            // ─── Fire-and-forget (default) ───
+            if (!params.wait) {
+              const lines = [
+                `Spawned ${isDetached ? "detached " : ""}agent "${session.name ?? name}" (${session.id}).`,
+                `Status: ${session.status}, Model: ${session.model ?? "inherited"}`,
+              ];
+              if (isDetached) {
+                lines.push(
+                  "This is an independent session — not in the spawn tree. " +
+                    "It has full capabilities and is monitored via the app.",
+                );
+              } else {
+                lines.push(
+                  "The session is now running independently. Use check_agents to monitor progress.",
+                );
+              }
+
+              return {
+                content: [{ type: "text", text: lines.join("\n") }],
+                details: {
+                  agentId: session.id,
+                  name: session.name ?? name,
+                  status: session.status,
+                  model: session.model,
+                  detached: isDetached,
+                },
+              };
+            }
+
+            // ─── Wait mode — block until child finishes ───
+            onUpdate?.({
+              content: [
+                {
+                  type: "text",
+                  text: `Spawned agent "${session.name ?? name}" (${session.id}). Waiting for completion...`,
+                },
+              ],
+              details: {
+                agentId: session.id,
+                name: session.name ?? name,
+                status: "waiting",
+                model: session.model,
+              },
+            });
+
+            const timeoutMs = params.timeout_seconds
+              ? params.timeout_seconds * 1000
+              : DEFAULT_WAIT_TIMEOUT_MS;
+
+            const result = await waitForChildCompletion(
+              ctx,
+              session.id,
+              timeoutMs,
+              signal,
+              onUpdate,
+              session.name ?? name,
+            );
+
+            // Build final result text
+            const lines: string[] = [];
+            lines.push(
+              `Agent "${session.name ?? name}" (${session.id}) finished: ${result.status.toUpperCase()}`,
+            );
+            lines.push(
+              `${result.messageCount} messages, ${formatCost(result.cost)}, ${formatDuration(result.durationMs)}`,
+            );
+
+            if (result.timedOut) {
               lines.push(
-                "This is an independent session — not in the spawn tree. " +
-                  "It has full capabilities and is monitored via the app.",
+                `WARNING: Timed out after ${formatDuration(timeoutMs)}. The child may still be running.`,
               );
-            } else {
+            }
+
+            if (result.changeStats && result.changeStats.filesChanged > 0) {
+              const cs = result.changeStats;
               lines.push(
-                "The session is now running independently. Use check_agents to monitor progress.",
+                `Changes: ${cs.filesChanged} file${cs.filesChanged !== 1 ? "s" : ""}, +${cs.addedLines}/-${cs.removedLines} lines`,
               );
+              if (cs.changedFiles.length > 0) {
+                for (const f of cs.changedFiles.slice(0, 10)) {
+                  lines.push(`  ${shortenPath(f)}`);
+                }
+                if (cs.changedFilesOverflow && cs.changedFilesOverflow > 0) {
+                  lines.push(`  ... and ${cs.changedFilesOverflow} more`);
+                }
+              }
+            }
+
+            // Read full last response from JSONL trace (session.lastMessage is truncated to 100 chars)
+            const childSession = ctx.getSession(session.id);
+            const tracePath = childSession?.piSessionFile;
+            if (tracePath) {
+              const turns = parseJsonlTrace(tracePath);
+              const lastTurn = turns[turns.length - 1];
+              if (lastTurn?.assistantText) {
+                lines.push("");
+                lines.push("Last response:");
+                lines.push(lastTurn.assistantText);
+              }
+            } else if (result.lastMessage) {
+              // Fallback to truncated lastMessage if no trace available
+              lines.push("");
+              lines.push("Last message:");
+              lines.push(result.lastMessage);
             }
 
             return {
@@ -925,199 +1060,114 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
               details: {
                 agentId: session.id,
                 name: session.name ?? name,
-                status: session.status,
+                status: result.status,
                 model: session.model,
-                detached: isDetached,
+                waited: true,
+                cost: result.cost,
+                durationMs: result.durationMs,
+              },
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [{ type: "text", text: `Failed to spawn agent: ${msg}` }],
+              details: { agentId: "", name, status: "error" },
+            };
+          }
+        },
+      });
+    } // end if (!childMode) — spawn_agent
+
+    // ─── stop_agent (root/detached only) ───
+
+    if (!childMode) {
+      pi.registerTool<typeof stopAgentParams, StopAgentDetails>({
+        name: "stop_agent",
+        label: "Stop Agent",
+        description:
+          "Stop a running child agent session. The session will be gracefully terminated. " +
+          "Use when a child agent is no longer needed, stuck, or going in the wrong direction.",
+        promptSnippet: "stop_agent(id) — stop a running child agent session",
+        promptGuidelines: [
+          "Use stop_agent to terminate a child that is no longer needed or is going in the wrong direction.",
+          "The stop is graceful — the child gets a chance to clean up before terminating.",
+          "Use check_agents first to find the session ID of the child you want to stop.",
+        ],
+        parameters: stopAgentParams,
+
+        async execute(_toolCallId: string, params: Static<typeof stopAgentParams>) {
+          // Look up the session
+          const session = ctx.getSession(params.id);
+          if (!session) {
+            return {
+              content: [{ type: "text" as const, text: `Session not found: ${params.id}` }],
+              details: { agentId: params.id, status: "not_found" },
+            };
+          }
+
+          // Verify the session is a child in this session's tree
+          const rootId = getRootSessionId(ctx);
+          const allSessions = ctx.listWorkspaceSessions();
+          const descendants = getDescendants(rootId, allSessions);
+          const isInTree =
+            session.parentSessionId === ctx.sessionId ||
+            descendants.some((d) => d.id === params.id);
+          if (!isInTree) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
+                },
+              ],
+              details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
+            };
+          }
+
+          // Check if already terminal
+          if (isTerminal(session.status)) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Agent "${session.name ?? params.id}" is already ${session.status}. No action needed.`,
+                },
+              ],
+              details: {
+                agentId: params.id,
+                name: session.name ?? undefined,
+                status: session.status,
               },
             };
           }
 
-          // ─── Wait mode — block until child finishes ───
-          onUpdate?.({
-            content: [
-              {
-                type: "text",
-                text: `Spawned agent "${session.name ?? name}" (${session.id}). Waiting for completion...`,
+          try {
+            await ctx.stopSession(params.id);
+            const updated = ctx.getSession(params.id);
+            const finalStatus = updated?.status ?? "stopped";
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Stopped agent "${session.name ?? params.id}" (${params.id}). Status: ${finalStatus}`,
+                },
+              ],
+              details: {
+                agentId: params.id,
+                name: session.name ?? undefined,
+                status: finalStatus,
               },
-            ],
-            details: {
-              agentId: session.id,
-              name: session.name ?? name,
-              status: "waiting",
-              model: session.model,
-            },
-          });
-
-          const timeoutMs = params.timeout_seconds
-            ? params.timeout_seconds * 1000
-            : DEFAULT_WAIT_TIMEOUT_MS;
-
-          const result = await waitForChildCompletion(
-            ctx,
-            session.id,
-            timeoutMs,
-            signal,
-            onUpdate,
-            session.name ?? name,
-          );
-
-          // Build final result text
-          const lines: string[] = [];
-          lines.push(
-            `Agent "${session.name ?? name}" (${session.id}) finished: ${result.status.toUpperCase()}`,
-          );
-          lines.push(
-            `${result.messageCount} messages, ${formatCost(result.cost)}, ${formatDuration(result.durationMs)}`,
-          );
-
-          if (result.timedOut) {
-            lines.push(
-              `WARNING: Timed out after ${formatDuration(timeoutMs)}. The child may still be running.`,
-            );
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [{ type: "text" as const, text: `Failed to stop agent: ${msg}` }],
+              details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
+            };
           }
-
-          if (result.changeStats && result.changeStats.filesChanged > 0) {
-            const cs = result.changeStats;
-            lines.push(
-              `Changes: ${cs.filesChanged} file${cs.filesChanged !== 1 ? "s" : ""}, +${cs.addedLines}/-${cs.removedLines} lines`,
-            );
-            if (cs.changedFiles.length > 0) {
-              for (const f of cs.changedFiles.slice(0, 10)) {
-                lines.push(`  ${shortenPath(f)}`);
-              }
-              if (cs.changedFilesOverflow && cs.changedFilesOverflow > 0) {
-                lines.push(`  ... and ${cs.changedFilesOverflow} more`);
-              }
-            }
-          }
-
-          // Read full last response from JSONL trace (session.lastMessage is truncated to 100 chars)
-          const childSession = ctx.getSession(session.id);
-          const tracePath = childSession?.piSessionFile;
-          if (tracePath) {
-            const turns = parseJsonlTrace(tracePath);
-            const lastTurn = turns[turns.length - 1];
-            if (lastTurn?.assistantText) {
-              lines.push("");
-              lines.push("Last response:");
-              lines.push(lastTurn.assistantText);
-            }
-          } else if (result.lastMessage) {
-            // Fallback to truncated lastMessage if no trace available
-            lines.push("");
-            lines.push("Last message:");
-            lines.push(result.lastMessage);
-          }
-
-          return {
-            content: [{ type: "text", text: lines.join("\n") }],
-            details: {
-              agentId: session.id,
-              name: session.name ?? name,
-              status: result.status,
-              model: session.model,
-              waited: true,
-              cost: result.cost,
-              durationMs: result.durationMs,
-            },
-          };
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return {
-            content: [{ type: "text", text: `Failed to spawn agent: ${msg}` }],
-            details: { agentId: "", name, status: "error" },
-          };
-        }
-      },
-    });
-
-    // ─── stop_agent ───
-
-    pi.registerTool<typeof stopAgentParams, StopAgentDetails>({
-      name: "stop_agent",
-      label: "Stop Agent",
-      description:
-        "Stop a running child agent session. The session will be gracefully terminated. " +
-        "Use when a child agent is no longer needed, stuck, or going in the wrong direction.",
-      promptSnippet: "stop_agent(id) — stop a running child agent session",
-      promptGuidelines: [
-        "Use stop_agent to terminate a child that is no longer needed or is going in the wrong direction.",
-        "The stop is graceful — the child gets a chance to clean up before terminating.",
-        "Use check_agents first to find the session ID of the child you want to stop.",
-      ],
-      parameters: stopAgentParams,
-
-      async execute(_toolCallId: string, params: Static<typeof stopAgentParams>) {
-        // Look up the session
-        const session = ctx.getSession(params.id);
-        if (!session) {
-          return {
-            content: [{ type: "text" as const, text: `Session not found: ${params.id}` }],
-            details: { agentId: params.id, status: "not_found" },
-          };
-        }
-
-        // Verify the session is a child in this session's tree
-        const rootId = getRootSessionId(ctx);
-        const allSessions = ctx.listWorkspaceSessions();
-        const descendants = getDescendants(rootId, allSessions);
-        const isInTree =
-          session.parentSessionId === ctx.sessionId || descendants.some((d) => d.id === params.id);
-        if (!isInTree) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
-              },
-            ],
-            details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
-          };
-        }
-
-        // Check if already terminal
-        if (isTerminal(session.status)) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Agent "${session.name ?? params.id}" is already ${session.status}. No action needed.`,
-              },
-            ],
-            details: {
-              agentId: params.id,
-              name: session.name ?? undefined,
-              status: session.status,
-            },
-          };
-        }
-
-        try {
-          await ctx.stopSession(params.id);
-          const updated = ctx.getSession(params.id);
-          const finalStatus = updated?.status ?? "stopped";
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Stopped agent "${session.name ?? params.id}" (${params.id}). Status: ${finalStatus}`,
-              },
-            ],
-            details: {
-              agentId: params.id,
-              name: session.name ?? undefined,
-              status: finalStatus,
-            },
-          };
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return {
-            content: [{ type: "text" as const, text: `Failed to stop agent: ${msg}` }],
-            details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
-          };
-        }
-      },
-    });
+        },
+      });
+    } // end if (!childMode) — stop_agent
 
     // ─── send_message ───
 
@@ -1156,18 +1206,13 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
-        // Verify the session is in this session's tree
-        const rootId = getRootSessionId(ctx);
-        const allSessions = ctx.listWorkspaceSessions();
-        const descendants = getDescendants(rootId, allSessions);
-        const isInTree =
-          session.parentSessionId === ctx.sessionId || descendants.some((d) => d.id === params.id);
-        if (!isInTree) {
+        // Verify the session is in the same workspace
+        if (!isInWorkspace(ctx, params.id)) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
+                text: `Session ${params.id} is not in this workspace. Use check_agents(scope: "workspace") to list sessions.`,
               },
             ],
             details: {
@@ -1239,7 +1284,10 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
             : "prompt";
 
         try {
-          await ctx.sendMessage(params.id, params.message, behavior);
+          // Prepend agent-origin preamble so recipient knows the message source
+          const preamble = buildAgentPreamble(ctx);
+          const fullMessage = `${preamble}\n${params.message}`;
+          await ctx.sendMessage(params.id, fullMessage, behavior);
 
           const modeLabel = autoResumed
             ? "as a new turn after auto-resuming the stopped session"
@@ -1294,7 +1342,57 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
       promptSnippet: "check_agents() — poll status of spawned child sessions",
       parameters: checkAgentsParams,
 
-      async execute() {
+      async execute(_toolCallId: string, params: Static<typeof checkAgentsParams>) {
+        const scope = params.scope ?? "children";
+
+        // ─── Workspace scope: all alive sessions in workspace ───
+        if (scope === "workspace") {
+          const allSessions = ctx.listWorkspaceSessions();
+          const alive = allSessions.filter(
+            (s) => s.id !== ctx.sessionId && ALIVE_STATUSES.has(s.status),
+          );
+
+          if (alive.length === 0) {
+            return {
+              content: [{ type: "text", text: "No active sessions in workspace." }],
+              details: { agents: [] },
+            };
+          }
+
+          const lines = alive.map((s) => {
+            const icon = STATUS_ICONS[s.status] ?? "?";
+            const name = s.name ?? s.id.slice(0, 8);
+            const duration = formatDuration(Date.now() - s.createdAt);
+            const cost = formatCost(s.cost);
+            let line = `${icon} ${name} (${s.id})  [${s.status.toUpperCase()}]  ${s.messageCount} msgs  ${cost}  ${duration}`;
+
+            if (s.firstMessage) {
+              const preview = s.firstMessage.slice(0, 80).replace(/\n/g, " ");
+              line += `\n  "${preview}${s.firstMessage.length > 80 ? "..." : ""}"`;
+            }
+
+            if (s.changeStats && s.changeStats.filesChanged > 0) {
+              const files = s.changeStats.changedFiles ?? [];
+              const shown = files.slice(0, 5).map(shortenPath);
+              const overflow =
+                (s.changeStats.changedFilesOverflow ?? 0) + Math.max(0, files.length - 5);
+              const fileLine =
+                overflow > 0 ? `${shown.join(", ")} (+${overflow} more)` : shown.join(", ");
+              line += `\n  Files: ${fileLine}`;
+            }
+
+            return line;
+          });
+
+          const text = `${alive.length} active session${alive.length !== 1 ? "s" : ""} in workspace\n\n${lines.join("\n\n")}`;
+
+          return {
+            content: [{ type: "text", text }],
+            details: { agents: alive.map(sessionToSummary) },
+          };
+        }
+
+        // ─── Children scope (default): existing behavior ───
         const children = ctx.listChildren();
         const agents = children.map(sessionToSummary);
 
@@ -1397,23 +1495,17 @@ export function createSpawnAgentFactory(ctx: SpawnAgentContext): ExtensionFactor
           };
         }
 
-        // Verify the session is a descendant of this session's tree
-        if (session.parentSessionId !== ctx.sessionId) {
-          const rootId = getRootSessionId(ctx);
-          const allSessions = ctx.listWorkspaceSessions();
-          const descendants = getDescendants(rootId, allSessions);
-          const isInTree = descendants.some((d) => d.id === params.id);
-          if (!isInTree) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
-                },
-              ],
-              details: { sessionId: params.id, level: "overview" },
-            };
-          }
+        // Verify the session is in the same workspace
+        if (!isInWorkspace(ctx, params.id)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Session ${params.id} is not in this workspace. Use check_agents(scope: "workspace") to list sessions.`,
+              },
+            ],
+            details: { sessionId: params.id, level: "overview" },
+          };
         }
 
         // Get the JSONL trace path

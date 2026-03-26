@@ -269,12 +269,10 @@ final class FullScreenCodeViewController: UIViewController {
         case .liveSource(let snapshot, _):
             return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
 
-        // Notebook renderers — source view until native renderers land
+        // Notebook renderers — use rendered views with source toggle
         case .latex(let text, let filePath):
-            return NativeFullScreenCodeBody(
-                content: text,
-                language: "latex",
-                startLine: 1,
+            return NativeFullScreenRenderedDocumentBody(
+                content: .latex(text),
                 palette: palette,
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: makeSourceContext(
@@ -284,10 +282,8 @@ final class FullScreenCodeViewController: UIViewController {
                 )
             )
         case .orgMode(let text, let filePath):
-            return NativeFullScreenCodeBody(
-                content: text,
-                language: "org",
-                startLine: 1,
+            return NativeFullScreenRenderedDocumentBody(
+                content: .orgMode(text),
                 palette: palette,
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: makeSourceContext(
@@ -297,10 +293,8 @@ final class FullScreenCodeViewController: UIViewController {
                 )
             )
         case .mermaid(let text, let filePath):
-            return NativeFullScreenCodeBody(
-                content: text,
-                language: "mermaid",
-                startLine: 1,
+            return NativeFullScreenRenderedDocumentBody(
+                content: .mermaid(text),
                 palette: palette,
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: makeSourceContext(
@@ -399,6 +393,16 @@ final class FullScreenCodeViewController: UIViewController {
                     .joined(separator: "\n")
                 return .html(content: fullNewText, filePath: filePath)
             }
+            // Notebook types: toggle to source view
+            if case .latex(let text, let filePath) = content {
+                return .code(content: text, language: "latex", filePath: filePath, startLine: 1)
+            }
+            if case .orgMode(let text, let filePath) = content {
+                return .code(content: text, language: "org", filePath: filePath, startLine: 1)
+            }
+            if case .mermaid(let text, let filePath) = content {
+                return .code(content: text, language: "mermaid", filePath: filePath, startLine: 1)
+            }
         }
         return content
     }
@@ -412,6 +416,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(_, _, let filePath, let precomputedLines):
             guard Self.isHTMLFilePath(filePath), precomputedLines != nil else { return nil }
             return showSource ? String(localized: "Diff") : String(localized: "Render")
+        case .latex, .orgMode, .mermaid:
+            return showSource ? String(localized: "Rendered") : String(localized: "Source")
         default:
             return nil
         }

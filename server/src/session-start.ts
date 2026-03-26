@@ -108,29 +108,40 @@ export class SessionStartCoordinator {
           }),
         );
 
-        // Inject spawn_agent extension only for root/detached sessions (not children).
-        // Child sessions focus on their assigned task without spawning further agents.
-        if (!session.parentSessionId) {
-          extraExtensionFactories.push(
-            createSpawnAgentFactory({
-              workspaceId: identity.workspaceId,
-              sessionId: session.id,
-              spawnChild: (params) => this.deps.spawnChildSession(session.id, params),
-              spawnDetached: (params) => this.deps.spawnDetachedSession(session.id, params),
-              listChildren: () => this.deps.listChildSessions(session.id),
-              getSession: (id) => this.deps.storage.getSession(id),
-              listWorkspaceSessions: () =>
-                this.deps.storage
-                  .listSessions()
-                  .filter((s) => s.workspaceId === identity.workspaceId),
-              subscribe: (id, callback) => this.deps.subscribeToSession(id, callback),
-              getAvailableModelIds: () => this.deps.getAvailableModelIds(),
-              stopSession: (id) => this.deps.stopSession(id),
-              resumeSession: (id) => this.deps.resumeSession(id),
-              sendMessage: (id, message, behavior) => this.deps.sendMessage(id, message, behavior),
-            }),
-          );
-        }
+        // Inject spawn_agent extension for all sessions.
+        // Root/detached sessions get full tools (spawn, stop, check, send, inspect).
+        // Child sessions get childMode (check, send, inspect only — no spawning).
+        const isChildSession = !!session.parentSessionId;
+        const spawnAgentCtx = {
+          workspaceId: identity.workspaceId,
+          sessionId: session.id,
+          spawnChild: (params: {
+            name?: string;
+            model?: string;
+            thinking?: string;
+            prompt: string;
+          }) => this.deps.spawnChildSession(session.id, params),
+          spawnDetached: (params: {
+            name?: string;
+            model?: string;
+            thinking?: string;
+            prompt: string;
+          }) => this.deps.spawnDetachedSession(session.id, params),
+          listChildren: () => this.deps.listChildSessions(session.id),
+          getSession: (id: string) => this.deps.storage.getSession(id),
+          listWorkspaceSessions: () =>
+            this.deps.storage.listSessions().filter((s) => s.workspaceId === identity.workspaceId),
+          subscribe: (id: string, callback: (msg: ServerMessage) => void) =>
+            this.deps.subscribeToSession(id, callback),
+          getAvailableModelIds: () => this.deps.getAvailableModelIds(),
+          stopSession: (id: string) => this.deps.stopSession(id),
+          resumeSession: (id: string) => this.deps.resumeSession(id),
+          sendMessage: (id: string, message: string, behavior?: "steer" | "followUp") =>
+            this.deps.sendMessage(id, message, behavior),
+        };
+        extraExtensionFactories.push(
+          createSpawnAgentFactory(spawnAgentCtx, isChildSession ? { childMode: true } : undefined),
+        );
 
         const createStart = Date.now();
         const sdkBackend = await SdkBackend.create({
