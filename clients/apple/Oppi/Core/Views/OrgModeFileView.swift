@@ -1,6 +1,12 @@
 import SwiftUI
 
 /// Rendered org mode with source toggle, matching `MarkdownFileView` pattern.
+///
+/// Uses the markdown rendering pipeline for visual output. Org AST is converted
+/// to markdown AST via `OrgToMarkdownConverter`, then rendered through the same
+/// `MarkdownContentViewWrapper` / `AssistantMarkdownContentView` stack used for
+/// `.md` files. This gives org mode identical fonts, colors, code blocks, and
+/// spacing as markdown — no separate renderer needed.
 struct OrgModeFileView: View {
     let content: String
     let filePath: String?
@@ -13,6 +19,14 @@ struct OrgModeFileView: View {
 
     private var lineCount: Int {
         content.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    /// Convert org content to markdown text for the markdown pipeline.
+    private var markdownContent: String {
+        let parser = OrgParser()
+        let orgBlocks = parser.parse(content)
+        let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks)
+        return MarkdownBlockSerializer.serialize(mdBlocks)
     }
 
     var body: some View {
@@ -91,7 +105,10 @@ struct OrgModeFileView: View {
                             .foregroundStyle(.themeFg)
                             .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                     } else {
-                        OrgModeRenderedView(content: content, textSelectionEnabled: inlineSelectionEnabled)
+                        MarkdownContentViewWrapper(
+                            content: markdownContent,
+                            textSelectionEnabled: inlineSelectionEnabled
+                        )
                     }
                 }
                 .padding(10)
@@ -127,62 +144,19 @@ struct OrgModeFileView: View {
                 )
             } else {
                 ScrollView(.vertical) {
-                    OrgModeRenderedView(
-                        content: content,
-                        textSelectionEnabled: true
+                    MarkdownContentViewWrapper(
+                        content: markdownContent,
+                        plainTextFallbackThreshold: nil,
+                        selectedTextSourceContext: piRouter != nil
+                            ? fileContentSourceContext(filePath: filePath, surface: .fullScreenMarkdown)
+                            : nil
                     )
+                    .allowsFullScreenExpansion(false)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
-    }
-}
-
-// MARK: - Rendered Content Wrapper
-
-/// Wraps OrgParser + OrgAttributedStringRenderer into a UITextView-backed SwiftUI view.
-private struct OrgModeRenderedView: View {
-    let content: String
-    let textSelectionEnabled: Bool
-
-    private var attributedString: NSAttributedString {
-        let parser = OrgParser()
-        let renderer = OrgAttributedStringRenderer()
-        let blocks = parser.parse(content)
-        let config = RenderConfiguration.default(maxWidth: 600)
-        return renderer.renderAttributedString(blocks, configuration: config)
-    }
-
-    var body: some View {
-        AttributedStringTextView(
-            attributedString: attributedString,
-            textSelectionEnabled: textSelectionEnabled
-        )
-    }
-}
-
-/// UITextView wrapper for displaying attributed strings with proper link handling.
-private struct AttributedStringTextView: UIViewRepresentable {
-    let attributedString: NSAttributedString
-    let textSelectionEnabled: Bool
-
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.isEditable = false
-        textView.isScrollEnabled = false
-        textView.backgroundColor = .clear
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        textView.textContainer.lineFragmentPadding = 0
-        textView.isSelectable = textSelectionEnabled
-        textView.dataDetectorTypes = .link
-        textView.attributedText = attributedString
-        return textView
-    }
-
-    func updateUIView(_ textView: UITextView, context: Context) {
-        textView.attributedText = attributedString
-        textView.isSelectable = textSelectionEnabled
     }
 }

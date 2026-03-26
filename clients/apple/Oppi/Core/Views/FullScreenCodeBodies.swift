@@ -895,22 +895,23 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
     }
 
     private func makeOrgView(text: String) -> UIView {
+        // Convert org → markdown AST → markdown text, then render via the
+        // same AssistantMarkdownContentView used for .md files.
         let parser = OrgParser()
-        let renderer = OrgAttributedStringRenderer()
-        let blocks = parser.parse(text)
-        let config = RenderConfiguration(fontSize: 16, maxWidth: 800, theme: .fallback, displayMode: .document)
-        let attrStr = renderer.renderAttributedString(blocks, configuration: config)
+        let orgBlocks = parser.parse(text)
+        let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks)
+        let markdownText = MarkdownBlockSerializer.serialize(mdBlocks)
 
-        let textView = UITextView()
-        textView.isEditable = false
-        textView.isScrollEnabled = false
-        textView.backgroundColor = .clear
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
-        textView.textContainer.lineFragmentPadding = 0
-        textView.isSelectable = true
-        textView.dataDetectorTypes = .link
-        textView.attributedText = attrStr
-        return textView
+        let mdView = AssistantMarkdownContentView()
+        mdView.backgroundColor = .clear
+        mdView.apply(configuration: .init(
+            content: markdownText,
+            isStreaming: false,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            textSelectionEnabled: true,
+            plainTextFallbackThreshold: nil
+        ))
+        return mdView
     }
 
     private func makeGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(
