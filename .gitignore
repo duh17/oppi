@@ -17,6 +17,7 @@ scripts/*
 !server/scripts/
 server/scripts/*
 !server/scripts/telemetry-review.mjs
+!server/scripts/run-bench.sh
 !server/scripts/manual/
 !server/scripts/manual/telemetry-import-sqlite.mjs
 !clients/apple/scripts/
