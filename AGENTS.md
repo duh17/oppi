@@ -26,19 +26,18 @@ cd server && npm test
 cd server && npm run check    # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 
-# Apple — use sim-pool.sh for simulator commands (avoids collisions between agents)
+# Apple — all dev scripts live in the oppi-dev skill (~/.pi/agent/skills/oppi-dev/scripts/)
 cd clients/apple && xcodegen generate
-cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
-cd clients/apple && ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
+~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
-# Single canonical install script lives in the oppi-dev skill.
 bash ~/.pi/agent/skills/oppi-dev/scripts/install.sh -d DEVICE_UDID --launch
 ```
 
-**sim-pool.sh** wraps xcodebuild with slot-based simulator locking for parallel agents. It auto-injects `-destination` and `-derivedDataPath` — do NOT pass your own. On failure it prints a `BUILD FAILED` summary with the full log path. Do not pipe build output through `grep`/`tail` — use `read(path=...)` on the log path from the summary.
+**sim-pool.sh** (`~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh`) wraps xcodebuild with slot-based simulator locking for parallel agents. It auto-injects `-destination` and `-derivedDataPath` — do NOT pass your own. All output goes to a log file; on completion it prints a summary with the log path. Use `read(path=...)` on the log path to investigate failures — do NOT re-run builds to find errors.
 
-After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
+After code changes: run `npm run check` (server) or `sim-pool.sh run -- xcodebuild ... build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Fix all errors, warnings, and infos before committing.
 
 See [`.internal/testing/`](.internal/testing/) for full test strategy, pyramid, and required gates by change type.
 
