@@ -273,6 +273,35 @@ final class WorkspaceStore {
 
     // MARK: - Loading
 
+    /// Load only cached workspaces + skills for a server (no network fetch).
+    ///
+    /// Used during app launch to populate the workspace list before revealing
+    /// the UI. Returns `true` if any cached data was applied.
+    @discardableResult
+    func loadCachedCatalog(serverId: String) async -> Bool {
+        let cache = _cacheForTesting ?? TimelineCache.shared
+
+        if !serverId.isEmpty && !serverOrder.contains(serverId) {
+            serverOrder.append(serverId)
+        }
+        ensureFreshness(for: serverId)
+
+        let cached = await loadCachedCatalog(serverId: serverId, cache: cache)
+
+        if let cws = cached.workspaces {
+            workspacesByServer[serverId] = cws
+        }
+        if let csk = cached.skills {
+            skillsByServer[serverId] = csk
+        }
+
+        let hasCachedData = (cached.workspaces?.isEmpty == false) || (cached.skills?.isEmpty == false)
+        if hasCachedData {
+            serverLoaded[serverId] = true
+        }
+        return hasCachedData
+    }
+
     /// Load workspaces + skills for the active server.
     ///
     /// Uses cache immediately when first loading this server, then refreshes

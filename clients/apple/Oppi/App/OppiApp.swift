@@ -178,6 +178,7 @@ struct OppiApp: App {
 
                     os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
                     await handleIncomingURL(e2eURL)
+                    navigation.launchPhase = .ready
                     os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
                            navigation.showOnboarding ? 1 : 0,
                            connection.workspaceStore.workspaces.count)
@@ -636,6 +637,7 @@ struct OppiApp: App {
         guard let server = targetServer else {
             launchOutcome = "no_credentials"
             navigation.showOnboarding = true
+            navigation.launchPhase = .ready
             return
         }
 
@@ -643,6 +645,7 @@ struct OppiApp: App {
         guard coordinator.switchToServer(server) else {
             launchOutcome = "invalid_credentials"
             navigation.showOnboarding = true
+            navigation.launchPhase = .ready
             return
         }
 
@@ -652,6 +655,7 @@ struct OppiApp: App {
         guard let api = connection.apiClient else {
             launchOutcome = "no_api_client"
             navigation.showOnboarding = true
+            navigation.launchPhase = .ready
             return
         }
 
@@ -682,6 +686,16 @@ struct OppiApp: App {
             connection.sessionStore.applyServerSnapshot(cachedSessions)
             connection.syncLiveActivityPermissions()
         }
+
+        // Cached workspace catalog — load before revealing UI so the
+        // workspace list is populated on the first visible frame.
+        // Cache-only: no network fetch, so this returns fast.
+        await connection.workspaceStore.loadCachedCatalog(serverId: server.id)
+
+        // Launch resolved: credentials valid, cached data applied.
+        // Reveal the UI before the network refresh so the user sees
+        // cached content immediately instead of a blank screen.
+        navigation.launchPhase = .ready
 
         // 4. Refresh session list from server
         connection.sessionStore.markSyncStarted()

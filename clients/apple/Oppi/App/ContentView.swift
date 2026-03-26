@@ -36,29 +36,38 @@ struct ContentView: View {
         @Bindable var liveConnection = connection
 
         Group {
-            if navigation.showOnboarding {
-                OnboardingView()
-            } else {
-                TabView(selection: $nav.selectedTab) {
-                    SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
-                        NavigationStack(path: $nav.workspacePath) {
-                            WorkspaceHomeView()
+            switch navigation.launchPhase {
+            case .resolving:
+                // Blank canvas while credential check + cache load runs.
+                // Prevents flash of onboarding or empty workspace list.
+                Color.themeBg
+                    .ignoresSafeArea()
+
+            case .ready:
+                if navigation.showOnboarding {
+                    OnboardingView()
+                } else {
+                    TabView(selection: $nav.selectedTab) {
+                        SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
+                            NavigationStack(path: $nav.workspacePath) {
+                                WorkspaceHomeView()
+                            }
+                        }
+                        SwiftUI.Tab("Server", systemImage: "server.rack", value: AppTab.server) {
+                            NavigationStack {
+                                ServerView()
+                            }
+                        }
+                        SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
+                            NavigationStack {
+                                SettingsView()
+                            }
                         }
                     }
-                    SwiftUI.Tab("Server", systemImage: "server.rack", value: AppTab.server) {
-                        NavigationStack {
-                            ServerView()
-                        }
-                    }
-                    SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
-                        NavigationStack {
-                            SettingsView()
-                        }
-                    }
+                    .tabBarMinimizeBehavior(.onScrollDown)
+                    .toolbarBackground(Color.themeBg, for: .tabBar)
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
-                .tabBarMinimizeBehavior(.onScrollDown)
-                .toolbarBackground(Color.themeBg, for: .tabBar)
-                .ignoresSafeArea(.container, edges: .bottom)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {

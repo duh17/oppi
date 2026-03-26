@@ -1,11 +1,26 @@
 import SwiftUI
 
+/// Launch resolution phase — gates UI until credentials + cache are checked.
+///
+/// Prevents the flash of wrong content on cold launch (onboarding screen
+/// briefly visible for paired users, empty workspace list before cache loads).
+enum AppLaunchPhase: Sendable {
+    /// Credential check + cache load in progress. UI shows blank canvas.
+    case resolving
+    /// Launch resolved. `showOnboarding` is authoritative.
+    case ready
+}
+
 /// Navigation state for the app.
 @MainActor @Observable
 final class AppNavigation {
     var selectedTab: AppTab = .workspaces
     var showOnboarding: Bool = true
     var showWhatsNew: Bool = false
+
+    /// Launch phase gate. While `.resolving`, ContentView shows a blank
+    /// canvas instead of onboarding or the workspace list.
+    var launchPhase: AppLaunchPhase = .resolving
 
     /// Set after a fresh pairing when the server had no workspaces.
     /// WorkspaceHomeView consumes this to auto-present workspace creation.
