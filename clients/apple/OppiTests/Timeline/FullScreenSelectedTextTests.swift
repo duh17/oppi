@@ -182,7 +182,7 @@ struct FullScreenSelectedTextTests {
         )
         let navigationController = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigationController.topViewController)
-        let titleView = try #require(contentController.navigationItem.titleView)
+        // titleView is nil in Liquid Glass immersive mode — only floating glass pills.
         let copyButton = try #require(contentController.navigationItem.rightBarButtonItems?.first)
 
         stream.update(
@@ -192,7 +192,6 @@ struct FullScreenSelectedTextTests {
             finalContent: nil
         )
 
-        #expect(contentController.navigationItem.titleView === titleView)
         #expect(contentController.navigationItem.rightBarButtonItems?.first === copyButton)
     }
 

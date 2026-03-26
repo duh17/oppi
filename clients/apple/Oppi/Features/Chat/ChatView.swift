@@ -458,9 +458,10 @@ struct ChatView: View {
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: connection.activeAskRequest,
                     onAskSubmit: { answers in
+                        guard let askId = connection.activeAskRequest?.id else { return }
                         let value = AskResponseEncoder.encode(answers)
                         Task {
-                            try? await connection.respondToExtensionUI(id: connection.activeAskRequest?.id ?? "", value: value)
+                            try? await connection.respondToExtensionUI(id: askId, value: value)
                         }
                     },
                     onAskIgnoreAll: {
