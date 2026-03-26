@@ -109,6 +109,28 @@ struct GitStatusStoreTests {
         #expect(store.workspaceId == "ws-2")
     }
 
+    @Test func switchingWorkspaceClearsStaleGitStatus() {
+        let store = GitStatusStore()
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 5))
+        #expect(store.gitStatus != nil)
+
+        // Switch to ws-2 with git enabled — stale ws-1 status should be cleared immediately
+        store.loadInitial(workspaceId: "ws-2", apiClient: makeMockAPIClient(), gitStatusEnabled: true)
+        #expect(store.gitStatus == nil, "Stale status from previous workspace should be cleared on switch")
+    }
+
+    @Test func reloadingSameWorkspacePreservesStatus() {
+        let store = GitStatusStore()
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 5))
+        #expect(store.gitStatus?.dirtyCount == 5)
+
+        // Reload same workspace — should keep existing status (avoid flash)
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: true)
+        #expect(store.gitStatus?.dirtyCount == 5, "Same workspace reload should preserve existing status")
+    }
+
     // MARK: - Helpers
 
     private func makeMockAPIClient() -> APIClient {

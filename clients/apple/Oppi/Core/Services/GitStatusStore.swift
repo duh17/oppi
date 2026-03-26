@@ -35,11 +35,17 @@ final class GitStatusStore {
     /// Fetch initial git status when entering a chat view.
     /// Subsequent updates arrive via WebSocket push.
     func loadInitial(workspaceId: String, apiClient: APIClient, gitStatusEnabled: Bool = true) {
+        let workspaceChanged = self.workspaceId != workspaceId
         self.workspaceId = workspaceId
 
         guard gitStatusEnabled else {
             gitStatus = nil
             return
+        }
+
+        // Clear stale status from a different workspace before fetching
+        if workspaceChanged {
+            gitStatus = nil
         }
 
         isLoading = gitStatus == nil

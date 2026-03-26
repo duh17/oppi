@@ -61,23 +61,7 @@ struct ContextInspectorViewTests {
         #expect(snap.accessibilityLabel == "Context usage unavailable")
     }
 
-    // MARK: - formatTokenCount
-
-    @Test func formatTokenCountSmall() {
-        #expect(formatTokenCount(500) == "500")
-        #expect(formatTokenCount(0) == "0")
-    }
-
-    @Test func formatTokenCountThousands() {
-        #expect(formatTokenCount(1_000) == "1k")
-        #expect(formatTokenCount(50_000) == "50k")
-        #expect(formatTokenCount(1_500) == "1.5k")
-    }
-
-    @Test func formatTokenCountMillions() {
-        #expect(formatTokenCount(1_000_000) == "1M")
-        #expect(formatTokenCount(1_500_000) == "1.5M")
-    }
+    // MARK: - formatTokenCount (removed from production code)
 
     // MARK: - inferContextWindow
 
