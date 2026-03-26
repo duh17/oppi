@@ -698,7 +698,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             themeID: ThemeRuntimeState.currentThemeID(),
             plainTextFallbackThreshold: plainTextFallbackThreshold,
             selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: selectedTextSourceContext
+            selectedTextSourceContext: selectedTextSourceContext,
+            perfSurface: .fullScreenThinking
         ))
 
         tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()

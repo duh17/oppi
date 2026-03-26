@@ -31,7 +31,8 @@ struct ToolRowMarkdownRenderStrategy {
             // always render formatted markdown regardless of content size.
             plainTextFallbackThreshold: nil,
             selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSourceContext: selectedTextSourceContext
+            selectedTextSourceContext: selectedTextSourceContext,
+            perfSurface: .toolExpanded
         ))
 
         let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
