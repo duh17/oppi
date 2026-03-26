@@ -23,6 +23,8 @@ final class AssistantMarkdownContentView: UIView {
         /// Workspace context for resolving inline image paths.
         let workspaceID: String?
         let serverBaseURL: URL?
+        /// Surface tag for streaming markdown perf instrumentation.
+        let perfSurface: MarkdownStreamingPerf.Surface?
 
         init(
             content: String,
@@ -33,7 +35,8 @@ final class AssistantMarkdownContentView: UIView {
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil,
             workspaceID: String? = nil,
-            serverBaseURL: URL? = nil
+            serverBaseURL: URL? = nil,
+            perfSurface: MarkdownStreamingPerf.Surface? = nil
         ) {
             self.content = content
             self.isStreaming = isStreaming
@@ -44,6 +47,7 @@ final class AssistantMarkdownContentView: UIView {
             self.selectedTextSourceContext = selectedTextSourceContext
             self.workspaceID = workspaceID
             self.serverBaseURL = serverBaseURL
+            self.perfSurface = perfSurface
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -56,6 +60,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.serverBaseURL == rhs.serverBaseURL
+                && lhs.perfSurface == rhs.perfSurface
         }
     }
 
@@ -113,8 +118,19 @@ final class AssistantMarkdownContentView: UIView {
         guard config != currentConfig else { return }
         currentConfig = config
 
+        let cycleStart = MarkdownStreamingPerf.timestampNs()
         let segments = segmentSource.buildSegments(config)
         segmentApplier.apply(segments: segments, config: config)
+
+        if let surface = config.perfSurface {
+            let elapsed = MarkdownStreamingPerf.timestampNs() - cycleStart
+            MarkdownStreamingPerf.recordFullCycle(
+                totalNs: elapsed,
+                segmentCount: segments.count,
+                isStreaming: config.isStreaming,
+                surface: surface
+            )
+        }
     }
 }
 

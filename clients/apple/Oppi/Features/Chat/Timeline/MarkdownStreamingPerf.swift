@@ -79,6 +79,66 @@ enum MarkdownStreamingPerf {
         )
     }
 
+    // MARK: - Full Cycle (parse + build + view apply)
+
+    /// Surface identifier for distinguishing markdown rendering contexts.
+    enum Surface: String, Sendable {
+        case fullScreenThinking = "fullscreen.thinking"
+        case fullScreenMarkdown = "fullscreen.markdown"
+        case inlineAssistant = "inline.assistant"
+        case toolExpanded = "tool.expanded"
+    }
+
+    /// Record a complete streaming markdown render cycle including view apply.
+    ///
+    /// This captures the full main-thread cost: CommonMark parse + FlatSegment
+    /// build + UIKit view manipulation (segment applier). The `surface` tag
+    /// lets us compare full-screen (no collection view) vs inline (cell height
+    /// invalidation) vs tool (fixed viewport) costs.
+    static func recordFullCycle(
+        totalNs: UInt64,
+        segmentCount: Int,
+        isStreaming: Bool,
+        surface: Surface
+    ) {
+        signposter.emitEvent(
+            "markdown.fullCycle",
+            "\(surface.rawValue) segs=\(segmentCount)"
+        )
+
+        let totalMs = Int(totalNs / 1_000_000)
+
+        // Emit to telemetry for all streaming cycles above noise floor.
+        if isStreaming, totalMs >= 1 {
+            let surfaceTag = surface.rawValue
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .markdownStreamingMs,
+                    value: Double(totalMs),
+                    unit: .ms,
+                    tags: [
+                        "surface": surfaceTag,
+                        "segments": String(segmentCount),
+                    ]
+                )
+            }
+        }
+
+        guard totalMs >= slowThresholdMs else { return }
+        guard shouldEmitSlowLog() else { return }
+
+        ClientLog.error(
+            "MarkdownPerf",
+            "Slow markdown full cycle",
+            metadata: [
+                "totalMs": String(totalMs),
+                "segments": String(segmentCount),
+                "streaming": isStreaming ? "1" : "0",
+                "surface": surface.rawValue,
+            ]
+        )
+    }
+
     // MARK: - Helpers
 
     private static func shouldEmitSlowLog() -> Bool {
