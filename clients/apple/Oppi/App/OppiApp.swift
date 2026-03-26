@@ -401,6 +401,11 @@ struct OppiApp: App {
             if hasActiveAgent {
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
             } else {
+                // No active agents — send graceful close so the server sees
+                // 1001 (going away) instead of discovering the dead connection
+                // via ping timeout (1006). This avoids a 30-60s server-side
+                // wait and produces cleaner telemetry.
+                connection.prepareForBackground()
                 backgroundKeepAlive.end()
             }
 
