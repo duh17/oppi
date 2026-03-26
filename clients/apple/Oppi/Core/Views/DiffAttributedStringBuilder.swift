@@ -42,6 +42,11 @@ enum DiffAttributedStringBuilder {
         // Array indexed by TokenKind.rawValue for O(1) lookup (no dictionary hash)
         let syntaxColorArray: [UIColor?]  // 9 entries: variable=nil, comment..operator
 
+        // Stats summary accents (exposed for inline styling)
+        let addedAccentColor: UIColor
+        let removedAccentColor: UIColor
+        let commentDimColor: UIColor
+
         nonisolated(unsafe) private static var cached: Self?
         nonisolated(unsafe) private static var cachedThemeID: ThemeID?
 
@@ -92,7 +97,10 @@ enum DiffAttributedStringBuilder {
                 fgColor: fgColor,
                 wordAddedBg: wordAddedBg,
                 wordRemovedBg: wordRemovedBg,
-                syntaxColorArray: syntaxColorArray
+                syntaxColorArray: syntaxColorArray,
+                addedAccentColor: addedAccent,
+                removedAccentColor: removedAccent,
+                commentDimColor: lineNumColor
             )
             cached = attrs
             cachedThemeID = currentTheme
@@ -118,9 +126,17 @@ enum DiffAttributedStringBuilder {
         let length: Int
     }
 
+    /// Stats summary line segment positions.
+    private struct StatsSegments {
+        let fullRange: NSRange
+        let addedRange: NSRange?
+        let removedRange: NSRange?
+        let totalRange: NSRange
+    }
+
     // MARK: - Build
 
-    static func build(hunks: [WorkspaceReviewDiffHunk], filePath: String) -> NSAttributedString {
+    static func build(hunks: [WorkspaceReviewDiffHunk], filePath: String, includeStats: Bool = false) -> NSAttributedString {
         let ext = (filePath as NSString).pathExtension
         let language = ext.isEmpty ? SyntaxLanguage.unknown : SyntaxLanguage.detect(ext)
         let style = StyleAttrs.current()
@@ -128,11 +144,18 @@ enum DiffAttributedStringBuilder {
         // --- Compute max line number for gutter width ---
         var maxLineNum = 1
         var totalLines = 0
+        var totalAdded = 0
+        var totalRemoved = 0
         for hunk in hunks {
             totalLines += hunk.lines.count
             for line in hunk.lines {
                 if let n = line.oldLine { maxLineNum = max(maxLineNum, n) }
                 if let n = line.newLine { maxLineNum = max(maxLineNum, n) }
+                switch line.kind {
+                case .added: totalAdded += 1
+                case .removed: totalRemoved += 1
+                case .context: break
+                }
             }
         }
         let numDigits = max(3, String(maxLineNum).count)
@@ -160,6 +183,38 @@ enum DiffAttributedStringBuilder {
         if language != .unknown {
             batchCode.reserveCapacity(totalLines * 60)
             batchOffsets.reserveCapacity(totalLines)
+        }
+
+        // --- Optional stats summary line ---
+        var statsSegs: StatsSegments?
+        if includeStats, totalAdded > 0 || totalRemoved > 0 {
+            let statsStart = text.length
+            text.append(" ")
+            var addedRange: NSRange?
+            if totalAdded > 0 {
+                let s = text.length
+                text.append("+\(totalAdded)")
+                addedRange = NSRange(location: s, length: text.length - s)
+                text.append(" ")
+            }
+            var removedRange: NSRange?
+            if totalRemoved > 0 {
+                let s = text.length
+                text.append("-\(totalRemoved)")
+                removedRange = NSRange(location: s, length: text.length - s)
+                text.append(" ")
+            }
+            text.append(" ")
+            let totalStart = text.length
+            text.append("\(totalLines) lines")
+            let totalRange = NSRange(location: totalStart, length: text.length - totalStart)
+            text.append("\n")
+            statsSegs = StatsSegments(
+                fullRange: NSRange(location: statsStart, length: text.length - statsStart),
+                addedRange: addedRange,
+                removedRange: removedRange,
+                totalRange: totalRange
+            )
         }
 
         var batchByteOffset = 0
@@ -226,6 +281,21 @@ enum DiffAttributedStringBuilder {
         // Headers
         for header in headers {
             result.setAttributes(style.headerAttrs, range: NSRange(location: header.start, length: header.length))
+        }
+
+        // Stats summary line
+        if let stats = statsSegs {
+            result.setAttributes(style.headerAttrs, range: stats.fullRange)
+            if let r = stats.addedRange {
+                result.addAttribute(.foregroundColor, value: style.addedAccentColor, range: r)
+                result.addAttribute(.font, value: AppFont.monoMediumBold, range: r)
+            }
+            if let r = stats.removedRange {
+                result.addAttribute(.foregroundColor, value: style.removedAccentColor, range: r)
+                result.addAttribute(.font, value: AppFont.monoMediumBold, range: r)
+            }
+            result.addAttribute(.foregroundColor, value: style.commentDimColor, range: stats.totalRange)
+            result.addAttribute(.font, value: AppFont.systemSmall, range: stats.totalRange)
         }
 
         // Per-line segments: gutter, line numbers, code
