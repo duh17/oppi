@@ -73,7 +73,7 @@ struct FileContentView: View {
         case .latex:
             CodeFileView(content: content, language: .latex, startLine: startLine, presentation: presentation, filePath: filePath)
         case .orgMode:
-            CodeFileView(content: content, language: .orgMode, startLine: startLine, presentation: presentation, filePath: filePath)
+            OrgModeFileView(content: content, filePath: filePath, presentation: presentation)
         case .mermaid:
             CodeFileView(content: content, language: .mermaid, startLine: startLine, presentation: presentation, filePath: filePath)
         case .graphviz:

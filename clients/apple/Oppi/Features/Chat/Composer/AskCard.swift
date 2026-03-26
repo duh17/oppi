@@ -128,8 +128,11 @@ struct AskCard: View {
             RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
                 .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
         )
-        // Timeout: auto-dismiss when server timeout expires
-        .task(id: request.id) {
+        // Timeout: auto-dismiss when server timeout expires.
+        // Keyed on isExpanded so the timer pauses while the user is in the
+        // full-screen expanded view, then restarts on collapse.
+        .task(id: "\(request.id)-\(isExpanded)") {
+            guard !isExpanded else { return }
             guard let timeout = request.timeout, timeout > 0 else { return }
             try? await Task.sleep(for: .milliseconds(timeout))
             guard !Task.isCancelled else { return }
