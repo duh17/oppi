@@ -840,3 +840,106 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         )
     }
 }
+
+// MARK: - Rendered Document Body (Org, LaTeX, Mermaid)
+
+/// Fullscreen body for rendered document types. Hosts either a UITextView
+/// (attributed string renderers like Org Mode) or a custom drawing view
+/// (Core Graphics renderers like LaTeX, Mermaid) inside a scroll view.
+final class NativeFullScreenRenderedDocumentBody: UIView {
+
+    enum DocumentContent {
+        case orgMode(String)
+        case latex(String)
+        case mermaid(String)
+    }
+
+    private let scrollView = UIScrollView()
+
+    init(
+        content: DocumentContent,
+        palette: ThemePalette,
+        selectedTextPiRouter: SelectedTextPiActionRouter?,
+        selectedTextSourceContext: SelectedTextSourceContext?
+    ) {
+        super.init(frame: .zero)
+        backgroundColor = UIColor(palette.bgDark)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.showsHorizontalScrollIndicator = true
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        addSubview(scrollView)
+
+        let contentView: UIView
+        switch content {
+        case .orgMode(let text):
+            contentView = makeOrgView(text: text)
+        case .latex(let text):
+            contentView = makeGraphicalView(
+                parser: TeXMathParser(), renderer: MathCoreGraphicsRenderer(),
+                text: text, fontSize: 20
+            )
+        case .mermaid(let text):
+            contentView = makeGraphicalView(
+                parser: MermaidParser(), renderer: MermaidFlowchartRenderer(),
+                text: text, fontSize: 14
+            )
+        }
+
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 14),
+            contentView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func makeOrgView(text: String) -> UIView {
+        let parser = OrgParser()
+        let renderer = OrgAttributedStringRenderer()
+        let blocks = parser.parse(text)
+        let config = RenderConfiguration(fontSize: 16, maxWidth: 800, theme: .fallback, displayMode: .document)
+        let attrStr = renderer.renderAttributedString(blocks, configuration: config)
+
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isSelectable = true
+        textView.dataDetectorTypes = .link
+        textView.attributedText = attrStr
+        return textView
+    }
+
+    private func makeGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(
+        parser: P, renderer: R, text: String, fontSize: CGFloat
+    ) -> UIView where P.Document == R.Document {
+        let document = parser.parse(text)
+        let config = RenderConfiguration(fontSize: fontSize, maxWidth: 800, theme: .fallback, displayMode: .document)
+        let layoutResult = renderer.layout(document, configuration: config)
+        let size = renderer.boundingBox(layoutResult)
+
+        let drawView = GraphicalRendererUIView()
+        drawView.configure(size: size) { ctx, origin in
+            renderer.draw(layoutResult, in: ctx, at: origin)
+        }
+        drawView.widthAnchor.constraint(equalToConstant: max(size.width, 1)).isActive = true
+        drawView.heightAnchor.constraint(equalToConstant: max(size.height, 1)).isActive = true
+        return drawView
+    }
+}

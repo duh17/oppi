@@ -23,6 +23,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     cost: 0.05,
     name: `Session ${id}`,
     model: "anthropic/claude-sonnet-4-20250514",
+    workspaceId: "ws-1",
     ...overrides,
   };
 }
@@ -149,7 +150,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
     },
 
     listWorkspaceSessions() {
-      return [...ctx.sessions.values()];
+      return [...ctx.sessions.values()].filter((s) => s.workspaceId === workspaceId);
     },
 
     subscribe(id, callback) {
@@ -203,14 +204,17 @@ function emitMessage(ctx: MockCtx, sessionId: string, msg: ServerMessage): void 
 // Factory helper — registers tools and returns lookup
 // ---------------------------------------------------------------------------
 
-function setup(sessionId = "parent-1"): {
+function setup(
+  sessionId = "parent-1",
+  options?: { childMode?: boolean },
+): {
   ctx: MockCtx;
   api: MockExtensionAPI;
   tool: (name: string) => RegisteredTool;
 } {
   const ctx = createMockCtx(sessionId);
   const api = createMockAPI();
-  const factory = createSpawnAgentFactory(ctx);
+  const factory = createSpawnAgentFactory(ctx, options);
   factory(api as unknown as Parameters<typeof factory>[0]);
   const tool = (name: string): RegisteredTool => {
     const t = api.tools.get(name);
@@ -774,7 +778,8 @@ describe("spawn-agent-extension", () => {
 
       expect(ctx.sendMessageCalls).toHaveLength(1);
       expect(ctx.sendMessageCalls[0].sessionId).toBe("c1");
-      expect(ctx.sendMessageCalls[0].message).toBe("do more work");
+      expect(ctx.sendMessageCalls[0].message).toContain("do more work");
+      expect(ctx.sendMessageCalls[0].message).toContain("[From agent"); // preamble present
       expect(ctx.sendMessageCalls[0].behavior).toBe("steer");
 
       const text = result.content[0].text;
@@ -872,15 +877,18 @@ describe("spawn-agent-extension", () => {
       expect(result.content[0].text).toContain("Session not found");
     });
 
-    it("rejects sessions outside the spawn tree", async () => {
+    it("rejects sessions outside the workspace", async () => {
       const { ctx, tool } = setup();
-      ctx.sessions.set("unrelated", makeSession({ id: "unrelated", status: "busy" }));
+      ctx.sessions.set(
+        "other-ws",
+        makeSession({ id: "other-ws", status: "busy", workspaceId: "ws-other" }),
+      );
 
       const result = await tool("send_message").execute("tc1", {
-        id: "unrelated",
+        id: "other-ws",
         message: "hello",
       });
-      expect(result.content[0].text).toContain("not in this session's tree");
+      expect(result.content[0].text).toContain("not in this workspace");
     });
 
     it("rejects messages to stopped sessions", async () => {
@@ -903,9 +911,9 @@ describe("spawn-agent-extension", () => {
       expect(result.content[0].text).toContain("Done Worker");
       // Verify the session was resumed (status changed from stopped → ready)
       expect(ctx.sessions.get("c1")!.status).toBe("ready");
-      // Verify message was sent
+      // Verify message was sent (with preamble prepended)
       expect(ctx.sendMessageCalls).toHaveLength(1);
-      expect(ctx.sendMessageCalls[0].message).toBe("hello");
+      expect(ctx.sendMessageCalls[0].message).toContain("hello");
     });
 
     it("rejects messages to errored sessions", async () => {
@@ -1147,20 +1155,17 @@ describe("spawn-agent-extension", () => {
       expect(result.content[0].text).toContain("Session not found");
     });
 
-    it("returns error when session not in tree", async () => {
+    it("returns error when session not in workspace", async () => {
       const { ctx, tool } = setup();
 
-      // Add a session that isn't related to the parent at all
-      ctx.sessions.set(
-        "orphan-1",
-        makeSession({ id: "orphan-1" }), // no parentSessionId
-      );
+      // Add a session in a different workspace
+      ctx.sessions.set("other-ws", makeSession({ id: "other-ws", workspaceId: "ws-other" }));
 
       const result = await tool("inspect_agent").execute("tc1", {
-        id: "orphan-1",
+        id: "other-ws",
       });
 
-      expect(result.content[0].text).toContain("not in this session's tree");
+      expect(result.content[0].text).toContain("not in this workspace");
     });
 
     it("allows inspecting direct child", async () => {
@@ -2078,6 +2083,479 @@ describe("spawn-agent-extension", () => {
       expect(text).toContain("3 sessions");
       // Total cost = 0.50 + 0.10 + 0.05 = 0.65
       expect(text).toContain("$0.65");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-session: check_agents scope=workspace
+  // -----------------------------------------------------------------------
+
+  describe("check_agents scope=workspace", () => {
+    it("lists alive sessions (busy, starting, ready) excluding self", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "detached-1",
+        makeSession({
+          id: "detached-1",
+          status: "busy",
+          name: "Analyzer",
+          firstMessage: "Analyze the auth module",
+        }),
+      );
+      ctx.sessions.set(
+        "idle-1",
+        makeSession({
+          id: "idle-1",
+          status: "ready",
+          name: "Idle Worker",
+        }),
+      );
+      ctx.sessions.set(
+        "starting-1",
+        makeSession({
+          id: "starting-1",
+          status: "starting",
+          name: "Warming Up",
+        }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("Analyzer");
+      expect(text).toContain("Idle Worker");
+      expect(text).toContain("Warming Up");
+      // Self (parent-1) is excluded
+      expect(text).not.toContain("parent-1");
+    });
+
+    it("excludes stopped and error sessions", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "stopped-1",
+        makeSession({ id: "stopped-1", status: "stopped", name: "Done Agent" }),
+      );
+      ctx.sessions.set(
+        "error-1",
+        makeSession({ id: "error-1", status: "error", name: "Crashed Agent" }),
+      );
+      ctx.sessions.set(
+        "busy-1",
+        makeSession({ id: "busy-1", status: "busy", name: "Active Agent" }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("Active Agent");
+      expect(text).not.toContain("Done Agent");
+      expect(text).not.toContain("Crashed Agent");
+    });
+
+    it("excludes sessions from other workspaces", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "same-ws",
+        makeSession({ id: "same-ws", status: "busy", name: "Same WS", workspaceId: "ws-1" }),
+      );
+      ctx.sessions.set(
+        "diff-ws",
+        makeSession({ id: "diff-ws", status: "busy", name: "Other WS", workspaceId: "ws-2" }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("Same WS");
+      expect(text).not.toContain("Other WS");
+    });
+
+    it("includes firstMessage and changedFiles", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "worker-1",
+        makeSession({
+          id: "worker-1",
+          status: "busy",
+          name: "Refactorer",
+          firstMessage: "Refactor the session coordinator to use dependency injection",
+          changeStats: {
+            mutatingToolCalls: 3,
+            filesChanged: 2,
+            addedLines: 50,
+            removedLines: 10,
+            changedFiles: ["server/src/session-coordinators.ts", "server/src/session-start.ts"],
+          },
+        }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("Refactor the session coordinator");
+      expect(text).toContain("session-coordinators.ts");
+      expect(text).toContain("session-start.ts");
+    });
+
+    it("includes sessions from different spawn trees", async () => {
+      const { ctx, tool } = setup();
+
+      // A child of a different parent (different tree)
+      ctx.sessions.set(
+        "other-parent",
+        makeSession({ id: "other-parent", status: "busy", name: "Other Root" }),
+      );
+      ctx.sessions.set(
+        "other-child",
+        makeSession({
+          id: "other-child",
+          parentSessionId: "other-parent",
+          status: "busy",
+          name: "Other Child",
+        }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+
+      expect(text).toContain("Other Root");
+      expect(text).toContain("Other Child");
+    });
+
+    it("returns empty message when no alive sessions besides self", async () => {
+      const { tool } = setup();
+      // Only self exists (parent-1, status=stopped by default)
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      const text = result.content[0].text;
+      expect(text).toContain("No active sessions");
+    });
+
+    it("default scope (omitted) still returns children only", async () => {
+      const { ctx, tool } = setup();
+
+      // A child of this session
+      ctx.sessions.set(
+        "my-child",
+        makeSession({
+          id: "my-child",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "My Child",
+        }),
+      );
+      // An unrelated session
+      ctx.sessions.set(
+        "unrelated",
+        makeSession({ id: "unrelated", status: "busy", name: "Unrelated" }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", {});
+      const text = result.content[0].text;
+
+      expect(text).toContain("My Child");
+      expect(text).not.toContain("Unrelated");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-session: send_message workspace scope
+  // -----------------------------------------------------------------------
+
+  describe("send_message workspace scope", () => {
+    it("can send to detached session in same workspace", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "detached-1",
+        makeSession({
+          id: "detached-1",
+          // no parentSessionId
+          status: "busy",
+          name: "Detached Worker",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "detached-1",
+        message: "status check",
+      });
+
+      expect(result.content[0].text).toContain("Detached Worker");
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].sessionId).toBe("detached-1");
+    });
+
+    it("can send to unrelated session in same workspace", async () => {
+      const { ctx, tool } = setup();
+
+      // Session from a completely different tree
+      ctx.sessions.set(
+        "sibling-tree",
+        makeSession({
+          id: "sibling-tree",
+          parentSessionId: "some-other-parent",
+          status: "busy",
+          name: "Sibling",
+        }),
+      );
+
+      await tool("send_message").execute("tc1", {
+        id: "sibling-tree",
+        message: "coordinate with me",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].sessionId).toBe("sibling-tree");
+    });
+
+    it("rejects sessions not in the workspace", async () => {
+      const { ctx, tool } = setup();
+
+      // Session in a different workspace — not in listWorkspaceSessions results
+      ctx.sessions.set(
+        "other-ws",
+        makeSession({ id: "other-ws", status: "busy", workspaceId: "ws-2" }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "other-ws",
+        message: "hello",
+      });
+
+      expect(result.content[0].text).toContain("not in this workspace");
+      expect(ctx.sendMessageCalls).toHaveLength(0);
+    });
+
+    it("prepends agent-origin preamble with sender name and ID", async () => {
+      const { ctx, tool } = setup();
+
+      // Give the parent session a name
+      const parent = ctx.sessions.get("parent-1")!;
+      parent.name = "Coordinator";
+
+      ctx.sessions.set(
+        "target-1",
+        makeSession({
+          id: "target-1",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "Worker",
+        }),
+      );
+
+      await tool("send_message").execute("tc1", {
+        id: "target-1",
+        message: "please check the tests",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      const sentMessage = ctx.sendMessageCalls[0].message;
+      expect(sentMessage).toContain('[From agent "Coordinator" (parent-1)]');
+      expect(sentMessage).toContain("please check the tests");
+    });
+
+    it("preamble uses session ID when name is not set", async () => {
+      const { ctx, tool } = setup();
+
+      // Clear the parent session name
+      const parent = ctx.sessions.get("parent-1")!;
+      parent.name = undefined;
+
+      ctx.sessions.set(
+        "target-1",
+        makeSession({
+          id: "target-1",
+          parentSessionId: "parent-1",
+          status: "busy",
+        }),
+      );
+
+      await tool("send_message").execute("tc1", {
+        id: "target-1",
+        message: "hello",
+      });
+
+      const sentMessage = ctx.sendMessageCalls[0].message;
+      expect(sentMessage).toContain("[From agent parent-1]");
+      expect(sentMessage).toContain("hello");
+    });
+
+    it("existing child messaging still works", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "child-1",
+        makeSession({
+          id: "child-1",
+          parentSessionId: "parent-1",
+          status: "busy",
+          name: "Child",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "child-1",
+        message: "update me",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(result.content[0].text).toContain("Child");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-session: inspect_agent workspace scope
+  // -----------------------------------------------------------------------
+
+  describe("inspect_agent workspace scope", () => {
+    it("can inspect any session in same workspace", async () => {
+      const { ctx, tool } = setup();
+
+      const tracePath = writeTrace(tmpDir, "detached.jsonl", [
+        userMsg("analyze code"),
+        assistantMsg("found issues"),
+      ]);
+
+      ctx.sessions.set(
+        "detached-1",
+        makeSession({
+          id: "detached-1",
+          // no parentSessionId, not in tree
+          status: "busy",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", { id: "detached-1" });
+      expect(result.content[0].text).toContain("1 turns");
+    });
+
+    it("rejects sessions not in the workspace", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "other-ws",
+        makeSession({ id: "other-ws", status: "busy", workspaceId: "ws-2" }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", { id: "other-ws" });
+      expect(result.content[0].text).toContain("not in this workspace");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Cross-session: stop_agent stays tree-scoped
+  // -----------------------------------------------------------------------
+
+  describe("stop_agent tree scope (unchanged)", () => {
+    it("still rejects sessions outside the spawn tree", async () => {
+      const { ctx, tool } = setup();
+
+      ctx.sessions.set(
+        "unrelated",
+        makeSession({ id: "unrelated", status: "busy", name: "Not Mine" }),
+      );
+
+      const result = await tool("stop_agent").execute("tc1", { id: "unrelated" });
+      expect(result.content[0].text).toContain("not in this session's tree");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Child mode: restricted tool set
+  // -----------------------------------------------------------------------
+
+  describe("child mode (childMode: true)", () => {
+    it("registers only check_agents, send_message, inspect_agent", () => {
+      const { api } = setup("child-1", { childMode: true });
+
+      expect(api.tools.has("check_agents")).toBe(true);
+      expect(api.tools.has("send_message")).toBe(true);
+      expect(api.tools.has("inspect_agent")).toBe(true);
+      expect(api.tools.has("spawn_agent")).toBe(false);
+      expect(api.tools.has("stop_agent")).toBe(false);
+      expect(api.tools.size).toBe(3);
+    });
+
+    it("child can send_message to sibling", async () => {
+      const { ctx, tool } = setup("child-1", { childMode: true });
+
+      // Set up the child's parent
+      ctx.sessions.set("root-1", makeSession({ id: "root-1" }));
+      ctx.sessions.set(
+        "child-1",
+        makeSession({ id: "child-1", parentSessionId: "root-1", status: "busy" }),
+      );
+      ctx.sessions.set(
+        "child-2",
+        makeSession({
+          id: "child-2",
+          parentSessionId: "root-1",
+          status: "busy",
+          name: "Sibling",
+        }),
+      );
+
+      const result = await tool("send_message").execute("tc1", {
+        id: "child-2",
+        message: "hey sibling",
+      });
+
+      expect(ctx.sendMessageCalls).toHaveLength(1);
+      expect(ctx.sendMessageCalls[0].sessionId).toBe("child-2");
+      expect(result.content[0].text).toContain("Sibling");
+    });
+
+    it("child can check_agents scope=workspace", async () => {
+      const { ctx, tool } = setup("child-1", { childMode: true });
+
+      ctx.sessions.set(
+        "child-1",
+        makeSession({ id: "child-1", parentSessionId: "root-1", status: "busy" }),
+      );
+      ctx.sessions.set(
+        "child-2",
+        makeSession({
+          id: "child-2",
+          parentSessionId: "root-1",
+          status: "busy",
+          name: "Sibling Worker",
+        }),
+      );
+
+      const result = await tool("check_agents").execute("tc1", { scope: "workspace" });
+      expect(result.content[0].text).toContain("Sibling Worker");
+    });
+
+    it("child can inspect_agent on sibling", async () => {
+      const { ctx, tool } = setup("child-1", { childMode: true });
+
+      const tracePath = writeTrace(tmpDir, "sibling.jsonl", [
+        userMsg("sibling task"),
+        assistantMsg("done"),
+      ]);
+
+      ctx.sessions.set(
+        "child-1",
+        makeSession({ id: "child-1", parentSessionId: "root-1", status: "busy" }),
+      );
+      ctx.sessions.set(
+        "child-2",
+        makeSession({
+          id: "child-2",
+          parentSessionId: "root-1",
+          status: "busy",
+          piSessionFile: tracePath,
+        }),
+      );
+
+      const result = await tool("inspect_agent").execute("tc1", { id: "child-2" });
+      expect(result.content[0].text).toContain("1 turns");
     });
   });
 });

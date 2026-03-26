@@ -105,7 +105,7 @@ function setup(opts: {
     },
 
     listWorkspaceSessions() {
-      return [...sessions.values()];
+      return [...sessions.values()].filter((s) => s.workspaceId === "ws-1");
     },
 
     subscribe(sessionId, callback) {
@@ -316,7 +316,7 @@ describe("spawn_agent", () => {
         async spawnDetached() { throw new Error("unused"); },
         listChildren: () => [...sessions.values()].filter((s) => s.parentSessionId === "parent-1"),
         getSession: (id) => sessions.get(id),
-        listWorkspaceSessions: () => [...sessions.values()],
+        listWorkspaceSessions: () => [...sessions.values()].filter((s) => s.workspaceId === "ws-1"),
         subscribe: () => () => {},
         getAvailableModelIds: () => [],
       };
@@ -556,12 +556,12 @@ describe("inspect_agent", () => {
     expect(result.content[0].text).toContain("Session not found");
   });
 
-  it("rejects session not in the spawn tree", async () => {
-    const other = makeSession({ id: "other-session", parentSessionId: "someone-else" });
+  it("rejects session not in the workspace", async () => {
+    const other = makeSession({ id: "other-session", workspaceId: "ws-other" });
     const { inspect } = setup({ sessions: [other] });
 
     const result = await inspect.execute("tc-1", { id: "other-session" });
-    expect(result.content[0].text).toContain("not in this session's tree");
+    expect(result.content[0].text).toContain("not in this workspace");
   });
 
   it("allows inspection of direct children", async () => {
