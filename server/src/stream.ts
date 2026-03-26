@@ -103,9 +103,10 @@ function parseIncomingClientMessage(
 /**
  * Start a server-initiated ping/pong keepalive for a WebSocket.
  *
- * Sends a WS ping every `intervalMs`. If a pong is not received before
- * the next ping fires, the connection is terminated — which triggers
- * the `close` event and runs existing cleanup.
+ * Sends a WS ping every `intervalMs`. Tolerates one missed pong (brief
+ * iOS background suspension) before terminating the connection on the
+ * second consecutive miss. This matches the iOS client's 2-failure
+ * threshold and avoids killing connections during quick lock/unlock cycles.
  *
  * Returns a cleanup function that stops the timer.
  */
@@ -115,27 +116,27 @@ export function startServerPing(
   intervalMs = PING_INTERVAL_MS,
   metrics?: ServerMetricCollector,
 ): () => void {
-  let alive = true;
+  let missedPongs = 0;
   let lastPingSentAt = 0;
 
   ws.on("pong", () => {
-    alive = true;
+    missedPongs = 0;
     if (lastPingSentAt > 0 && metrics) {
       metrics.record("server.ws_ping_rtt_ms", Date.now() - lastPingSentAt);
     }
   });
 
   const timer = setInterval(() => {
-    if (!alive) {
+    missedPongs++;
+    if (missedPongs > 2) {
       metrics?.record("server.ws_ping_timeout", 1);
-      console.log("[ws] Ping timeout — terminating", {
+      console.log("[ws] Ping timeout (2 consecutive misses) — terminating", {
         label,
       });
       clearInterval(timer);
       ws.terminate();
       return;
     }
-    alive = false;
     lastPingSentAt = Date.now();
     ws.ping();
   }, intervalMs);

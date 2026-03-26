@@ -403,6 +403,20 @@ final class WebSocketClient {
         resolveConnectionWaiters()
     }
 
+    /// Send a graceful close frame before iOS suspends the app.
+    ///
+    /// Sends `.goingAway` (1001) so the server sees a clean close instead of
+    /// discovering the dead connection via ping timeout (1006). Stops the ping
+    /// timer since no pongs can be sent while suspended. Preserves subscriptions
+    /// and continuation so `reconnectIfNeeded()` can reopen on foreground.
+    func prepareForBackground() {
+        guard let ws = webSocket, status == .connected else { return }
+        wsLogInfo("Preparing for background — sending goingAway close")
+        pingTask?.cancel()
+        pingTask = nil
+        ws.cancel(with: .goingAway, reason: nil)
+    }
+
     /// Disconnect and clean up.
     func disconnect() {
         wsLogInfo(

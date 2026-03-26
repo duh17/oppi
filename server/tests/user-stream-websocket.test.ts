@@ -415,8 +415,7 @@ describe("/stream websocket behavior", () => {
 });
 
 describe("server-side ping keepalive", () => {
-  it("terminates connection when pong is not received", async () => {
-    const pings: Array<() => void> = [];
+  it("terminates connection after 2 consecutive missed pongs", async () => {
     let terminated = false;
 
     const fakeWs = {
@@ -438,12 +437,17 @@ describe("server-side ping keepalive", () => {
     try {
       const stop = startServerPing(fakeWs as unknown as WebSocket, "test", 100);
 
-      // First interval tick: alive is true → set alive=false, send ping
+      // First tick: missedPongs=1, send ping — tolerated
       vi.advanceTimersByTime(100);
       expect(fakeWs.ping).toHaveBeenCalledTimes(1);
       expect(terminated).toBe(false);
 
-      // Second tick: alive is still false (no pong) → terminate
+      // Second tick: missedPongs=2, send ping — still tolerated (threshold is >2)
+      vi.advanceTimersByTime(100);
+      expect(fakeWs.ping).toHaveBeenCalledTimes(2);
+      expect(terminated).toBe(false);
+
+      // Third tick: missedPongs=3 (>2) → terminate
       vi.advanceTimersByTime(100);
       expect(terminated).toBe(true);
       expect(fakeWs.terminate).toHaveBeenCalledTimes(1);

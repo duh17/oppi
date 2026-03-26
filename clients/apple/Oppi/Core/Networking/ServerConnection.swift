@@ -399,6 +399,12 @@ final class ServerConnection {
         }
     }
 
+    /// Send a graceful WS close frame before iOS suspends the app.
+    /// Preserves subscriptions so `reconnectIfNeeded()` can reopen on foreground.
+    func prepareForBackground() {
+        wsClient?.prepareForBackground()
+    }
+
     /// Route a message from the multiplexed stream to the appropriate session.
     /// Well-known server error code for "session not subscribed at full level".
     private static let notSubscribedFullCode = "stream_not_subscribed_full"
