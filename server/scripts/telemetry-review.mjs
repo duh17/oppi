@@ -11,7 +11,6 @@
  *   --data-dir <path>     Oppi data dir (default: $OPPI_DATA_DIR or ~/.config/oppi)
  *   --days <n>            Days of data to include (default: 7)
  *   --json                Output machine-readable JSON
- *   --metrics             Output METRIC name=value lines (autoresearch-compatible)
  *   --no-color            Disable ANSI colors
  *   --help                Show this help
  */
@@ -72,7 +71,6 @@ Options:
   --days <n>            Days of data to include (default: 7)
   --gate                Exit non-zero if any SLO violations (for CI/release gates)
   --json                Machine-readable JSON output
-  --metrics             Output METRIC name=value lines (autoresearch baseline format)
   --no-color            Disable ANSI colors
   --help                Show this help
 `);
@@ -85,7 +83,6 @@ const dataDir = resolve(
 const telemetryDir = join(dataDir, "diagnostics", "telemetry");
 const daysBack = Math.max(1, Number.parseInt(getArg("days") ?? "7", 10) || 7);
 const jsonOutput = hasFlag("json");
-const metricsOutput = hasFlag("metrics");
 const gateMode = hasFlag("gate");
 const useColor = !hasFlag("no-color") && process.stdout.isTTY;
 
@@ -214,24 +211,6 @@ if (jsonOutput) {
     }
   }
   console.log(JSON.stringify({ days: daysBack, totalSamples, filesRead, metrics: results, builds }, null, 2));
-  process.exit(0);
-}
-
-if (metricsOutput) {
-  // Output METRIC lines compatible with autoresearch benchmark format.
-  // Useful as production baselines before/after optimization.
-  const metrics = Object.entries(values)
-    .sort(([a], [b]) => a.localeCompare(b));
-
-  for (const [metric, { vals }] of metrics) {
-    if (vals.length === 0) continue;
-    const stats = computeStats(vals);
-    console.log(`METRIC ${metric}_count=${stats.count}`);
-    console.log(`METRIC ${metric}_p50=${Number(stats.p50.toFixed(1))}`);
-    console.log(`METRIC ${metric}_p95=${Number(stats.p95.toFixed(1))}`);
-    console.log(`METRIC ${metric}_p99=${Number(stats.p99.toFixed(1))}`);
-    console.log(`METRIC ${metric}_max=${Number(stats.max.toFixed(1))}`);
-  }
   process.exit(0);
 }
 
