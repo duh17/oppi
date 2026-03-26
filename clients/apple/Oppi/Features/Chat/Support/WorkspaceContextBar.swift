@@ -83,12 +83,18 @@ struct WorkspaceContextBar: View {
 
     @State private var isExpanded = false
     @State private var selectedFile: GitFileStatus?
+    @State private var selectedCommit: GitCommitSummary?
     @State private var isSelecting = false
     @State private var selectedPaths: Set<String> = []
     @State private var launchActionInFlight: WorkspaceReviewSessionAction?
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
     @State private var stoppingAgentIds: Set<String> = []
+
+    // Commit pagination state
+    @State private var additionalCommits: [GitCommitSummary] = []
+    @State private var hasMoreCommits = true
+    @State private var isLoadingMore = false
 
     // Drag-select state
     @State private var rowFrames: [String: CGRect] = [:]
@@ -191,15 +197,21 @@ struct WorkspaceContextBar: View {
         childSessions.count { $0.status == .error }
     }
 
+    /// All commits: recent from git status + any additionally loaded ones.
+    private var allCommits: [GitCommitSummary] {
+        (gitStatus?.recentCommits ?? []) + additionalCommits
+    }
+
     /// Dynamic max height: grows with content, caps at 480.
     private var expandedMaxHeight: CGFloat {
         let agentRows = CGFloat(childSessions.count) * 48
         let fileRows = CGFloat(displayFiles.count) * 32
-        let commitRows = CGFloat(gitStatus?.recentCommits.count ?? 0) * 24
+        let commitRows = CGFloat(allCommits.count) * 24
+        let loadMoreRow: CGFloat = hasMoreCommits ? 28 : 0
         let selectionBar: CGFloat = isSelecting ? 52 : 0
         let sectionHeaders: CGFloat = (!childSessions.isEmpty && !displayFiles.isEmpty) ? 48 : 24
         let chrome: CGFloat = 60
-        return min(agentRows + fileRows + commitRows + selectionBar + sectionHeaders + chrome, 480)
+        return min(agentRows + fileRows + commitRows + loadMoreRow + selectionBar + sectionHeaders + chrome, 480)
     }
 
     // MARK: - Body
@@ -221,6 +233,16 @@ struct WorkspaceContextBar: View {
                 .padding(.bottom, 2)
                 .sheet(item: $selectedFile) { file in
                     fileDetailSheet(file: file)
+                }
+                .sheet(item: $selectedCommit) { commit in
+                    NavigationStack {
+                        CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Done") { selectedCommit = nil }
+                                }
+                            }
+                    }
                 }
                 .alert(
                     "Review Error",
@@ -450,24 +472,49 @@ struct WorkspaceContextBar: View {
             }
 
             // Recent commits
-            if let gitStatus, !gitStatus.recentCommits.isEmpty {
+            if !allCommits.isEmpty {
                 Divider().overlay(Color.themeComment.opacity(0.15))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(gitStatus.recentCommits) { commit in
-                        HStack(spacing: 8) {
-                            Text(commit.sha)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.themeComment)
-
-                            Text(commit.message)
-                                .font(.caption2)
-                                .foregroundStyle(.themeFgDim)
-                                .lineLimit(1)
+                    ForEach(allCommits) { commit in
+                        Button {
+                            selectedCommit = commit
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(commit.sha)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.themeComment)
+                                Text(commit.message)
+                                    .font(.caption2)
+                                    .foregroundStyle(.themeFgDim)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.right")
+                                    .font(.appBadgeLight)
+                                    .foregroundStyle(.themeComment.opacity(0.5))
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
 
-                    if gitStatus.stashCount > 0 {
+                    if hasMoreCommits {
+                        Button {
+                            Task { await loadMoreCommits() }
+                        } label: {
+                            if isLoadingMore {
+                                ProgressView().scaleEffect(0.6)
+                            } else {
+                                Text("Load more")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.themePurple)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 4)
+                    }
+
+                    if let gitStatus, gitStatus.stashCount > 0 {
                         HStack(spacing: 8) {
                             Text("\(gitStatus.stashCount) stash")
                                 .font(.caption2.monospaced())
@@ -677,6 +724,22 @@ struct WorkspaceContextBar: View {
             )
         } catch {
             launchError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Load More Commits
+
+    private func loadMoreCommits() async {
+        guard let workspaceId, let api = apiClient, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        let currentCount = allCommits.count
+        do {
+            let response = try await api.getCommitLog(workspaceId: workspaceId, offset: currentCount)
+            additionalCommits.append(contentsOf: response.commits)
+            hasMoreCommits = response.hasMore
+        } catch {
+            // Silently fail — not critical
         }
     }
 

@@ -396,6 +396,27 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceGraphResponse.self, from: data)
     }
 
+    // MARK: - Git Commits
+
+    /// Fetch paginated commit log for a workspace.
+    func getCommitLog(workspaceId: String, offset: Int = 0, limit: Int = 20) async throws -> GitCommitLogResponse {
+        let data = try await get("/workspaces/\(workspaceId)/git/commits?offset=\(offset)&limit=\(limit)")
+        return try JSONDecoder().decode(GitCommitLogResponse.self, from: data)
+    }
+
+    /// Fetch detailed info for a single commit (metadata + changed files).
+    func getCommitDetail(workspaceId: String, sha: String) async throws -> GitCommitDetail {
+        let data = try await get("/workspaces/\(workspaceId)/git/commits/\(sha)")
+        return try JSONDecoder().decode(GitCommitDetail.self, from: data)
+    }
+
+    /// Fetch diff for a specific file in a commit.
+    func getCommitFileDiff(workspaceId: String, sha: String, path: String) async throws -> WorkspaceReviewDiffResponse {
+        let encodedPath = try encodeQueryPath(path)
+        let data = try await get("/workspaces/\(workspaceId)/git/commits/\(sha)/diff?path=\(encodedPath)")
+        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
+    }
+
     // MARK: - Git Status
 
     /// Fetch git status for a workspace's host directory.
