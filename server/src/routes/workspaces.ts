@@ -278,9 +278,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         stagedCount: 0,
         files: [],
         totalFiles: 0,
+        addedLines: 0,
+        removedLines: 0,
         stashCount: 0,
         lastCommitMessage: null,
         lastCommitDate: null,
+        recentCommits: [],
       });
       return;
     }
