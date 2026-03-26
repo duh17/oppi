@@ -1,0 +1,40 @@
+sequenceDiagram
+    participant User
+    participant App as Oppi iOS
+    participant Server as Oppi Server
+    participant Container as Agent Container
+    participant LLM as Claude API
+
+    User->>App: Send message
+    App->>Server: WebSocket: user_message
+    Server->>Container: Forward to agent session
+    Container->>LLM: API request (messages + tools)
+
+    loop Agent turn
+        LLM-->>Container: Stream response
+        Container-->>Server: Tool calls / text deltas
+        Server-->>App: WebSocket: tool_start, text_delta
+
+        alt Tool: read_file
+            Container->>Container: Read from workspace
+            Container->>LLM: Tool result
+        else Tool: write_file
+            Container->>Container: Write to workspace
+            Container-->>Server: file_changed event
+            Server-->>App: WebSocket: file_changed
+        else Tool: bash
+            Container->>Container: Execute command
+            Container->>LLM: stdout/stderr result
+        else Tool: spawn_agent
+            Container->>Server: Create child session
+            Server->>Container: New container for child
+            Container-->>App: child_spawned event
+        end
+    end
+
+    LLM-->>Container: End turn (stop_reason)
+    Container-->>Server: turn_complete
+    Server-->>App: WebSocket: turn_complete
+    App-->>User: Display rendered response
+
+    Note over User,LLM: User can send new message or browse workspace files
