@@ -288,6 +288,34 @@ export interface GitCommitSummary {
   date: string;
 }
 
+export interface GitCommitFileInfo {
+  /** File path relative to repo root */
+  path: string;
+  /** Change status (M=modified, A=added, D=deleted, etc.) */
+  status: string;
+  /** Lines added (null for binary files) */
+  addedLines: number | null;
+  /** Lines removed (null for binary files) */
+  removedLines: number | null;
+}
+
+export interface GitCommitDetail {
+  /** Short SHA (7-char) */
+  sha: string;
+  /** Commit subject line */
+  message: string;
+  /** ISO timestamp */
+  date: string;
+  /** Author name and email */
+  author: string;
+  /** Files changed in this commit */
+  files: GitCommitFileInfo[];
+  /** Total lines added */
+  addedLines: number;
+  /** Total lines removed */
+  removedLines: number;
+}
+
 export interface GitStatus {
   /** Whether the directory is a git repo */
   isGitRepo: boolean;
@@ -319,7 +347,7 @@ export interface GitStatus {
   lastCommitMessage: string | null;
   /** ISO timestamp of most recent commit */
   lastCommitDate: string | null;
-  /** Recent commits (newest first, capped at 5) */
+  /** Recent commits (newest first, capped at 20) */
   recentCommits: GitCommitSummary[];
 }
 

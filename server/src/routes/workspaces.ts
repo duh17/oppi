@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { DefaultResourceLoader, SettingsManager, getAgentDir } from "@mariozechner/pi-coding-agent";
 
 import { isValidExtensionName } from "../extension-loader.js";
+import { CommitDiffError, getCommitDetail, getCommitFileDiff, getCommitLog } from "../git-commits.js";
 import { buildWorkspaceGraph } from "../graph.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
@@ -283,6 +284,87 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, status);
   }
 
+  async function handleGetWorkspaceCommitLog(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      helpers.json(res, { commits: [], total: 0, hasMore: false });
+      return;
+    }
+
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "20", 10) || 20));
+
+    const result = await getCommitLog(workspace.hostMount, offset, limit);
+    helpers.json(res, result);
+  }
+
+  async function handleGetWorkspaceCommitDetail(
+    wsId: string,
+    sha: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      helpers.error(res, 404, "Workspace has no host mount");
+      return;
+    }
+
+    try {
+      const detail = await getCommitDetail(workspace.hostMount, sha);
+      helpers.json(res, detail);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to get commit detail";
+      helpers.error(res, 404, message);
+    }
+  }
+
+  async function handleGetWorkspaceCommitFileDiff(
+    wsId: string,
+    sha: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      helpers.error(res, 404, "Workspace has no host mount");
+      return;
+    }
+
+    const filePath = url.searchParams.get("path") ?? "";
+
+    try {
+      const diff = await getCommitFileDiff(workspace.hostMount, sha, filePath, wsId);
+      helpers.compressedJson(req, res, diff);
+    } catch (error) {
+      if (error instanceof CommitDiffError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to get commit diff";
+      helpers.error(res, 500, message);
+    }
+  }
+
   function sessionWithinWorkspace(
     session: Session | undefined,
     workspaceId: string,
@@ -509,6 +591,24 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
     if (wsGitStatusMatch && method === "GET") {
       await handleGetWorkspaceGitStatus(wsGitStatusMatch[1], res);
+      return true;
+    }
+
+    const wsGitCommitsMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits$/);
+    if (wsGitCommitsMatch && method === "GET") {
+      await handleGetWorkspaceCommitLog(wsGitCommitsMatch[1], url, res);
+      return true;
+    }
+
+    const wsGitCommitDetailMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits\/([^/]+)$/);
+    if (wsGitCommitDetailMatch && method === "GET") {
+      await handleGetWorkspaceCommitDetail(wsGitCommitDetailMatch[1], wsGitCommitDetailMatch[2], res);
+      return true;
+    }
+
+    const wsGitCommitDiffMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits\/([^/]+)\/diff$/);
+    if (wsGitCommitDiffMatch && method === "GET") {
+      await handleGetWorkspaceCommitFileDiff(wsGitCommitDiffMatch[1], wsGitCommitDiffMatch[2], url, req, res);
       return true;
     }
 
