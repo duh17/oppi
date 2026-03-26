@@ -875,7 +875,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         textView.isEditable = false
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
-        textView.textContainerInset = .zero
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
         textView.textContainer.lineFragmentPadding = 0
         textView.isSelectable = true
         textView.dataDetectorTypes = .link
