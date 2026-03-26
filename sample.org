@@ -1,0 +1,36 @@
+#+TITLE: Notebook Renderer Demo
+#+AUTHOR: Oppi
+
+* Introduction
+This is a /test document/ for the *Org Mode* renderer.
+
+** Features
+- *Bold text* works
+- /Italic text/ works  
+- =verbatim= and ~code~ work
+- +strikethrough+ too
+- Links: [[https://oppi.dev][Oppi]]
+
+** TODO Task List
+- [X] Parser implementation
+- [X] Renderer implementation
+- [ ] Performance optimization
+
+** Code Example
+#+begin_src swift
+struct OrgParser: DocumentParser {
+    func parse(_ source: String) -> [OrgBlock] {
+        // Parse org mode syntax
+    }
+}
+#+end_src
+
+** Heading with Tags                                    :renderer:native:
+
+#+begin_quote
+This is a block quote. It should render in italic with indentation.
+#+end_quote
+
+-----
+
+#+AUTHOR: Chen
