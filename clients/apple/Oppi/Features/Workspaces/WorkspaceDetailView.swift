@@ -188,6 +188,8 @@ struct WorkspaceDetailView: View {
     }
 
     private var viewData: ViewData {
+        let startNs = SessionListPerf.timestampNs()
+
         let allWorkspaceIds = Set(workspaceSessions.map(\.id))
 
         // Filter to roots: children accessible through parent's chat view.
@@ -253,6 +255,14 @@ struct WorkspaceDetailView: View {
                 : roots
             return filtered.sorted { $0.lastActivity > $1.lastActivity }
         }()
+
+        let activeCount = yourTurnRoots.count + workingRoots.count
+        SessionListPerf.recordViewDataCompute(
+            startNs: startNs,
+            activeCount: activeCount,
+            stoppedCount: stoppedRoots.count,
+            workspaceId: workspace.id
+        )
 
         return ViewData(
             yourTurnRoots: yourTurnRoots,
@@ -496,6 +506,7 @@ struct WorkspaceDetailView: View {
     /// Build a SessionRow with computed activity summary for the given session.
     @ViewBuilder
     private func sessionRow(for session: Session) -> some View {
+        let rowStartNs = SessionListPerf.timestampNs()
         let pending = SessionTreeHelper.aggregatePendingCount(
             of: session.id, in: activeSessions,
             pendingForSession: { permissionStore.pending(for: $0).count }
@@ -506,11 +517,18 @@ struct WorkspaceDetailView: View {
             pendingPermissions: permissionStore.pending(for: session.id),
             activity: activityStore.lastActivity(for: session.id)
         )
+        let children = childSummary(for: session.id, in: workspaceSessions)
+        let rowMs = Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000)
+        let _ = SessionListPerf.recordRowCompute(
+            durationMs: rowMs,
+            rowCount: 1,
+            workspaceId: workspace.id
+        )
         SessionRow(
             session: session,
             pendingCount: pending,
             activitySummary: summary,
-            children: childSummary(for: session.id, in: workspaceSessions)
+            children: children
         )
     }
 
