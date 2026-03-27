@@ -4,7 +4,7 @@ import SwiftUI
 
 /// A section in the org document tree.
 struct OrgSection: Identifiable {
-    let id = UUID()
+    let id: Int  // stable index for fold state
     let level: Int
     let heading: OrgBlock?
     let bodyBlocks: [OrgBlock]
@@ -14,16 +14,17 @@ struct OrgSection: Identifiable {
 }
 
 /// Initial fold state from `#+STARTUP:`.
-enum OrgFoldState {
-    case overview  // only level-1 headings
-    case content   // all headings, body hidden initially
-    case showAll   // everything expanded
+enum OrgFoldState: Equatable {
+    case overview
+    case content
+    case showAll
 }
 
 // MARK: - Build section tree
 
 func buildOrgSectionTree(_ blocks: [OrgBlock]) -> (sections: [OrgSection], foldState: OrgFoldState) {
     var foldState: OrgFoldState = .showAll
+    var nextId = 0
 
     for block in blocks {
         if case .keyword(let key, let value) = block, key.uppercased() == "STARTUP" {
@@ -45,20 +46,22 @@ func buildOrgSectionTree(_ blocks: [OrgBlock]) -> (sections: [OrgSection], foldS
         cursor += 1
     }
     if !zerothBody.isEmpty {
-        sections.append(OrgSection(level: 0, heading: nil, bodyBlocks: zerothBody, children: []))
+        let id = nextId; nextId += 1
+        sections.append(OrgSection(id: id, level: 0, heading: nil, bodyBlocks: zerothBody, children: []))
     }
 
-    sections.append(contentsOf: parseHeadingSections(blocks: blocks, cursor: &cursor, parentLevel: 0))
+    sections.append(contentsOf: parseHeadingSections(blocks: blocks, cursor: &cursor, parentLevel: 0, nextId: &nextId))
     return (sections, foldState)
 }
 
-private func parseHeadingSections(blocks: [OrgBlock], cursor: inout Int, parentLevel: Int) -> [OrgSection] {
+private func parseHeadingSections(blocks: [OrgBlock], cursor: inout Int, parentLevel: Int, nextId: inout Int) -> [OrgSection] {
     var sections: [OrgSection] = []
 
     while cursor < blocks.count {
         guard case .heading(let level, _, _, _, _) = blocks[cursor], level > parentLevel else { break }
 
         let heading = blocks[cursor]
+        let id = nextId; nextId += 1
         cursor += 1
 
         var body: [OrgBlock] = []
@@ -68,227 +71,154 @@ private func parseHeadingSections(blocks: [OrgBlock], cursor: inout Int, parentL
             cursor += 1
         }
 
-        let children = parseHeadingSections(blocks: blocks, cursor: &cursor, parentLevel: level)
-        sections.append(OrgSection(level: level, heading: heading, bodyBlocks: body, children: children))
+        let children = parseHeadingSections(blocks: blocks, cursor: &cursor, parentLevel: level, nextId: &nextId)
+        sections.append(OrgSection(id: id, level: level, heading: heading, bodyBlocks: body, children: children))
     }
 
     return sections
 }
 
-// MARK: - Foldable Org View
+// MARK: - Generate markdown with fold state
 
+/// Generate markdown for an org section tree, respecting fold state.
+/// Collapsed headings show the heading with a collapsed bullet but omit body and children.
+/// Heading text includes a tappable link for fold toggle.
+func generateOrgMarkdown(
+    sections: [OrgSection],
+    foldedIds: Set<Int>
+) -> String {
+    var lines: [String] = []
+
+    func emitSection(_ section: OrgSection) {
+        if let heading = section.heading {
+            // Emit heading with bullet
+            if case .heading(let level, let keyword, _, let title, let tags) = heading {
+                let isFolded = foldedIds.contains(section.id)
+
+                let expandedBullets = ["◈", "•", "‣", "◦", "·", "·"]
+                let collapsedBullets = ["◇", "◦", "▹", "·", "·", "·"]
+                let idx = min(level - 1, expandedBullets.count - 1)
+                let bullet: String
+                if section.hasContent {
+                    bullet = isFolded ? collapsedBullets[idx] : expandedBullets[idx]
+                } else {
+                    bullet = expandedBullets[idx]
+                }
+
+                let prefix = String(repeating: "#", count: min(level, 6))
+                var parts = [String]()
+                parts.append(bullet)
+                if let kw = keyword { parts.append("**\(kw)**") }
+                parts.append(OrgToMarkdownConverter.serializeInlines(title))
+                if !tags.isEmpty {
+                    parts.append(" `:" + tags.joined(separator: ":") + ":`")
+                }
+                let headingText = parts.joined(separator: " ")
+
+                if section.hasContent {
+                    // Wrap heading in a link for fold toggle
+                    lines.append("\(prefix) [\(headingText)](oppi://org-fold/\(section.id))")
+                } else {
+                    lines.append("\(prefix) \(headingText)")
+                }
+
+                if !isFolded {
+                    // Emit body
+                    let bodyMd = MarkdownBlockSerializer.serialize(
+                        OrgToMarkdownConverter.convert(section.bodyBlocks)
+                    )
+                    if !bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        lines.append("")
+                        lines.append(bodyMd)
+                    }
+
+                    // Emit children
+                    for child in section.children {
+                        lines.append("")
+                        emitSection(child)
+                    }
+                }
+            }
+        } else {
+            // Zeroth section — just body
+            let bodyMd = MarkdownBlockSerializer.serialize(
+                OrgToMarkdownConverter.convert(section.bodyBlocks)
+            )
+            if !bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lines.append(bodyMd)
+            }
+        }
+    }
+
+    for section in sections {
+        if !lines.isEmpty { lines.append("") }
+        emitSection(section)
+    }
+
+    return lines.joined(separator: "\n")
+}
+
+// MARK: - Foldable Org View (UIKit-backed, single MarkdownContentViewWrapper)
+
+/// Renders an org document through a single MarkdownContentViewWrapper.
+/// Fold state is managed here; toggling regenerates the markdown string.
 struct OrgFoldableContentView: View {
     let sections: [OrgSection]
     let initialFoldState: OrgFoldState
+    @State private var foldedIds: Set<Int> = []
+    @State private var initialized = false
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(sections) { section in
-                OrgSectionView(section: section, initialFoldState: initialFoldState, depth: 0)
-            }
-        }
-    }
-}
-
-// MARK: - Section View
-
-private struct OrgSectionView: View {
-    let section: OrgSection
-    let initialFoldState: OrgFoldState
-    let depth: Int
-    @State private var isExpanded: Bool
-
-    init(section: OrgSection, initialFoldState: OrgFoldState, depth: Int) {
-        self.section = section
-        self.initialFoldState = initialFoldState
-        self.depth = depth
-
-        let expanded: Bool
-        switch initialFoldState {
-        case .showAll: expanded = true
-        case .content: expanded = false
-        case .overview: expanded = section.level <= 1
-        }
-        // Zeroth section (no heading) is always expanded
-        if section.heading == nil { _isExpanded = State(initialValue: true) }
-        else { _isExpanded = State(initialValue: expanded) }
-    }
-
-    var body: some View {
-        // Zeroth section — just render body, no heading. Extra bottom spacing
-        // separates the title/metadata from the first heading.
-        if section.heading == nil {
-            VStack(alignment: .leading, spacing: 0) {
-                sectionBody
-            }
-            .padding(.bottom, 12)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                headingRow
-                if isExpanded {
-                    sectionBody
-                }
-            }
-            .padding(.bottom, 4)
-        }
-    }
-
-    // MARK: - Heading row
-
-    private var headingRow: some View {
-        Button {
-            if section.hasContent {
+        let md = generateOrgMarkdown(sections: sections, foldedIds: foldedIds)
+        MarkdownContentViewWrapper(
+            content: md,
+            textSelectionEnabled: true,
+            plainTextFallbackThreshold: nil
+        )
+        .environment(\.openURL, OpenURLAction { url in
+            if url.scheme == "oppi", url.host == "org-fold",
+               let idStr = url.pathComponents.last,
+               let sectionId = Int(idStr) {
                 withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            }
-        } label: {
-            // Render the entire heading (including fold indicator) as one markdown
-            // block through the markdown pipeline. This guarantees the chevron
-            // aligns with the text since it's part of the same text flow.
-            MarkdownContentViewWrapper(
-                content: headingMarkdown,
-                textSelectionEnabled: false,
-                plainTextFallbackThreshold: nil
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var headingMarkdown: String {
-        guard case .heading(let level, let keyword, _, let title, let tags) = section.heading else {
-            return ""
-        }
-        var inlines = [MarkdownInline]()
-
-        // Level-specific bullets — filled = expanded, outline = collapsed.
-        // Small geometric shapes that don't overpower the heading text.
-        let expandedBullets = ["◈", "•", "‣", "◦", "·", "·"]
-        let collapsedBullets = ["◇", "◦", "▹", "·", "·", "·"]
-        let idx = min(level - 1, expandedBullets.count - 1)
-        let bullet = (section.hasContent && !isExpanded)
-            ? collapsedBullets[idx]
-            : expandedBullets[idx]
-        inlines.append(.text("\(bullet) "))
-
-        if let kw = keyword {
-            inlines.append(.strong([.text(kw)]))
-            inlines.append(.text(" "))
-        }
-        inlines.append(contentsOf: title.map { OrgToMarkdownConverter.convertSingleInline($0) })
-        if !tags.isEmpty {
-            inlines.append(.text("  "))
-            inlines.append(.code(":" + tags.joined(separator: ":") + ":"))
-        }
-        let mdBlocks: [MarkdownBlock] = [.heading(level: min(level, 6), inlines: inlines)]
-        return MarkdownBlockSerializer.serialize(mdBlocks)
-    }
-
-    // MARK: - Body + children
-
-    @ViewBuilder
-    private var sectionBody: some View {
-        // Split body blocks: drawers get special UI, everything else goes through markdown.
-        let groups = groupBodyBlocks(section.bodyBlocks)
-        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-            switch group {
-            case .drawer(let name, let properties):
-                OrgDrawerView(name: name, properties: properties)
-            case .markdown(let md):
-                if !md.isEmpty {
-                    MarkdownContentViewWrapper(
-                        content: md,
-                        textSelectionEnabled: true,
-                        plainTextFallbackThreshold: nil
-                    )
-                }
-            }
-        }
-
-        // Child sections — no indentation, heading sizes communicate hierarchy
-        ForEach(section.children) { child in
-            OrgSectionView(section: child, initialFoldState: initialFoldState, depth: depth + 1)
-        }
-    }
-
-    private enum BodyGroup {
-        case drawer(name: String, properties: [OrgDrawerProperty])
-        case markdown(String)
-    }
-
-    private func groupBodyBlocks(_ blocks: [OrgBlock]) -> [BodyGroup] {
-        var groups: [BodyGroup] = []
-        var pending: [OrgBlock] = []
-
-        func flushPending() {
-            guard !pending.isEmpty else { return }
-            let mdBlocks = OrgToMarkdownConverter.convert(pending)
-            let md = MarkdownBlockSerializer.serialize(mdBlocks)
-            let trimmed = md.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                groups.append(.markdown(trimmed))
-            }
-            pending = []
-        }
-
-        for block in blocks {
-            if case .drawer(let name, let props) = block {
-                flushPending()
-                groups.append(.drawer(name: name, properties: props))
-            } else {
-                pending.append(block)
-            }
-        }
-        flushPending()
-        return groups
-    }
-}
-
-// MARK: - Collapsible Drawer View
-
-private struct OrgDrawerView: View {
-    let name: String
-    let properties: [OrgDrawerProperty]
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .medium))
-                    Text(name)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                }
-                .foregroundStyle(.themeComment)
-                .padding(.vertical, 3)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(properties.enumerated()), id: \.offset) { _, prop in
-                        HStack(spacing: 0) {
-                            Text(":\(prop.key):")
-                                .foregroundStyle(.themePurple)
-                            Text(" \(prop.value)")
-                                .foregroundStyle(.themeFgDim)
-                        }
-                        .font(.system(size: 12, design: .monospaced))
+                    if foldedIds.contains(sectionId) {
+                        foldedIds.remove(sectionId)
+                    } else {
+                        foldedIds.insert(sectionId)
                     }
                 }
-                .padding(.leading, 14)
-                .padding(.bottom, 4)
+                return .handled
+            }
+            return .systemAction
+        })
+        .onAppear {
+            guard !initialized else { return }
+            initialized = true
+            // Set initial fold state
+            switch initialFoldState {
+            case .showAll:
+                foldedIds = []
+            case .content:
+                foldedIds = Set(allSectionIds(sections).filter { id in
+                    findSection(id: id, in: sections)?.hasContent == true
+                })
+            case .overview:
+                foldedIds = Set(allSectionIds(sections).filter { id in
+                    guard let s = findSection(id: id, in: sections) else { return false }
+                    return s.level > 1 && s.hasContent
+                })
             }
         }
     }
-}
 
-// Uses .themeMdHeading, .themeGreen, .themeOrange from the existing theme color extensions.
+    private func allSectionIds(_ sections: [OrgSection]) -> [Int] {
+        sections.flatMap { [$0.id] + allSectionIds($0.children) }
+    }
+
+    private func findSection(id: Int, in sections: [OrgSection]) -> OrgSection? {
+        for s in sections {
+            if s.id == id { return s }
+            if let found = findSection(id: id, in: s.children) { return found }
+        }
+        return nil
+    }
+}
