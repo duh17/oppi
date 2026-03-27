@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { readFileSync, existsSync } from "node:fs";
 
@@ -20,17 +20,21 @@ const packageJson = readJson(packageJsonUrl);
 
 // 1. Gate scripts must call the canonical runner
 check(
-  packageJson.scripts["test:gate:pr-fast"] === "node scripts/testing-gates.mjs pr-fast",
+  packageJson.scripts["test:gate:pr-fast"] === "bun scripts/testing-gates.ts pr-fast",
   "package.json script test:gate:pr-fast drifted from canonical runner",
 );
 check(
-  packageJson.scripts["test:gate:nightly-deep"] === "node scripts/testing-gates.mjs nightly-deep",
+  packageJson.scripts["test:gate:nightly-deep"] === "bun scripts/testing-gates.ts nightly-deep",
   "package.json script test:gate:nightly-deep drifted from canonical runner",
 );
 
 // 2. Every gate step must have a corresponding npm script
 for (const [gate, steps] of Object.entries(policy.gates)) {
-  for (const step of steps) {
+  // Gates can be arrays (flat) or objects (keyed by platform)
+  const stepList = Array.isArray(steps)
+    ? steps
+    : Object.values(steps).flat().filter((s) => typeof s === "string" && !s.startsWith("xcodebuild"));
+  for (const step of stepList) {
     check(
       step in packageJson.scripts,
       `Gate '${gate}' references step '${step}' but no npm script exists in package.json`,

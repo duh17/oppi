@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Oppi telemetry review — reads JSONL chat metric files, computes percentiles,

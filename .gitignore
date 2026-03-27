@@ -14,9 +14,9 @@ clients/apple/.env.testflight.local
 scripts/
 server/scripts/*
 !server/scripts/architecture-layer-rules.mjs
-!server/scripts/check-architecture-boundaries.mjs
-!server/scripts/check-testing-policy.mjs
-!server/scripts/telemetry-review.mjs
+!server/scripts/check-architecture-boundaries.ts
+!server/scripts/check-testing-policy.ts
+!server/scripts/telemetry-review.ts
 clients/apple/scripts/
 !clients/apple/scripts/testflight.sh
 !server/docker/entrypoint.sh
