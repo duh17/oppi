@@ -115,21 +115,19 @@ private struct OrgSectionView: View {
     }
 
     var body: some View {
-        // Zeroth section — just render body, no heading. Extra bottom spacing
-        // separates the title/metadata from the first heading.
         if section.heading == nil {
-            VStack(alignment: .leading, spacing: 0) {
-                sectionBody
-            }
-            .padding(.bottom, 12)
+            // Zeroth section — body only, no heading
+            sectionBody
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            // Heading + body. Spacing is 0 because the MarkdownContentViewWrapper
+            // already applies paragraphSpacingBefore internally (matching markdown:
+            // H1=20pt, H2=16pt, H3=12pt, H4=8pt).
+            VStack(alignment: .leading, spacing: 0) {
                 headingRow
                 if isExpanded {
                     sectionBody
                 }
             }
-            .padding(.bottom, 4)
         }
     }
 
