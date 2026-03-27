@@ -1,0 +1,415 @@
+#+TITLE: Oppi User Guide
+#+AUTHOR: Chen Da
+#+STARTUP: content
+
+* Getting Started
+
+Oppi lets you supervise coding agents from your phone. You connect to
+a server running on your local network, and every agent session shows
+up on your device in real time. You can watch what they do, approve
+actions, answer questions, and browse your codebase — all from the
+same app.
+
+This guide covers the features available in Oppi as of March 2026.
+
+[[file:screenshots/home-screen.png]]
+
+** Connecting to a Server
+
+When you first open Oppi, the app scans your local network for running
+servers. Servers that advertise via Bonjour appear automatically in
+the connection list.
+
+You can also add a server manually by entering its address. This works
+for remote servers reachable over Tailscale or any VPN — the server
+does not need to be on the same WiFi network.
+
+Once connected, the app stays connected. If the network drops (WiFi
+to cellular, walking out of range, phone sleeping), Oppi reconnects
+automatically when the network returns. Session state is replayed
+from the server, so you pick up exactly where things were.
+
+** Workspaces
+
+Each server manages one or more workspaces. A workspace is a project
+directory on the server. Every agent session runs inside a workspace,
+and the file browser shows that workspace's contents.
+
+The home screen lists your workspaces with their current status.
+
+* Sessions
+
+A session is one agent run. The agent receives a task, works through
+it, and eventually finishes. While it runs, every action streams to
+your phone.
+
+** The Session List
+
+The session list shows all sessions for the current workspace. Each
+row displays the session name, its status (running, paused, finished),
+elapsed time, and a short preview of the latest activity.
+
+[[file:screenshots/session-list.png]]
+
+Running sessions appear at the top. Tap a session to open its timeline.
+
+** Starting a Session
+
+Tap the compose button to start a new session. Type or dictate your
+task. The session launches immediately and you can watch progress in
+the timeline.
+
+For quick tasks, use the quick session bar: a condensed composer that
+appears at the top of the session list. Type a short prompt and it
+dispatches without leaving the list view.
+
+** Session Status
+
+| Status   | Meaning                                      |
+|----------+----------------------------------------------|
+| Running  | Agent is actively working                    |
+| Waiting  | Agent needs your input (approval or answer)  |
+| Paused   | Session is suspended, can be resumed         |
+| Finished | Agent completed the task                     |
+| Error    | Something went wrong                         |
+
+* The Timeline
+
+The timeline is where you follow an agent's work. It shows everything
+the agent does in chronological order: messages, tool calls, file
+edits, command output, and any questions directed at you.
+
+[[file:screenshots/timeline.png]]
+
+** Messages
+
+Agent responses appear as rendered markdown. Code blocks have syntax
+highlighting for 20+ languages. Math expressions render as formatted
+equations. Mermaid diagram blocks render as actual diagrams.
+
+Tap any code block to open it full-screen. From there you can scroll
+through the full output, copy it, or share it as an image or PDF.
+
+** Tool Calls
+
+When an agent reads a file, runs a command, or makes an edit, the
+tool call appears in the timeline. Each shows the tool name and a
+summary of what it did. Tap to expand the full input and output.
+
+File reads show the file content with syntax highlighting. Command
+output shows stdout/stderr with ANSI color support. File edits show
+the before-and-after diff.
+
+** Approvals
+
+Some actions require your approval before the agent can proceed. These
+appear as interactive cards with Allow and Deny buttons. The card
+shows what the agent wants to do (the command it wants to run, the
+file it wants to write) so you can make an informed decision.
+
+[[file:screenshots/approval-card.png]]
+
+Push notifications alert you when an agent is waiting for approval.
+Tap the notification to jump directly to the pending action.
+
+** Agent Questions
+
+Agents can ask you questions with predefined options. These render as
+tappable cards with labeled choices. You can pick one, pick multiple,
+type a custom answer, or skip the question entirely.
+
+[[file:screenshots/ask-card.png]]
+
+If you skip a question, the agent uses its best judgment and moves on.
+
+* File Browser
+
+The file browser lets you navigate your project files from your phone.
+Open it from the workspace tab to browse directories, search for
+files, and view source code.
+
+** Navigating
+
+The browser shows directories and files sorted alphabetically, with
+directories first. Tap a directory to enter it. Tap a file to view
+its contents. The back button and swipe gesture navigate up.
+
+File sizes appear next to each entry. Directories show a folder icon;
+files show a type-specific icon based on their extension.
+
+[[file:screenshots/file-browser.png]]
+
+** Searching
+
+The search bar at the top accepts fuzzy queries. Type a few characters
+and matching file paths appear instantly. The matching is path-aware:
+typing =fbv= matches =Features/FileBrowser/FileBrowserView.swift=.
+Matched characters highlight in the results.
+
+Search runs entirely on-device against a cached file index. Results
+appear as you type with no network round-trip per keystroke.
+
+** Viewing Files
+
+The file browser renders content based on file type:
+
+| File Type    | Rendering                                       |
+|--------------+-------------------------------------------------|
+| Source code  | Syntax highlighting, line numbers, scrollable   |
+| Markdown     | Rendered prose with headers, lists, code blocks  |
+| Org mode     | Foldable sections, rendered inline markup        |
+| JSON         | Pretty-printed with colored keys and values      |
+| Images       | Inline preview with pinch-to-zoom                |
+| PDF          | Native reader with scroll and text selection      |
+| Video/Audio  | Playback controls, streams from server           |
+| HTML         | Rendered preview or source view                  |
+
+[[file:screenshots/code-view.png]]
+
+For large text files (over 1 MB), the browser shows a size warning
+before downloading. On cellular connections, an additional notice
+appears so you can decide whether to load it.
+
+** Inline Images in Documents
+
+Markdown and org files can reference images stored in the workspace.
+These render inline when viewing the document:
+
+In markdown:
+#+begin_src markdown
+![Architecture diagram](docs/screenshots/architecture.png)
+#+end_src
+
+In org mode:
+#+begin_src org
+[[file:screenshots/architecture.png]]
+#+end_src
+
+This means you can keep documentation with embedded diagrams in your
+repo and read it directly from the file browser on your phone.
+
+* Rich Content Rendering
+
+Oppi renders several content types natively, without web views or
+external dependencies.
+
+** Syntax Highlighting
+
+Source code in the timeline and file browser gets syntax highlighting
+for these languages:
+
+#+begin_src text
+Swift, TypeScript, JavaScript, Python, Rust, Go, Java, Kotlin,
+Ruby, C, C++, Shell, SQL, HTML, CSS, JSON, YAML, TOML, Markdown,
+Org, LaTeX, Diff, and more.
+#+end_src
+
+The highlighter runs fast enough to keep up with streaming output.
+As an agent types code character by character, the highlighting
+updates in real time.
+
+** Markdown
+
+Markdown renders with full CommonMark support plus extensions:
+
+- Headers, paragraphs, block quotes
+- Ordered and unordered lists, nested to any depth
+- Task lists (checkboxes)
+- Tables with aligned columns
+- Syntax-highlighted fenced code blocks
+- Inline code, bold, italic, strikethrough
+- Links (tappable, opens in browser)
+- Images (loaded from workspace or URL)
+- Horizontal rules
+
+** Org Mode
+
+Org files render with foldable sections. Tap a heading to expand or
+collapse its contents. The fold state respects the file's =#+STARTUP=
+directive:
+
+| Directive            | Behavior                                 |
+|----------------------+------------------------------------------|
+| =#+STARTUP: nofold=  | Everything expanded                      |
+| =#+STARTUP: content= | Headings visible, bodies collapsed        |
+| =#+STARTUP: overview=| Only top-level headings visible           |
+
+Org markup converts to the same rendering pipeline as markdown, so
+bold, italic, code, links, lists, and tables all look consistent.
+
+Drawers (=:PROPERTIES:=, =:LOGBOOK:=) render as collapsible sections.
+Source blocks get syntax highlighting. Keywords like =#+TITLE:= are
+parsed and respected.
+
+** Mermaid Diagrams
+
+Mermaid blocks in markdown render as native diagrams. No JavaScript,
+no web view. The renderer draws directly to the screen using Core
+Graphics.
+
+Supported diagram types:
+
+- Flowcharts (with subgraphs, styling, direction control)
+- Sequence diagrams (messages, activations, notes, loops)
+- Class diagrams (classes, relationships, methods)
+- State diagrams (states, transitions, forks, joins)
+- ER diagrams (entities, relationships, cardinality)
+- Gantt charts (tasks, milestones, sections)
+- Pie charts (labeled slices with percentages)
+- Git graphs (commits, branches, merges)
+
+Example:
+
+#+begin_src markdown
+```mermaid
+graph LR
+    A[Phone] --> B[Server]
+    B --> C[Agent]
+    C --> B
+    B --> A
+```
+#+end_src
+
+This renders as a horizontal flow diagram with four connected nodes.
+
+** LaTeX Math
+
+LaTeX expressions render as formatted math. Inline math uses =$...$=
+delimiters. Display math uses =$$...$$=.
+
+The renderer handles fractions, matrices, integrals, summations, Greek
+letters, subscripts, superscripts, and most standard LaTeX math
+commands. Rendering is native — no MathJax, no KaTeX.
+
+* Sharing
+
+Tap the share button when viewing content full-screen to export it.
+A single tap exports with the smart default format (usually an image).
+Long-press the share button to pick a specific format.
+
+| Content Type    | Available Formats        |
+|-----------------+--------------------------|
+| Code            | Image, PDF, Source text   |
+| Markdown        | Image, PDF, Source text   |
+| Org mode        | Image, PDF, Source text   |
+| Mermaid diagram | Image, PDF, Source text   |
+| LaTeX equation  | Image, PDF, Source text   |
+
+Exported images use a light theme regardless of the app's current
+appearance. The resolution matches your device's screen scale (2x
+on most iPhones, 3x on Pro models).
+
+[[file:screenshots/share-sheet.png]]
+
+* Voice Input
+
+Tap the microphone icon in the composer to dictate your message. The
+app uses iOS speech recognition, which runs on-device for common
+languages.
+
+As you speak, tentative text appears in the composer and refines as
+the recognizer processes more audio. When you stop speaking, the
+final transcription replaces the tentative text.
+
+Voice input works well for quick instructions to agents. For code
+snippets or exact commands, typing is still more reliable.
+
+* Push Notifications
+
+Oppi sends push notifications when an agent needs your attention:
+
+- Approval requests (a tool call waiting for Allow/Deny)
+- Agent questions (the ask extension)
+- Session errors
+- Session completion
+
+Notifications include enough context to decide whether to act now or
+later. Tapping a notification opens the relevant session at the
+pending action.
+
+Notification preferences are configurable per workspace. You can
+mute a workspace during focused work and re-enable it later.
+
+* Changed Files and Diffs
+
+After a session finishes (or while it runs), you can review every
+file the agent touched. The changed files list shows each modified
+file with its git status: added, modified, deleted.
+
+[[file:screenshots/changed-files.png]]
+
+Tap a file to see the diff. Additions highlight in green, deletions
+in red. The diff view shows enough context around each change to
+understand what happened.
+
+This is useful for reviewing agent work before committing. You can
+see exactly what changed, file by file, without leaving your phone.
+
+* Keyboard Shortcuts
+
+On iPad with an external keyboard, these shortcuts are available:
+
+| Shortcut     | Action                          |
+|--------------+---------------------------------|
+| =Cmd + N=    | New session                     |
+| =Cmd + F=    | Search files                    |
+| =Cmd + K=    | Quick session                   |
+| =Cmd + .=    | Cancel current action           |
+
+* Tips
+
+- *Swipe left* on a session row to delete it.
+- *Long-press* a code block in the timeline to copy its contents.
+- *Pinch-to-zoom* works on images and PDF files in the browser.
+- *Pull to refresh* the session list to force a sync.
+- *Shake* the device to send feedback (debug builds only).
+- The file browser remembers your last browsed path per workspace.
+- Search in the file browser supports partial matches: =tsconf=
+  finds =tsconfig.json=.
+- Large tool outputs in the timeline are collapsed by default. Tap
+  to expand, tap again to collapse.
+
+* Appendix: Supported File Types
+
+The file browser recognizes and renders these file extensions:
+
+** Source Code
+
+#+begin_src text
+.swift .ts .tsx .js .jsx .mjs .cjs .py .pyi .rs .go .java .kt .kts
+.scala .c .cpp .cc .cxx .h .hpp .hxx .rb .php .lua .pl .pm .r .sh
+.bash .zsh .fish .ps1 .sql .graphql .gql .proto .ex .exs .erl .hs
+.ml .fs .dart .zig .nim .tf .hcl
+#+end_src
+
+** Data and Config
+
+#+begin_src text
+.json .jsonl .json5 .yml .yaml .toml .ini .cfg .conf .xml .xsl .xsd
+.csv .tsv .html .htm .css .scss .sass .less
+#+end_src
+
+** Documents
+
+#+begin_src text
+.md .mdx .markdown .rst .adoc .txt .org .tex .latex
+#+end_src
+
+** Media
+
+#+begin_src text
+Images: .png .jpg .jpeg .gif .webp .svg .ico .bmp .tiff
+Video:  .mp4 .mov .m4v .avi .webm
+Audio:  .mp3 .m4a .wav .aac .ogg .flac .opus
+PDF:    .pdf
+#+end_src
+
+** Special Files
+
+These files without extensions are also recognized:
+
+#+begin_src text
+Dockerfile  Makefile  LICENSE  README  CHANGELOG
+Procfile    Gemfile   Rakefile Brewfile Justfile
+.gitignore  .env      .prettierrc      .eslintrc
+#+end_src
