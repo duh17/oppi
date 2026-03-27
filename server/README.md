@@ -130,6 +130,21 @@ npx oppi config validate         # validate config file
 npx oppi token rotate            # rotate owner bearer token
 ```
 
+## Built-in extensions
+
+The server injects two extensions into every agent session automatically:
+
+- **spawn_agent** (`src/spawn-agent-extension.ts`) — spawn child sessions, inspect their traces, send messages, stop or resume them. Supports detached mode (independent session, no parent link) and synchronous wait-for-result.
+- **autoresearch** (`src/autoresearch-extension.ts`) — autonomous experiment loop. The agent edits code, benchmarks, keeps or reverts, and repeats. Uses git worktrees for isolation so experiments don't contaminate the main checkout. Results logged to `autoresearch.jsonl`.
+
+## Server stats API
+
+`GET /server/stats?range=7|30|90&tz=<offset>` returns aggregate session counts, cost, token usage, model breakdown, workspace breakdown, and daily trends. `GET /server/stats/daily/YYYY-MM-DD?tz=<offset>` returns an hourly breakdown and session list for a single day. Both the iOS and Mac apps consume these endpoints for the stats dashboard.
+
+## Workspace files API
+
+`GET /workspaces/:id/files/<path>` serves directory listings and file content over HTTP. `GET /workspaces/:id/files?search=<q>` provides filename search. Used by the iOS file browser.
+
 ## Configuration
 
 - Config: `~/.config/oppi/config.json`
