@@ -13,7 +13,8 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import { Type, type Static } from "@sinclair/typebox";
-import type { ServerMessage, Session } from "./types.js";
+import type { ServerMessage, Session, SubagentConfig } from "./types.js";
+import { defaultSubagentConfig } from "./storage/config-store.js";
 
 // ---------------------------------------------------------------------------
 // Context interface — thin abstraction over SessionManager
@@ -67,8 +68,8 @@ export interface SpawnAgentContext {
 // Tree utilities
 // ---------------------------------------------------------------------------
 
-/** Maximum spawn depth. 0 = root (no spawning), 1 = parent→child only. */
-const MAX_SPAWN_DEPTH = 1;
+// MAX_SPAWN_DEPTH is now configurable via SubagentConfig.maxDepth.
+// Kept as a fallback default if config is not provided.
 
 /** Walk parentSessionId chain upward to compute depth. Root = 0. */
 function getSpawnDepth(ctx: SpawnAgentContext): number {
@@ -673,8 +674,8 @@ function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): stri
 // Wait mode — poll child session until terminal status
 // ---------------------------------------------------------------------------
 
-const DEFAULT_WAIT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const POLL_INTERVAL_MS = 3_000;
+// DEFAULT_WAIT_TIMEOUT_MS and POLL_INTERVAL_MS are now configurable
+// via SubagentConfig. Kept as fallback defaults.
 
 /** Terminal session statuses — the child is done. */
 function isTerminal(status: string): boolean {
@@ -699,6 +700,7 @@ function waitForChildCompletion(
   ctx: SpawnAgentContext,
   childId: string,
   timeoutMs: number,
+  pollIntervalMs: number,
   signal: AbortSignal | undefined,
   onUpdate?: (update: {
     content: Array<{ type: "text"; text: string }>;
@@ -806,7 +808,7 @@ function waitForChildCompletion(
           status: session.status,
         },
       });
-    }, POLL_INTERVAL_MS);
+    }, pollIntervalMs);
   });
 }
 
@@ -840,6 +842,8 @@ function buildAgentPreamble(ctx: SpawnAgentContext): string {
 export interface SpawnAgentFactoryOptions {
   /** If true, only register check_agents, send_message, inspect_agent (no spawn/stop). */
   childMode?: boolean;
+  /** Subagent lifecycle config. Falls back to defaults if not provided. */
+  subagentConfig?: SubagentConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +856,7 @@ export function createSpawnAgentFactory(
 ): ExtensionFactory {
   return (pi) => {
     const childMode = options?.childMode ?? false;
+    const subagentConfig = options?.subagentConfig ?? defaultSubagentConfig();
 
     // ─── spawn_agent (root/detached only) ───
 
@@ -891,13 +896,13 @@ export function createSpawnAgentFactory(
 
           // Depth check: prevent unbounded recursive spawning
           const currentDepth = getSpawnDepth(ctx);
-          if (currentDepth >= MAX_SPAWN_DEPTH) {
+          if (currentDepth >= subagentConfig.maxDepth) {
             return {
               content: [
                 {
                   type: "text" as const,
                   text:
-                    `Cannot spawn: max depth reached (${MAX_SPAWN_DEPTH}). ` +
+                    `Cannot spawn: max depth reached (${subagentConfig.maxDepth}). ` +
                     `This session is at depth ${currentDepth} in the spawn tree. ` +
                     `Do the work directly instead of delegating further.`,
                 },
@@ -996,12 +1001,13 @@ export function createSpawnAgentFactory(
 
             const timeoutMs = params.timeout_seconds
               ? params.timeout_seconds * 1000
-              : DEFAULT_WAIT_TIMEOUT_MS;
+              : subagentConfig.defaultWaitTimeoutMs;
 
             const result = await waitForChildCompletion(
               ctx,
               session.id,
               timeoutMs,
+              subagentConfig.pollIntervalMs,
               signal,
               onUpdate,
               session.name ?? name,

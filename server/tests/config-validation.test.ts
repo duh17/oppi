@@ -185,6 +185,76 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.policy.unknownKey: unknown key"))).toBe(true);
   });
 
+  it("accepts subagents config with all fields", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      subagents: {
+        maxDepth: 3,
+        autoStopWhenDone: false,
+        startupGraceMs: 120_000,
+        defaultWaitTimeoutMs: 60 * 60_000,
+        pollIntervalMs: 5_000,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.subagents?.maxDepth).toBe(3);
+    expect(result.config?.subagents?.autoStopWhenDone).toBe(false);
+    expect(result.config?.subagents?.startupGraceMs).toBe(120_000);
+    expect(result.config?.subagents?.defaultWaitTimeoutMs).toBe(3_600_000);
+    expect(result.config?.subagents?.pollIntervalMs).toBe(5_000);
+  });
+
+  it("rejects subagents.maxDepth < 0", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      subagents: { maxDepth: -1 },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("subagents.maxDepth"))).toBe(true);
+  });
+
+  it("rejects subagents.pollIntervalMs < 100", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      subagents: { pollIntervalMs: 50 },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("subagents.pollIntervalMs"))).toBe(true);
+  });
+
+  it("rejects unknown keys in subagents in strict mode", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      subagents: { unknownField: true },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("config.subagents.unknownField: unknown key"))).toBe(true);
+  });
+
+  it("backfills subagents defaults when partially specified", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      subagents: { maxDepth: 2 },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.subagents?.maxDepth).toBe(2);
+    // Other fields use defaults
+    expect(result.config?.subagents?.autoStopWhenDone).toBe(true);
+    expect(result.config?.subagents?.startupGraceMs).toBe(60_000);
+    expect(result.config?.subagents?.defaultWaitTimeoutMs).toBe(1_800_000);
+    expect(result.config?.subagents?.pollIntervalMs).toBe(3_000);
+  });
+
   it("validateConfigFile reports parse errors with file path", () => {
     const configPath = join(dir, "bad-config.json");
     writeFileSync(configPath, "{ invalid json }");

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { defaultPolicy } from "../policy-presets.js";
-import type { PolicyHeuristics, ServerConfig } from "../types.js";
+import type { PolicyHeuristics, ServerConfig, SubagentConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -33,6 +33,16 @@ function defaultRuntimePathEntries(): string[] {
   ];
 }
 
+export function defaultSubagentConfig(): SubagentConfig {
+  return {
+    maxDepth: 1,
+    autoStopWhenDone: true,
+    startupGraceMs: 60_000,
+    defaultWaitTimeoutMs: 30 * 60_000,
+    pollIntervalMs: 3_000,
+  };
+}
+
 function createDefaultConfig(dataDir: string): ServerConfig {
   return {
     configVersion: CONFIG_VERSION,
@@ -51,6 +61,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     runtimeEnv: {},
     tls: { mode: "disabled" },
     policy: defaultPolicy(),
+    subagents: defaultSubagentConfig(),
   };
 }
 
@@ -100,6 +111,7 @@ function normalizeConfig(
     "liveActivityToken",
     "thinkingLevelByModel",
     "autoTitle",
+    "subagents",
   ]);
 
   if (strictUnknown) {
@@ -680,6 +692,88 @@ function normalizeConfig(
       autoTitle.model = at.model.trim();
     }
     config.autoTitle = autoTitle;
+  }
+
+  // Subagent lifecycle config
+  if ("subagents" in obj && isRecord(obj.subagents)) {
+    const sa = obj.subagents;
+    const defaults = defaultSubagentConfig();
+    const subagents: SubagentConfig = { ...defaults };
+
+    const allowedSubagentKeys = new Set([
+      "maxDepth",
+      "autoStopWhenDone",
+      "startupGraceMs",
+      "defaultWaitTimeoutMs",
+      "pollIntervalMs",
+    ]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(sa)) {
+        if (!allowedSubagentKeys.has(key)) {
+          errors.push(`config.subagents.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("maxDepth" in sa) {
+      if (typeof sa.maxDepth === "number" && Number.isInteger(sa.maxDepth) && sa.maxDepth >= 0) {
+        subagents.maxDepth = sa.maxDepth;
+      } else {
+        errors.push("config.subagents.maxDepth: expected non-negative integer");
+        changed = true;
+      }
+    }
+
+    if ("autoStopWhenDone" in sa) {
+      if (typeof sa.autoStopWhenDone === "boolean") {
+        subagents.autoStopWhenDone = sa.autoStopWhenDone;
+      } else {
+        errors.push("config.subagents.autoStopWhenDone: expected boolean");
+        changed = true;
+      }
+    }
+
+    if ("startupGraceMs" in sa) {
+      if (
+        typeof sa.startupGraceMs === "number" &&
+        Number.isInteger(sa.startupGraceMs) &&
+        sa.startupGraceMs >= 1
+      ) {
+        subagents.startupGraceMs = sa.startupGraceMs;
+      } else {
+        errors.push("config.subagents.startupGraceMs: expected positive integer");
+        changed = true;
+      }
+    }
+
+    if ("defaultWaitTimeoutMs" in sa) {
+      if (
+        typeof sa.defaultWaitTimeoutMs === "number" &&
+        Number.isInteger(sa.defaultWaitTimeoutMs) &&
+        sa.defaultWaitTimeoutMs >= 1
+      ) {
+        subagents.defaultWaitTimeoutMs = sa.defaultWaitTimeoutMs;
+      } else {
+        errors.push("config.subagents.defaultWaitTimeoutMs: expected positive integer");
+        changed = true;
+      }
+    }
+
+    if ("pollIntervalMs" in sa) {
+      if (
+        typeof sa.pollIntervalMs === "number" &&
+        Number.isInteger(sa.pollIntervalMs) &&
+        sa.pollIntervalMs >= 100
+      ) {
+        subagents.pollIntervalMs = sa.pollIntervalMs;
+      } else {
+        errors.push("config.subagents.pollIntervalMs: expected integer >= 100");
+        changed = true;
+      }
+    }
+
+    config.subagents = subagents;
   }
 
   return { valid: errors.length === 0, errors, warnings, config, changed };

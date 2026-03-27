@@ -139,8 +139,12 @@ export class SessionStartCoordinator {
           sendMessage: (id: string, message: string, behavior?: "steer" | "followUp") =>
             this.deps.sendMessage(id, message, behavior),
         };
+        const subagentConfig = this.deps.runtimeManager.getLimits().subagents;
         extraExtensionFactories.push(
-          createSpawnAgentFactory(spawnAgentCtx, isChildSession ? { childMode: true } : undefined),
+          createSpawnAgentFactory(spawnAgentCtx, {
+            childMode: isChildSession,
+            subagentConfig,
+          }),
         );
 
         const createStart = Date.now();

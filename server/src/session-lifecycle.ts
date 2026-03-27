@@ -23,6 +23,10 @@ export interface SessionLifecycleCoordinatorDeps {
   releaseSession: (identity: { workspaceId: string; sessionId: string }) => void;
   stopSession: (sessionId: string) => Promise<void>;
   getSessionIdleTimeoutMs: () => number;
+  /** Whether children automatically stop after completing work. */
+  getChildAutoStopWhenDone: () => boolean;
+  /** Grace period (ms) for a child that hasn't produced output yet. */
+  getChildStartupGraceMs: () => number;
   hasActiveChildren: (sessionId: string) => boolean;
   metrics?: ServerMetricCollector;
 }
@@ -96,7 +100,7 @@ export class SessionLifecycleCoordinator {
       // sees messageCount > 0 while the agent hasn't started yet.
       const hasCompletedWork = active.session.tokens.output > active.outputTokensAtStart;
 
-      if (hasCompletedWork) {
+      if (hasCompletedWork && this.deps.getChildAutoStopWhenDone()) {
         console.log("[session] auto-stopping idle child", {
           sessionId: active.session.id,
           parent: active.session.parentSessionId,
@@ -108,22 +112,28 @@ export class SessionLifecycleCoordinator {
         return;
       }
 
-      // Child hasn't produced output yet — either still initializing,
-      // waiting for the LLM, or in sandbox VM boot. Give it time.
-      const CHILD_GRACE_MS = 60_000;
-      const timer = setTimeout(() => {
-        const current = this.deps.getActiveSession(key);
-        if (current?.session.parentSessionId && current.session.status === "ready") {
-          console.log("[session] auto-stopping idle child (grace expired)", {
-            sessionId: current.session.id,
-            parent: current.session.parentSessionId,
-          });
-          this.pendingIdleTimeoutKeys.add(key);
-          void this.deps.stopSession(current.session.id);
-        }
-      }, CHILD_GRACE_MS);
-      this.idleTimers.set(key, timer);
-      return;
+      // If auto-stop is disabled and work is done, fall through to the
+      // normal idle timeout path (same as root sessions).
+      if (hasCompletedWork) {
+        // fall through to normal idle timeout below
+      } else {
+        // Child hasn't produced output yet — either still initializing,
+        // waiting for the LLM, or in sandbox VM boot. Give it time.
+        const graceMs = this.deps.getChildStartupGraceMs();
+        const timer = setTimeout(() => {
+          const current = this.deps.getActiveSession(key);
+          if (current?.session.parentSessionId && current.session.status === "ready") {
+            console.log("[session] auto-stopping idle child (grace expired)", {
+              sessionId: current.session.id,
+              parent: current.session.parentSessionId,
+            });
+            this.pendingIdleTimeoutKeys.add(key);
+            void this.deps.stopSession(current.session.id);
+          }
+        }, graceMs);
+        this.idleTimers.set(key, timer);
+        return;
+      }
     }
 
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();

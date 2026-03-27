@@ -250,6 +250,35 @@ export interface ServerConfig {
     enabled: boolean;
     model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
   };
+
+  /**
+   * Subagent lifecycle configuration. Controls how spawned child sessions
+   * behave — depth limits, auto-stop behavior, timeouts, and polling.
+   */
+  subagents?: SubagentConfig;
+}
+
+export interface SubagentConfig {
+  /** How many levels deep agents can spawn other agents.
+   *  1 = parent→child only (no grandchildren). 2 = allows grandchildren.
+   *  Default: 1 */
+  maxDepth: number;
+  /** Whether children automatically stop after completing their work.
+   *  When true, a child that finishes and goes idle is stopped immediately.
+   *  When false, children stay alive for follow-up messages.
+   *  Default: true */
+  autoStopWhenDone: boolean;
+  /** How long (ms) to wait for a child to start producing output before
+   *  giving up. Covers VM boot time, model loading, and first LLM call.
+   *  Default: 60000 (60s) */
+  startupGraceMs: number;
+  /** Default timeout (ms) for spawn_agent(wait=true) when the caller
+   *  doesn't specify timeout_seconds.
+   *  Default: 1800000 (30 min) */
+  defaultWaitTimeoutMs: number;
+  /** How often (ms) to poll a child's status during wait mode.
+   *  Default: 3000 (3s) */
+  pollIntervalMs: number;
 }
 
 // ─── API Types ───

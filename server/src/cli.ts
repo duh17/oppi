@@ -744,6 +744,10 @@ const SETTABLE_KEYS: Record<
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
   tls: { type: "json", desc: "TLS config JSON (mode/certPath/keyPath/caPath)" },
+  subagents: {
+    type: "json",
+    desc: "Subagent config JSON (maxDepth/autoStopWhenDone/startupGraceMs/defaultWaitTimeoutMs/pollIntervalMs)",
+  },
 };
 
 function coerceValue(raw: string, type: "number" | "string" | "boolean" | "json"): unknown {

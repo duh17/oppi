@@ -206,6 +206,8 @@ export function createSessionCoordinatorBundle(
     releaseSession: (identity) => deps.runtimeManager.releaseSession(identity),
     stopSession: (sessionId) => deps.stopSession(sessionId),
     getSessionIdleTimeoutMs: () => deps.runtimeManager.getLimits().sessionIdleTimeoutMs,
+    getChildAutoStopWhenDone: () => deps.runtimeManager.getLimits().subagents.autoStopWhenDone,
+    getChildStartupGraceMs: () => deps.runtimeManager.getLimits().subagents.startupGraceMs,
     hasActiveChildren: (sessionId) => {
       for (const active of deps.active.values()) {
         if (active.session.parentSessionId === sessionId) {

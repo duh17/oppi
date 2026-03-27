@@ -49,6 +49,8 @@ function makeDeps(
     releaseSession: vi.fn(),
     stopSession: vi.fn(async () => {}),
     getSessionIdleTimeoutMs: () => 300_000,
+    getChildAutoStopWhenDone: () => true,
+    getChildStartupGraceMs: () => 60_000,
     hasActiveChildren: vi.fn(() => false),
     ...overrides,
   };
@@ -218,6 +220,58 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     expect(deps.stopSession).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(240_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("does NOT auto-stop a completed child when autoStopWhenDone is false", () => {
+    const active = makeActiveSession(
+      {
+        parentSessionId: "parent-1",
+        status: "ready",
+        messageCount: 4,
+        tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 },
+      },
+      { outputTokensAtStart: 0 },
+    );
+    const deps = makeDeps(active, {
+      getChildAutoStopWhenDone: () => false,
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    // Should NOT immediately stop — autoStopWhenDone is false
+    vi.advanceTimersByTime(0);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // Should fall through to normal idle timeout (300s from makeDeps)
+    vi.advanceTimersByTime(299_999);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(deps.stopSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("uses configured startupGraceMs instead of hardcoded 60s", () => {
+    const active = makeActiveSession({
+      parentSessionId: "parent-1",
+      status: "ready",
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+    const deps = makeDeps(active, {
+      getChildStartupGraceMs: () => 30_000, // 30s instead of 60s
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+
+    // Should NOT stop at 29s
+    vi.advanceTimersByTime(29_999);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // Should stop at 30s
+    vi.advanceTimersByTime(1);
     expect(deps.stopSession).toHaveBeenCalledWith("child-1");
   });
 
