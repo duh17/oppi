@@ -276,9 +276,6 @@ export interface SubagentConfig {
    *  doesn't specify timeout_seconds.
    *  Default: 1800000 (30 min) */
   defaultWaitTimeoutMs: number;
-  /** How often (ms) to poll a child's status during wait mode.
-   *  Default: 3000 (3s) */
-  pollIntervalMs: number;
 }
 
 // ─── API Types ───

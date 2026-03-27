@@ -39,7 +39,6 @@ export function defaultSubagentConfig(): SubagentConfig {
     autoStopWhenDone: true,
     startupGraceMs: 60_000,
     defaultWaitTimeoutMs: 30 * 60_000,
-    pollIntervalMs: 3_000,
   };
 }
 
@@ -705,7 +704,6 @@ function normalizeConfig(
       "autoStopWhenDone",
       "startupGraceMs",
       "defaultWaitTimeoutMs",
-      "pollIntervalMs",
     ]);
 
     if (strictUnknown) {
@@ -756,19 +754,6 @@ function normalizeConfig(
         subagents.defaultWaitTimeoutMs = sa.defaultWaitTimeoutMs;
       } else {
         errors.push("config.subagents.defaultWaitTimeoutMs: expected positive integer");
-        changed = true;
-      }
-    }
-
-    if ("pollIntervalMs" in sa) {
-      if (
-        typeof sa.pollIntervalMs === "number" &&
-        Number.isInteger(sa.pollIntervalMs) &&
-        sa.pollIntervalMs >= 100
-      ) {
-        subagents.pollIntervalMs = sa.pollIntervalMs;
-      } else {
-        errors.push("config.subagents.pollIntervalMs: expected integer >= 100");
         changed = true;
       }
     }

@@ -674,8 +674,9 @@ function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): stri
 // Wait mode — poll child session until terminal status
 // ---------------------------------------------------------------------------
 
-// DEFAULT_WAIT_TIMEOUT_MS and POLL_INTERVAL_MS are now configurable
-// via SubagentConfig. Kept as fallback defaults.
+// Default fallback poll interval — only used as a safety net.
+// Progress updates are driven by subscribe events, not polling.
+const FALLBACK_POLL_INTERVAL_MS = 30_000;
 
 /** Terminal session statuses — the child is done. */
 function isTerminal(status: string): boolean {
@@ -700,7 +701,6 @@ function waitForChildCompletion(
   ctx: SpawnAgentContext,
   childId: string,
   timeoutMs: number,
-  pollIntervalMs: number,
   signal: AbortSignal | undefined,
   onUpdate?: (update: {
     content: Array<{ type: "text"; text: string }>;
@@ -716,7 +716,8 @@ function waitForChildCompletion(
 
     const cleanup = (): void => {
       resolved = true;
-      clearInterval(pollTimer);
+      clearInterval(fallbackTimer);
+      clearTimeout(timeoutTimer);
       unsubscribe();
       signal?.removeEventListener("abort", onAbort);
     };
@@ -733,6 +734,30 @@ function waitForChildCompletion(
         messageCount: session?.messageCount ?? 0,
         durationMs: Date.now() - startTime,
         timedOut,
+      });
+    };
+
+    /** Emit progress update if status or message count changed. */
+    const emitProgress = (session: Session): void => {
+      const statusChanged = session.status !== lastStatus;
+      const msgCountChanged = session.messageCount !== lastMsgCount;
+      if (!statusChanged && !msgCountChanged) return;
+
+      lastStatus = session.status;
+      lastMsgCount = session.messageCount;
+
+      const elapsed = formatDuration(Date.now() - startTime);
+      const cost = formatCost(session.cost);
+      const name = childName ?? childId.slice(0, 8);
+      const progressText = `[${name}] ${session.status} — ${session.messageCount} msgs, ${cost}, ${elapsed}`;
+
+      onUpdate?.({
+        content: [{ type: "text", text: progressText }],
+        details: {
+          agentId: childId,
+          name: childName ?? childId.slice(0, 8),
+          status: session.status,
+        },
       });
     };
 
@@ -755,60 +780,43 @@ function waitForChildCompletion(
     const onAbort = (): void => finalize(false);
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    // Subscribe to child events for fast terminal detection.
-    // We only care about session_ended / state messages — NOT streaming content.
+    // Precise timeout via setTimeout (not dependent on poll frequency)
+    const timeoutTimer = setTimeout(() => {
+      if (!resolved) finalize(true);
+    }, timeoutMs);
+
+    // Subscribe to child events — drives both terminal detection AND
+    // progress updates. `state` messages carry the full Session object
+    // and fire on agent_start, agent_end, message_end, tool_start,
+    // stop/resume transitions — exactly the signals we need.
     const unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
       if (resolved) return;
-      if (
-        msg.type === "session_ended" ||
-        (msg.type === "state" && isTerminal(msg.session.status))
-      ) {
+      if (msg.type === "session_ended") {
         finalize(false);
+        return;
+      }
+      if (msg.type === "state") {
+        if (isTerminal(msg.session.status)) {
+          finalize(false);
+        } else {
+          emitProgress(msg.session);
+        }
       }
     });
 
-    // Periodic poll — drives progress updates and acts as fallback for
-    // terminal detection (in case subscribe misses the transition).
-    const pollTimer = setInterval(() => {
+    // Fallback poll — safety net only. All real progress is event-driven
+    // via subscribe. This catches edge cases where a subscribe event is
+    // missed (e.g. race between subscribe setup and status transition).
+    const fallbackTimer = setInterval(() => {
       if (resolved) return;
-
-      // Timeout check
-      if (Date.now() - startTime > timeoutMs) {
-        finalize(true);
-        return;
-      }
-
       const session = ctx.getSession(childId);
       if (!session) return;
-
-      // Terminal check (fallback)
       if (isTerminal(session.status)) {
         finalize(false);
         return;
       }
-
-      // Only emit progress when something changed
-      const statusChanged = session.status !== lastStatus;
-      const msgCountChanged = session.messageCount !== lastMsgCount;
-      if (!statusChanged && !msgCountChanged) return;
-
-      lastStatus = session.status;
-      lastMsgCount = session.messageCount;
-
-      const elapsed = formatDuration(Date.now() - startTime);
-      const cost = formatCost(session.cost);
-      const name = childName ?? childId.slice(0, 8);
-      const progressText = `[${name}] ${session.status} — ${session.messageCount} msgs, ${cost}, ${elapsed}`;
-
-      onUpdate?.({
-        content: [{ type: "text", text: progressText }],
-        details: {
-          agentId: childId,
-          name: childName ?? childId.slice(0, 8),
-          status: session.status,
-        },
-      });
-    }, pollIntervalMs);
+      emitProgress(session);
+    }, FALLBACK_POLL_INTERVAL_MS);
   });
 }
 
@@ -1007,7 +1015,6 @@ export function createSpawnAgentFactory(
               ctx,
               session.id,
               timeoutMs,
-              subagentConfig.pollIntervalMs,
               signal,
               onUpdate,
               session.name ?? name,

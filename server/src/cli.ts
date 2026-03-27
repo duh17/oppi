@@ -746,7 +746,7 @@ const SETTABLE_KEYS: Record<
   tls: { type: "json", desc: "TLS config JSON (mode/certPath/keyPath/caPath)" },
   subagents: {
     type: "json",
-    desc: "Subagent config JSON (maxDepth/autoStopWhenDone/startupGraceMs/defaultWaitTimeoutMs/pollIntervalMs)",
+    desc: "Subagent config JSON (maxDepth/autoStopWhenDone/startupGraceMs/defaultWaitTimeoutMs)",
   },
 };
 
