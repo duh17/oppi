@@ -1,0 +1,18 @@
+gantt
+    title Project Timeline
+    dateFormat YYYY-MM-DD
+    axisFormat %m/%d
+
+    section Design
+    Research           :done, des1, 2024-01-01, 2024-01-05
+    Prototyping        :active, des2, after des1, 3d
+    Review             :des3, after des2, 1d
+
+    section Implementation
+    Backend            :crit, impl1, 2024-01-08, 5d
+    Frontend           :impl2, after impl1, 4d
+    Testing            :after impl2, 3d
+
+    section Deployment
+    Staging            :2024-01-20, 2d
+    Production         :milestone, 2024-01-22, 0d
