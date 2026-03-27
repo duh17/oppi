@@ -102,6 +102,23 @@ struct RenderTheme: Sendable {
         link: CGColor(red: 0.38, green: 0.68, blue: 0.94, alpha: 1),
         heading: CGColor(gray: 0.9, alpha: 1)
     )
+
+    /// Light theme for export/sharing. Always used for shared images
+    /// regardless of the app's current theme setting.
+    static let light = RenderTheme(
+        foreground: CGColor(gray: 0.1, alpha: 1),
+        foregroundDim: CGColor(gray: 0.4, alpha: 1),
+        background: CGColor(gray: 1.0, alpha: 1),
+        backgroundDark: CGColor(gray: 0.96, alpha: 1),
+        comment: CGColor(gray: 0.55, alpha: 1),
+        keyword: CGColor(red: 0.46, green: 0.38, blue: 0.66, alpha: 1),
+        string: CGColor(red: 0.23, green: 0.52, blue: 0.31, alpha: 1),
+        number: CGColor(red: 0.66, green: 0.46, blue: 0.19, alpha: 1),
+        function: CGColor(red: 0.20, green: 0.47, blue: 0.78, alpha: 1),
+        type: CGColor(red: 0.18, green: 0.54, blue: 0.51, alpha: 1),
+        link: CGColor(red: 0.20, green: 0.47, blue: 0.78, alpha: 1),
+        heading: CGColor(gray: 0.1, alpha: 1)
+    )
 }
 
 // MARK: - Renderer Protocols

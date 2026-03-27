@@ -157,6 +157,20 @@ final class FullScreenCodeViewController: UIViewController {
         copyButton = copy
         rightItems.append(copy)
 
+        // Share button — tap for default, long-press for format picker
+        if let shareable = shareableContent() {
+            let formats = FileShareService.availableFormats(for: shareable)
+            let shareButton = UIBarButtonItem(
+                image: UIImage(systemName: "square.and.arrow.up"),
+                primaryAction: UIAction { [weak self] _ in
+                    self?.shareDefaultFormat()
+                },
+                menu: formats.count > 1 ? makeShareMenu(formats: formats) : nil
+            )
+            shareButton.tintColor = UIColor(palette.fgDim)
+            rightItems.append(shareButton)
+        }
+
         if let toggleTitle = presentation.sourceToggleTitle {
             let toggle = UIBarButtonItem(
                 title: toggleTitle,
@@ -483,6 +497,80 @@ final class FullScreenCodeViewController: UIViewController {
             filePath: filePath,
             languageHint: languageHint
         )
+    }
+
+    // MARK: - Share
+
+    private func shareableContent() -> FileShareService.ShareableContent? {
+        let content = currentSemanticContent()
+        switch content {
+        case .mermaid(let text, _): return .mermaid(text)
+        case .latex(let text, _): return .latex(text)
+        case .markdown(let text, _): return .markdown(text)
+        case .orgMode(let text, _): return .orgMode(text)
+        case .html(let text, _): return .html(text)
+        case .graphviz(let text, _): return .code(text, language: "dot")
+        case .code(let text, let lang, _, _): return .code(text, language: lang)
+        case .plainText(let text, _): return .plainText(text)
+        case .thinking(let text, let stream):
+            return .plainText(stream?.snapshot.text ?? text)
+        case .terminal(let text, _, let stream):
+            return .plainText(stream?.snapshot.output ?? text)
+        case .diff(_, let newText, _, _): return .plainText(newText)
+        case .liveSource(let snapshot, _):
+            return .plainText(snapshot.text)
+        }
+    }
+
+    private func shareDefaultFormat() {
+        guard let shareable = shareableContent() else { return }
+        Task {
+            let item = await FileShareService.renderDefault(shareable)
+            presentShareSheet(item: item)
+        }
+    }
+
+    private func share(format: FileShareService.ExportFormat) {
+        guard let shareable = shareableContent() else { return }
+        Task {
+            let item = await FileShareService.render(shareable, as: format)
+            presentShareSheet(item: item)
+        }
+    }
+
+    private func presentShareSheet(item: FileShareService.ShareItem) {
+        let vc = UIActivityViewController(
+            activityItems: item.activityItems,
+            applicationActivities: nil
+        )
+        vc.completionWithItemsHandler = { _, _, _, _ in
+            FileShareService.cleanupTempFiles()
+        }
+        if let popover = vc.popoverPresentationController,
+           let barItems = contentHostController?.navigationItem.rightBarButtonItems {
+            popover.barButtonItem = barItems.first(where: {
+                $0.image == UIImage(systemName: "square.and.arrow.up")
+            })
+        }
+        present(vc, animated: true)
+    }
+
+    private func makeShareMenu(formats: [FileShareService.ExportFormat]) -> UIMenu {
+        let actions = formats.map { format in
+            let (title, icon) = formatDisplayInfo(format)
+            return UIAction(title: title, image: UIImage(systemName: icon)) { [weak self] _ in
+                self?.share(format: format)
+            }
+        }
+        return UIMenu(children: actions)
+    }
+
+    private func formatDisplayInfo(_ format: FileShareService.ExportFormat) -> (String, String) {
+        switch format {
+        case .image: return ("Share as Image", "photo")
+        case .pdf: return ("Share as PDF", "doc.richtext")
+        case .source: return ("Share Source", "doc.text")
+        }
     }
 
     @objc private func toggleSource() {
