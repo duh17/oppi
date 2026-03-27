@@ -133,6 +133,11 @@ enum OrgToMarkdownConverter {
         orgInlines.map(convertInline)
     }
 
+    /// Convert a single org inline to a markdown inline. Public for heading rendering.
+    static func convertSingleInline(_ orgInline: OrgInline) -> MarkdownInline {
+        convertInline(orgInline)
+    }
+
     private static func convertInline(_ orgInline: OrgInline) -> MarkdownInline {
         switch orgInline {
         case .text(let string):

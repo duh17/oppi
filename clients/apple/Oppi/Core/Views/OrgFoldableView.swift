@@ -156,55 +156,31 @@ private struct OrgSectionView: View {
         .buttonStyle(.plain)
     }
 
+    private var headingMarkdown: String {
+        guard case .heading(let level, let keyword, _, let title, let tags) = section.heading else {
+            return ""
+        }
+        var inlines = [MarkdownInline]()
+        if let kw = keyword {
+            inlines.append(.strong([.text(kw)]))
+            inlines.append(.text(" "))
+        }
+        inlines.append(contentsOf: title.map { OrgToMarkdownConverter.convertSingleInline($0) })
+        if !tags.isEmpty {
+            inlines.append(.text("  "))
+            inlines.append(.code(":" + tags.joined(separator: ":") + ":"))
+        }
+        let mdBlocks: [MarkdownBlock] = [.heading(level: min(level, 6), inlines: inlines)]
+        return MarkdownBlockSerializer.serialize(mdBlocks)
+    }
+
     @ViewBuilder
     private var headingLabel: some View {
-        if case .heading(let level, let keyword, _, let title, let tags) = section.heading {
-            let titleText = OrgToMarkdownConverter.serializeInlines(title)
-            HStack(spacing: 6) {
-                // TODO/DONE badge
-                if let kw = keyword {
-                    Text(kw)
-                        .font(.system(size: headingSize(level) * 0.7, weight: .bold, design: .monospaced))
-                        .foregroundStyle(kw == "DONE" ? .themeGreen : .themeOrange)
-                }
-
-                Text(titleText)
-                    .font(.system(size: headingSize(level), weight: headingWeight(level)))
-                    .foregroundStyle(headingColor(level))
-
-                if !tags.isEmpty {
-                    Text(":" + tags.joined(separator: ":") + ":")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.themeComment)
-                }
-            }
-        }
-    }
-
-    private func headingSize(_ level: Int) -> CGFloat {
-        switch level {
-        case 1: return 20
-        case 2: return 17
-        case 3: return 15
-        default: return 14
-        }
-    }
-
-    private func headingWeight(_ level: Int) -> Font.Weight {
-        switch level {
-        case 1: return .bold
-        case 2: return .semibold
-        case 3: return .semibold
-        default: return .medium
-        }
-    }
-
-    private func headingColor(_ level: Int) -> Color {
-        switch level {
-        case 1, 2: return .themeMdHeading
-        case 3: return .themeFg
-        default: return .themeFgDim
-        }
+        MarkdownContentViewWrapper(
+            content: headingMarkdown,
+            textSelectionEnabled: false,
+            plainTextFallbackThreshold: nil
+        )
     }
 
     // MARK: - Body + children

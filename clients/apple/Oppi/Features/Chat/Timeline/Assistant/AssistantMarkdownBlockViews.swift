@@ -305,7 +305,7 @@ final class NativeTableBlockView: UIView {
         addSubview(cardView)
         cardView.addSubview(scrollView)
         scrollView.addSubview(tableLabel)
-        cardView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        
 
         tableLabel.delegate = self
         scrollView.addGestureRecognizer(longPressCopyGesture)
@@ -313,7 +313,7 @@ final class NativeTableBlockView: UIView {
         let labelWidthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
         tableLabelWidthConstraint = labelWidthConstraint
 
-        let cardWidth = cardView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor)
+        let cardWidth = cardView.widthAnchor.constraint(equalTo: widthAnchor)
         cardWidthConstraint = cardWidth
 
         NSLayoutConstraint.activate([
@@ -342,11 +342,32 @@ final class NativeTableBlockView: UIView {
     }
 
     /// Update card width to min(contentWidth, boundsWidth).
-    /// The card uses `lessThanOrEqualTo: widthAnchor` so it naturally shrinks
-    /// to content width. This method just ensures the scroll view content size
-    /// is correct.
     private func updateCardWidth() {
-        // No-op — lessThanOrEqualTo + content hugging handles sizing.
+        guard let constraint = cardWidthConstraint else { return }
+        let contentWidth = tableLabelWidthConstraint?.constant ?? 0
+        let parentWidth = bounds.width
+
+        if contentWidth > 0, contentWidth < parentWidth {
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                constraint.isActive = false
+                let absolute = cardView.widthAnchor.constraint(equalToConstant: contentWidth)
+                cardWidthConstraint = absolute
+                absolute.isActive = true
+            } else {
+                constraint.constant = contentWidth
+            }
+        } else {
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                // Already relative.
+            } else {
+                constraint.isActive = false
+                let relative = cardView.widthAnchor.constraint(equalTo: widthAnchor)
+                cardWidthConstraint = relative
+                relative.isActive = true
+            }
+        }
     }
 
     func configureSelectedTextPi(
