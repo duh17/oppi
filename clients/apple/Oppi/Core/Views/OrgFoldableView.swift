@@ -138,19 +138,15 @@ private struct OrgSectionView: View {
                 }
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if section.hasContent {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 10)
-                }
-
-                headingLabel
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.leading, section.hasContent ? 0 : 16)
-            .padding(.vertical, 4)
+            // Render the entire heading (including fold indicator) as one markdown
+            // block through the markdown pipeline. This guarantees the chevron
+            // aligns with the text since it's part of the same text flow.
+            MarkdownContentViewWrapper(
+                content: headingMarkdown,
+                textSelectionEnabled: false,
+                plainTextFallbackThreshold: nil
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -161,6 +157,13 @@ private struct OrgSectionView: View {
             return ""
         }
         var inlines = [MarkdownInline]()
+
+        // Fold indicator as part of the heading text
+        if section.hasContent {
+            let indicator = isExpanded ? "▾ " : "▸ "
+            inlines.append(.text(indicator))
+        }
+
         if let kw = keyword {
             inlines.append(.strong([.text(kw)]))
             inlines.append(.text(" "))
@@ -172,15 +175,6 @@ private struct OrgSectionView: View {
         }
         let mdBlocks: [MarkdownBlock] = [.heading(level: min(level, 6), inlines: inlines)]
         return MarkdownBlockSerializer.serialize(mdBlocks)
-    }
-
-    @ViewBuilder
-    private var headingLabel: some View {
-        MarkdownContentViewWrapper(
-            content: headingMarkdown,
-            textSelectionEnabled: false,
-            plainTextFallbackThreshold: nil
-        )
     }
 
     // MARK: - Body + children

@@ -405,6 +405,7 @@ final class NativeTableBlockView: UIView {
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
         setNeedsLayout()
+        layoutIfNeeded()
     }
 
     private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {
