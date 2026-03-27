@@ -62,7 +62,8 @@ struct SessionOutlineView: View {
                     SessionFilesListView(
                         sessionId: sessionId,
                         workspaceId: workspaceId,
-                        changedFiles: changedFiles
+                        changedFiles: changedFiles,
+                        searchText: debouncedSearchText
                     )
                 } else {
                     outlinePane
