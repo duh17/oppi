@@ -438,37 +438,47 @@ enum FileShareService {
     ///
     /// Creates a temporary web view, loads the HTML, waits for rendering,
     /// then uses `WKWebView.pdf(configuration:)` for a native PDF export
-    /// with selectable text and proper layout.
+    /// with selectable text and proper layout. Omits `WKPDFConfiguration.rect`
+    /// so WebKit auto-paginates the full document height.
     private static func renderHTMLToPDF(_ source: String) async -> Data {
+        let layoutWidth: CGFloat = 800
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
 
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: layoutWidth, height: 1),
+            configuration: config
+        )
         webView.isOpaque = false
 
         // Load HTML and wait for navigation to complete
         let loaded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let delegate = PDFNavigationDelegate(continuation: continuation)
             webView.navigationDelegate = delegate
-            // Store delegate to prevent deallocation
             objc_setAssociatedObject(webView, &PDFNavigationDelegate.associatedKey, delegate, .OBJC_ASSOCIATION_RETAIN)
             webView.loadHTMLString(source, baseURL: nil)
         }
 
         guard loaded else { return Data() }
 
-        // Brief delay for any async CSS/layout to settle
-        try? await Task.sleep(for: .milliseconds(100))
+        // Let CSS/layout settle, then measure full content height
+        try? await Task.sleep(for: .milliseconds(150))
 
-        // Generate PDF
-        let pdfConfig = WKPDFConfiguration()
-        // Use standard US Letter page size
-        pdfConfig.rect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        // Resize web view to match full content height so createPDF
+        // sees the entire document rather than clipping to the initial frame
+        let contentHeight = try? await webView.evaluateJavaScript(
+            "document.documentElement.scrollHeight"
+        ) as? CGFloat
+        let fullHeight = max(contentHeight ?? 600, 100)
+        webView.frame = CGRect(x: 0, y: 0, width: layoutWidth, height: fullHeight)
 
+        // Brief additional settle after resize
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // Generate PDF — omit rect for auto-pagination of full content
         do {
-            return try await webView.pdf(configuration: pdfConfig)
+            return try await webView.pdf(configuration: WKPDFConfiguration())
         } catch {
-            // Fallback: render as code image embedded in PDF
             let image = renderCodeToImage(source, language: "html")
             return embedImageInPDF(image)
         }
