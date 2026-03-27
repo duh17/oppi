@@ -109,23 +109,48 @@ struct LaTeXFileView: View {
     // MARK: - Document Body
 
     private var documentBody: some View {
-        Group {
-            if showRaw {
-                NativeCodeBodyView(
-                    content: content,
-                    language: SyntaxLanguage.latex.displayName,
-                    startLine: 1,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.latex.displayName)
-                        : nil
-                )
-            } else {
-                ScrollView([.horizontal, .vertical]) {
-                    LaTeXRenderedView(content: content)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if showRaw {
+                    NativeCodeBodyView(
+                        content: content,
+                        language: SyntaxLanguage.latex.displayName,
+                        startLine: 1,
+                        selectedTextSourceContext: piRouter != nil
+                            ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.latex.displayName)
+                            : nil
+                    )
+                } else {
+                    ScrollView([.horizontal, .vertical]) {
+                        LaTeXRenderedView(content: content)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    }
                 }
             }
+
+            // Floating toolbar
+            HStack(spacing: 8) {
+                FileShareButton(content: .latex(content), style: .capsule)
+                    .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showRaw.toggle() }
+                } label: {
+                    Label(
+                        showRaw ? "Rendered" : "Source",
+                        systemImage: showRaw ? "function" : "curlybraces"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 12)
+            .padding(.top, 8)
         }
     }
 }

@@ -109,21 +109,46 @@ struct MermaidFileView: View {
     // MARK: - Document Body
 
     private var documentBody: some View {
-        Group {
-            if showRaw {
-                NativeCodeBodyView(
-                    content: content,
-                    language: SyntaxLanguage.mermaid.displayName,
-                    startLine: 1,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.mermaid.displayName)
-                        : nil
-                )
-            } else {
-                MermaidRenderedView(content: content)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if showRaw {
+                    NativeCodeBodyView(
+                        content: content,
+                        language: SyntaxLanguage.mermaid.displayName,
+                        startLine: 1,
+                        selectedTextSourceContext: piRouter != nil
+                            ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.mermaid.displayName)
+                            : nil
+                    )
+                } else {
+                    MermaidRenderedView(content: content)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                }
             }
+
+            // Floating toolbar
+            HStack(spacing: 8) {
+                FileShareButton(content: .mermaid(content), style: .capsule)
+                    .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showRaw.toggle() }
+                } label: {
+                    Label(
+                        showRaw ? "Rendered" : "Source",
+                        systemImage: showRaw ? "chart.dots.scatter" : "curlybraces"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 12)
+            .padding(.top, 8)
         }
     }
 }

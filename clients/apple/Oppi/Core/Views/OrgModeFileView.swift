@@ -158,28 +158,53 @@ struct OrgModeFileView: View {
     // MARK: - Document Body
 
     private var documentBody: some View {
-        Group {
-            if showRaw {
-                NativeCodeBodyView(
-                    content: content,
-                    language: SyntaxLanguage.orgMode.displayName,
-                    startLine: 1,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.orgMode.displayName)
-                        : nil
-                )
-            } else {
-                let tree = cachedTree ?? synchronousTree
-                ScrollView(.vertical) {
-                    OrgFoldableContentView(
-                        sections: tree.sections,
-                        initialFoldState: tree.foldState
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if showRaw {
+                    NativeCodeBodyView(
+                        content: content,
+                        language: SyntaxLanguage.orgMode.displayName,
+                        startLine: 1,
+                        selectedTextSourceContext: piRouter != nil
+                            ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.orgMode.displayName)
+                            : nil
                     )
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    let tree = cachedTree ?? synchronousTree
+                    ScrollView(.vertical) {
+                        OrgFoldableContentView(
+                            sections: tree.sections,
+                            initialFoldState: tree.foldState
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
+
+            // Floating toolbar
+            HStack(spacing: 8) {
+                FileShareButton(content: .orgMode(content), style: .capsule)
+                    .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showRaw.toggle() }
+                } label: {
+                    Label(
+                        showRaw ? "Reader" : "Source",
+                        systemImage: showRaw ? "doc.richtext" : "curlybraces"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 12)
+            .padding(.top, 8)
         }
     }
 }
