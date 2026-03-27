@@ -18,6 +18,7 @@ server/scripts/*
 !server/scripts/check-testing-policy.mjs
 !server/scripts/telemetry-review.mjs
 clients/apple/scripts/
+!clients/apple/scripts/testflight.sh
 !server/docker/entrypoint.sh
 
 # CI / internal tooling
