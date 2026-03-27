@@ -241,6 +241,176 @@
         }
       ],
       "options": { "showHeader": true, "sortBy": [{ "displayName": "Closed At", "desc": true }] }
+    },
+    {
+      "title": "Agent Turn Duration (ms)",
+      "description": "End-to-end agent turn duration. Key indicator of response time budget.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Turn Duration" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_duration_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Server TTFT (ms)",
+      "description": "Server-side time-to-first-token. Compare with iOS chat.ttft_ms for end-to-end picture.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "TTFT" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_ttft_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Cost per Turn (µ$)",
+      "description": "Turn cost in microdollars. Track spending trends per interaction.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "µ$",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Cost (µ$)" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Ask Round-Trip (ms)",
+      "description": "Ask extension round-trip latency. Measures the full cycle from ask dispatch to user response received.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "yellow", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Ask RTT" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ask_round_trip_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "title": "Session Title Gen (ms)",
+      "description": "Auto-title generation latency. Runs after first user message to generate session title.",
+      "type": "timeseries",
+      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Title Gen" }] }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_title_gen_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
     }
   ],
   "schemaVersion": 39,

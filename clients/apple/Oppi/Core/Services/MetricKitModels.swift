@@ -68,6 +68,7 @@ enum ChatMetricName: String, Codable, Sendable {
     case timelineHitch = "chat.timeline_hitch"
     case appLaunchMs = "chat.app_launch_ms"
     case sessionSwitchMs = "chat.session_switch_ms"
+    case shareExportMs = "chat.share_export_ms"
     case permissionOverlayMs = "chat.permission_overlay_ms"
     case sessionListComputeMs = "chat.session_list_compute_ms"
     case sessionListBodyRate = "chat.session_list_body_rate"

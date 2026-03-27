@@ -799,6 +799,12 @@ export const CHAT_METRIC_REGISTRY = {
       "Internal render strategy time for tool row content. Tags: mode, input_bytes, language.",
   },
 
+  "chat.markdown_streaming_ms": {
+    unit: "ms",
+    description:
+      "Streaming markdown full-cycle render cost (parse + build + view apply). Tags: surface, segments.",
+  },
+
   // ── App-level UX latency ──
   "chat.app_launch_ms": {
     unit: "ms",
@@ -811,6 +817,11 @@ export const CHAT_METRIC_REGISTRY = {
   "chat.permission_overlay_ms": {
     unit: "ms",
     description: "Permission overlay display to user tap (allow/deny). Tags: action.",
+  },
+  "chat.share_export_ms": {
+    unit: "ms",
+    description:
+      "Share sheet export rendering duration (offscreen render to shareable format). Tags: format, content_type.",
   },
 
   // ── Session list rendering ──

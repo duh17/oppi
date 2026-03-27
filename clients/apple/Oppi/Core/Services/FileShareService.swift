@@ -97,14 +97,33 @@ enum FileShareService {
 
     /// Render content to a specific format.
     static func render(_ content: ShareableContent, as format: ExportFormat) async -> ShareItem {
+        let startNs = ChatTimelinePerf.timestampNs()
+        let result: ShareItem
         switch format {
         case .image:
-            return renderImage(content)
+            result = renderImage(content)
         case .pdf:
-            return renderPDF(content)
+            result = renderPDF(content)
         case .source:
-            return renderSource(content)
+            result = renderSource(content)
         }
+        let durationMs = ChatTimelinePerf.elapsedMs(since: startNs)
+        if durationMs >= 1 {
+            let formatTag = exportFormatTag(format)
+            let contentTag = contentTypeTag(content)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .shareExportMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    tags: [
+                        "format": formatTag,
+                        "content_type": contentTag,
+                    ]
+                )
+            }
+        }
+        return result
     }
 
     // MARK: - Image Rendering
@@ -529,6 +548,29 @@ enum FileShareService {
         case "mermaid": return "mmd"
         case "org": return "org"
         default: return nil
+        }
+    }
+
+    private static func exportFormatTag(_ format: ExportFormat) -> String {
+        switch format {
+        case .image: return "image"
+        case .pdf: return "pdf"
+        case .source: return "source"
+        }
+    }
+
+    private static func contentTypeTag(_ content: ShareableContent) -> String {
+        switch content {
+        case .mermaid: return "mermaid"
+        case .latex: return "latex"
+        case .markdown: return "markdown"
+        case .orgMode: return "org"
+        case .code: return "code"
+        case .html: return "html"
+        case .json: return "json"
+        case .plainText: return "text"
+        case .imageData: return "image"
+        case .pdfData: return "pdf"
         }
     }
 

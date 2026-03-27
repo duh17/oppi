@@ -147,7 +147,18 @@ private struct MermaidRenderedView: View {
     }
 
     var body: some View {
+        let startNs = ChatTimelinePerf.timestampNs()
         let (size, draw) = renderResult
+        let durationMs = ChatTimelinePerf.elapsedMs(since: startNs)
+        let _ = {
+            if durationMs >= 1 {
+                ChatTimelinePerf.recordRenderStrategy(
+                    mode: "mermaid_fullscreen",
+                    durationMs: durationMs,
+                    inputBytes: content.utf8.count
+                )
+            }
+        }()
         ZoomableGraphicalSwiftUIView(size: size, drawBlock: draw)
             .frame(maxWidth: .infinity, minHeight: min(size.height, 400), maxHeight: max(size.height, 400))
     }
