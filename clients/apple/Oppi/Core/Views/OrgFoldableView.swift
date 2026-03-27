@@ -187,7 +187,6 @@ private struct OrgSectionView: View {
             switch group {
             case .drawer(let name, let properties):
                 OrgDrawerView(name: name, properties: properties)
-                    .padding(.leading, 16)
             case .markdown(let md):
                 if !md.isEmpty {
                     MarkdownContentViewWrapper(
@@ -195,15 +194,13 @@ private struct OrgSectionView: View {
                         textSelectionEnabled: true,
                         plainTextFallbackThreshold: nil
                     )
-                    .padding(.leading, 16)
                 }
             }
         }
 
-        // Child sections
+        // Child sections — no indentation, heading sizes communicate hierarchy
         ForEach(section.children) { child in
             OrgSectionView(section: child, initialFoldState: initialFoldState, depth: depth + 1)
-                .padding(.leading, 12)
         }
     }
 
