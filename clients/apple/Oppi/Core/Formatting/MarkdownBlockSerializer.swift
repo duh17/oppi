@@ -74,7 +74,7 @@ enum MarkdownBlockSerializer {
 
     // MARK: - Inline serialization
 
-    private static func serializeInlines(_ inlines: [MarkdownInline]) -> String {
+    static func serializeInlines(_ inlines: [MarkdownInline]) -> String {
         inlines.map(serializeInline).joined()
     }
 

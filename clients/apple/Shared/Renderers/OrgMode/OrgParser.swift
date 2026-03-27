@@ -71,6 +71,14 @@ struct OrgParser: DocumentParser, Sendable {
                 continue
             }
 
+            // Drawer: `:NAME: ... :END:`
+            if isDrawerStart(trimmed) {
+                let (block, newCursor) = parseDrawer(lines: lines, startCursor: cursor)
+                blocks.append(block)
+                cursor = newCursor
+                continue
+            }
+
             // List item
             if isListItemStart(line) {
                 let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
@@ -400,8 +408,55 @@ struct OrgParser: DocumentParser, Sendable {
         if trimmed == "#" || (trimmed.hasPrefix("# ") && !trimmed.hasPrefix("#+")) { return true }
         if isHorizontalRule(trimmed) { return true }
         if isListItemStart(trimmed) { return true }
+        if isDrawerStart(trimmed) { return true }
 
         return false
+    }
+
+    // MARK: - Drawer Parsing
+
+    /// Check if a line starts a drawer: `:NAME:` where NAME is word chars/hyphens.
+    private func isDrawerStart(_ trimmed: String) -> Bool {
+        guard trimmed.hasPrefix(":"),
+              trimmed.hasSuffix(":"),
+              trimmed.count > 2 else { return false }
+        let name = trimmed.dropFirst().dropLast()
+        // Must not be empty and must contain only word chars and hyphens.
+        guard !name.isEmpty else { return false }
+        // Exclude `:END:` — that's a closer, not a start.
+        if name.uppercased() == "END" { return false }
+        return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+    }
+
+    /// Parse a drawer from `:NAME:` to `:END:`.
+    private func parseDrawer(lines: [String], startCursor: Int) -> (OrgBlock, Int) {
+        let headerTrimmed = lines[startCursor].trimmingCharacters(in: .whitespaces)
+        let name = String(headerTrimmed.dropFirst().dropLast())
+        var cursor = startCursor + 1
+        var properties: [OrgDrawerProperty] = []
+
+        while cursor < lines.count {
+            let line = lines[cursor].trimmingCharacters(in: .whitespaces)
+
+            // End of drawer
+            if line.uppercased() == ":END:" {
+                cursor += 1
+                break
+            }
+
+            // Property line: `:KEY: VALUE`
+            if line.hasPrefix(":"), let colonIdx = line.dropFirst().firstIndex(of: ":") {
+                let key = String(line[line.index(after: line.startIndex) ..< colonIdx])
+                let valueStart = line.index(after: colonIdx)
+                let value = String(line[valueStart...]).trimmingCharacters(in: .whitespaces)
+                if !key.isEmpty {
+                    properties.append(OrgDrawerProperty(key: key, value: value))
+                }
+            }
+            cursor += 1
+        }
+
+        return (.drawer(name: name, properties: properties), cursor)
     }
 
     // MARK: - Inline Parsing

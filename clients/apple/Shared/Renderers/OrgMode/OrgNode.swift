@@ -39,6 +39,16 @@ enum OrgBlock: Equatable, Sendable {
 
     /// Comment line: `# some text`
     case comment(String)
+
+    /// Drawer: `:NAME: ... :END:`
+    /// Property drawers use name "PROPERTIES" and contain key-value pairs.
+    case drawer(name: String, properties: [OrgDrawerProperty])
+}
+
+/// A single property in an org drawer.
+struct OrgDrawerProperty: Equatable, Sendable {
+    let key: String
+    let value: String
 }
 
 /// Inline (object-level) elements within paragraphs and headings.

@@ -1,0 +1,43 @@
+#+TITLE: Folding Demo
+#+STARTUP: content
+
+* Project Overview
+:PROPERTIES:
+:ID: proj-001
+:CREATED: 2024-01-15
+:CATEGORY: demo
+:END:
+
+This is the project overview. Tap the heading to fold/unfold.
+
+** Goals
+- Build native document renderers
+- Support org mode folding
+- Add property drawer parsing
+
+** Timeline
+:PROPERTIES:
+:DEADLINE: 2024-03-01
+:END:
+
+| Phase     | Status    |
+|-----------+-----------|
+| Parser    | Done      |
+| Renderer  | Done      |
+| Folding   | In Progress |
+
+* TODO Implementation Notes
+
+Some implementation details that should be foldable.
+
+** Parser Changes
+Added =drawer= case to =OrgBlock= enum:
+#+begin_src swift
+case drawer(name: String, properties: [OrgDrawerProperty])
+#+end_src
+
+** View Changes
+New =OrgFoldableContentView= with collapsible sections.
+
+* DONE Research
+Investigated org-syntax spec for drawer and folding behavior.

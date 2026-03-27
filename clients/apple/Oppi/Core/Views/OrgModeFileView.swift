@@ -29,6 +29,13 @@ struct OrgModeFileView: View {
         return MarkdownBlockSerializer.serialize(mdBlocks)
     }
 
+    /// Parse org content into a foldable section tree.
+    private var orgSections: (sections: [OrgSection], foldState: OrgFoldState) {
+        let parser = OrgParser()
+        let orgBlocks = parser.parse(content)
+        return buildOrgSectionTree(orgBlocks)
+    }
+
     var body: some View {
         Group {
             if presentation.usesInlineChrome {
@@ -105,9 +112,10 @@ struct OrgModeFileView: View {
                             .foregroundStyle(.themeFg)
                             .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
                     } else {
-                        MarkdownContentViewWrapper(
-                            content: markdownContent,
-                            textSelectionEnabled: inlineSelectionEnabled
+                        let tree = orgSections
+                        OrgFoldableContentView(
+                            sections: tree.sections,
+                            initialFoldState: tree.foldState
                         )
                     }
                 }
@@ -144,14 +152,11 @@ struct OrgModeFileView: View {
                 )
             } else {
                 ScrollView(.vertical) {
-                    MarkdownContentViewWrapper(
-                        content: markdownContent,
-                        plainTextFallbackThreshold: nil,
-                        selectedTextSourceContext: piRouter != nil
-                            ? fileContentSourceContext(filePath: filePath, surface: .fullScreenMarkdown)
-                            : nil
+                    let tree = orgSections
+                    OrgFoldableContentView(
+                        sections: tree.sections,
+                        initialFoldState: tree.foldState
                     )
-                    .allowsFullScreenExpansion(false)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)

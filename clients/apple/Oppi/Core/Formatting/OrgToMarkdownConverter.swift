@@ -86,6 +86,14 @@ enum OrgToMarkdownConverter {
             case .horizontalRule:
                 result.append(.thematicBreak)
 
+            case .drawer(let name, let properties):
+                // Render drawers as a code block showing key-value pairs.
+                if !properties.isEmpty {
+                    let lines = properties.map { ":\($0.key): \($0.value)" }
+                    let content = lines.joined(separator: "\n")
+                    result.append(.codeBlock(language: name.lowercased(), code: content))
+                }
+
             case .comment:
                 // Skip comments in rendered output.
                 break
@@ -96,6 +104,12 @@ enum OrgToMarkdownConverter {
     }
 
     // MARK: - Inline conversion
+
+    /// Convert org inlines to markdown text. Public for use by heading rendering.
+    static func serializeInlines(_ orgInlines: [OrgInline]) -> String {
+        let mdInlines = convertInlines(orgInlines)
+        return MarkdownBlockSerializer.serializeInlines(mdInlines)
+    }
 
     private static func convertInlines(_ orgInlines: [OrgInline]) -> [MarkdownInline] {
         orgInlines.map(convertInline)

@@ -160,6 +160,10 @@ private struct RenderContext: Sendable {
 
         case let .comment(text):
             return renderComment(text)
+
+        case let .drawer(name, properties):
+            let text = ":\(name):\n" + properties.map { ":\($0.key): \($0.value)" }.joined(separator: "\n") + "\n:END:"
+            return renderComment(text)
         }
     }
 
