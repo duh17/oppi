@@ -5,12 +5,11 @@ import UIKit
 
 /// Converts file content into shareable formats (image, PDF, source file).
 ///
-/// Always renders with a light theme for export, regardless of the app's
-/// current theme. Uses device screen scale for resolution.
+/// Renders using the app's current theme. Uses device screen scale for resolution.
 ///
 /// Two rendering strategies:
 /// - **CGContext re-render** for Mermaid/LaTeX: fresh render at export quality
-/// - **View snapshot** for Markdown/Org/Code: offscreen UIView with light palette
+/// - **View snapshot** for Markdown/Org/Code: offscreen UIView with current theme palette
 @MainActor
 enum FileShareService {
 
@@ -165,7 +164,7 @@ enum FileShareService {
         let config = RenderConfiguration(
             fontSize: 20,
             maxWidth: 800,
-            theme: .light,
+            theme: currentRenderTheme,
             displayMode: .document
         )
         let layout = renderer.layout(diagram, configuration: config)
@@ -179,7 +178,7 @@ enum FileShareService {
 
         let imageRenderer = UIGraphicsImageRenderer(size: imageSize)
         return imageRenderer.image { ctx in
-            UIColor.white.setFill()
+            currentBackgroundColor.setFill()
             ctx.fill(CGRect(origin: .zero, size: imageSize))
             renderer.draw(layout, in: ctx.cgContext, at: CGPoint(x: padding, y: padding))
         }
@@ -198,7 +197,7 @@ enum FileShareService {
         let config = RenderConfiguration(
             fontSize: 20,
             maxWidth: 800,
-            theme: .light,
+            theme: currentRenderTheme,
             displayMode: .document
         )
 
@@ -227,7 +226,7 @@ enum FileShareService {
 
         let imageRenderer = UIGraphicsImageRenderer(size: imageSize)
         return imageRenderer.image { ctx in
-            UIColor.white.setFill()
+            currentBackgroundColor.setFill()
             ctx.fill(CGRect(origin: .zero, size: imageSize))
 
             var yOffset = padding
@@ -242,15 +241,15 @@ enum FileShareService {
 
     private static func renderMarkdownToImage(_ source: String) -> UIImage {
         let view = AssistantMarkdownContentView()
-        view.backgroundColor = .white
+        view.backgroundColor = currentBackgroundColor
         view.apply(configuration: .init(
             content: source,
             isStreaming: false,
-            themeID: .light,
+            themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: false,
             plainTextFallbackThreshold: nil
         ))
-        return snapshotView(view, width: 800, padding: 40, backgroundColor: .white)
+        return snapshotView(view, width: 800, padding: 40, backgroundColor: currentBackgroundColor)
     }
 
     private static func renderOrgModeToImage(_ source: String) -> UIImage {
@@ -263,7 +262,7 @@ enum FileShareService {
     }
 
     private static func renderCodeToImage(_ source: String, language: String?) -> UIImage {
-        let palette = ThemeID.light.palette
+        let palette = ThemeRuntimeState.currentPalette()
         let body = NativeFullScreenCodeBody(
             content: source,
             language: language,
@@ -357,7 +356,7 @@ enum FileShareService {
         let config = RenderConfiguration(
             fontSize: 20,
             maxWidth: 800,
-            theme: .light,
+            theme: currentRenderTheme,
             displayMode: .document
         )
         let layout = renderer.layout(diagram, configuration: config)
@@ -372,7 +371,7 @@ enum FileShareService {
         let pdfRenderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
         return pdfRenderer.pdfData { ctx in
             ctx.beginPage()
-            UIColor.white.setFill()
+            currentBackgroundColor.setFill()
             UIRectFill(CGRect(origin: .zero, size: pageSize))
             renderer.draw(layout, in: ctx.cgContext, at: CGPoint(x: padding, y: padding))
         }
@@ -391,7 +390,7 @@ enum FileShareService {
         let config = RenderConfiguration(
             fontSize: 20,
             maxWidth: 800,
-            theme: .light,
+            theme: currentRenderTheme,
             displayMode: .document
         )
 
@@ -420,7 +419,7 @@ enum FileShareService {
         let pdfRenderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
         return pdfRenderer.pdfData { ctx in
             ctx.beginPage()
-            UIColor.white.setFill()
+            currentBackgroundColor.setFill()
             UIRectFill(CGRect(origin: .zero, size: pageSize))
 
             var yOffset = padding
@@ -572,6 +571,18 @@ enum FileShareService {
         case .imageData: return "image"
         case .pdfData: return "pdf"
         }
+    }
+
+    /// Current theme's RenderTheme for CGContext renderers.
+    /// Maps the app's ThemeID color scheme to the matching RenderTheme.
+    private static var currentRenderTheme: RenderTheme {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        return themeID.preferredColorScheme == .light ? .light : .fallback
+    }
+
+    /// Current theme's background color for image export.
+    private static var currentBackgroundColor: UIColor {
+        UIColor(ThemeRuntimeState.currentPalette().bgDark)
     }
 
     private static func placeholderImage() -> UIImage {

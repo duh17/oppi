@@ -556,8 +556,9 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func makeShareMenu(formats: [FileShareService.ExportFormat]) -> UIMenu {
+        let shareable = shareableContent()
         let actions = formats.map { format in
-            let (title, icon) = formatDisplayInfo(format)
+            let (title, icon) = formatDisplayInfo(format, content: shareable)
             return UIAction(title: title, image: UIImage(systemName: icon)) { [weak self] _ in
                 self?.share(format: format)
             }
@@ -565,11 +566,31 @@ final class FullScreenCodeViewController: UIViewController {
         return UIMenu(children: actions)
     }
 
-    private func formatDisplayInfo(_ format: FileShareService.ExportFormat) -> (String, String) {
+    private func formatDisplayInfo(
+        _ format: FileShareService.ExportFormat,
+        content: FileShareService.ShareableContent?
+    ) -> (String, String) {
+        let sourceLabel = sourceFormatLabel(for: content)
         switch format {
-        case .image: return ("Share as Image", "photo")
-        case .pdf: return ("Share as PDF", "doc.richtext")
-        case .source: return ("Share Source", "doc.text")
+        case .image: return ("Rendered Image", "photo")
+        case .pdf: return ("Rendered PDF", "doc.richtext")
+        case .source: return (sourceLabel, "doc.text")
+        }
+    }
+
+    private func sourceFormatLabel(for content: FileShareService.ShareableContent?) -> String {
+        guard let content else { return "Source File" }
+        switch content {
+        case .markdown: return "Markdown File"
+        case .orgMode: return "Org File"
+        case .mermaid: return "Mermaid Source"
+        case .latex: return "LaTeX Source"
+        case .code: return "Source File"
+        case .html: return "HTML Source"
+        case .json: return "JSON File"
+        case .plainText: return "Text File"
+        case .imageData: return "Image File"
+        case .pdfData: return "PDF File"
         }
     }
 
