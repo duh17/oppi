@@ -9,7 +9,7 @@
   <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
-Agents wrote most of this code and I didn't review it. I use it every day and vouch for the product, not the internals.
+There are many clankers and this is mine. They wrote all the code and I didn't review most of it. I do use it every day — my goal was just to have a better mobile experience than tmux + Termius + Claude Code. Thanks to [pi](https://github.com/badlogic/pi-mono) and the new models, this is now possible :)
 
 ## Mac App (recommended on macOS)
 
