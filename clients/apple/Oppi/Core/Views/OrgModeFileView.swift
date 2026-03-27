@@ -28,6 +28,14 @@ struct OrgModeFileView: View {
         content.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 
+    /// Synchronous parse for first render (before .task completes).
+    /// The .task will replace this with a properly cached version for stable UUIDs.
+    private var synchronousTree: (sections: [OrgSection], foldState: OrgFoldState) {
+        let parser = OrgParser()
+        let blocks = parser.parse(content)
+        return buildOrgSectionTree(blocks)
+    }
+
     /// Convert org content to markdown text for the markdown pipeline.
     private var markdownContent: String {
         let parser = OrgParser()
@@ -121,7 +129,8 @@ struct OrgModeFileView: View {
                             .font(.appCaptionMono)
                             .foregroundStyle(.themeFg)
                             .applyInlineTextSelectionPolicy(inlineSelectionEnabled)
-                    } else if let tree = cachedTree {
+                    } else {
+                        let tree = cachedTree ?? synchronousTree
                         OrgFoldableContentView(
                             sections: tree.sections,
                             initialFoldState: tree.foldState
@@ -159,7 +168,8 @@ struct OrgModeFileView: View {
                         ? fileContentSourceContext(filePath: filePath, language: SyntaxLanguage.orgMode.displayName)
                         : nil
                 )
-            } else if let tree = cachedTree {
+            } else {
+                let tree = cachedTree ?? synchronousTree
                 ScrollView(.vertical) {
                     OrgFoldableContentView(
                         sections: tree.sections,
