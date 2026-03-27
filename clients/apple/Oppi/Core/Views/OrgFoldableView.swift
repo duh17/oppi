@@ -119,12 +119,13 @@ private struct OrgSectionView: View {
         if section.heading == nil {
             sectionBody
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
                 headingRow
                 if isExpanded {
                     sectionBody
                 }
             }
+            .padding(.bottom, 4)
         }
     }
 
@@ -158,16 +159,15 @@ private struct OrgSectionView: View {
         }
         var inlines = [MarkdownInline]()
 
-        // Level-specific bullet (org-superstar style: ◉ ○ ✸ ✿)
-        // followed by fold state indicator
-        let bullets = ["◉", "○", "✸", "✿", "◆", "▸"]
-        let bullet = bullets[min(level - 1, bullets.count - 1)]
-        if section.hasContent {
-            let indicator = isExpanded ? "▾" : "▸"
-            inlines.append(.text("\(bullet) \(indicator) "))
-        } else {
-            inlines.append(.text("\(bullet) "))
-        }
+        // Level-specific bullets — filled = expanded, outline = collapsed.
+        // The bullet IS the fold indicator, no separate chevron needed.
+        let expandedBullets = ["◆", "●", "■", "▲", "◆", "●"]
+        let collapsedBullets = ["◇", "○", "□", "△", "◇", "○"]
+        let idx = min(level - 1, expandedBullets.count - 1)
+        let bullet = (section.hasContent && !isExpanded)
+            ? collapsedBullets[idx]
+            : expandedBullets[idx]
+        inlines.append(.text("\(bullet) "))
 
         if let kw = keyword {
             inlines.append(.strong([.text(kw)]))
