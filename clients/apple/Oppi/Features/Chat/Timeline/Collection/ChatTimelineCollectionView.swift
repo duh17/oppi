@@ -534,10 +534,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // Raw cell.contentConfiguration bypasses the compositional
                 // layout's preferredLayoutAttributesFitting — the cell stays
                 // its old height and clips growing text.
-                ChatTimelinePerf.beginTimelineApplyCycle(
-                    itemCount: currentIDs.count,
-                    changedCount: 1
-                )
+
                 // Update the streaming item map entry.
                 currentItemByID[streamingID] = nextItem
                 previousItemByID[streamingID] = nextItem

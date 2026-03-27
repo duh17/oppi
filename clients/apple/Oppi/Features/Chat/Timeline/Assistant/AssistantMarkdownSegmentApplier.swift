@@ -23,6 +23,11 @@ final class AssistantMarkdownSegmentApplier {
     /// Used to compute the "new characters" delta on the next flush.
     private var lastStreamingTextCharCount: Int = 0
 
+    /// Cached NSAttributedString for the streaming tail segment. Maintained
+    /// incrementally (append-only) to avoid O(total) NSAttributedString conversion
+    /// on every streaming tick.
+    private var cachedStreamingTailNS: NSMutableAttributedString?
+
     /// Closure for fetching workspace files (for inline markdown images).
     /// Injected by the owning view chain, wrapping `APIClient` at the site
     /// where it's available so view-layer files stay decoupled from `APIClient`.
@@ -36,6 +41,7 @@ final class AssistantMarkdownSegmentApplier {
     func clear() {
         textRevealer.reset()
         lastStreamingTextCharCount = 0
+        cachedStreamingTailNS = nil
 
         for task in highlightTasks.values {
             task.cancel()
@@ -62,6 +68,7 @@ final class AssistantMarkdownSegmentApplier {
         if !config.isStreaming {
             textRevealer.finishImmediately()
             lastStreamingTextCharCount = 0
+            cachedStreamingTailNS = nil
         }
 
         let signatures = segments.map(SegmentSignature.init)
@@ -256,6 +263,7 @@ final class AssistantMarkdownSegmentApplier {
         // Reset reveal state on structural change — new segments start fresh.
         textRevealer.reset()
         lastStreamingTextCharCount = 0
+        cachedStreamingTailNS = nil
 
         // Track character count for the new last text segment.
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
@@ -282,26 +290,71 @@ final class AssistantMarkdownSegmentApplier {
             case .text(let attributed):
                 if let textView = textViews[index] {
                     if !config.isStreaming || isStreamingTail {
-                        textView.isSelectable = config.textSelectionEnabled
+                        // Skip isSelectable during streaming when unchanged — UITextView
+                        // does internal state work on assignment even if value is identical.
+                        if !config.isStreaming || textView.isSelectable != config.textSelectionEnabled {
+                            textView.isSelectable = config.textSelectionEnabled
+                        }
 
-                        // FlatSegment.build uses UIKit attribute scope (UIFont/UIColor)
-                        // directly, so direct conversion produces correct NSAttributedString
-                        // attributes — no normalization pass needed.
-                        let attrText = NSAttributedString(attributed)
-                        textView.attributedText = attrText
-
-                        // Smooth reveal for the last (actively growing) text segment during streaming.
                         if isStreamingTail {
-                            let previousCount = lastStreamingTextCharCount
-                            let currentCount = attrText.length
-                            if currentCount > previousCount {
-                                textRevealer.reveal(
-                                    in: textView,
-                                    normalizedText: attrText,
-                                    previousVisibleCount: previousCount
-                                )
+                            // Disable data detectors during streaming to avoid O(n) text
+                            // scanning on every textStorage change. Data detection runs
+                            // against the ENTIRE text content on each modification, which
+                            // is increasingly expensive as the response grows. Detectors
+                            // are re-enabled when streaming ends (next non-streaming apply).
+                            if textView.dataDetectorTypes != [] {
+                                textView.dataDetectorTypes = []
                             }
-                            lastStreamingTextCharCount = currentCount
+                            // Streaming fast path: avoid full O(total) NSAttributedString
+                            // conversion on every tick. Build the full conversion only on
+                            // the first tick or when text shrinks; on subsequent ticks,
+                            // convert only the delta and extend the cached version.
+                            let oldLength = textView.textStorage.length
+
+                            if let cached = cachedStreamingTailNS, cached.length == oldLength {
+                                // Incremental path: convert only the delta
+                                let fullNS = NSAttributedString(attributed)
+                                let newLength = fullNS.length
+
+                                if newLength > oldLength {
+                                    let delta = fullNS.attributedSubstring(
+                                        from: NSRange(location: oldLength, length: newLength - oldLength)
+                                    )
+                                    textView.textStorage.beginEditing()
+                                    textView.textStorage.append(delta)
+                                    textView.textStorage.endEditing()
+                                    cached.append(delta)
+
+                                    let previousCount = lastStreamingTextCharCount
+                                    lastStreamingTextCharCount = cached.length
+                                    if cached.length > previousCount {
+                                        textRevealer.reveal(
+                                            in: textView,
+                                            normalizedText: cached,
+                                            previousVisibleCount: previousCount
+                                        )
+                                    }
+                                } else if newLength != oldLength {
+                                    textView.attributedText = fullNS
+                                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                                    lastStreamingTextCharCount = fullNS.length
+                                }
+                                // else: same length — no change, skip
+                            } else {
+                                // First tick or cache mismatch — full initialization
+                                let fullNS = NSAttributedString(attributed)
+                                textView.attributedText = fullNS
+                                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                                lastStreamingTextCharCount = fullNS.length
+                            }
+                        } else {
+                            // Non-streaming: re-enable data detectors if they were disabled
+                            // during streaming, then do full replacement.
+                            if textView.dataDetectorTypes != [.link] {
+                                textView.dataDetectorTypes = [.link]
+                            }
+                            let attrText = NSAttributedString(attributed)
+                            textView.attributedText = attrText
                         }
                     }
                 }

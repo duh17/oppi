@@ -23,6 +23,21 @@ private final class SafeSizingCell: UICollectionViewCell {
     private static let maxValidHeight: CGFloat = 10_000
     private static let fallbackHeight: CGFloat = 44
 
+    /// When true, `preferredLayoutAttributesFitting` uses a cached height on
+    /// alternate calls to avoid the O(total) `systemLayoutSizeFitting` text
+    /// layout cost on every 33ms streaming tick. The `StreamingTextRevealer`
+    /// hides unrevealed characters, so the visible content is always within
+    /// the previous height — clipping of hidden text is invisible.
+    var isStreamingAssistant = false
+    var cachedStreamingHeight: CGFloat?
+    /// Last time preferredLayoutAttributesFitting did a full computation.
+    /// Used to throttle self-sizing during streaming — recompute every ~100ms
+    /// instead of every 33ms tick. The StreamingTextRevealer hides unrevealed
+    /// characters, so the visible content fits within the cached height.
+    var lastFullSizeComputeNs: UInt64 = 0
+    /// Minimum interval between full self-sizing computations during streaming.
+    private static let streamingSizeThrottleNs: UInt64 = 100_000_000 // 100ms
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         // Cell-level clipping: UIKit resets contentView.clipsToBounds when
@@ -54,6 +69,19 @@ private final class SafeSizingCell: UICollectionViewCell {
             return layoutAttributes
         }
 
+        // Streaming throttle: recompute self-sizing at most once per 100ms
+        // instead of every 33ms tick. The StreamingTextRevealer hides
+        // unrevealed text with .foregroundColor = .clear, so visible content
+        // fits within the cached height between recomputations. This reduces
+        // text layout cost from ~10ms/tick to ~10ms/100ms (3.3ms/tick average).
+        if isStreamingAssistant, let cached = cachedStreamingHeight {
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now &- lastFullSizeComputeNs < Self.streamingSizeThrottleNs {
+                attributes.size = CGSize(width: attributes.size.width, height: cached)
+                return attributes
+            }
+        }
+
         let targetSize = CGSize(
             width: attributes.size.width,
             height: UIView.layoutFittingCompressedSize.height
@@ -76,6 +104,11 @@ private final class SafeSizingCell: UICollectionViewCell {
             height = Self.fallbackHeight
         }
 
+        if isStreamingAssistant {
+            cachedStreamingHeight = height
+            lastFullSizeComputeNs = DispatchTime.now().uptimeNanoseconds
+        }
+
         attributes.size = CGSize(width: width, height: height)
         return attributes
     }
@@ -89,6 +122,14 @@ extension ChatTimelineCollectionHost.Controller {
         collectionView.delegate = self
 
         let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+            // Set streaming flag for self-sizing throttle. When streaming,
+            // the cell skips expensive auto layout on alternate ticks.
+            let isStreaming = self?.streamingAssistantID == itemID
+            cell.isStreamingAssistant = isStreaming
+            if !isStreaming {
+                cell.cachedStreamingHeight = nil
+                cell.lastFullSizeComputeNs = 0
+            }
             self?.configureNativeCell(
                 cell,
                 itemID: itemID,
