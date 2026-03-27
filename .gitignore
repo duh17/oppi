@@ -19,6 +19,7 @@ server/scripts/*
 !server/scripts/telemetry-review.ts
 clients/apple/scripts/
 !clients/apple/scripts/testflight.sh
+!clients/apple/scripts/release-mac.sh
 !server/docker/entrypoint.sh
 
 # CI / internal tooling

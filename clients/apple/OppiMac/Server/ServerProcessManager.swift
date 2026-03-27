@@ -76,11 +76,21 @@ final class ServerProcessManager {
     ///
     /// Search order:
     /// 1. `OPPI_SERVER_PATH` environment variable
-    /// 2. Well-known locations (repo-local, homebrew npm global)
+    /// 2. App bundle (release builds copy server runtime into Resources/)
+    /// 3. Well-known dev paths (repo-local workspaces)
+    /// 4. Homebrew npm global
     static func resolveServerCLIPath() -> String? {
         if let envPath = ProcessInfo.processInfo.environment["OPPI_SERVER_PATH"],
            FileManager.default.fileExists(atPath: envPath) {
             return envPath
+        }
+
+        // App bundle — release builds embed the server runtime in Resources/
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundledPath = (resourcePath as NSString).appendingPathComponent("server/dist/cli.js")
+            if FileManager.default.fileExists(atPath: bundledPath) {
+                return bundledPath
+            }
         }
 
         // Well-known locations for dogfood development

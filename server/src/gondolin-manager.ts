@@ -67,7 +67,7 @@ export async function defaultVmFactory(
   if (options.readonlyMounts) {
     for (const hostPath of options.readonlyMounts) {
       // Mount at the same absolute path inside the VM so system prompt
-      // references (e.g. /Users/chenda/.pi/agent/skills/...) resolve.
+      // references (e.g. /Users/me/.pi/agent/skills/...) resolve.
       mounts[hostPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
     }
   }
