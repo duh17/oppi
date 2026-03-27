@@ -23,7 +23,7 @@ There are many clankers and this is mine. They wrote all the code and I didn't r
 3. Follow the setup wizard (checks prerequisites, requests permissions, initializes the server)
 4. Scan the QR code from the Oppi iOS app
 
-The Mac app manages the server process automatically — start, stop, restart, and crash recovery — with no terminal needed. For Linux, headless servers, or manual control, use the [CLI](#install) instead.
+The Mac app manages the server process automatically — start, stop, restart, and crash recovery — with no terminal needed. It also shows a stats dashboard with session counts, costs, and model breakdowns. For Linux, headless servers, or manual control, use the [CLI](#install) instead.
 
 ---
 
@@ -80,6 +80,12 @@ npx oppi serve --host my-machine.local
 **Control models.** Switch LLM provider and model mid-session. Adjust thinking level. Queue steering messages while the agent is working, or follow-up messages for after it finishes.
 
 **Run multi-agent.** Agents can spawn child sessions. You see the full tree from your phone — check status, inspect traces, drill into individual turns.
+
+**Browse workspace files.** View files the agent has read or written. Fuzzy search, PDF/video/audio preview, rendered Org mode, LaTeX math, and Mermaid diagrams with pinch-to-zoom.
+
+**View server stats.** Session counts, cost breakdowns by model and workspace, daily usage trends — all from the iOS app's Server tab.
+
+**Autoresearch.** Agents can run autonomous experiment loops — edit code, benchmark, keep or revert, repeat. Results log to the timeline as collapsible experiment rows.
 
 **Connect multiple servers.** The iOS app supports multiple oppi-server instances. Switch between them or receive permission notifications from all at once.
 
