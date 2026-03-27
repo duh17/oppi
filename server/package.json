@@ -47,17 +47,17 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
-    "telemetry:review": "bun scripts/telemetry-review.mjs",
-    "telemetry:review:gate": "bun scripts/telemetry-review.mjs --days 3 --gate",
+    "telemetry:review": "bun scripts/telemetry-review.ts",
+    "telemetry:review:gate": "bun scripts/telemetry-review.ts --days 3 --gate",
     "dead-code": "knip",
-    "test:gate:pr-fast": "bun scripts/testing-gates.mjs pr-fast",
-    "test:gate:nightly-deep": "bun scripts/testing-gates.mjs nightly-deep",
+    "test:gate:pr-fast": "bun scripts/testing-gates.ts pr-fast",
+    "test:gate:nightly-deep": "bun scripts/testing-gates.ts nightly-deep",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
 
-    "check": "tsc --noEmit && eslint src/ && knip && prettier --check src/"
+    "check": "bash -c 'pids=(); tsc --noEmit & pids+=($!); eslint src/ & pids+=($!); knip & pids+=($!); prettier --check src/ & pids+=($!); rc=0; for p in \"${pids[@]}\"; do wait \"$p\" || rc=1; done; exit $rc'"
   },
   "dependencies": {
     "@earendil-works/gondolin": "^0.7.0",
