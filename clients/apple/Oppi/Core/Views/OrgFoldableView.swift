@@ -158,10 +158,15 @@ private struct OrgSectionView: View {
         }
         var inlines = [MarkdownInline]()
 
-        // Fold indicator as part of the heading text
+        // Level-specific bullet (org-superstar style: ◉ ○ ✸ ✿)
+        // followed by fold state indicator
+        let bullets = ["◉", "○", "✸", "✿", "◆", "▸"]
+        let bullet = bullets[min(level - 1, bullets.count - 1)]
         if section.hasContent {
-            let indicator = isExpanded ? "▾ " : "▸ "
-            inlines.append(.text(indicator))
+            let indicator = isExpanded ? "▾" : "▸"
+            inlines.append(.text("\(bullet) \(indicator) "))
+        } else {
+            inlines.append(.text("\(bullet) "))
         }
 
         if let kw = keyword {
