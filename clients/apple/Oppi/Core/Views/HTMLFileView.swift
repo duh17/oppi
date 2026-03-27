@@ -160,21 +160,26 @@ struct HTMLFileView: View {
                 .ignoresSafeArea(edges: .bottom)
             }
 
-            // Floating toggle
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { showSource.toggle() }
-            } label: {
-                Label(
-                    showSource ? "Preview" : "Source",
-                    systemImage: showSource ? "eye" : "curlybraces"
-                )
-                .font(.caption2.bold())
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
+            // Floating toolbar
+            HStack(spacing: 8) {
+                FileShareButton(content: .html(content), style: .capsule)
+                    .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showSource.toggle() }
+                } label: {
+                    Label(
+                        showSource ? "Preview" : "Source",
+                        systemImage: showSource ? "eye" : "curlybraces"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .padding(.trailing, 12)
             .padding(.top, 8)
         }

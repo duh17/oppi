@@ -9,24 +9,29 @@ struct FileShareServiceTests {
 
     // MARK: - Format Selection
 
-    @Test func defaultFormatForMermaidIsImage() {
+    @Test func defaultFormatForMermaidIsPDF() {
         let format = FileShareService.defaultFormat(for: .mermaid("graph TD; A-->B"))
-        #expect(format == .image)
+        #expect(format == .pdf)
     }
 
-    @Test func defaultFormatForLatexIsImage() {
+    @Test func defaultFormatForLatexIsPDF() {
         let format = FileShareService.defaultFormat(for: .latex("E = mc^2"))
-        #expect(format == .image)
+        #expect(format == .pdf)
     }
 
-    @Test func defaultFormatForMarkdownIsImage() {
+    @Test func defaultFormatForMarkdownIsPDF() {
         let format = FileShareService.defaultFormat(for: .markdown("# Hello"))
-        #expect(format == .image)
+        #expect(format == .pdf)
     }
 
-    @Test func defaultFormatForCodeIsImage() {
+    @Test func defaultFormatForCodeIsPDF() {
         let format = FileShareService.defaultFormat(for: .code("let x = 1", language: "swift"))
-        #expect(format == .image)
+        #expect(format == .pdf)
+    }
+
+    @Test func defaultFormatForHTMLIsPDF() {
+        let format = FileShareService.defaultFormat(for: .html("<h1>Hello</h1>"))
+        #expect(format == .pdf)
     }
 
     @Test func defaultFormatForPlainTextIsSource() {

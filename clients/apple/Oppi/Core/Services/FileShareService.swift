@@ -30,7 +30,7 @@ enum FileShareService {
     }
 
     /// Output format for sharing.
-    enum ExportFormat: Equatable {
+    enum ExportFormat: Equatable, Hashable {
         case image   // PNG via UIActivityViewController
         case pdf     // PDF document
         case source  // Raw source file
@@ -60,7 +60,7 @@ enum FileShareService {
     static func defaultFormat(for content: ShareableContent) -> ExportFormat {
         switch content {
         case .mermaid, .latex, .markdown, .orgMode, .code, .html, .json:
-            return .image
+            return .pdf
         case .plainText:
             return .source
         case .imageData:
@@ -74,9 +74,9 @@ enum FileShareService {
     static func availableFormats(for content: ShareableContent) -> [ExportFormat] {
         switch content {
         case .mermaid, .latex:
-            return [.image, .pdf, .source]
+            return [.pdf, .image, .source]
         case .markdown, .orgMode, .code, .html, .json:
-            return [.image, .pdf, .source]
+            return [.pdf, .image, .source]
         case .plainText:
             return [.source]
         case .imageData:

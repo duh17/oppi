@@ -116,31 +116,56 @@ struct MarkdownFileView: View {
     }
 
     private var documentBody: some View {
-        Group {
-            if showRaw {
-                NativeCodeBodyView(
-                    content: content,
-                    language: "markdown",
-                    startLine: 1,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: "markdown")
-                        : nil
-                )
-            } else {
-                ScrollView(.vertical) {
-                    MarkdownContentViewWrapper(
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if showRaw {
+                    NativeCodeBodyView(
                         content: content,
-                        plainTextFallbackThreshold: nil,
+                        language: "markdown",
+                        startLine: 1,
                         selectedTextSourceContext: piRouter != nil
-                            ? fileContentSourceContext(filePath: filePath, surface: .fullScreenMarkdown)
+                            ? fileContentSourceContext(filePath: filePath, language: "markdown")
                             : nil
                     )
-                    .allowsFullScreenExpansion(false)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ScrollView(.vertical) {
+                        MarkdownContentViewWrapper(
+                            content: content,
+                            plainTextFallbackThreshold: nil,
+                            selectedTextSourceContext: piRouter != nil
+                                ? fileContentSourceContext(filePath: filePath, surface: .fullScreenMarkdown)
+                                : nil
+                        )
+                        .allowsFullScreenExpansion(false)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
+
+            // Floating toolbar
+            HStack(spacing: 8) {
+                FileShareButton(content: .markdown(content), style: .capsule)
+                    .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showRaw.toggle() }
+                } label: {
+                    Label(
+                        showRaw ? "Reader" : "Source",
+                        systemImage: showRaw ? "doc.richtext" : "curlybraces"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 12)
+            .padding(.top, 8)
         }
     }
 }
