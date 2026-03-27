@@ -150,7 +150,7 @@ private struct MermaidRenderedView: View {
 
     var body: some View {
         let (size, draw) = renderResult
-        GraphicalRendererSwiftUIView(size: size, drawBlock: draw)
-            .frame(width: max(size.width, 1), height: max(size.height, 1))
+        ZoomableGraphicalSwiftUIView(size: size, drawBlock: draw)
+            .frame(maxWidth: .infinity, minHeight: min(size.height, 400), maxHeight: max(size.height, 400))
     }
 }

@@ -30,6 +30,11 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let theme: RenderTheme
         let isPlaceholder: Bool
         let placeholderText: String?
+        /// Custom draw block for non-flowchart diagram types (sequence, gantt, mindmap).
+        /// When set, `draw()` calls this instead of the flowchart drawing logic.
+        let customDraw: (@Sendable (CGContext, CGPoint) -> Void)?
+        /// Total size for custom-drawn diagrams.
+        let customSize: CGSize?
     }
 
     typealias LayoutResult = FlowchartLayout
@@ -41,11 +46,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         switch document {
         case .flowchart(let flowchart):
             return layoutFlowchart(flowchart, configuration: configuration)
-        case .sequence:
-            return placeholderLayout(
-                text: "Sequence diagrams not yet supported",
-                configuration: configuration
-            )
+        case .sequence(let diagram):
+            return MermaidSequenceRenderer.layout(diagram, configuration: configuration)
+        case .gantt(let diagram):
+            return MermaidGanttRenderer.layout(diagram, configuration: configuration)
+        case .mindmap(let diagram):
+            return MermaidMindmapRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return placeholderLayout(
                 text: "Unsupported diagram type: \(type)",
@@ -59,6 +65,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         in ctx: CGContext,
         at origin: CGPoint
     ) {
+        if let customDraw = layout.customDraw {
+            customDraw(ctx, origin)
+            return
+        }
         if layout.isPlaceholder {
             drawPlaceholder(layout, in: ctx, at: origin)
             return
@@ -67,6 +77,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     }
 
     nonisolated func boundingBox(_ layout: FlowchartLayout) -> CGSize {
+        if let size = layout.customSize {
+            return size
+        }
         if layout.isPlaceholder {
             return CGSize(width: 300, height: 40)
         }
@@ -154,7 +167,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             fontSize: fontSize,
             theme: configuration.theme,
             isPlaceholder: false,
-            placeholderText: nil
+            placeholderText: nil,
+            customDraw: nil,
+            customSize: nil
         )
     }
 
@@ -204,7 +219,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
     // MARK: - Placeholder
 
-    private func placeholderLayout(
+    func placeholderLayout(
         text: String,
         configuration: RenderConfiguration
     ) -> FlowchartLayout {
@@ -220,7 +235,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             fontSize: configuration.fontSize,
             theme: configuration.theme,
             isPlaceholder: true,
-            placeholderText: text
+            placeholderText: text,
+            customDraw: nil,
+            customSize: nil
         )
     }
 

@@ -6,7 +6,73 @@ import Foundation
 enum MermaidDiagram: Equatable, Sendable {
     case flowchart(FlowchartDiagram)
     case sequence(SequenceDiagram)
+    case gantt(GanttDiagram)
+    case mindmap(MindmapDiagram)
     case unsupported(type: String)
+}
+
+// MARK: - Gantt chart types
+
+struct GanttDiagram: Equatable, Sendable {
+    let title: String?
+    let dateFormat: String
+    let sections: [GanttSection]
+    let axisFormat: String?
+    let excludes: [String]
+
+    static let empty = Self(title: nil, dateFormat: "YYYY-MM-DD", sections: [], axisFormat: nil, excludes: [])
+}
+
+struct GanttSection: Equatable, Sendable {
+    let name: String
+    let tasks: [GanttTask]
+}
+
+struct GanttTask: Equatable, Sendable {
+    let name: String
+    let id: String?
+    let status: GanttTaskStatus
+    let startDate: String?
+    let endDate: String?
+    let duration: String?
+    let afterId: String?
+}
+
+enum GanttTaskStatus: Equatable, Sendable {
+    case normal
+    case active
+    case done
+    case critical
+    case milestone
+}
+
+// MARK: - Mindmap types
+
+struct MindmapDiagram: Equatable, Sendable {
+    let root: MindmapNode
+
+    static let empty = Self(root: MindmapNode(label: "", shape: .default, children: []))
+}
+
+struct MindmapNode: Equatable, Sendable {
+    let label: String
+    let shape: MindmapNodeShape
+    let children: [MindmapNode]
+}
+
+enum MindmapNodeShape: Equatable, Sendable {
+    /// Default (root gets rounded rect, children get plain)
+    case `default`
+    /// `[text]` — square
+    case square
+    /// `(text)` — rounded
+    case rounded
+    /// `((text))` — circle
+    case circle
+    /// `))text((` — bang (cloud)
+    case bang
+    /// `)text(` — hexagon
+    case hexagon
 }
 
 // MARK: - Flowchart types

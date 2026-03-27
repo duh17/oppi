@@ -59,12 +59,28 @@ struct MermaidParserConformanceTests {
     }
 
     @Test func detectsUnsupportedType() {
-        let result = parser.parse("gantt\n    title A Gantt")
+        let result = parser.parse("journey\n    title A Journey")
         guard case .unsupported(let type) = result else {
             Issue.record("Expected unsupported diagram type")
             return
         }
-        #expect(type == "gantt")
+        #expect(type == "journey")
+    }
+
+    @Test func parsesGanttType() {
+        let result = parser.parse("gantt\n    title Test")
+        guard case .gantt = result else {
+            Issue.record("Expected gantt diagram")
+            return
+        }
+    }
+
+    @Test func parsesMindmapType() {
+        let result = parser.parse("mindmap\n  root")
+        guard case .mindmap = result else {
+            Issue.record("Expected mindmap diagram")
+            return
+        }
     }
 
     @Test func emptyInputReturnsUnsupported() {

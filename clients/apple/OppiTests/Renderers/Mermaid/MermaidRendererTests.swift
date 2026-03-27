@@ -212,18 +212,19 @@ struct MermaidRendererTests {
 
     // MARK: - Sequence diagram placeholder
 
-    @Test func sequenceDiagramPlaceholder() {
+    @Test func sequenceDiagramRendersWithoutCrash() {
         let diagram = parser.parse("sequenceDiagram\n    A->>B: Hello")
         let layout = renderer.layout(diagram, configuration: config)
-        #expect(layout.isPlaceholder)
-        #expect(layout.placeholderText?.contains("Sequence") == true)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
     }
 
     @Test func unsupportedDiagramPlaceholder() {
-        let diagram = parser.parse("gantt\n    title Test")
+        let diagram = parser.parse("journey\n    title Test")
         let layout = renderer.layout(diagram, configuration: config)
         #expect(layout.isPlaceholder)
-        #expect(layout.placeholderText?.contains("gantt") == true)
+        #expect(layout.placeholderText?.contains("journey") == true)
     }
 
     // MARK: - Render with complex diagram

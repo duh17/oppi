@@ -29,6 +29,14 @@ struct MermaidParser: DocumentParser, Sendable {
             let body = Array(stripped[(firstIndex + 1)...])
             let diagram = parseSequence(lines: body)
             return .sequence(diagram)
+        case .gantt:
+            let body = Array(stripped[(firstIndex + 1)...])
+            let diagram = MermaidGanttParser.parse(lines: body)
+            return .gantt(diagram)
+        case .mindmap:
+            let body = Array(stripped[(firstIndex + 1)...])
+            let diagram = MermaidMindmapParser.parse(lines: body)
+            return .mindmap(diagram)
         case .unknown(let name):
             return .unsupported(type: name)
         }
@@ -39,6 +47,8 @@ struct MermaidParser: DocumentParser, Sendable {
     private enum DiagramType {
         case flowchart
         case sequence
+        case gantt
+        case mindmap
         case unknown(String)
     }
 
@@ -62,6 +72,10 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .flowchart, direction: dir)
         case "sequencediagram":
             return Header(type: .sequence, direction: nil)
+        case "gantt":
+            return Header(type: .gantt, direction: nil)
+        case "mindmap":
+            return Header(type: .mindmap, direction: nil)
         default:
             return Header(type: .unknown(tokens.first ?? keyword), direction: nil)
         }

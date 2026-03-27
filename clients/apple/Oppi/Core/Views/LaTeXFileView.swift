@@ -170,7 +170,7 @@ private struct LaTeXExpressionView: View {
 
     var body: some View {
         let (size, draw) = renderResult
-        GraphicalRendererSwiftUIView(size: size, drawBlock: draw)
-            .frame(width: max(size.width, 1), height: max(size.height, 1))
+        ZoomableGraphicalSwiftUIView(size: size, drawBlock: draw)
+            .frame(maxWidth: .infinity, minHeight: max(size.height, 30))
     }
 }

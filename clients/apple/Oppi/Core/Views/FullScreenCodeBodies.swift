@@ -836,7 +836,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         case .latex(let text):
             contentView = makeLatexView(text: text)
         case .mermaid(let text):
-            contentView = makeGraphicalView(
+            contentView = makeZoomableGraphicalView(
                 parser: MermaidParser(), renderer: MermaidFlowchartRenderer(),
                 text: text, fontSize: 14
             )
@@ -914,7 +914,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         return mdView
     }
 
-    private func makeGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(
+    private func makeZoomableGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(
         parser: P, renderer: R, text: String, fontSize: CGFloat
     ) -> UIView where P.Document == R.Document {
         let document = parser.parse(text)
@@ -922,12 +922,8 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         let layoutResult = renderer.layout(document, configuration: config)
         let size = renderer.boundingBox(layoutResult)
 
-        let drawView = GraphicalRendererUIView()
-        drawView.configure(size: size) { ctx, origin in
+        return ZoomableGraphicalView(size: size) { ctx, origin in
             renderer.draw(layoutResult, in: ctx, at: origin)
         }
-        drawView.widthAnchor.constraint(equalToConstant: max(size.width, 1)).isActive = true
-        drawView.heightAnchor.constraint(equalToConstant: max(size.height, 1)).isActive = true
-        return drawView
     }
 }
