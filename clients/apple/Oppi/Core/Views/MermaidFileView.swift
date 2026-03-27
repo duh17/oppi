@@ -78,20 +78,20 @@ struct MermaidFileView: View {
             .padding(.vertical, 6)
             .background(Color.themeBgHighlight)
 
-            ScrollView([.horizontal, .vertical]) {
-                Group {
-                    if showRaw {
-                        Text(content)
-                            .font(.appCaptionMono)
-                            .foregroundStyle(.themeFg)
-                    } else {
-                        MermaidRenderedView(content: content)
-                    }
+            if showRaw {
+                ScrollView([.horizontal, .vertical]) {
+                    Text(content)
+                        .font(.appCaptionMono)
+                        .foregroundStyle(.themeFg)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: presentation.viewportMaxHeight)
+            } else {
+                MermaidRenderedView(content: content)
+                    .padding(10)
+                    .frame(maxHeight: presentation.viewportMaxHeight)
             }
-            .frame(maxHeight: presentation.viewportMaxHeight)
         }
         .codeBlockChrome()
         .contextMenu {
@@ -120,11 +120,9 @@ struct MermaidFileView: View {
                         : nil
                 )
             } else {
-                ScrollView([.horizontal, .vertical]) {
-                    MermaidRenderedView(content: content)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                }
+                MermaidRenderedView(content: content)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
             }
         }
     }

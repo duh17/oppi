@@ -85,6 +85,19 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         ])
     }
 
+    /// Update content size and draw block after initial creation.
+    ///
+    /// Called from `UIViewRepresentable.updateUIView` when SwiftUI
+    /// detects property changes. Adjusts constraints and triggers redraw.
+    func update(size: CGSize, draw: @escaping (CGContext, CGPoint) -> Void) {
+        contentView.configure(size: size, draw: draw)
+        let newWidth = max(size.width, 1)
+        let newHeight = max(size.height, 1)
+        contentWidthConstraint?.constant = newWidth
+        contentHeightConstraint?.constant = newHeight
+        setNeedsLayout()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         fitContentIfNeeded()
@@ -133,6 +146,6 @@ struct ZoomableGraphicalSwiftUIView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ZoomableGraphicalView, context: Context) {
-        // Content is set at init time; no live updates needed.
+        view.update(size: size, draw: drawBlock)
     }
 }
