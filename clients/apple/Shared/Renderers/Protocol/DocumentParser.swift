@@ -1,6 +1,6 @@
 /// Protocol for spec-conformant document parsers.
 ///
-/// Every notebook renderer starts with a parser that converts raw text into
+/// Every document renderer starts with a parser that converts raw text into
 /// a typed AST. Parsers are `nonisolated` and `Sendable` so they can run
 /// off the main thread via `Task.detached` — matching the existing
 /// `parseCommonMark` pattern.

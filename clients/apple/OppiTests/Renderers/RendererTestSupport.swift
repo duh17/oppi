@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Shared test infrastructure for notebook renderer conformance and performance tests.
+/// Shared test infrastructure for document renderer conformance and performance tests.
 ///
 /// Provides:
 /// - `medianNs()`: timing helper matching `MarkdownParsePerfBench` pattern

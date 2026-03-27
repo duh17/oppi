@@ -15,7 +15,7 @@ private typealias PlatformColor = NSColor
 /// Renders an org mode AST (`[OrgBlock]`) into a styled `NSAttributedString`.
 ///
 /// Conforms to `AttributedStringDocumentRenderer` so it plugs into the
-/// notebook render pipeline alongside the markdown renderer.
+/// document render pipeline alongside the markdown renderer.
 ///
 /// Platform-agnostic: uses `#if canImport(UIKit/AppKit)` for font/color types.
 /// Theme colors arrive as `CGColor` via `RenderTheme` and are bridged to

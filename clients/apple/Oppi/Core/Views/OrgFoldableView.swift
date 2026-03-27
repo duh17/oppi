@@ -211,17 +211,22 @@ private struct OrgSectionView: View {
 
     @ViewBuilder
     private var sectionBody: some View {
-        // Body blocks rendered through markdown
-        if !section.bodyBlocks.isEmpty {
-            let mdBlocks = OrgToMarkdownConverter.convert(section.bodyBlocks)
-            let md = MarkdownBlockSerializer.serialize(mdBlocks)
-            if !md.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                MarkdownContentViewWrapper(
-                    content: md,
-                    textSelectionEnabled: true,
-                    plainTextFallbackThreshold: nil
-                )
-                .padding(.leading, 16)
+        // Split body blocks: drawers get special UI, everything else goes through markdown.
+        let groups = groupBodyBlocks(section.bodyBlocks)
+        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+            switch group {
+            case .drawer(let name, let properties):
+                OrgDrawerView(name: name, properties: properties)
+                    .padding(.leading, 16)
+            case .markdown(let md):
+                if !md.isEmpty {
+                    MarkdownContentViewWrapper(
+                        content: md,
+                        textSelectionEnabled: true,
+                        plainTextFallbackThreshold: nil
+                    )
+                    .padding(.leading, 16)
+                }
             }
         }
 
@@ -229,6 +234,83 @@ private struct OrgSectionView: View {
         ForEach(section.children) { child in
             OrgSectionView(section: child, initialFoldState: initialFoldState, depth: depth + 1)
                 .padding(.leading, 12)
+        }
+    }
+
+    private enum BodyGroup {
+        case drawer(name: String, properties: [OrgDrawerProperty])
+        case markdown(String)
+    }
+
+    private func groupBodyBlocks(_ blocks: [OrgBlock]) -> [BodyGroup] {
+        var groups: [BodyGroup] = []
+        var pending: [OrgBlock] = []
+
+        func flushPending() {
+            guard !pending.isEmpty else { return }
+            let mdBlocks = OrgToMarkdownConverter.convert(pending)
+            let md = MarkdownBlockSerializer.serialize(mdBlocks)
+            let trimmed = md.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                groups.append(.markdown(trimmed))
+            }
+            pending = []
+        }
+
+        for block in blocks {
+            if case .drawer(let name, let props) = block {
+                flushPending()
+                groups.append(.drawer(name: name, properties: props))
+            } else {
+                pending.append(block)
+            }
+        }
+        flushPending()
+        return groups
+    }
+}
+
+// MARK: - Collapsible Drawer View
+
+private struct OrgDrawerView: View {
+    let name: String
+    let properties: [OrgDrawerProperty]
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .medium))
+                    Text(name)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(.themeComment)
+                .padding(.vertical, 3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(properties.enumerated()), id: \.offset) { _, prop in
+                        HStack(spacing: 0) {
+                            Text(":\(prop.key):")
+                                .foregroundStyle(.themePurple)
+                            Text(" \(prop.value)")
+                                .foregroundStyle(.themeFgDim)
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                    }
+                }
+                .padding(.leading, 14)
+                .padding(.bottom, 4)
+            }
         }
     }
 }

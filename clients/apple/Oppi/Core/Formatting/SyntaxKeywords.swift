@@ -137,7 +137,7 @@ let graphqlKeywords: Set<String> = [
     "repeatable",
 ]
 
-// MARK: - Notebook Renderer Languages
+// MARK: - Document Renderer Languages
 
 let latexKeywords: Set<String> = [
     "begin", "end", "frac", "sqrt", "sum", "prod", "int",

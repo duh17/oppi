@@ -69,7 +69,7 @@ struct FileContentView: View {
         case .plain:
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
 
-        // Notebook renderers — source view until native renderers land
+        // Document renderers — source view until native renderers land
         case .latex:
             LaTeXFileView(content: content, filePath: filePath, presentation: presentation)
         case .orgMode:

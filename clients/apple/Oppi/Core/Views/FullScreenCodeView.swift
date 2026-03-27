@@ -198,7 +198,7 @@ indirect enum FullScreenCodeContent {
     case terminal(content: String, command: String?, stream: TerminalTraceStream? = nil)
     case liveSource(snapshot: SourceTraceStream.Snapshot, stream: SourceTraceStream)
 
-    // Notebook renderers
+    // Document renderers
     case latex(content: String, filePath: String?)
     case orgMode(content: String, filePath: String?)
     case mermaid(content: String, filePath: String?)

@@ -269,7 +269,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .liveSource(let snapshot, _):
             return makeBodyView(for: bodyContent(for: snapshot), palette: palette)
 
-        // Notebook renderers — use rendered views with source toggle
+        // Document renderers — use rendered views with source toggle
         case .latex(let text, let filePath):
             return NativeFullScreenRenderedDocumentBody(
                 content: .latex(text),
@@ -393,7 +393,7 @@ final class FullScreenCodeViewController: UIViewController {
                     .joined(separator: "\n")
                 return .html(content: fullNewText, filePath: filePath)
             }
-            // Notebook types: toggle to source view
+            // Document types: toggle to source view
             if case .latex(let text, let filePath) = content {
                 return .code(content: text, language: "latex", filePath: filePath, startLine: 1)
             }

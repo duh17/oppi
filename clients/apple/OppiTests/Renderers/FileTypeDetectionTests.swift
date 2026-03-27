@@ -1,8 +1,8 @@
 import Testing
 @testable import Oppi
 
-/// Tests FileType detection for notebook renderer file extensions.
-@Suite("FileType Detection — Notebook Renderers")
+/// Tests FileType detection for document renderer file extensions.
+@Suite("FileType Detection — Document Renderers")
 struct FileTypeDetectionTests {
 
     // MARK: - LaTeX

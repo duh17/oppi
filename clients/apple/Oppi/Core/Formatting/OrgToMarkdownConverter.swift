@@ -79,9 +79,21 @@ enum OrgToMarkdownConverter {
                 result.append(.blockQuote(converted))
 
             case .keyword(let key, let value):
-                // Render keywords as dim text.
-                let text = "#+\(key): \(value)"
-                result.append(.paragraph([.code(text)]))
+                let upper = key.uppercased()
+                if upper == "TITLE" {
+                    // Render title as a level-1 heading.
+                    result.append(.heading(level: 1, inlines: [.text(value)]))
+                } else if upper == "STARTUP" || upper == "OPTIONS" {
+                    // Skip directives that control rendering behavior.
+                    break
+                } else if upper == "AUTHOR" || upper == "DATE" || upper == "EMAIL" {
+                    // Render metadata as dim paragraph.
+                    result.append(.paragraph([.emphasis([.text("\(key): \(value)")])]))
+                } else {
+                    // Other keywords as inline code.
+                    let text = "#+\(key): \(value)"
+                    result.append(.paragraph([.code(text)]))
+                }
 
             case .horizontalRule:
                 result.append(.thematicBreak)

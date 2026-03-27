@@ -15,7 +15,7 @@ enum FileType: Equatable {
     case binary
     case plain
 
-    // Notebook renderers — native rendering from spec
+    // Document renderers — native rendering from spec
     case latex
     case orgMode
     case mermaid
@@ -66,7 +66,7 @@ enum FileType: Equatable {
         }
 
         switch ext {
-        // Notebook renderers
+        // Document renderers
         case "tex", "latex":
             return .latex
         case "org":
