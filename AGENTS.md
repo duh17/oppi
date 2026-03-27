@@ -18,15 +18,30 @@ cd server && npm test
 cd server && npm run check      # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 
-# Apple
+# Apple — project generation
 cd clients/apple && xcodegen generate
-xcodebuild -project clients/apple/Oppi.xcodeproj -scheme Oppi build
-xcodebuild -project clients/apple/Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
+
+# Apple — builds MUST use sim-pool (isolates DerivedData per build slot)
+cd clients/apple && bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh \
+  run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+cd clients/apple && bash ~/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh \
+  run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests
 ```
 
 The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.
 
 After code changes: run `npm run check` (server) and/or build + test (Apple). Fix all errors before committing.
+
+## Parallel Build Safety
+
+Multiple agents may build concurrently. Xcode's build system uses a SQLite database that locks when two builds share the same DerivedData path. This causes `unable to attach DB: database is locked` errors.
+
+Rules:
+1. **Always use `sim-pool.sh`** for simulator builds — it auto-injects isolated `-derivedDataPath` per slot
+2. If sim-pool isn't available, pass `-derivedDataPath /tmp/oppi-dd-$$` to avoid the shared default path
+3. **Never use bare `xcodebuild`** without one of the above — the default DerivedData path will collide with Xcode or other agents
+4. Do not pipe sim-pool output through `grep`/`tail`/`head` — it prints a self-contained summary with the log path
+5. To investigate build failures, use `read(path=...)` on the log file printed in the summary
 
 ## Complexity Guardrails
 
