@@ -132,10 +132,10 @@ npx oppi token rotate            # rotate owner bearer token
 
 ## Built-in extensions
 
-The server injects these extensions into every agent session:
+The server ships two extensions, injected into every agent session by default:
 
-- **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards. Part of the pi SDK, intercepted by Oppi for native mobile rendering.
-- **spawn_agent** — spawn child sessions, inspect their traces, send messages, stop or resume them. Supports detached mode (independent session, no parent link) and synchronous wait-for-result.
+- **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards and routes answers back.
+- **spawn_agent** — multi-agent orchestration. Spawn child sessions, inspect traces, send messages mid-turn, stop or resume agents. See [docs/sub-agents.md](docs/sub-agents.md).
 
 Extensions are configurable per workspace via the `extensions` field in workspace settings.
 
