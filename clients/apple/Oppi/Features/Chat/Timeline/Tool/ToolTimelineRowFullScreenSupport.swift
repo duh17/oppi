@@ -89,6 +89,19 @@ enum ToolTimelineRowFullScreenSupport {
             if language == .html {
                 return .html(content: copyText, filePath: filePath)
             }
+            // Document renderers get native rendering in full-screen
+            if language == .orgMode {
+                return .orgMode(content: copyText, filePath: filePath)
+            }
+            if language == .latex {
+                return .latex(content: copyText, filePath: filePath)
+            }
+            if language == .mermaid {
+                return .mermaid(content: copyText, filePath: filePath)
+            }
+            if language == .dot {
+                return .graphviz(content: copyText, filePath: filePath)
+            }
             return .code(
                 content: copyText,
                 language: language?.displayName,
