@@ -115,9 +115,13 @@ private struct OrgSectionView: View {
     }
 
     var body: some View {
-        // Zeroth section — just render body, no heading
+        // Zeroth section — just render body, no heading. Extra bottom spacing
+        // separates the title/metadata from the first heading.
         if section.heading == nil {
-            sectionBody
+            VStack(alignment: .leading, spacing: 0) {
+                sectionBody
+            }
+            .padding(.bottom, 12)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 headingRow
@@ -160,9 +164,9 @@ private struct OrgSectionView: View {
         var inlines = [MarkdownInline]()
 
         // Level-specific bullets — filled = expanded, outline = collapsed.
-        // The bullet IS the fold indicator, no separate chevron needed.
-        let expandedBullets = ["◆", "●", "■", "▲", "◆", "●"]
-        let collapsedBullets = ["◇", "○", "□", "△", "◇", "○"]
+        // Small geometric shapes that don't overpower the heading text.
+        let expandedBullets = ["◈", "•", "‣", "◦", "·", "·"]
+        let collapsedBullets = ["◇", "◦", "▹", "·", "·", "·"]
         let idx = min(level - 1, expandedBullets.count - 1)
         let bullet = (section.hasContent && !isExpanded)
             ? collapsedBullets[idx]
