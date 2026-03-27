@@ -60,7 +60,11 @@ enum FileShareService {
     /// Smart default export format for each content type.
     static func defaultFormat(for content: ShareableContent) -> ExportFormat {
         switch content {
-        case .mermaid, .latex, .markdown, .orgMode, .code, .html, .json:
+        case .html:
+            // HTML uses image (full-page screenshot) because offscreen WKWebView
+            // can't GPU-render <canvas> elements for PDF. Image captures everything.
+            return .image
+        case .mermaid, .latex, .markdown, .orgMode, .code, .json:
             return .pdf
         case .plainText:
             return .source
@@ -76,7 +80,9 @@ enum FileShareService {
         switch content {
         case .mermaid, .latex:
             return [.pdf, .image, .source]
-        case .markdown, .orgMode, .code, .html, .json:
+        case .html:
+            return [.image, .pdf, .source]
+        case .markdown, .orgMode, .code, .json:
             return [.pdf, .image, .source]
         case .plainText:
             return [.source]
@@ -101,7 +107,7 @@ enum FileShareService {
         let result: ShareItem
         switch format {
         case .image:
-            result = renderImage(content)
+            result = await renderImage(content)
         case .pdf:
             result = await renderPDF(content)
         case .source:
@@ -128,7 +134,7 @@ enum FileShareService {
 
     // MARK: - Image Rendering
 
-    private static func renderImage(_ content: ShareableContent) -> ShareItem {
+    private static func renderImage(_ content: ShareableContent) async -> ShareItem {
         let image: UIImage
         switch content {
         case .mermaid(let source):
@@ -142,8 +148,7 @@ enum FileShareService {
         case .code(let source, let language):
             image = renderCodeToImage(source, language: language)
         case .html(let source):
-            // HTML falls back to plain code rendering for image export
-            image = renderCodeToImage(source, language: "html")
+            image = await renderHTMLToImage(source)
         case .json(let source):
             image = renderCodeToImage(source, language: "json")
         case .plainText(let source):
@@ -262,6 +267,72 @@ enum FileShareService {
         return renderMarkdownToImage(markdownText)
     }
 
+    /// Render HTML to a full-page screenshot using WKWebView.
+    ///
+    /// Briefly attaches an offscreen web view to the window hierarchy so the
+    /// GPU renders <canvas> elements (Chart.js, D3, etc.), then takes a
+    /// full-height snapshot via takeSnapshot(). Removes the web view after.
+    private static func renderHTMLToImage(_ source: String) async -> UIImage {
+        let layoutWidth: CGFloat = 800
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: layoutWidth, height: 1),
+            configuration: config
+        )
+        webView.isOpaque = false
+
+        // Attach to window hierarchy (hidden) so GPU canvas rendering works
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first
+        webView.isHidden = true
+        webView.alpha = 0
+        window?.addSubview(webView)
+
+        defer {
+            webView.removeFromSuperview()
+        }
+
+        // Load HTML
+        let loaded = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let delegate = PDFNavigationDelegate(continuation: cont)
+            webView.navigationDelegate = delegate
+            objc_setAssociatedObject(webView, &PDFNavigationDelegate.associatedKey, delegate, .OBJC_ASSOCIATION_RETAIN)
+            webView.loadHTMLString(source, baseURL: nil)
+        }
+
+        guard loaded else { return placeholderImage() }
+
+        // Wait for external resources (Chart.js, Leaflet, fonts)
+        await waitForContentReady(webView: webView)
+
+        // Measure full content height
+        let contentHeight = try? await webView.evaluateJavaScript(
+            "document.documentElement.scrollHeight"
+        ) as? CGFloat
+        let fullHeight = max(contentHeight ?? 600, 100)
+
+        // Cap at reasonable max to avoid memory issues
+        let maxHeight: CGFloat = 16000
+        let clampedHeight = min(fullHeight, maxHeight)
+
+        // Resize to full content
+        webView.frame = CGRect(x: 0, y: 0, width: layoutWidth, height: clampedHeight)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // Take full-page snapshot
+        let snapshotConfig = WKSnapshotConfiguration()
+        snapshotConfig.rect = CGRect(x: 0, y: 0, width: layoutWidth, height: clampedHeight)
+
+        do {
+            return try await webView.takeSnapshot(configuration: snapshotConfig)
+        } catch {
+            return placeholderImage()
+        }
+    }
+
     private static func renderCodeToImage(_ source: String, language: String?) -> UIImage {
         let palette = ThemeRuntimeState.currentPalette()
         let body = NativeFullScreenCodeBody(
@@ -342,7 +413,7 @@ enum FileShareService {
             return .pdf(data, filename: name)
         default:
             // For text-based content, render image and embed in PDF
-            let imageItem = renderImage(content)
+            let imageItem = await renderImage(content)
             guard case .image(let image) = imageItem else {
                 return .pdf(Data(), filename: "document.pdf")
             }

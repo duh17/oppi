@@ -146,7 +146,30 @@ struct HTMLPDFExportDiagnosticTests {
                 "At least one chart should render via toBase64Image")
     }
 
-    // MARK: - Full PDF Pipeline
+    // MARK: - Full Image Pipeline (default for HTML)
+
+    @Test func fullHTMLImageExport() async throws {
+        let html = try loadTestHTML()
+        let item = await FileShareService.renderDefault(.html(html))
+        guard case .image(let image) = item else {
+            Issue.record("Expected image, got \(item)")
+            return
+        }
+
+        print("[DIAG] Image size: \(image.size.width)x\(image.size.height)")
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 100, "Full-page screenshot should be tall")
+
+        // Save to /tmp for visual inspection
+        if let pngData = image.pngData() {
+            let outputPath = "/tmp/oppi-html-image-test.png"
+            try pngData.write(to: URL(fileURLWithPath: outputPath))
+            print("[DIAG] Image saved to \(outputPath) (\(pngData.count / 1024) KB)")
+            print("[DIAG] Open with: open \(outputPath)")
+        }
+    }
+
+    // MARK: - PDF Pipeline (still available as option)
 
     @Test func fullHTMLPDFExport() async throws {
         let html = try loadTestHTML()
@@ -159,15 +182,9 @@ struct HTMLPDFExportDiagnosticTests {
         #expect(filename == "page.pdf")
         #expect(data.count > 0, "PDF data should not be empty")
 
-        // Save to /tmp for visual inspection
         let outputPath = "/tmp/oppi-html-pdf-test.pdf"
         try data.write(to: URL(fileURLWithPath: outputPath))
-        print("[DIAG] PDF saved to \(outputPath) (\(data.count) bytes)")
-        print("[DIAG] Open with: open \(outputPath)")
-
-        // A PDF with rendered charts should be significantly larger than text-only
-        // Text-only PDF of this HTML would be ~50-100KB, with charts ~200KB+
-        print("[DIAG] PDF size: \(data.count) bytes (\(data.count / 1024) KB)")
+        print("[DIAG] PDF saved to \(outputPath) (\(data.count / 1024) KB)")
     }
 }
 

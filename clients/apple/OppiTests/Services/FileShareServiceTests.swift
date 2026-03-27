@@ -29,9 +29,9 @@ struct FileShareServiceTests {
         #expect(format == .pdf)
     }
 
-    @Test func defaultFormatForHTMLIsPDF() {
+    @Test func defaultFormatForHTMLIsImage() {
         let format = FileShareService.defaultFormat(for: .html("<h1>Hello</h1>"))
-        #expect(format == .pdf)
+        #expect(format == .image)
     }
 
     @Test func defaultFormatForOrgModeIsPDF() {
@@ -80,10 +80,7 @@ struct FileShareServiceTests {
     }
 
     @Test func pdfIsFirstAvailableFormatForRenderedTypes() {
-        // PDF should be listed first since it's the default
-        let htmlFormats = FileShareService.availableFormats(for: .html("<p>test</p>"))
-        #expect(htmlFormats.first == .pdf)
-
+        // PDF should be listed first for non-HTML rendered types
         let mdFormats = FileShareService.availableFormats(for: .markdown("# test"))
         #expect(mdFormats.first == .pdf)
 
@@ -92,6 +89,12 @@ struct FileShareServiceTests {
 
         let orgFormats = FileShareService.availableFormats(for: .orgMode("* test"))
         #expect(orgFormats.first == .pdf)
+    }
+
+    @Test func htmlHasImageFirstInFormats() {
+        // HTML defaults to image (full-page screenshot) for canvas support
+        let htmlFormats = FileShareService.availableFormats(for: .html("<p>test</p>"))
+        #expect(htmlFormats.first == .image)
     }
 
     // MARK: - RenderTheme.light
@@ -191,14 +194,14 @@ struct FileShareServiceTests {
         #expect(filename == "document.pdf")
     }
 
-    @Test func renderDefaultProducesPDFForHTML() async {
+    @Test func renderDefaultProducesImageForHTML() async {
         let item = await FileShareService.renderDefault(.html("<h1>Hello</h1>"))
-        guard case .pdf(let data, let filename) = item else {
-            Issue.record("Expected PDF, got \(item)")
+        guard case .image(let image) = item else {
+            Issue.record("Expected image, got \(item)")
             return
         }
-        #expect(data.count > 0)
-        #expect(filename == "page.pdf")
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 0)
     }
 
     @Test func renderDefaultProducesSourceForPlainText() async {
