@@ -40,6 +40,9 @@ enum OrgBlock: Equatable, Sendable {
     /// Comment line: `# some text`
     case comment(String)
 
+    /// Table with header row and data rows.
+    case table(headers: [[OrgInline]], rows: [[[OrgInline]]])
+
     /// Drawer: `:NAME: ... :END:`
     /// Property drawers use name "PROPERTIES" and contain key-value pairs.
     case drawer(name: String, properties: [OrgDrawerProperty])

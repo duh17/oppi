@@ -161,6 +161,17 @@ private struct RenderContext: Sendable {
         case let .comment(text):
             return renderComment(text)
 
+        case let .table(headers, rows):
+            // Render as simple text table
+            let headerText = headers.map { renderInlines($0, baseFont: monoFont, baseColor: foreground).string }.joined(separator: " | ")
+            let rowTexts = rows.map { row in row.map { renderInlines($0, baseFont: monoFont, baseColor: foreground).string }.joined(separator: " | ") }
+            let tableStr = ([headerText] + rowTexts).joined(separator: "\n")
+            let result = NSMutableAttributedString(string: tableStr, attributes: [
+                .font: monoFont,
+                .foregroundColor: foreground,
+            ])
+            return result
+
         case let .drawer(name, properties):
             let text = ":\(name):\n" + properties.map { ":\($0.key): \($0.value)" }.joined(separator: "\n") + "\n:END:"
             return renderComment(text)
