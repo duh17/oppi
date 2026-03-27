@@ -1,0 +1,11 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: oppi-webhook
+    receivers:
+      - uid: oppi-webhook-receiver
+        type: webhook
+        settings:
+          url: http://localhost:3001/api/internal/alert
+          httpMethod: POST
