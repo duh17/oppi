@@ -85,8 +85,6 @@ npx oppi serve --host my-machine.local
 
 **View server stats.** Session counts, cost breakdowns by model and workspace, daily usage trends — all from the iOS app's Server tab.
 
-**Autoresearch.** Agents can run autonomous experiment loops — edit code, benchmark, keep or revert, repeat. Results log to the timeline as collapsible experiment rows.
-
 **Connect multiple servers.** The iOS app supports multiple oppi-server instances. Switch between them or receive permission notifications from all at once.
 
 ## Commands

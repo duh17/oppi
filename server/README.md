@@ -132,10 +132,12 @@ npx oppi token rotate            # rotate owner bearer token
 
 ## Built-in extensions
 
-The server injects two extensions into every agent session automatically:
+The server injects these extensions into every agent session:
 
-- **spawn_agent** (`src/spawn-agent-extension.ts`) — spawn child sessions, inspect their traces, send messages, stop or resume them. Supports detached mode (independent session, no parent link) and synchronous wait-for-result.
-- **autoresearch** (`src/autoresearch-extension.ts`) — autonomous experiment loop. The agent edits code, benchmarks, keeps or reverts, and repeats. Uses git worktrees for isolation so experiments don't contaminate the main checkout. Results logged to `autoresearch.jsonl`.
+- **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards. Part of the pi SDK, intercepted by Oppi for native mobile rendering.
+- **spawn_agent** — spawn child sessions, inspect their traces, send messages, stop or resume them. Supports detached mode (independent session, no parent link) and synchronous wait-for-result.
+
+Extensions are configurable per workspace via the `extensions` field in workspace settings.
 
 ## Server stats API
 
