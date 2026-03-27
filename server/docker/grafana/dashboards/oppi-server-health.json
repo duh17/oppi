@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -9,11 +11,21 @@
     {
       "title": "CPU Usage (%)",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisLabel": "%",
             "drawStyle": "line",
@@ -27,28 +39,81 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "cpu_user" }, "properties": [{ "id": "displayName", "value": "User" }] },
-          { "matcher": { "id": "byName", "options": "cpu_system" }, "properties": [{ "id": "displayName", "value": "System" }] },
-          { "matcher": { "id": "byName", "options": "cpu_total" }, "properties": [{ "id": "displayName", "value": "Total" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu_user"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "User"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu_system"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "System"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu_total"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Total"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, cpu_user, cpu_system, cpu_total FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "Memory (MB)",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisLabel": "MB",
             "drawStyle": "line",
@@ -62,29 +127,97 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "mem_rss" }, "properties": [{ "id": "displayName", "value": "RSS" }, { "id": "custom.lineWidth", "value": 2 }] },
-          { "matcher": { "id": "byName", "options": "mem_heap_used" }, "properties": [{ "id": "displayName", "value": "Heap Used" }] },
-          { "matcher": { "id": "byName", "options": "mem_heap_total" }, "properties": [{ "id": "displayName", "value": "Heap Total" }] },
-          { "matcher": { "id": "byName", "options": "mem_external" }, "properties": [{ "id": "displayName", "value": "External" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mem_rss"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "RSS"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mem_heap_used"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Heap Used"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mem_heap_total"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Heap Total"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mem_external"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "External"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, mem_heap_used, mem_heap_total, mem_rss, mem_external FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "Active Sessions",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisLabel": "Sessions",
             "drawStyle": "line",
@@ -93,35 +226,112 @@
             "pointSize": 3,
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": { "mode": "normal" }
+            "stacking": {
+              "mode": "normal"
+            }
           },
           "unit": "short",
           "min": 0,
           "decimals": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "sessions_busy" }, "properties": [{ "id": "displayName", "value": "Busy" }, { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "sessions_ready" }, "properties": [{ "id": "displayName", "value": "Idle" }, { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "sessions_starting" }, "properties": [{ "id": "displayName", "value": "Starting" }, { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions_busy"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Busy"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions_ready"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Idle"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions_starting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Starting"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, sessions_busy, sessions_ready, sessions_starting FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "WebSocket Connections",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "Connections",
             "drawStyle": "line",
@@ -136,27 +346,59 @@
           "decimals": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "ws_connections" }, "properties": [{ "id": "displayName", "value": "WebSocket Connections" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ws_connections"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "WebSocket Connections"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, ws_connections FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "WebSocket Ping RTT (ms)",
       "description": "Server-side ping/pong round-trip time. Key baseline for relay latency comparison.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "line",
@@ -170,27 +412,59 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Ping RTT" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ping RTT"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_rtt_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "WebSocket Handshake (ms)",
       "description": "Server-side WebSocket upgrade duration. Compare with iOS-side ws_connect_ms for full picture.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "green", "mode": "fixed" },
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "points",
@@ -204,53 +478,184 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "handshake" }, "properties": [{ "id": "displayName", "value": "Handshake" }] },
-          { "matcher": { "id": "byName", "options": "first_msg" }, "properties": [{ "id": "displayName", "value": "First Message" }, { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "handshake"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Handshake"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "first_msg"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "First Message"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.ws_handshake_ms' THEN value END AS handshake, CASE WHEN metric = 'server.ws_first_message_ms' THEN value END AS first_msg FROM server_ops_metric_samples WHERE metric IN ('server.ws_handshake_ms', 'server.ws_first_message_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "WebSocket Session Stats",
       "description": "Messages sent/received per connection, session duration.",
       "type": "table",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
       "fieldConfig": {
         "defaults": {},
         "overrides": [
-          { "matcher": { "id": "byName", "options": "time" }, "properties": [{ "id": "displayName", "value": "Closed At" }, { "id": "unit", "value": "dateTimeFromNow" }] },
-          { "matcher": { "id": "byName", "options": "duration_s" }, "properties": [{ "id": "displayName", "value": "Duration" }, { "id": "unit", "value": "s" }] },
-          { "matcher": { "id": "byName", "options": "sent" }, "properties": [{ "id": "displayName", "value": "Msgs Sent" }] },
-          { "matcher": { "id": "byName", "options": "received" }, "properties": [{ "id": "displayName", "value": "Msgs Received" }] },
-          { "matcher": { "id": "byName", "options": "close_code" }, "properties": [{ "id": "displayName", "value": "Close Code" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Closed At"
+              },
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration_s"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Duration"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sent"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Msgs Sent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "received"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Msgs Received"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "close_code"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Close Code"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT d.ts_ms / 1000 AS time, ROUND(d.value / 1000.0, 1) AS duration_s, s.value AS sent, r.value AS received, json_extract(c.tags_json, '$.code') AS close_code FROM server_ops_metric_samples d LEFT JOIN server_ops_metric_samples s ON s.metric = 'server.ws_messages_sent' AND ABS(s.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples r ON r.metric = 'server.ws_messages_received' AND ABS(r.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples c ON c.metric = 'server.ws_close_code' AND ABS(c.ts_ms - d.ts_ms) < 100 WHERE d.metric = 'server.ws_session_duration_ms' AND d.ts_ms >= ${__from} AND d.ts_ms <= ${__to} ORDER BY d.ts_ms DESC LIMIT 50",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "showHeader": true, "sortBy": [{ "displayName": "Closed At", "desc": true }] }
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Closed At",
+            "desc": true
+          }
+        ]
+      }
     },
     {
       "title": "Agent Turn Duration (ms)",
       "description": "End-to-end agent turn duration. Key indicator of response time budget.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "points",
@@ -264,27 +669,59 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Turn Duration" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Turn Duration"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_duration_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "Server TTFT (ms)",
       "description": "Server-side time-to-first-token. Compare with iOS chat.ttft_ms for end-to-end picture.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "green", "mode": "fixed" },
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "points",
@@ -298,29 +735,61 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "TTFT" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "TTFT"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_ttft_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
-      "title": "Cost per Turn (µ$)",
+      "title": "Cost per Turn (\u00b5$)",
       "description": "Turn cost in microdollars. Track spending trends per interaction.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "color": {
+            "fixedColor": "orange",
+            "mode": "fixed"
+          },
           "custom": {
-            "axisLabel": "µ$",
+            "axisLabel": "\u00b5$",
             "drawStyle": "points",
             "lineWidth": 0,
             "fillOpacity": 0,
@@ -332,27 +801,59 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Cost (µ$)" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cost (\u00b5$)"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "Ask Round-Trip (ms)",
       "description": "Ask extension round-trip latency. Measures the full cycle from ask dispatch to user response received.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "yellow", "mode": "fixed" },
+          "color": {
+            "fixedColor": "yellow",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "points",
@@ -366,27 +867,59 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Ask RTT" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ask RTT"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ask_round_trip_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "title": "Session Title Gen (ms)",
       "description": "Auto-title generation latency. Runs after first user message to generate session title.",
       "type": "timeseries",
-      "datasource": { "uid": "oppi-telemetry-sqlite", "type": "frser-sqlite-datasource" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
           "custom": {
             "axisLabel": "ms",
             "drawStyle": "points",
@@ -400,26 +933,994 @@
           "min": 0
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "value" }, "properties": [{ "id": "displayName", "value": "Title Gen" }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Title Gen"
+              }
+            ]
+          }
         ]
       },
       "targets": [
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_title_gen_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Turn Tokens",
+      "description": "Input and output token counts per agent turn.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "tokens",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "input"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Input Tokens"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Output Tokens"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_input_tokens' THEN value END AS input, CASE WHEN metric = 'server.turn_output_tokens' THEN value END AS output FROM server_ops_metric_samples WHERE metric IN ('server.turn_input_tokens', 'server.turn_output_tokens') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Turn Tool Calls + Errors",
+      "description": "Tool call count and errors per agent turn.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tool_calls"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Tool Calls"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errors"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Turn Errors"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_tool_calls' THEN value END AS tool_calls, CASE WHEN metric = 'server.turn_error' THEN value END AS errors FROM server_ops_metric_samples WHERE metric IN ('server.turn_tool_calls', 'server.turn_error') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Gate Latency (ms)",
+      "description": "Permission gate evaluation time and user approval wait time.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "check"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gate Check"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approval_wait"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Approval Wait"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.gate_check_ms' THEN value END AS check, CASE WHEN metric = 'server.gate_approval_wait_ms' THEN value END AS approval_wait FROM server_ops_metric_samples WHERE metric IN ('server.gate_check_ms', 'server.gate_approval_wait_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Gate Decisions + Timeouts",
+      "description": "Permission gate decisions (allow/deny/ask) and timeout events.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decisions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gate Decisions"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "timeouts"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gate Timeouts"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.gate_decision' THEN value END AS decisions, CASE WHEN metric = 'server.gate_timeout' THEN value END AS timeouts FROM server_ops_metric_samples WHERE metric IN ('server.gate_decision', 'server.gate_timeout') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Session Subscribe (ms)",
+      "description": "Full subscribe flow duration including catch-up replay.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Subscribe Duration"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_subscribe_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "WS Ping Timeouts",
+      "description": "Dead connection detection events. Each point is a timed-out WebSocket.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ping Timeouts"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_timeout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Catch-up Replay",
+      "description": "Events replayed during catch-up and ring misses requiring full reload.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "events"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Catchup Events"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "misses"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ring Miss"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.catchup_events' THEN value END AS events, CASE WHEN metric = 'server.catchup_miss' THEN value END AS misses FROM server_ops_metric_samples WHERE metric IN ('server.catchup_events', 'server.catchup_miss') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Broadcast Fanout",
+      "description": "Number of subscribers receiving each broadcast.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "subscribers",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Fanout Count"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "HTTP Request Latency (ms)",
+      "description": "Server-side HTTP request processing time.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Request Latency"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.http_request_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Auto Retries",
+      "description": "Automatic retry events triggered by transient failures.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 88
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "orange",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Auto Retries"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.auto_retry' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Compaction Duration (ms)",
+      "description": "Time spent compacting session event history.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 96
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Compaction Time"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Compaction Results",
+      "description": "Compaction outcomes per event.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 96
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisLabel": "count",
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "always",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Compaction Results"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_result' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,
-  "tags": ["oppi", "server"],
-  "templating": { "list": [] },
-  "time": { "from": "now-24h", "to": "now" },
+  "tags": [
+    "oppi",
+    "server"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
   "timepicker": {
-    "refresh_intervals": ["30s", "1m", "5m"],
-    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "1h",
+      "6h",
+      "12h",
+      "24h",
+      "2d",
+      "7d",
+      "30d"
+    ]
   },
   "timezone": "browser",
   "title": "Oppi Server Health",
