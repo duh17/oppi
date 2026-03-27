@@ -469,38 +469,46 @@ enum FileShareService {
         // Chart.js canvases that need time to animate and render.
         await waitForContentReady(webView: webView)
 
-        // Force Chart.js to re-render without animation so canvases have
-        // final content immediately, then swap canvases for static images
-        // since WKWebView.pdf() doesn't reliably capture <canvas>.
+        // Offscreen WKWebView doesn't trigger GPU canvas rendering, so
+        // Chart.js canvases are blank despite JS executing. Use Chart.js's
+        // toBase64Image() API which reads from the internal render state,
+        // then replace canvases with static <img> tags for PDF capture.
         try? await webView.evaluateJavaScript("""
             (function() {
-                // Force Chart.js charts to render without animation
-                if (window.Chart && Chart.instances) {
-                    var instances = Object.values(Chart.instances);
-                    instances.forEach(function(chart) {
-                        chart.options.animation = false;
-                        chart.options.animations = {};
-                        chart.update('none');
-                    });
-                }
-            })();
-        """)
+                if (!window.Chart || !Chart.instances) return;
+                var keys = Object.keys(Chart.instances);
+                keys.forEach(function(k) {
+                    var chart = Chart.instances[k];
+                    // Disable animation and force a synchronous internal render
+                    chart.options.animation = false;
+                    chart.resize();
+                    chart.update('none');
 
-        // Give synchronous re-render a moment to complete
-        try? await Task.sleep(for: .milliseconds(200))
+                    // Use Chart.js API to get rendered image
+                    var dataURL = chart.toBase64Image('image/png', 1);
+                    if (!dataURL || dataURL === 'data:,') return;
 
-        // Now freeze canvases to PNG images
-        try? await webView.evaluateJavaScript("""
-            (function() {
+                    var canvas = chart.canvas;
+                    var img = document.createElement('img');
+                    img.src = dataURL;
+                    img.style.width = canvas.offsetWidth + 'px';
+                    img.style.height = canvas.offsetHeight + 'px';
+                    img.style.display = 'block';
+                    if (canvas.parentNode) {
+                        canvas.parentNode.replaceChild(img, canvas);
+                    }
+                });
+
+                // Also handle any non-Chart.js canvases (e.g. Leaflet)
                 document.querySelectorAll('canvas').forEach(function(canvas) {
                     try {
                         var dataURL = canvas.toDataURL('image/png');
                         if (!dataURL || dataURL === 'data:,') return;
-                        var img = new Image();
+                        var img = document.createElement('img');
                         img.src = dataURL;
-                        img.style.cssText = window.getComputedStyle(canvas).cssText;
                         img.style.width = canvas.offsetWidth + 'px';
                         img.style.height = canvas.offsetHeight + 'px';
+                        img.style.display = 'block';
                         canvas.parentNode.replaceChild(img, canvas);
                     } catch(e) {}
                 });
@@ -528,8 +536,9 @@ enum FileShareService {
         }
     }
 
-    /// Poll the web view until external resources are loaded and JS has executed.
-    /// Waits up to 5 seconds, checking every 200ms.
+    /// Poll the web view until document and external resources have loaded.
+    /// Waits up to 5 seconds for `document.readyState === 'complete'` and
+    /// any Chart.js instances to be registered.
     private static func waitForContentReady(webView: WKWebView) async {
         let maxAttempts = 25  // 25 × 200ms = 5 seconds
         for _ in 0..<maxAttempts {
@@ -538,18 +547,11 @@ enum FileShareService {
             let ready = try? await webView.evaluateJavaScript("""
                 (function() {
                     if (document.readyState !== 'complete') return false;
-                    // Check if Chart.js canvases have drawn content
-                    var canvases = document.querySelectorAll('canvas');
-                    for (var i = 0; i < canvases.length; i++) {
-                        var ctx = canvases[i].getContext('2d');
-                        if (!ctx) continue;
-                        try {
-                            // Sample center pixel — Chart.js draws axes/data there
-                            var cx = Math.floor(canvases[i].width / 2);
-                            var cy = Math.floor(canvases[i].height / 2);
-                            var px = ctx.getImageData(cx, cy, 1, 1).data;
-                            if (px[3] === 0) return false; // still transparent
-                        } catch(e) { /* cross-origin, assume rendered */ }
+                    // If Chart.js is loaded, wait until instances are created
+                    if (typeof Chart !== 'undefined' && Chart.instances) {
+                        var keys = Object.keys(Chart.instances);
+                        // Charts exist in source but none created yet
+                        if (document.querySelectorAll('canvas').length > 0 && keys.length === 0) return false;
                     }
                     return true;
                 })();
