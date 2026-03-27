@@ -283,12 +283,15 @@ enum FileShareService {
         )
         webView.isOpaque = false
 
-        // Attach to window hierarchy (hidden) so GPU canvas rendering works
+        // Attach to window hierarchy off-screen so GPU canvas rendering works.
+        // Can't use isHidden/alpha=0 — those prevent layer compositing and
+        // takeSnapshot returns a black image.
         let window = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.windows.first
-        webView.isHidden = true
-        webView.alpha = 0
+        webView.frame = CGRect(x: -10000, y: 0, width: layoutWidth, height: 1)
+        // Force light mode for export — light backgrounds share better
+        webView.overrideUserInterfaceStyle = .light
         window?.addSubview(webView)
 
         defer {
