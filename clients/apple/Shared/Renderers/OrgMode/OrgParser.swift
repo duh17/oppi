@@ -79,6 +79,14 @@ struct OrgParser: DocumentParser, Sendable {
                 continue
             }
 
+            // Table: lines starting with `|`
+            if trimmed.hasPrefix("|") {
+                let (block, newCursor) = parseTable(lines: lines, startCursor: cursor)
+                blocks.append(block)
+                cursor = newCursor
+                continue
+            }
+
             // List item
             if isListItemStart(line) {
                 let (list, newCursor) = parseList(lines: lines, startCursor: cursor)
@@ -409,8 +417,69 @@ struct OrgParser: DocumentParser, Sendable {
         if isHorizontalRule(trimmed) { return true }
         if isListItemStart(trimmed) { return true }
         if isDrawerStart(trimmed) { return true }
+        if trimmed.hasPrefix("|") { return true }
 
         return false
+    }
+
+    // MARK: - Table Parsing
+
+    /// Parse an org table (lines starting with `|`).
+    ///
+    /// Org table format:
+    /// ```
+    /// | Header 1 | Header 2 |
+    /// |----------+----------|
+    /// | Cell 1   | Cell 2   |
+    /// ```
+    /// The separator row (`|---+---|`) divides headers from data rows.
+    /// If no separator, the first row is treated as the header.
+    private func parseTable(lines: [String], startCursor: Int) -> (OrgBlock, Int) {
+        var cursor = startCursor
+        var dataRows: [[String]] = []
+        var separatorIndex: Int? = nil
+
+        while cursor < lines.count {
+            let trimmed = lines[cursor].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("|") else { break }
+
+            // Check if separator row: contains only |, -, +, spaces
+            let isSeparator = trimmed.dropFirst().allSatisfy { $0 == "-" || $0 == "+" || $0 == "|" || $0 == " " }
+
+            if isSeparator && trimmed.contains("-") {
+                separatorIndex = dataRows.count
+            } else {
+                // Parse cells: split by `|`, trim, drop empty first/last
+                let cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                // Drop leading/trailing empty strings from the split
+                let cleaned: [String]
+                if cells.first?.isEmpty == true && cells.last?.isEmpty == true {
+                    cleaned = Array(cells.dropFirst().dropLast())
+                } else if cells.first?.isEmpty == true {
+                    cleaned = Array(cells.dropFirst())
+                } else {
+                    cleaned = cells
+                }
+                dataRows.append(cleaned)
+            }
+            cursor += 1
+        }
+
+        guard !dataRows.isEmpty else {
+            return (.paragraph([.text("")]), cursor)
+        }
+
+        // First row (or row before separator) is the header
+        let headerRowIndex = separatorIndex != nil ? 0 : 0
+        let headerCells = dataRows[headerRowIndex].map { [OrgInline.text($0)] }
+
+        let bodyStartIndex = separatorIndex != nil ? 1 : 1
+        let bodyRows = dataRows[bodyStartIndex...].map { row in
+            row.map { [OrgInline.text($0)] }
+        }
+
+        return (.table(headers: headerCells, rows: Array(bodyRows)), cursor)
     }
 
     // MARK: - Drawer Parsing

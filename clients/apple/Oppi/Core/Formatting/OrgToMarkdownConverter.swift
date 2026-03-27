@@ -86,6 +86,12 @@ enum OrgToMarkdownConverter {
             case .horizontalRule:
                 result.append(.thematicBreak)
 
+            case .table(let headers, let rows):
+                // Convert to markdown table with MarkdownInline cells.
+                let mdHeaders = headers.map { convertInlines($0) }
+                let mdRows = rows.map { row in row.map { convertInlines($0) } }
+                result.append(.table(headers: mdHeaders, rows: mdRows))
+
             case .drawer(let name, let properties):
                 // Render drawers as a code block showing key-value pairs.
                 if !properties.isEmpty {
