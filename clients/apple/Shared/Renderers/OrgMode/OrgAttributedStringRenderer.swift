@@ -45,7 +45,7 @@ struct OrgAttributedStringRenderer: AttributedStringDocumentRenderer, Sendable {
 
 /// Internal rendering state — holds resolved fonts and colors for the current
 /// configuration. Created once per `renderAttributedString` call.
-private struct RenderContext: Sendable {
+private struct RenderContext: @unchecked Sendable {
     let configuration: RenderConfiguration
 
     // Resolved platform colors from theme CGColors.
