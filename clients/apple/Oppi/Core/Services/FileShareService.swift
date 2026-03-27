@@ -1,5 +1,6 @@
 import CoreGraphics
 import UIKit
+import WebKit
 
 // MARK: - FileShareService
 
@@ -102,7 +103,7 @@ enum FileShareService {
         case .image:
             result = renderImage(content)
         case .pdf:
-            result = renderPDF(content)
+            result = await renderPDF(content)
         case .source:
             result = renderSource(content)
         }
@@ -323,7 +324,7 @@ enum FileShareService {
 
     // MARK: - PDF Rendering
 
-    private static func renderPDF(_ content: ShareableContent) -> ShareItem {
+    private static func renderPDF(_ content: ShareableContent) async -> ShareItem {
         let filename: String
         let pdfData: Data
 
@@ -334,6 +335,9 @@ enum FileShareService {
         case .latex(let source):
             filename = "formula.pdf"
             pdfData = renderLatexToPDF(source)
+        case .html(let source):
+            filename = "page.pdf"
+            pdfData = await renderHTMLToPDF(source)
         case .pdfData(let data, let name):
             return .pdf(data, filename: name)
         default:
@@ -427,6 +431,46 @@ enum FileShareService {
                 renderer.draw(layout, in: ctx.cgContext, at: CGPoint(x: padding, y: yOffset))
                 yOffset += size.height + spacing
             }
+        }
+    }
+
+    /// Render HTML to PDF using an offscreen WKWebView.
+    ///
+    /// Creates a temporary web view, loads the HTML, waits for rendering,
+    /// then uses `WKWebView.pdf(configuration:)` for a native PDF export
+    /// with selectable text and proper layout.
+    private static func renderHTMLToPDF(_ source: String) async -> Data {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
+        webView.isOpaque = false
+
+        // Load HTML and wait for navigation to complete
+        let loaded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let delegate = PDFNavigationDelegate(continuation: continuation)
+            webView.navigationDelegate = delegate
+            // Store delegate to prevent deallocation
+            objc_setAssociatedObject(webView, &PDFNavigationDelegate.associatedKey, delegate, .OBJC_ASSOCIATION_RETAIN)
+            webView.loadHTMLString(source, baseURL: nil)
+        }
+
+        guard loaded else { return Data() }
+
+        // Brief delay for any async CSS/layout to settle
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // Generate PDF
+        let pdfConfig = WKPDFConfiguration()
+        // Use standard US Letter page size
+        pdfConfig.rect = CGRect(x: 0, y: 0, width: 612, height: 792)
+
+        do {
+            return try await webView.pdf(configuration: pdfConfig)
+        } catch {
+            // Fallback: render as code image embedded in PDF
+            let image = renderCodeToImage(source, language: "html")
+            return embedImageInPDF(image)
         }
     }
 
@@ -593,6 +637,39 @@ enum FileShareService {
             ctx.fill(CGRect(origin: .zero, size: size))
         }
     }
+}
+
+// MARK: - PDF Navigation Delegate
+
+/// One-shot WKNavigationDelegate that resumes a continuation when loading completes.
+private final class PDFNavigationDelegate: NSObject, WKNavigationDelegate {
+    nonisolated(unsafe) static var associatedKey: UInt8 = 0
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    init(continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    // swiftlint:disable no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        continuation?.resume(returning: true)
+        continuation = nil
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        continuation?.resume(returning: false)
+        continuation = nil
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        continuation?.resume(returning: false)
+        continuation = nil
+    }
+    // swiftlint:enable no_force_unwrap_production
 }
 
 // MARK: - PDF Data Provider
