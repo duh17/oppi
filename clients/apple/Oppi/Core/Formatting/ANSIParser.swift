@@ -21,28 +21,28 @@ enum ANSIParser {
         // Fast path: no ESC byte means no ANSI codes.
         guard input.utf8.contains(0x1B) else { return input }
 
-        let utf8 = Array(input.utf8)
         var result = [UInt8]()
-        result.reserveCapacity(utf8.count)
-        var i = 0
-        let count = utf8.count
+        result.reserveCapacity(input.utf8.count)
 
-        while i < count {
-            if utf8[i] == 0x1B, i + 1 < count, utf8[i + 1] == 0x5B /* [ */ {
-                // Skip ESC [ ... final-byte
-                var j = i + 2
-                while j < count {
-                    let b = utf8[j]
-                    if b >= 0x40 && b <= 0x7E { // final byte A-Z a-z @-~
+        input.utf8.withContiguousStorageIfAvailable { buf in
+            let count = buf.count
+            var i = 0
+            while i < count {
+                if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
+                    var j = i + 2
+                    while j < count {
+                        let b = buf[j]
+                        if b >= 0x40 && b <= 0x7E {
+                            j += 1
+                            break
+                        }
                         j += 1
-                        break
                     }
-                    j += 1
+                    i = j
+                } else {
+                    result.append(buf[i])
+                    i += 1
                 }
-                i = j
-            } else {
-                result.append(utf8[i])
-                i += 1
             }
         }
 
@@ -52,7 +52,7 @@ enum ANSIParser {
     /// Parse ANSI escape sequences into an `NSAttributedString`.
     ///
     /// Maps ANSI colors to the Tokyo Night palette for visual consistency.
-    /// Uses direct UTF-8 byte scanning (no regex) for O(n) performance.
+    /// Single-pass UTF-8 scan → plain text + attribute runs → NSAttributedString.
     static func attributedString(
         from input: String,
         baseForeground: Color = .themeFg
@@ -60,7 +60,7 @@ enum ANSIParser {
         let baseFg = UIColor(baseForeground)
         let baseFont = AppFont.mono
 
-        // Fast path: no ESC byte means no ANSI codes — return plain text directly.
+        // Fast path: no ESC byte means no ANSI codes.
         guard input.utf8.contains(0x1B) else {
             return NSAttributedString(
                 string: input,
@@ -71,148 +71,124 @@ enum ANSIParser {
         var fontCache = FontCache(base: baseFont)
         var state = SGRState()
 
-        // Work with UTF-8 bytes for fast scanning.
-        let utf8 = Array(input.utf8)
-        let count = utf8.count
+        // Phase 1: Single-pass scan. Build plain text and record attribute runs.
+        struct AttrRun {
+            let utf16Start: Int
+            let utf16Length: Int
+            let font: UIFont
+            let fg: UIColor?
+            let bg: UIColor?
+            let underline: Bool
+        }
 
-        // Phase 1: Scan UTF-8 bytes. Build plain text (escapes removed) and
-        // record SGR events with their positions in the plain-text output.
         var plainBytes = [UInt8]()
-        plainBytes.reserveCapacity(count)
+        var runs = [AttrRun]()
 
-        // SGR event: (byte offset in plainBytes where this SGR takes effect, parsed codes)
-        var sgrEvents: [(offset: Int, codes: [Int])] = []
+        // Track UTF-16 position incrementally as we build plainBytes.
+        var utf16Pos = 0
+        var runStart16 = 0
+        var hasSGR = false
 
-        var i = 0
-        while i < count {
-            if utf8[i] == 0x1B, i + 1 < count, utf8[i + 1] == 0x5B /* [ */ {
-                // Found ESC [  — parse parameter bytes and find final byte
-                var j = i + 2
-                while j < count {
-                    let b = utf8[j]
-                    if b >= 0x40 && b <= 0x7E { // final byte
-                        break
+        input.utf8.withContiguousStorageIfAvailable { buf in
+            let count = buf.count
+            plainBytes.reserveCapacity(count)
+            var i = 0
+
+            while i < count {
+                if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
+                    var j = i + 2
+                    while j < count {
+                        let b = buf[j]
+                        if b >= 0x40 && b <= 0x7E { break }
+                        j += 1
                     }
-                    j += 1
-                }
 
-                if j < count && utf8[j] == 0x6D /* 'm' */ {
-                    // SGR sequence — parse the parameters
-                    let codes = parseCSIParams(utf8, from: i + 2, to: j)
-                    sgrEvents.append((offset: plainBytes.count, codes: codes))
-                }
-                // else: non-SGR sequence — silently stripped
+                    if j < count && buf[j] == 0x6D { // 'm' → SGR
+                        let runLen16 = utf16Pos - runStart16
+                        if hasSGR && runLen16 > 0 {
+                            runs.append(AttrRun(
+                                utf16Start: runStart16,
+                                utf16Length: runLen16,
+                                font: fontCache.font(bold: state.bold, italic: state.italic),
+                                fg: state.foregroundUIColor,
+                                bg: state.backgroundUIColor,
+                                underline: state.underline
+                            ))
+                        }
 
-                i = j + 1
-            } else {
-                plainBytes.append(utf8[i])
-                i += 1
+                        state.applyFromBuffer(buf, from: i + 2, to: j)
+                        hasSGR = true
+                        runStart16 = utf16Pos
+                    }
+
+                    i = j + 1
+                } else {
+                    let b = buf[i]
+                    plainBytes.append(b)
+                    if b < 0x80 { utf16Pos += 1; i += 1 }
+                    else if b < 0xC0 { i += 1 }
+                    else if b < 0xE0 {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        utf16Pos += 1; i += 2
+                    } else if b < 0xF0 {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                        utf16Pos += 1; i += 3
+                    } else {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                        if i + 3 < count { plainBytes.append(buf[i + 3]) }
+                        utf16Pos += 2; i += 4
+                    }
+                }
             }
         }
 
-        // Phase 2: Build a byte→UTF-16 offset map for the plain text.
+        // Close final run
+        if hasSGR {
+            let runLen16 = utf16Pos - runStart16
+            if runLen16 > 0 {
+                runs.append(AttrRun(
+                    utf16Start: runStart16,
+                    utf16Length: runLen16,
+                    font: fontCache.font(bold: state.bold, italic: state.italic),
+                    fg: state.foregroundUIColor,
+                    bg: state.backgroundUIColor,
+                    underline: state.underline
+                ))
+            }
+        }
+
+        // Phase 2: Build NSMutableAttributedString
         let plainString = String(bytes: plainBytes, encoding: .utf8) ?? ""
-        let plainCount = plainBytes.count
-
-        var byteToUTF16 = [Int](repeating: 0, count: plainCount + 1)
-        do {
-            var bIdx = 0
-            var u16Idx = 0
-            while bIdx < plainCount {
-                byteToUTF16[bIdx] = u16Idx
-                let b = plainBytes[bIdx]
-                let seqLen: Int
-                if b < 0x80 { seqLen = 1 }
-                else if b < 0xE0 { seqLen = 2 }
-                else if b < 0xF0 { seqLen = 3 }
-                else { seqLen = 4 }
-                let utf16Units = seqLen == 4 ? 2 : 1
-                bIdx += seqLen
-                u16Idx += utf16Units
-            }
-            byteToUTF16[plainCount] = u16Idx
-        }
-
-        // Phase 3: Create attributed string with base attributes, then apply
-        // SGR overrides in a single beginEditing/endEditing batch.
         let result = NSMutableAttributedString(
             string: plainString,
             attributes: [.font: baseFont, .foregroundColor: baseFg]
         )
 
-        guard !sgrEvents.isEmpty else { return result }
+        guard !runs.isEmpty else { return result }
 
         result.beginEditing()
 
-        // Walk SGR events. Each event changes state; apply that state to the
-        // text range from this event's offset to the next event's offset (or end).
-        for eventIdx in 0..<sgrEvents.count {
-            state.apply(sgrEvents[eventIdx].codes)
+        for run in runs {
+            let nsRange = NSRange(location: run.utf16Start, length: run.utf16Length)
 
-            let rangeStartByte = sgrEvents[eventIdx].offset
-            let rangeEndByte = eventIdx + 1 < sgrEvents.count
-                ? sgrEvents[eventIdx + 1].offset
-                : plainCount
-
-            guard rangeEndByte > rangeStartByte else { continue }
-
-            let utf16Start = byteToUTF16[rangeStartByte]
-            let utf16End = byteToUTF16[rangeEndByte]
-            let rangeLen = utf16End - utf16Start
-            guard rangeLen > 0 else { continue }
-
-            let nsRange = NSRange(location: utf16Start, length: rangeLen)
-
-            // Apply font only when not the default
-            let font = fontCache.font(bold: state.bold, italic: state.italic)
-            if font !== baseFont {
-                result.addAttribute(.font, value: font, range: nsRange)
+            if run.font !== baseFont {
+                result.addAttribute(.font, value: run.font, range: nsRange)
             }
-
-            // Apply foreground color only when changed from base
-            if let fg = state.foregroundUIColor {
+            if let fg = run.fg {
                 result.addAttribute(.foregroundColor, value: fg, range: nsRange)
             }
-
-            if state.underline {
+            if run.underline {
                 result.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
             }
-
-            if let bg = state.backgroundUIColor {
+            if let bg = run.bg {
                 result.addAttribute(.backgroundColor, value: bg, range: nsRange)
             }
         }
 
         result.endEditing()
         return result
-    }
-
-    // MARK: - CSI Parameter Parsing
-
-    /// Parse semicolon-separated integer parameters from CSI sequence bytes.
-    /// Scans utf8[from..<to], returns array of integers.
-    private static func parseCSIParams(_ utf8: [UInt8], from start: Int, to end: Int) -> [Int] {
-        if start >= end { return [0] }
-
-        var codes = [Int]()
-        var current = 0
-        var hasDigit = false
-
-        for i in start..<end {
-            let b = utf8[i]
-            if b >= 0x30 && b <= 0x39 { // '0'-'9'
-                current = current &* 10 &+ Int(b &- 0x30)
-                hasDigit = true
-            } else if b == 0x3B { // ';'
-                codes.append(hasDigit ? current : 0)
-                current = 0
-                hasDigit = false
-            }
-            // Skip other parameter/intermediate bytes
-        }
-
-        codes.append(hasDigit ? current : 0)
-        return codes.isEmpty ? [0] : codes
     }
 }
 
@@ -267,6 +243,43 @@ private struct FontCache {
     }
 }
 
+// MARK: - Inline SGR Code Buffer
+
+/// Fixed-capacity buffer for parsing SGR codes inline (no heap allocation).
+/// Uses two 2-tuples to stay within SwiftLint's large_tuple limit while
+/// supporting up to 6 codes (covers `48;2;r;g;b` = 5 codes + spare).
+private struct InlineSGRCodes {
+    private var lo: (Int, Int) = (0, 0)
+    private var hi: (Int, Int) = (0, 0)
+    private var ex: (Int, Int) = (0, 0)
+    private(set) var count = 0
+
+    mutating func append(_ value: Int) {
+        switch count {
+        case 0: lo.0 = value
+        case 1: lo.1 = value
+        case 2: hi.0 = value
+        case 3: hi.1 = value
+        case 4: ex.0 = value
+        case 5: ex.1 = value
+        default: return
+        }
+        count += 1
+    }
+
+    subscript(index: Int) -> Int {
+        switch index {
+        case 0: return lo.0
+        case 1: return lo.1
+        case 2: return hi.0
+        case 3: return hi.1
+        case 4: return ex.0
+        case 5: return ex.1
+        default: return 0
+        }
+    }
+}
+
 // MARK: - SGR State
 
 /// Tracks cumulative SGR state across escape sequences.
@@ -278,102 +291,153 @@ private struct SGRState {
     var foregroundUIColor: UIColor?
     var backgroundUIColor: UIColor?
 
-    mutating func apply(_ codes: [Int]) {
+    /// Apply SGR codes parsed directly from a UTF-8 buffer pointer.
+    /// Parses semicolon-separated integers inline — no array allocation.
+    mutating func applyFromBuffer(
+        _ buf: UnsafeBufferPointer<UInt8>,
+        from start: Int,
+        to end: Int
+    ) {
+        if start >= end {
+            // Bare ESC[m = reset
+            reset()
+            return
+        }
+
+        // Fast path: single-code sequences (most common).
+        // Check if the sequence contains no semicolons.
+        var hasSemicolon = false
+        var singleValue = 0
+        var digitCount = 0
+        for i in start..<end {
+            let b = buf[i]
+            if b == 0x3B { hasSemicolon = true; break }
+            if b >= 0x30 && b <= 0x39 {
+                singleValue = singleValue &* 10 &+ Int(b &- 0x30)
+                digitCount += 1
+            }
+        }
+
+        if !hasSemicolon {
+            applySingleCode(digitCount > 0 ? singleValue : 0)
+            return
+        }
+
+        // Multi-code sequence — parse all codes
+        var codes = InlineSGRCodes()
+        var current = 0
+        var hasDigit = false
+
+        for i in start..<end {
+            let b = buf[i]
+            if b >= 0x30 && b <= 0x39 {
+                current = current &* 10 &+ Int(b &- 0x30)
+                hasDigit = true
+            } else if b == 0x3B {
+                codes.append(hasDigit ? current : 0)
+                current = 0
+                hasDigit = false
+            }
+        }
+        codes.append(hasDigit ? current : 0)
+
+        // Apply codes with lookahead for extended colors
         var i = 0
         while i < codes.count {
             let code = codes[i]
-            switch code {
-            case 0: // Reset
-                bold = false; dim = false; italic = false
-                underline = false; foregroundUIColor = nil; backgroundUIColor = nil
 
-            case 1: bold = true
-            case 2: dim = true
-            case 3: italic = true
-            case 4: underline = true
-            case 22: bold = false; dim = false
-            case 23: italic = false
-            case 24: underline = false
-            case 39: foregroundUIColor = nil // default fg
-            case 49: backgroundUIColor = nil // default bg
-
-            // Standard fg colors (30-37)
-            case 30: foregroundUIColor = UIColor(Color.themeFgDim)       // black → dim
-            case 31: foregroundUIColor = UIColor(Color.themeRed)
-            case 32: foregroundUIColor = UIColor(Color.themeGreen)
-            case 33: foregroundUIColor = UIColor(Color.themeYellow)
-            case 34: foregroundUIColor = UIColor(Color.themeBlue)
-            case 35: foregroundUIColor = UIColor(Color.themePurple)
-            case 36: foregroundUIColor = UIColor(Color.themeCyan)
-            case 37: foregroundUIColor = UIColor(Color.themeFg)           // white → fg
-
-            // Bright fg colors (90-97)
-            case 90: foregroundUIColor = UIColor(Color.themeComment)      // bright black → comment
-            case 91: foregroundUIColor = UIColor(Color.themeRed)
-            case 92: foregroundUIColor = UIColor(Color.themeGreen)
-            case 93: foregroundUIColor = UIColor(Color.themeYellow)
-            case 94: foregroundUIColor = UIColor(Color.themeBlue)
-            case 95: foregroundUIColor = UIColor(Color.themePurple)
-            case 96: foregroundUIColor = UIColor(Color.themeCyan)
-            case 97: foregroundUIColor = UIColor(Color.themeFg)
-
-            // Standard bg colors (40-47)
-            case 40: backgroundUIColor = UIColor(Color.themeFgDim.opacity(0.35))  // black bg
-            case 41: backgroundUIColor = UIColor(Color.themeRed.opacity(0.55))
-            case 42: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.45))
-            case 43: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.45))
-            case 44: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.45))
-            case 45: backgroundUIColor = UIColor(Color.themePurple.opacity(0.45))
-            case 46: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.40))
-            case 47: backgroundUIColor = UIColor(Color.themeFg.opacity(0.20))    // white bg
-
-            // Bright bg colors (100-107)
-            case 100: backgroundUIColor = UIColor(Color.themeComment.opacity(0.30))
-            case 101: backgroundUIColor = UIColor(Color.themeRed.opacity(0.65))
-            case 102: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.55))
-            case 103: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.55))
-            case 104: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.55))
-            case 105: backgroundUIColor = UIColor(Color.themePurple.opacity(0.55))
-            case 106: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.50))
-            case 107: backgroundUIColor = UIColor(Color.themeFg.opacity(0.30))
-
-            // 256-color fg: 38;5;n  /  rgb fg: 38;2;r;g;b
-            case 38:
-                if i + 1 < codes.count, codes[i + 1] == 5, i + 2 < codes.count {
-                    foregroundUIColor = color256(codes[i + 2])
-                    i += 2
-                } else if i + 1 < codes.count, codes[i + 1] == 2, i + 4 < codes.count {
-                    foregroundUIColor = UIColor(
-                        red: CGFloat(codes[i + 2]) / 255,
-                        green: CGFloat(codes[i + 3]) / 255,
-                        blue: CGFloat(codes[i + 4]) / 255,
-                        alpha: 1
-                    )
-                    i += 4
-                }
-
-            // 256-color bg: 48;5;n  /  rgb bg: 48;2;r;g;b
-            case 48:
-                if i + 1 < codes.count, codes[i + 1] == 5, i + 2 < codes.count {
-                    backgroundUIColor = color256(codes[i + 2])
-                    i += 2
-                } else if i + 1 < codes.count, codes[i + 1] == 2, i + 4 < codes.count {
-                    backgroundUIColor = UIColor(
-                        red: CGFloat(codes[i + 2]) / 255,
-                        green: CGFloat(codes[i + 3]) / 255,
-                        blue: CGFloat(codes[i + 4]) / 255,
-                        alpha: 1
-                    )
-                    i += 4
-                }
-
-            default: break // ignore blink, reverse, etc.
+            if code == 38, i + 2 < codes.count, codes[i + 1] == 5 {
+                foregroundUIColor = color256(codes[i + 2])
+                i += 3; continue
             }
+            if code == 38, i + 4 < codes.count, codes[i + 1] == 2 {
+                foregroundUIColor = UIColor(
+                    red: CGFloat(codes[i + 2]) / 255,
+                    green: CGFloat(codes[i + 3]) / 255,
+                    blue: CGFloat(codes[i + 4]) / 255,
+                    alpha: 1
+                )
+                i += 5; continue
+            }
+            if code == 48, i + 2 < codes.count, codes[i + 1] == 5 {
+                backgroundUIColor = color256(codes[i + 2])
+                i += 3; continue
+            }
+            if code == 48, i + 4 < codes.count, codes[i + 1] == 2 {
+                backgroundUIColor = UIColor(
+                    red: CGFloat(codes[i + 2]) / 255,
+                    green: CGFloat(codes[i + 3]) / 255,
+                    blue: CGFloat(codes[i + 4]) / 255,
+                    alpha: 1
+                )
+                i += 5; continue
+            }
+
+            applySingleCode(code)
             i += 1
         }
     }
 
-    /// Map 256-color palette to Tokyo Night approximations.
+    // MARK: - Single Code
+
+    private mutating func reset() {
+        bold = false; dim = false; italic = false
+        underline = false; foregroundUIColor = nil; backgroundUIColor = nil
+    }
+
+    private mutating func applySingleCode(_ code: Int) {
+        switch code {
+        case 0: reset()
+        case 1: bold = true
+        case 2: dim = true
+        case 3: italic = true
+        case 4: underline = true
+        case 22: bold = false; dim = false
+        case 23: italic = false
+        case 24: underline = false
+        case 39: foregroundUIColor = nil
+        case 49: backgroundUIColor = nil
+
+        case 30: foregroundUIColor = UIColor(Color.themeFgDim)
+        case 31: foregroundUIColor = UIColor(Color.themeRed)
+        case 32: foregroundUIColor = UIColor(Color.themeGreen)
+        case 33: foregroundUIColor = UIColor(Color.themeYellow)
+        case 34: foregroundUIColor = UIColor(Color.themeBlue)
+        case 35: foregroundUIColor = UIColor(Color.themePurple)
+        case 36: foregroundUIColor = UIColor(Color.themeCyan)
+        case 37: foregroundUIColor = UIColor(Color.themeFg)
+
+        case 90: foregroundUIColor = UIColor(Color.themeComment)
+        case 91: foregroundUIColor = UIColor(Color.themeRed)
+        case 92: foregroundUIColor = UIColor(Color.themeGreen)
+        case 93: foregroundUIColor = UIColor(Color.themeYellow)
+        case 94: foregroundUIColor = UIColor(Color.themeBlue)
+        case 95: foregroundUIColor = UIColor(Color.themePurple)
+        case 96: foregroundUIColor = UIColor(Color.themeCyan)
+        case 97: foregroundUIColor = UIColor(Color.themeFg)
+
+        case 40: backgroundUIColor = UIColor(Color.themeFgDim.opacity(0.35))
+        case 41: backgroundUIColor = UIColor(Color.themeRed.opacity(0.55))
+        case 42: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.45))
+        case 43: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.45))
+        case 44: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.45))
+        case 45: backgroundUIColor = UIColor(Color.themePurple.opacity(0.45))
+        case 46: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.40))
+        case 47: backgroundUIColor = UIColor(Color.themeFg.opacity(0.20))
+
+        case 100: backgroundUIColor = UIColor(Color.themeComment.opacity(0.30))
+        case 101: backgroundUIColor = UIColor(Color.themeRed.opacity(0.65))
+        case 102: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.55))
+        case 103: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.55))
+        case 104: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.55))
+        case 105: backgroundUIColor = UIColor(Color.themePurple.opacity(0.55))
+        case 106: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.50))
+        case 107: backgroundUIColor = UIColor(Color.themeFg.opacity(0.30))
+
+        default: break
+        }
+    }
+
     private func color256(_ n: Int) -> UIColor {
         switch n {
         case 0: return UIColor(Color.themeFgDim)
@@ -384,12 +448,11 @@ private struct SGRState {
         case 5: return UIColor(Color.themePurple)
         case 6: return UIColor(Color.themeCyan)
         case 7: return UIColor(Color.themeFg)
-        case 8...15: return color256(n - 8) // bright = same mapping
-        case 232...255: // grayscale ramp
+        case 8...15: return color256(n - 8)
+        case 232...255:
             let gray = CGFloat(n - 232) / 23.0
             return UIColor(white: gray, alpha: 1)
         default:
-            // 216-color cube (16-231): approximate with hue
             let idx = n - 16
             let r = CGFloat((idx / 36) % 6) / 5.0
             let g = CGFloat((idx / 6) % 6) / 5.0
