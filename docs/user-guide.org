@@ -16,9 +16,10 @@ This guide covers the features available in Oppi as of March 2026.
 
 ** Connecting to a Server
 
-When you first open Oppi, the app scans your local network for running
-servers. Servers that advertise via Bonjour appear automatically in
-the connection list.
+When you first open Oppi, the app guides you through pairing with a
+server. The primary method is scanning a QR code — run =oppi pair= on
+your server machine and scan the code from the Oppi iOS app using the
+built-in camera scanner.
 
 You can also add a server manually by entering its address. This works
 for remote servers reachable over Tailscale or any VPN — the server
@@ -46,8 +47,8 @@ your phone.
 ** The Session List
 
 The session list shows all sessions for the current workspace. Each
-row displays the session name, its status (running, paused, finished),
-elapsed time, and a short preview of the latest activity.
+row displays the session name, its status, elapsed time, and a short
+preview of the latest activity.
 
 [[file:screenshots/session-list.png]]
 
@@ -59,19 +60,39 @@ Tap the compose button to start a new session. Type or dictate your
 task. The session launches immediately and you can watch progress in
 the timeline.
 
-For quick tasks, use the quick session bar: a condensed composer that
-appears at the top of the session list. Type a short prompt and it
-dispatches without leaving the list view.
+For quick tasks, the quick session sheet provides a lightweight way
+to dispatch a short prompt. It can be triggered from a Control Center
+widget or Siri shortcut.
 
 ** Session Status
 
 | Status   | Meaning                                      |
 |----------+----------------------------------------------|
-| Running  | Agent is actively working                    |
-| Waiting  | Agent needs your input (approval or answer)  |
-| Paused   | Session is suspended, can be resumed         |
-| Finished | Agent completed the task                     |
+| Starting | Session is being initialized                 |
+| Ready    | Agent is idle, waiting for a prompt           |
+| Busy     | Agent is actively working                    |
+| Stopping | Stop was requested, agent is winding down    |
+| Stopped  | Session has ended                            |
 | Error    | Something went wrong                         |
+
+** Searching Sessions
+
+The session list includes a search bar that supports full-text search
+across all sessions in the workspace.
+
+| Query Length | Search Method     | What It Matches                |
+|--------------+-------------------+--------------------------------|
+| 1-2 chars    | Local fuzzy match | Session titles only            |
+| 3+ chars     | Server full-text  | Titles, messages, tool names   |
+
+Short queries filter instantly on-device. Longer queries hit the
+server's full-text index, which searches through actual conversation
+content. Results include context snippets with matching terms in bold,
+ranked by relevance — matches in titles and your messages rank higher
+than matches in agent output.
+
+The search bar debounces input by 200ms, so partial keystrokes do not
+flood the network.
 
 * The Timeline
 
@@ -84,11 +105,11 @@ edits, command output, and any questions directed at you.
 ** Messages
 
 Agent responses appear as rendered markdown. Code blocks have syntax
-highlighting for 20+ languages. Math expressions render as formatted
+highlighting for 25+ languages. Math expressions render as formatted
 equations. Mermaid diagram blocks render as actual diagrams.
 
 Tap any code block to open it full-screen. From there you can scroll
-through the full output, copy it, or share it as an image or PDF.
+through the full output, copy it, or share it.
 
 ** Tool Calls
 
@@ -102,12 +123,24 @@ the before-and-after diff.
 
 ** Approvals
 
-Some actions require your approval before the agent can proceed. These
-appear as interactive cards with Allow and Deny buttons. The card
-shows what the agent wants to do (the command it wants to run, the
-file it wants to write) so you can make an informed decision.
+Some actions require your approval before the agent can proceed. A
+floating pill appears at the bottom of the timeline showing the tool
+name and a summary of the action. Tap Allow or Deny directly on the
+pill for quick decisions.
 
-[[file:screenshots/approval-card.png]]
+For more detail, tap the pill to open the permission sheet. The sheet
+shows the full command or file path, the agent's reason for the
+request, and scope options:
+
+| Choice        | Effect                                     |
+|---------------+--------------------------------------------|
+| Allow once    | Permits this single tool call              |
+| This session  | Permits matching calls for this session    |
+| Always        | Creates a persistent rule for all sessions |
+| Deny once     | Blocks this single tool call               |
+| Deny globally | Blocks all matching calls going forward    |
+
+[[file:screenshots/permission-pill.png]]
 
 Push notifications alert you when an agent is waiting for approval.
 Tap the notification to jump directly to the pending action.
@@ -125,8 +158,8 @@ If you skip a question, the agent uses its best judgment and moves on.
 * File Browser
 
 The file browser lets you navigate your project files from your phone.
-Open it from the workspace tab to browse directories, search for
-files, and view source code.
+Open it from the workspace detail toolbar to browse directories,
+search for files, and view source code.
 
 ** Navigating
 
@@ -151,24 +184,23 @@ appear as you type with no network round-trip per keystroke.
 
 ** Viewing Files
 
-The file browser renders content based on file type:
+All files open in a unified full-screen viewer. The viewer adapts its
+rendering based on file type:
 
-| File Type    | Rendering                                       |
-|--------------+-------------------------------------------------|
-| Source code  | Syntax highlighting, line numbers, scrollable   |
-| Markdown     | Rendered prose with headers, lists, code blocks  |
-| Org mode     | Foldable sections, rendered inline markup        |
-| JSON         | Pretty-printed with colored keys and values      |
-| Images       | Inline preview with pinch-to-zoom                |
-| PDF          | Native reader with scroll and text selection      |
-| Video/Audio  | Playback controls, streams from server           |
-| HTML         | Rendered preview or source view                  |
+| File Type       | Rendering                                       |
+|-----------------+-------------------------------------------------|
+| Source code     | Syntax highlighting, line numbers, scrollable   |
+| Markdown        | Rendered prose with headers, lists, code blocks  |
+| Org mode        | Foldable sections, rendered inline markup        |
+| JSON            | Pretty-printed with colored keys and values      |
+| LaTeX           | Rendered math equations                          |
+| Mermaid         | Native diagrams (flowchart, sequence, etc.)      |
+| Images          | Inline preview with pinch-to-zoom                |
+| PDF             | Native reader with scroll and text selection      |
+| Video/Audio     | Playback controls, streams from server           |
+| HTML            | Rendered preview or source view                  |
 
 [[file:screenshots/code-view.png]]
-
-For large text files (over 1 MB), the browser shows a size warning
-before downloading. On cellular connections, an additional notice
-appears so you can decide whether to load it.
 
 ** Inline Images in Documents
 
@@ -188,6 +220,23 @@ In org mode:
 This means you can keep documentation with embedded diagrams in your
 repo and read it directly from the file browser on your phone.
 
+* Changed Files
+
+While a session runs (or after it finishes), you can review every
+file the agent touched. Open the session outline from the timeline
+toolbar, then tap the Files tab. Each file shows its git status —
+added, modified, or deleted — with line counts for additions and
+removals.
+
+[[file:screenshots/changed-files.png]]
+
+Tap a file to see the diff. Additions highlight in green, deletions
+in red. The diff view shows enough context around each change to
+understand what happened.
+
+This is useful for reviewing agent work before committing. You can
+see exactly what changed, file by file, without leaving your phone.
+
 * Rich Content Rendering
 
 Oppi renders several content types natively, without web views or
@@ -195,18 +244,21 @@ external dependencies.
 
 ** Syntax Highlighting
 
-Source code in the timeline and file browser gets syntax highlighting
-for these languages:
+Source code in the timeline and file browser gets syntax highlighting.
+The following languages have dedicated highlighter support:
 
 #+begin_src text
 Swift, TypeScript, JavaScript, Python, Rust, Go, Java, Kotlin,
-Ruby, C, C++, Shell, SQL, HTML, CSS, JSON, YAML, TOML, Markdown,
-Org, LaTeX, Diff, and more.
+C, C++, Shell, SQL, HTML, CSS, JSON, YAML, TOML, Markdown,
+Org, LaTeX, Diff, Zig, Protobuf, GraphQL, Ruby
 #+end_src
 
-The highlighter runs fast enough to keep up with streaming output.
-As an agent types code character by character, the highlighting
-updates in real time.
+Other file extensions are recognized and displayed with line numbers
+and monospaced formatting, but without language-specific coloring.
+
+During streaming, syntax highlighting updates per coalescer flush
+(roughly every 33ms). A typewriter effect reveals characters smoothly
+while the highlighter keeps up in the background.
 
 ** Markdown
 
@@ -237,7 +289,6 @@ directive:
 Org markup converts to the same rendering pipeline as markdown, so
 bold, italic, code, links, lists, and tables all look consistent.
 
-Drawers (=:PROPERTIES:=, =:LOGBOOK:=) render as collapsible sections.
 Source blocks get syntax highlighting. Keywords like =#+TITLE:= are
 parsed and respected.
 
@@ -251,12 +302,11 @@ Supported diagram types:
 
 - Flowcharts (with subgraphs, styling, direction control)
 - Sequence diagrams (messages, activations, notes, loops)
-- Class diagrams (classes, relationships, methods)
-- State diagrams (states, transitions, forks, joins)
-- ER diagrams (entities, relationships, cardinality)
 - Gantt charts (tasks, milestones, sections)
-- Pie charts (labeled slices with percentages)
-- Git graphs (commits, branches, merges)
+- Mindmaps (hierarchical node trees)
+
+Unsupported diagram types (class, state, ER, pie, git graph) fall
+back to displaying the source text.
 
 Example:
 
@@ -283,21 +333,30 @@ commands. Rendering is native — no MathJax, no KaTeX.
 
 * Sharing
 
-Tap the share button when viewing content full-screen to export it.
-A single tap exports with the smart default format (usually an image).
-Long-press the share button to pick a specific format.
+The full-screen viewer includes a share button in the navigation bar.
+Tap it to export with the default format. Long-press for a format
+picker with all available options.
 
-| Content Type    | Available Formats        |
-|-----------------+--------------------------|
-| Code            | Image, PDF, Source text   |
-| Markdown        | Image, PDF, Source text   |
-| Org mode        | Image, PDF, Source text   |
-| Mermaid diagram | Image, PDF, Source text   |
-| LaTeX equation  | Image, PDF, Source text   |
+The default format is PDF for most rendered content (code, markdown,
+org, mermaid, LaTeX, JSON, HTML). Plain text exports as a source file.
+Image data exports as an image.
 
-Exported images use a light theme regardless of the app's current
-appearance. The resolution matches your device's screen scale (2x
-on most iPhones, 3x on Pro models).
+| Content Type    | Available Formats          | Default  |
+|-----------------+----------------------------+----------|
+| Code            | PDF, Image, Source file    | PDF      |
+| Markdown        | PDF, Image, Markdown file  | PDF      |
+| Org mode        | PDF, Image, Org file       | PDF      |
+| Mermaid diagram | PDF, Image, Mermaid source | PDF      |
+| LaTeX equation  | PDF, Image, LaTeX source   | PDF      |
+| JSON            | PDF, Image, JSON file      | PDF      |
+| HTML            | Image, PDF, HTML source    | PDF      |
+| Plain text      | Text file                  | Source   |
+| Image           | Image                      | Image    |
+
+Exported images are rendered at @3x scale regardless of device,
+producing crisp output suitable for retina displays. The export uses
+the app's current color theme — if you are using a dark theme, the
+export will have a dark background.
 
 [[file:screenshots/share-sheet.png]]
 
@@ -327,42 +386,13 @@ Notifications include enough context to decide whether to act now or
 later. Tapping a notification opens the relevant session at the
 pending action.
 
-Notification preferences are configurable per workspace. You can
-mute a workspace during focused work and re-enable it later.
-
-* Changed Files and Diffs
-
-After a session finishes (or while it runs), you can review every
-file the agent touched. The changed files list shows each modified
-file with its git status: added, modified, deleted.
-
-[[file:screenshots/changed-files.png]]
-
-Tap a file to see the diff. Additions highlight in green, deletions
-in red. The diff view shows enough context around each change to
-understand what happened.
-
-This is useful for reviewing agent work before committing. You can
-see exactly what changed, file by file, without leaving your phone.
-
-* Keyboard Shortcuts
-
-On iPad with an external keyboard, these shortcuts are available:
-
-| Shortcut     | Action                          |
-|--------------+---------------------------------|
-| =Cmd + N=    | New session                     |
-| =Cmd + F=    | Search files                    |
-| =Cmd + K=    | Quick session                   |
-| =Cmd + .=    | Cancel current action           |
+Push notifications register with all paired servers, so approval
+requests arrive regardless of which server you are currently viewing.
 
 * Tips
 
-- *Swipe left* on a session row to delete it.
-- *Long-press* a code block in the timeline to copy its contents.
-- *Pinch-to-zoom* works on images and PDF files in the browser.
-- *Pull to refresh* the session list to force a sync.
-- *Shake* the device to send feedback (debug builds only).
+- *Double-tap* a code block in the timeline to copy its contents.
+- *Pinch-to-zoom* works on images, diagrams, and PDF files.
 - The file browser remembers your last browsed path per workspace.
 - Search in the file browser supports partial matches: =tsconf=
   finds =tsconfig.json=.
@@ -371,15 +401,25 @@ On iPad with an external keyboard, these shortcuts are available:
 
 * Appendix: Supported File Types
 
-The file browser recognizes and renders these file extensions:
+The file browser recognizes and renders these file extensions.
 
-** Source Code
+** Source Code (with syntax highlighting)
 
 #+begin_src text
 .swift .ts .tsx .js .jsx .mjs .cjs .py .pyi .rs .go .java .kt .kts
-.scala .c .cpp .cc .cxx .h .hpp .hxx .rb .php .lua .pl .pm .r .sh
-.bash .zsh .fish .ps1 .sql .graphql .gql .proto .ex .exs .erl .hs
-.ml .fs .dart .zig .nim .tf .hcl
+.c .cpp .cc .cxx .h .hpp .hxx .rb .sh .bash .zsh .fish .sql
+.graphql .gql .proto .zig .html .css .json .yml .yaml .toml .md .org
+.tex .latex .diff
+#+end_src
+
+** Source Code (displayed without highlighting)
+
+These extensions are recognized and shown with line numbers and
+monospaced font, but do not have dedicated syntax coloring:
+
+#+begin_src text
+.scala .php .lua .pl .pm .r .ps1 .ex .exs .erl .hs .ml .fs
+.dart .nim .tf .hcl
 #+end_src
 
 ** Data and Config
@@ -406,10 +446,10 @@ PDF:    .pdf
 
 ** Special Files
 
-These files without extensions are also recognized:
+These files without extensions are recognized:
 
 #+begin_src text
-Dockerfile  Makefile  LICENSE  README  CHANGELOG
-Procfile    Gemfile   Rakefile Brewfile Justfile
-.gitignore  .env      .prettierrc      .eslintrc
+Dockerfile  Containerfile  Makefile  GNUmakefile
+LICENSE  README  CHANGELOG
+.gitignore  .env  .prettierrc  .eslintrc
 #+end_src
