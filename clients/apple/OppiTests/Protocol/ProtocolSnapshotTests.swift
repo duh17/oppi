@@ -17,14 +17,15 @@ struct ProtocolSnapshotTests {
 
     /// Path to the shared protocol snapshot file.
     private var snapshotURL: URL {
-        // #filePath → .../ios/OppiTests/Protocol/ProtocolSnapshotTests.swift
+        // #filePath → .../clients/apple/OppiTests/Protocol/ProtocolSnapshotTests.swift
         // Navigate up to repo root, then into protocol/
         let testFile = URL(fileURLWithPath: #filePath)
         let repoRoot = testFile
+            .deletingLastPathComponent()  // ProtocolSnapshotTests.swift
             .deletingLastPathComponent()  // Protocol/
             .deletingLastPathComponent()  // OppiTests/
-            .deletingLastPathComponent()  // ios/
-            .deletingLastPathComponent()  // oppi/
+            .deletingLastPathComponent()  // apple/
+            .deletingLastPathComponent()  // clients/
         return repoRoot.appendingPathComponent("protocol/server-messages.json")
     }
 

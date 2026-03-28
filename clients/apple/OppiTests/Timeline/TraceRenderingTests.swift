@@ -602,9 +602,9 @@ struct TraceRenderingTests {
     }
 
     @Test func toolCallFormattingFormatBytes() {
-        #expect(ToolCallFormatting.formatBytes(500) == "500B")
-        #expect(ToolCallFormatting.formatBytes(2048) == "2KB")
-        #expect(ToolCallFormatting.formatBytes(1_500_000) == "1.4MB")
+        #expect(ToolCallFormatting.formatBytes(500) == "500 B")
+        #expect(ToolCallFormatting.formatBytes(2048) == "2.0 KB")
+        #expect(ToolCallFormatting.formatBytes(1_500_000) == "1.4 MB")
     }
 
     @Test func toolCallFormattingParseArgValue() {

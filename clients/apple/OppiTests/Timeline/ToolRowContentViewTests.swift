@@ -723,9 +723,9 @@ struct ToolTimelineRowContentViewTests {
             .compactMap { $0.attributedText?.string ?? $0.text }
             .joined(separator: "\n")
 
-        // Gutter bar with prefix (▎+ / ▎−) should be present.
-        #expect(rendered.contains("▎+"))
-        #expect(rendered.contains("▎−"))
+        // Gutter with prefix ( + /  - ) should be present.
+        #expect(rendered.contains(" + "))
+        #expect(rendered.contains(" - "))
         #expect(rendered.contains("let value"))
     }
 

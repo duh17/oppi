@@ -1360,8 +1360,8 @@ struct ToolTimelineRowModeDispatchTests {
         let rendered = label.attributedText?.string ?? label.text ?? ""
         #expect(rendered.contains("- let old = false"), "Streaming diff should show - prefix")
         #expect(rendered.contains("+ let old = true"), "Streaming diff should show + prefix")
-        // No rich gutter prefix during streaming (cheap path)
-        #expect(!rendered.contains("▎"), "Streaming diff should not have rich gutter markers")
+        // No rich gutter prefix during streaming (cheap path uses "+" / "-" at line start)
+        #expect(!rendered.contains(" + "), "Streaming diff should not have rich gutter markers")
     }
 
     // After completion, diff mode should render full attributed diff with
@@ -1385,7 +1385,7 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(rendered.contains("let old = false"))
         #expect(rendered.contains("let old = true"))
         // Full rich gutter when done
-        #expect(rendered.contains("▎"), "Done diff should have rich gutter markers")
+        #expect(rendered.contains(" + ") || rendered.contains(" - "), "Done diff should have rich gutter markers")
     }
 
     // Streaming -> done transition for diff mode.
@@ -1413,14 +1413,14 @@ struct ToolTimelineRowModeDispatchTests {
 
         let label = try #require(privateView(named: "expandedLabel", in: view) as? UITextView)
         let streamingRendered = label.attributedText?.string ?? label.text ?? ""
-        #expect(!streamingRendered.contains("▎"), "Streaming diff should not have gutter markers")
+        #expect(!streamingRendered.contains(" + "), "Streaming diff should not have gutter markers")
 
         view.configuration = done
         _ = fittedSize(for: view, width: 360)
 
         let doneRendered = label.attributedText?.string ?? label.text ?? ""
         #expect(doneRendered.contains("let a = 2"))
-        #expect(doneRendered.contains("▎"), "Done diff should add gutter markers")
+        #expect(doneRendered.contains(" + ") || doneRendered.contains(" - "), "Done diff should add gutter markers")
     }
 
     // MARK: - Streaming guard: auto-follow behavior

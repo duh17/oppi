@@ -50,7 +50,7 @@ struct DiffGutterAttributeTests {
 
     // MARK: - Gutter background coverage
 
-    /// The gutter region ("▎+ " / "▎− ") must carry a .backgroundColor attribute
+    /// The gutter region (" + " / " - ") must carry a .backgroundColor attribute
     /// so that timeline expanded views (plain UITextView, no custom layout manager)
     /// show the tinted line background across the entire row — not just line
     /// numbers and code. UnifiedDiffView compensates with UnifiedDiffLayoutManager
@@ -61,15 +61,15 @@ struct DiffGutterAttributeTests {
         )
         let text = result.string as NSString
 
-        // Find the added line gutter: "▎+ "
-        let gutterRange = text.range(of: "▎+ ")
+        // Find the added line gutter: " + "
+        let gutterRange = text.range(of: " + ")
         guard gutterRange.location != NSNotFound else {
-            Issue.record("Expected '▎+ ' gutter marker in diff output")
+            Issue.record("Expected ' + ' gutter marker in diff output")
             return
         }
 
         let bg = result.attribute(.backgroundColor, at: gutterRange.location, effectiveRange: nil)
-        #expect(bg != nil, "Added gutter '▎+ ' must have a .backgroundColor attribute for non-layout-manager contexts")
+        #expect(bg != nil, "Added gutter ' + ' must have a .backgroundColor attribute for non-layout-manager contexts")
     }
 
     @Test func removedGutterHasBackgroundColor() throws {
@@ -78,15 +78,15 @@ struct DiffGutterAttributeTests {
         )
         let text = result.string as NSString
 
-        // Find the removed line gutter: "▎− "
-        let gutterRange = text.range(of: "▎− ")
+        // Find the removed line gutter: " - "
+        let gutterRange = text.range(of: " - ")
         guard gutterRange.location != NSNotFound else {
-            Issue.record("Expected '▎− ' gutter marker in diff output")
+            Issue.record("Expected ' - ' gutter marker in diff output")
             return
         }
 
         let bg = result.attribute(.backgroundColor, at: gutterRange.location, effectiveRange: nil)
-        #expect(bg != nil, "Removed gutter '▎− ' must have a .backgroundColor attribute for non-layout-manager contexts")
+        #expect(bg != nil, "Removed gutter ' - ' must have a .backgroundColor attribute for non-layout-manager contexts")
     }
 
     /// Context lines use "   " (no gutter bar) — they must NOT have a background.
@@ -106,7 +106,7 @@ struct DiffGutterAttributeTests {
             if line.hasPrefix("   ") && !line.trimmingCharacters(in: .whitespaces).isEmpty {
                 // Check it's not a header line
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if !trimmed.hasPrefix("@@") && !trimmed.hasPrefix("▎") {
+                if !trimmed.hasPrefix("@@") {
                     contextGutterStart = offset
                     break
                 }
@@ -133,9 +133,9 @@ struct DiffGutterAttributeTests {
         )
         let text = result.string as NSString
 
-        let gutterRange = text.range(of: "▎+ ")
+        let gutterRange = text.range(of: " + ")
         guard gutterRange.location != NSNotFound else {
-            Issue.record("Expected '▎+ ' gutter marker")
+            Issue.record("Expected ' + ' gutter marker")
             return
         }
 
@@ -171,7 +171,7 @@ struct DiffGutterAttributeTests {
             hunks: makeHunks(), filePath: "test.swift"
         )
         let darkText = darkResult.string as NSString
-        let darkGutterRange = darkText.range(of: "▎+ ")
+        let darkGutterRange = darkText.range(of: " + ")
         let darkGutterColor = darkResult.attribute(
             .foregroundColor, at: darkGutterRange.location, effectiveRange: nil
         ) as? UIColor
@@ -182,7 +182,7 @@ struct DiffGutterAttributeTests {
             hunks: makeHunks(), filePath: "test.swift"
         )
         let lightText = lightResult.string as NSString
-        let lightGutterRange = lightText.range(of: "▎+ ")
+        let lightGutterRange = lightText.range(of: " + ")
         let lightGutterColor = lightResult.attribute(
             .foregroundColor, at: lightGutterRange.location, effectiveRange: nil
         ) as? UIColor
@@ -204,9 +204,9 @@ struct DiffGutterAttributeTests {
         )
         let text = result.string as NSString
 
-        let gutterRange = text.range(of: "▎+ ")
+        let gutterRange = text.range(of: " + ")
         guard gutterRange.location != NSNotFound else {
-            Issue.record("Expected '▎+ ' gutter marker")
+            Issue.record("Expected ' + ' gutter marker")
             return
         }
 
@@ -220,9 +220,9 @@ struct DiffGutterAttributeTests {
         )
         let text = result.string as NSString
 
-        let gutterRange = text.range(of: "▎− ")
+        let gutterRange = text.range(of: " - ")
         guard gutterRange.location != NSNotFound else {
-            Issue.record("Expected '▎− ' gutter marker")
+            Issue.record("Expected ' - ' gutter marker")
             return
         }
 

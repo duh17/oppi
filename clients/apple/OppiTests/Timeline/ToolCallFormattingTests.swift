@@ -261,17 +261,17 @@ struct ToolCallFormattingTests {
     // MARK: - Format Bytes
 
     @Test func formatBytesSmall() {
-        #expect(ToolCallFormatting.formatBytes(42) == "42B")
-        #expect(ToolCallFormatting.formatBytes(1023) == "1023B")
+        #expect(ToolCallFormatting.formatBytes(42) == "42 B")
+        #expect(ToolCallFormatting.formatBytes(1023) == "1023 B")
     }
 
     @Test func formatBytesKilobytes() {
-        #expect(ToolCallFormatting.formatBytes(1024) == "1KB")
-        #expect(ToolCallFormatting.formatBytes(10240) == "10KB")
+        #expect(ToolCallFormatting.formatBytes(1024) == "1.0 KB")
+        #expect(ToolCallFormatting.formatBytes(10240) == "10.0 KB")
     }
 
     @Test func formatBytesMegabytes() {
-        #expect(ToolCallFormatting.formatBytes(1048576) == "1.0MB")
-        #expect(ToolCallFormatting.formatBytes(5242880) == "5.0MB")
+        #expect(ToolCallFormatting.formatBytes(1048576) == "1.0 MB")
+        #expect(ToolCallFormatting.formatBytes(5242880) == "5.0 MB")
     }
 }

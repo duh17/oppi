@@ -112,25 +112,11 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { request in
             switch request.url?.path {
-            case "/workspaces":
-                return self.mockResponse(json: """
-                {"workspaces":[
-                    {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-                    {"id":"w2","name":"Ops","skills":[],"createdAt":0,"updatedAt":0}
-                ]}
-                """)
-
-            case "/workspaces/w1/sessions":
+            case "/sessions":
                 return self.mockResponse(json: """
                 {"sessions":[
+                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01},
                     {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
-                ]}
-                """)
-
-            case "/workspaces/w2/sessions":
-                return self.mockResponse(json: """
-                {"sessions":[
-                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
                 ]}
                 """)
 
