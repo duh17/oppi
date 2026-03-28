@@ -29,9 +29,9 @@ struct FileShareServiceTests {
         #expect(format == .pdf)
     }
 
-    @Test func defaultFormatForHTMLIsImage() {
+    @Test func defaultFormatForHTMLIsPDF() {
         let format = FileShareService.defaultFormat(for: .html("<h1>Hello</h1>"))
-        #expect(format == .image)
+        #expect(format == .pdf)
     }
 
     @Test func defaultFormatForOrgModeIsPDF() {
@@ -91,10 +91,11 @@ struct FileShareServiceTests {
         #expect(orgFormats.first == .pdf)
     }
 
-    @Test func htmlHasImageFirstInFormats() {
-        // HTML defaults to image (full-page screenshot) for canvas support
+    @Test func htmlFormatsIncludeAllThree() {
         let htmlFormats = FileShareService.availableFormats(for: .html("<p>test</p>"))
-        #expect(htmlFormats.first == .image)
+        #expect(htmlFormats.contains(.image))
+        #expect(htmlFormats.contains(.pdf))
+        #expect(htmlFormats.contains(.source))
     }
 
     // MARK: - RenderTheme.light
@@ -194,14 +195,14 @@ struct FileShareServiceTests {
         #expect(filename == "document.pdf")
     }
 
-    @Test func renderDefaultProducesImageForHTML() async {
+    @Test func renderDefaultProducesPDFForHTML() async {
         let item = await FileShareService.renderDefault(.html("<h1>Hello</h1>"))
-        guard case .image(let image) = item else {
-            Issue.record("Expected image, got \(item)")
+        guard case .pdf(let data, let filename) = item else {
+            Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(image.size.width > 0)
-        #expect(image.size.height > 0)
+        #expect(!data.isEmpty)
+        #expect(filename == "page.pdf")
     }
 
     @Test func renderDefaultProducesSourceForPlainText() async {

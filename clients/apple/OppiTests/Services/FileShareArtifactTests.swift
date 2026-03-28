@@ -258,7 +258,9 @@ struct FileShareArtifactTests {
                 Issue.record("\(name): expected PDF")
                 continue
             }
-            #expect(data.count > 100, "\(name): PDF too small (\(data.count) bytes)")
+            // 8KB is the minimum for a PDF with actual rendered content.
+            // Blank embed-image PDFs are ~6KB (just the PDF wrapper + empty image).
+            #expect(data.count > 8000, "\(name): PDF suspiciously small (\(data.count) bytes) — likely blank")
             let header = String(data: data.prefix(5), encoding: .ascii)
             #expect(header == "%PDF-", "\(name): invalid PDF header")
 
@@ -267,6 +269,21 @@ struct FileShareArtifactTests {
             let pdfDoc = provider.flatMap { CGPDFDocument($0) }
             #expect(pdfDoc != nil, "\(name): CGPDFDocument failed to open")
             #expect((pdfDoc?.numberOfPages ?? 0) >= 1, "\(name): PDF has no pages")
+
+            // Rasterize first page and check it's not blank
+            if let pdfDoc, let page = pdfDoc.page(at: 1) {
+                let pageRect = page.getBoxRect(.mediaBox)
+                let renderer = UIGraphicsImageRenderer(size: pageRect.size)
+                let raster = renderer.image { ctx in
+                    UIColor.white.setFill()
+                    ctx.fill(CGRect(origin: .zero, size: pageRect.size))
+                    let cgCtx = ctx.cgContext
+                    cgCtx.translateBy(x: 0, y: pageRect.height)
+                    cgCtx.scaleBy(x: 1, y: -1)
+                    cgCtx.drawPDFPage(page)
+                }
+                #expect(!FileShareService.isBlankImage(raster), "\(name): PDF renders to blank image")
+            }
         }
     }
 

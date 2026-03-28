@@ -409,20 +409,28 @@ enum FileShareService {
             selectedTextPiRouter: nil,
             selectedTextSourceContext: nil
         )
+        // NativeFullScreenCodeBody uses NSTextLayoutManager which needs
+        // a window attachment for layout to produce non-zero height.
         return snapshotView(
             body,
             width: 800,
             padding: 0,
-            backgroundColor: UIColor(palette.bgDark)
+            backgroundColor: UIColor(palette.bgDark),
+            attachToWindow: true
         )
     }
 
     /// Snapshot a UIView at the given width with padding.
+    ///
+    /// Some views (e.g. `NativeFullScreenCodeBody` with `NSTextLayoutManager`)
+    /// need a window attachment for layout to produce non-zero height.
+    /// Set `attachToWindow: true` for those cases.
     private static func snapshotView(
         _ view: UIView,
         width: CGFloat,
         padding: CGFloat,
-        backgroundColor: UIColor
+        backgroundColor: UIColor,
+        attachToWindow: Bool = false
     ) -> UIImage {
         let contentWidth = width - padding * 2
 
@@ -435,14 +443,38 @@ enum FileShareService {
             view.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
             view.topAnchor.constraint(equalTo: hostView.topAnchor),
         ])
+
+        // Attach to window for views that need the view hierarchy for layout
+        // (NSTextLayoutManager, UITextView). Insert at z=0 behind all content.
+        let window: UIWindow? = attachToWindow ? UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first?.windows.first : nil
+        if let window {
+            hostView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: 10000)
+            window.insertSubview(hostView, at: 0)
+        }
+
         hostView.layoutIfNeeded()
 
         let contentHeight = view.bounds.height
-        guard contentHeight > 0 else { return placeholderImage() }
+
+        if let window, contentHeight <= 0 {
+            // Retry: force a run-loop tick for deferred layout
+            hostView.setNeedsLayout()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            hostView.layoutIfNeeded()
+        }
+
+        defer {
+            hostView.removeFromSuperview()
+        }
+
+        let finalHeight = view.bounds.height
+        guard finalHeight > 0 else { return placeholderImage() }
 
         // Cap at a reasonable maximum to avoid massive images
         let maxHeight: CGFloat = 8000
-        let clampedHeight = min(contentHeight, maxHeight)
+        let clampedHeight = min(finalHeight, maxHeight)
 
         let imageSize = CGSize(
             width: width,
@@ -476,14 +508,28 @@ enum FileShareService {
             pdfData = await renderHTMLToPDF(source)
         case .pdfData(let data, let name):
             return .pdf(data, filename: name)
-        default:
-            // For text-based content, render image and embed in PDF
-            let imageItem = await renderImage(content)
-            guard case .image(let image) = imageItem else {
-                return .pdf(Data(), filename: "document.pdf")
-            }
+        case .markdown(let source):
+            filename = "document.pdf"
+            pdfData = await renderMarkdownToPDF(source)
+        case .orgMode(let source):
+            filename = "document.pdf"
+            pdfData = await renderMarkdownToPDF(DocumentRenderPipeline.orgToMarkdown(source))
+        case .code(let source, let language):
             filename = sourceFilename(for: content, extension: "pdf")
-            pdfData = embedImageInPDF(image)
+            pdfData = renderCodeToPDF(source, language: language)
+        case .json(let source):
+            filename = "data.pdf"
+            pdfData = renderCodeToPDF(source, language: "json")
+        case .plainText(let source):
+            filename = "text.pdf"
+            pdfData = renderCodeToPDF(source, language: nil)
+        case .imageData(let data, _):
+            filename = "image.pdf"
+            if let image = UIImage(data: data) {
+                pdfData = embedImageInPDF(image)
+            } else {
+                pdfData = Data()
+            }
         }
 
         return .pdf(pdfData, filename: filename)
@@ -510,6 +556,72 @@ enum FileShareService {
         return DocumentRenderPipeline.renderLatexExpressionsToPDF(
             layout: layout, backgroundColor: currentBackgroundColor
         )
+    }
+
+    /// Render code/JSON/plaintext to PDF using NSAttributedString drawing.
+    ///
+    /// This bypasses UITextView entirely — no window attachment needed.
+    /// Uses the same syntax highlighting as the full-screen viewer.
+    private static func renderCodeToPDF(_ source: String, language: String?) -> Data {
+        let palette = ThemeRuntimeState.currentPalette()
+        let font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+        // Build highlighted attributed string
+        let attrString: NSAttributedString
+        let syntaxLang = language.map { SyntaxLanguage.detect($0) }
+        if let syntaxLang, syntaxLang != .unknown {
+            attrString = FullScreenCodeHighlighter.buildHighlightedText(source, language: syntaxLang)
+        } else {
+            attrString = NSAttributedString(
+                string: source,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: UIColor(palette.fg),
+                ]
+            )
+        }
+
+        let maxWidth: CGFloat = 800
+        let padding: CGFloat = 24
+        let drawWidth = maxWidth - padding * 2
+
+        // Measure text height
+        let textRect = attrString.boundingRect(
+            with: CGSize(width: drawWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        let pageHeight = ceil(textRect.height) + padding * 2
+        let pageSize = CGSize(width: maxWidth, height: pageHeight)
+
+        let pdfRenderer = UIGraphicsPDFRenderer(
+            bounds: CGRect(origin: .zero, size: pageSize)
+        )
+        return pdfRenderer.pdfData { ctx in
+            ctx.beginPage()
+
+            // Background
+            UIColor(palette.bgDark).setFill()
+            UIRectFill(CGRect(origin: .zero, size: pageSize))
+
+            // Draw text
+            attrString.draw(with: CGRect(
+                x: padding, y: padding,
+                width: drawWidth, height: textRect.height
+            ), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+        }
+    }
+
+    /// Render markdown to PDF by snapshotting AssistantMarkdownContentView.
+    ///
+    /// AssistantMarkdownContentView layouts correctly offscreen (unlike code views
+    /// which need NSTextLayoutManager + window). Creates the view, snapshots to image,
+    /// then embeds in PDF for proper page sizing.
+    private static func renderMarkdownToPDF(_ source: String) async -> Data {
+        let image = renderMarkdownToImage(source)
+        // If markdown image is valid, embed it. Otherwise return empty.
+        guard image.size.width > 10, image.size.height > 10 else { return Data() }
+        return embedImageInPDF(image)
     }
 
     /// Render HTML to PDF using an offscreen WKWebView.
