@@ -10,6 +10,7 @@ import WebKit
 /// no bridge injection, external links open in Safari.
 final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
     private let webView: PiWKWebView
+    private let htmlString: String
 
     init(
         htmlString: String,
@@ -17,6 +18,8 @@ final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSourceContext: SelectedTextSourceContext? = nil
     ) {
+        self.htmlString = htmlString
+
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -51,6 +54,11 @@ final class NativeFullScreenHTMLBody: UIView, WKNavigationDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    // MARK: - Process termination recovery
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        webView.loadHTMLString(htmlString, baseURL: nil)
+    }
 }
 
 // MARK: - Code Body

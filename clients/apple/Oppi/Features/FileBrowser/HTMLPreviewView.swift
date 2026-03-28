@@ -1,12 +1,54 @@
 import SwiftUI
 import WebKit
 
+// MARK: - HTMLContentTracker
+
+/// Tracks whether an HTML web view needs to reload its content.
+///
+/// Detects two reload scenarios:
+/// 1. Content changed (hash mismatch)
+/// 2. WKWebView content process was terminated (blank screen recovery)
+final class HTMLContentTracker {
+    private var loadedContentHash: Int?
+    private var processTerminated = false
+
+    /// Returns true if the web view should reload for the given content.
+    /// Call before `loadHTMLString`.
+    func needsReload(for content: String) -> Bool {
+        let hash = content.hashValue
+        if processTerminated {
+            loadedContentHash = hash
+            return true
+        }
+        if hash != loadedContentHash {
+            loadedContentHash = hash
+            return true
+        }
+        return false
+    }
+
+    /// Call after a successful `loadHTMLString` to clear the reload flag.
+    func markLoaded() {
+        processTerminated = false
+    }
+
+    /// Call from `webViewWebContentProcessDidTerminate` to force
+    /// the next `needsReload` to return true — even for same content.
+    func markProcessTerminated() {
+        processTerminated = true
+    }
+}
+
 // MARK: - WKWebView wrapper
 
 /// UIViewRepresentable wrapper for a hardened WKWebView.
 ///
 /// Loads HTML from a string with no network access, no bridge,
 /// and external links opening in Safari.
+///
+/// Handles two blank-screen scenarios:
+/// - SwiftUI reuses the UIView with different content → `updateUIView` reloads
+/// - WKWebView content process crashes → coordinator triggers reload
 struct HTMLWebView: UIViewRepresentable {
     let htmlString: String
     let baseFileName: String
@@ -37,13 +79,24 @@ struct HTMLWebView: UIViewRepresentable {
         webView.piActionHandler = piActionHandler
 
         // Load HTML with a blank base URL — no relative resource loading
-        webView.loadHTMLString(htmlString, baseURL: nil)
+        let tracker = context.coordinator.contentTracker
+        if tracker.needsReload(for: htmlString) {
+            webView.loadHTMLString(htmlString, baseURL: nil)
+            tracker.markLoaded()
+        }
 
         return webView
     }
 
     func updateUIView(_ webView: PiWKWebView, context: Context) {
         webView.piActionHandler = piActionHandler
+
+        // Reload if content changed or process was terminated
+        let tracker = context.coordinator.contentTracker
+        if tracker.needsReload(for: htmlString) {
+            webView.loadHTMLString(htmlString, baseURL: nil)
+            tracker.markLoaded()
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -51,6 +104,8 @@ struct HTMLWebView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        let contentTracker = HTMLContentTracker()
+
         /// Block all navigation except the initial load.
         /// External links open in Safari.
         func webView(
@@ -85,6 +140,20 @@ struct HTMLWebView: UIViewRepresentable {
                 UIApplication.shared.open(url)
             }
             return nil
+        }
+
+        /// Recover from navigation failures (blank screen).
+        /// Marks the tracker so the next `updateUIView` reloads.
+        // swiftlint:disable:next no_force_unwrap_production
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+            contentTracker.markProcessTerminated()
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            contentTracker.markProcessTerminated()
+            // Force an immediate reload — WKWebView is blank at this point.
+            // Re-request the last loaded content via about:blank → triggers SwiftUI update cycle.
+            webView.loadHTMLString("", baseURL: nil)
         }
     }
 }
