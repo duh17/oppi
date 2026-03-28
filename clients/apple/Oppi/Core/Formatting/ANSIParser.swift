@@ -123,22 +123,45 @@ enum ANSIParser {
 
                     i = j + 1
                 } else {
-                    let b = buf[i]
-                    plainBytes.append(b)
-                    if b < 0x80 { utf16Pos += 1; i += 1 }
-                    else if b < 0xC0 { i += 1 }
-                    else if b < 0xE0 {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        utf16Pos += 1; i += 2
-                    } else if b < 0xF0 {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                        utf16Pos += 1; i += 3
-                    } else {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                        if i + 3 < count { plainBytes.append(buf[i + 3]) }
-                        utf16Pos += 2; i += 4
+                    // Fast inner loop: scan forward through ASCII bytes (< 0x80, != 0x1B)
+                    // without per-byte branching. This covers the vast majority of
+                    // terminal output (English text, numbers, punctuation).
+                    let textStart = i
+                    while i < count {
+                        let b = buf[i]
+                        if b == 0x1B || b >= 0x80 { break }
+                        i += 1
+                    }
+
+                    if i > textStart {
+                        // Batch-append the ASCII chunk.
+                        let asciiLen = i - textStart
+                        if let base = buf.baseAddress {
+                            plainBytes.append(contentsOf: UnsafeBufferPointer(
+                                start: base + textStart, count: asciiLen
+                            ))
+                        }
+                        utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
+                    }
+
+                    // Handle non-ASCII byte (if that's what stopped us).
+                    if i < count && buf[i] >= 0x80 {
+                        let b = buf[i]
+                        plainBytes.append(b)
+                        if b < 0xC0 { i += 1 }
+                        else if b < 0xE0 {
+                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                            utf16Pos += 1; i += 2
+                        } else if b < 0xF0 {
+                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                            if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                            utf16Pos += 1; i += 3
+                        } else {
+                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                            if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                            if i + 3 < count { plainBytes.append(buf[i + 3]) }
+                            utf16Pos += 2; i += 4
+                        }
                     }
                 }
             }
