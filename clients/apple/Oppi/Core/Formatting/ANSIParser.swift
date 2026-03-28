@@ -280,6 +280,43 @@ private struct InlineSGRCodes {
     }
 }
 
+// MARK: - Cached Theme Colors
+
+/// Pre-resolved UIColors for ANSI → Tokyo Night mapping.
+/// Created once, avoids repeated `UIColor(Color.themeX)` bridge calls.
+private enum ANSIColorCache {
+    // Foreground
+    static let fgDim = UIColor(Color.themeFgDim)
+    static let red = UIColor(Color.themeRed)
+    static let green = UIColor(Color.themeGreen)
+    static let yellow = UIColor(Color.themeYellow)
+    static let blue = UIColor(Color.themeBlue)
+    static let purple = UIColor(Color.themePurple)
+    static let cyan = UIColor(Color.themeCyan)
+    static let fg = UIColor(Color.themeFg)
+    static let comment = UIColor(Color.themeComment)
+
+    // Background (standard 40-47)
+    static let bgBlack = UIColor(Color.themeFgDim.opacity(0.35))
+    static let bgRed = UIColor(Color.themeRed.opacity(0.55))
+    static let bgGreen = UIColor(Color.themeGreen.opacity(0.45))
+    static let bgYellow = UIColor(Color.themeYellow.opacity(0.45))
+    static let bgBlue = UIColor(Color.themeBlue.opacity(0.45))
+    static let bgPurple = UIColor(Color.themePurple.opacity(0.45))
+    static let bgCyan = UIColor(Color.themeCyan.opacity(0.40))
+    static let bgWhite = UIColor(Color.themeFg.opacity(0.20))
+
+    // Background (bright 100-107)
+    static let bgBrightBlack = UIColor(Color.themeComment.opacity(0.30))
+    static let bgBrightRed = UIColor(Color.themeRed.opacity(0.65))
+    static let bgBrightGreen = UIColor(Color.themeGreen.opacity(0.55))
+    static let bgBrightYellow = UIColor(Color.themeYellow.opacity(0.55))
+    static let bgBrightBlue = UIColor(Color.themeBlue.opacity(0.55))
+    static let bgBrightPurple = UIColor(Color.themePurple.opacity(0.55))
+    static let bgBrightCyan = UIColor(Color.themeCyan.opacity(0.50))
+    static let bgBrightWhite = UIColor(Color.themeFg.opacity(0.30))
+}
+
 // MARK: - SGR State
 
 /// Tracks cumulative SGR state across escape sequences.
@@ -398,41 +435,41 @@ private struct SGRState {
         case 39: foregroundUIColor = nil
         case 49: backgroundUIColor = nil
 
-        case 30: foregroundUIColor = UIColor(Color.themeFgDim)
-        case 31: foregroundUIColor = UIColor(Color.themeRed)
-        case 32: foregroundUIColor = UIColor(Color.themeGreen)
-        case 33: foregroundUIColor = UIColor(Color.themeYellow)
-        case 34: foregroundUIColor = UIColor(Color.themeBlue)
-        case 35: foregroundUIColor = UIColor(Color.themePurple)
-        case 36: foregroundUIColor = UIColor(Color.themeCyan)
-        case 37: foregroundUIColor = UIColor(Color.themeFg)
+        case 30: foregroundUIColor = ANSIColorCache.fgDim
+        case 31: foregroundUIColor = ANSIColorCache.red
+        case 32: foregroundUIColor = ANSIColorCache.green
+        case 33: foregroundUIColor = ANSIColorCache.yellow
+        case 34: foregroundUIColor = ANSIColorCache.blue
+        case 35: foregroundUIColor = ANSIColorCache.purple
+        case 36: foregroundUIColor = ANSIColorCache.cyan
+        case 37: foregroundUIColor = ANSIColorCache.fg
 
-        case 90: foregroundUIColor = UIColor(Color.themeComment)
-        case 91: foregroundUIColor = UIColor(Color.themeRed)
-        case 92: foregroundUIColor = UIColor(Color.themeGreen)
-        case 93: foregroundUIColor = UIColor(Color.themeYellow)
-        case 94: foregroundUIColor = UIColor(Color.themeBlue)
-        case 95: foregroundUIColor = UIColor(Color.themePurple)
-        case 96: foregroundUIColor = UIColor(Color.themeCyan)
-        case 97: foregroundUIColor = UIColor(Color.themeFg)
+        case 90: foregroundUIColor = ANSIColorCache.comment
+        case 91: foregroundUIColor = ANSIColorCache.red
+        case 92: foregroundUIColor = ANSIColorCache.green
+        case 93: foregroundUIColor = ANSIColorCache.yellow
+        case 94: foregroundUIColor = ANSIColorCache.blue
+        case 95: foregroundUIColor = ANSIColorCache.purple
+        case 96: foregroundUIColor = ANSIColorCache.cyan
+        case 97: foregroundUIColor = ANSIColorCache.fg
 
-        case 40: backgroundUIColor = UIColor(Color.themeFgDim.opacity(0.35))
-        case 41: backgroundUIColor = UIColor(Color.themeRed.opacity(0.55))
-        case 42: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.45))
-        case 43: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.45))
-        case 44: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.45))
-        case 45: backgroundUIColor = UIColor(Color.themePurple.opacity(0.45))
-        case 46: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.40))
-        case 47: backgroundUIColor = UIColor(Color.themeFg.opacity(0.20))
+        case 40: backgroundUIColor = ANSIColorCache.bgBlack
+        case 41: backgroundUIColor = ANSIColorCache.bgRed
+        case 42: backgroundUIColor = ANSIColorCache.bgGreen
+        case 43: backgroundUIColor = ANSIColorCache.bgYellow
+        case 44: backgroundUIColor = ANSIColorCache.bgBlue
+        case 45: backgroundUIColor = ANSIColorCache.bgPurple
+        case 46: backgroundUIColor = ANSIColorCache.bgCyan
+        case 47: backgroundUIColor = ANSIColorCache.bgWhite
 
-        case 100: backgroundUIColor = UIColor(Color.themeComment.opacity(0.30))
-        case 101: backgroundUIColor = UIColor(Color.themeRed.opacity(0.65))
-        case 102: backgroundUIColor = UIColor(Color.themeGreen.opacity(0.55))
-        case 103: backgroundUIColor = UIColor(Color.themeYellow.opacity(0.55))
-        case 104: backgroundUIColor = UIColor(Color.themeBlue.opacity(0.55))
-        case 105: backgroundUIColor = UIColor(Color.themePurple.opacity(0.55))
-        case 106: backgroundUIColor = UIColor(Color.themeCyan.opacity(0.50))
-        case 107: backgroundUIColor = UIColor(Color.themeFg.opacity(0.30))
+        case 100: backgroundUIColor = ANSIColorCache.bgBrightBlack
+        case 101: backgroundUIColor = ANSIColorCache.bgBrightRed
+        case 102: backgroundUIColor = ANSIColorCache.bgBrightGreen
+        case 103: backgroundUIColor = ANSIColorCache.bgBrightYellow
+        case 104: backgroundUIColor = ANSIColorCache.bgBrightBlue
+        case 105: backgroundUIColor = ANSIColorCache.bgBrightPurple
+        case 106: backgroundUIColor = ANSIColorCache.bgBrightCyan
+        case 107: backgroundUIColor = ANSIColorCache.bgBrightWhite
 
         default: break
         }
@@ -440,14 +477,14 @@ private struct SGRState {
 
     private func color256(_ n: Int) -> UIColor {
         switch n {
-        case 0: return UIColor(Color.themeFgDim)
-        case 1: return UIColor(Color.themeRed)
-        case 2: return UIColor(Color.themeGreen)
-        case 3: return UIColor(Color.themeYellow)
-        case 4: return UIColor(Color.themeBlue)
-        case 5: return UIColor(Color.themePurple)
-        case 6: return UIColor(Color.themeCyan)
-        case 7: return UIColor(Color.themeFg)
+        case 0: return ANSIColorCache.fgDim
+        case 1: return ANSIColorCache.red
+        case 2: return ANSIColorCache.green
+        case 3: return ANSIColorCache.yellow
+        case 4: return ANSIColorCache.blue
+        case 5: return ANSIColorCache.purple
+        case 6: return ANSIColorCache.cyan
+        case 7: return ANSIColorCache.fg
         case 8...15: return color256(n - 8)
         case 232...255:
             let gray = CGFloat(n - 232) / 23.0
