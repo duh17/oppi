@@ -324,6 +324,7 @@ final class AssistantMarkdownSegmentApplier {
                                     textView.textStorage.append(delta)
                                     textView.textStorage.endEditing()
                                     cached.append(delta)
+                                    refreshTextViewLayoutAfterContentChange(textView)
 
                                     let previousCount = lastStreamingTextCharCount
                                     lastStreamingTextCharCount = cached.length
@@ -336,6 +337,7 @@ final class AssistantMarkdownSegmentApplier {
                                     }
                                 } else if newLength != oldLength {
                                     textView.attributedText = fullNS
+                                    refreshTextViewLayoutAfterContentChange(textView)
                                     cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
                                     lastStreamingTextCharCount = fullNS.length
                                 }
@@ -344,6 +346,7 @@ final class AssistantMarkdownSegmentApplier {
                                 // First tick or cache mismatch — full initialization
                                 let fullNS = NSAttributedString(attributed)
                                 textView.attributedText = fullNS
+                                refreshTextViewLayoutAfterContentChange(textView)
                                 cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
                                 lastStreamingTextCharCount = fullNS.length
                             }
@@ -355,6 +358,7 @@ final class AssistantMarkdownSegmentApplier {
                             }
                             let attrText = NSAttributedString(attributed)
                             textView.attributedText = attrText
+                            refreshTextViewLayoutAfterContentChange(textView)
                         }
                     }
                 }
@@ -421,6 +425,13 @@ final class AssistantMarkdownSegmentApplier {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.delegate = textViewDelegate
         return textView
+    }
+
+    private func refreshTextViewLayoutAfterContentChange(_ textView: UITextView) {
+        textView.invalidateIntrinsicContentSize()
+        textView.setNeedsLayout()
+        stackView.setNeedsLayout()
+        stackView.superview?.setNeedsLayout()
     }
 
     private func assistantCodeBlockSourceContext(

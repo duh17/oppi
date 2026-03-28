@@ -92,6 +92,63 @@ struct AssistantMarkdownLayoutTests {
         }
     }
 
+    @Test func streamingTextGrowthInvalidatesTextViewHeight() throws {
+        let markdownView = AssistantMarkdownContentView()
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 350, height: 900))
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(markdownView)
+        NSLayoutConstraint.activate([
+            markdownView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            markdownView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            markdownView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        let phase1 = "Streaming markdown should start with a short line."
+        markdownView.apply(configuration: .init(
+            content: phase1,
+            isStreaming: true,
+            themeID: .dark
+        ))
+        container.layoutIfNeeded()
+
+        let initialTextView = try #require(timelineFirstTextView(in: markdownView))
+        let initialFrameHeight = initialTextView.frame.height
+        let initialFittedHeight = markdownView.systemLayoutSizeFitting(
+            CGSize(width: 350, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+
+        let phase2 = """
+        Streaming markdown should start with a short line.
+
+        Then the same text segment keeps growing with enough additional prose to wrap across several lines inside the same UITextView. Without intrinsic-size invalidation after textStorage.append(delta), UIKit keeps the old height and later lines paint over whatever follows.
+        """
+        markdownView.apply(configuration: .init(
+            content: phase2,
+            isStreaming: true,
+            themeID: .dark
+        ))
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let grownTextView = try #require(timelineFirstTextView(in: markdownView))
+        let grownFittedHeight = markdownView.systemLayoutSizeFitting(
+            CGSize(width: 350, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+
+        #expect(
+            grownTextView.frame.height > initialFrameHeight + 20,
+            "Streaming text view height should grow after append (before: \(initialFrameHeight), after: \(grownTextView.frame.height))"
+        )
+        #expect(
+            grownFittedHeight > initialFittedHeight + 20,
+            "Markdown view fitted height should grow after append (before: \(initialFittedHeight), after: \(grownFittedHeight))"
+        )
+    }
+
     /// Regression: UICollectionViewCell defaults to clipsToBounds=false.
     /// When the compositional layout uses estimated(100) heights and self-
     /// sizing hasn't resolved yet (e.g., during streaming when layoutIfNeeded
