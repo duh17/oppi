@@ -40,8 +40,16 @@ enum ANSIParser {
                     }
                     i = j
                 } else {
-                    result.append(buf[i])
-                    i += 1
+                    // Scan forward through non-ESC bytes in bulk.
+                    let start = i
+                    while i < count && buf[i] != 0x1B {
+                        i += 1
+                    }
+                    if let base = buf.baseAddress {
+                        result.append(contentsOf: UnsafeBufferPointer(
+                            start: base + start, count: i - start
+                        ))
+                    }
                 }
             }
         }
