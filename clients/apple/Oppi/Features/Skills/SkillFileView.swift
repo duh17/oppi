@@ -8,9 +8,6 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 /// Navigated to from the file tree in ``SkillDetailView``.
 /// Text files are rendered as syntax-highlighted code or markdown.
 struct SkillFileView: View {
-    static let contentPresentation: FileContentPresentation = .document
-    static let allowsNestedFullScreenExpansion = false
-
     let skillName: String
     let filePath: String
 
@@ -32,13 +29,19 @@ struct SkillFileView: View {
         filePath.components(separatedBy: "/").last ?? filePath
     }
 
+    /// Whether the UIKit file viewer is active (text content loaded).
+    private var isUsingFileViewer: Bool {
+        content != nil
+    }
+
     var body: some View {
         Group {
             if let content {
-                FileContentView(content: content, filePath: filePath, presentation: Self.contentPresentation)
-                    .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
-                    .environment(\.selectedTextPiActionRouter, piRouter)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                EmbeddedFileViewerView(
+                    content: .fromText(content, filePath: filePath),
+                    selectedTextPiRouter: piRouter
+                )
+                .ignoresSafeArea(edges: .top)
             } else if isLoading {
                 ProgressView("Loading…")
                     .padding(.top, 80)
@@ -51,21 +54,9 @@ struct SkillFileView: View {
             }
         }
         .background(Color.themeBg)
-        .navigationTitle(fileName)
+        .navigationTitle(isUsingFileViewer ? "" : fileName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let content {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button("Copy", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = content
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
-        }
+        .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
         .task { await load() }
     }
 

@@ -57,6 +57,14 @@ struct FileBrowserContentView: View {
         }
     }
 
+    /// Whether the UIKit file viewer is active (text content loaded).
+    /// When true, the SwiftUI navigation bar is hidden and the UIKit
+    /// viewer's internal nav bar provides all chrome.
+    private var isUsingFileViewer: Bool {
+        if case .text = content { return true }
+        return false
+    }
+
     var body: some View {
         Group {
             switch content {
@@ -72,13 +80,11 @@ struct FileBrowserContentView: View {
                     description: Text(message)
                 )
             case .text(let text):
-                FileContentView(
-                    content: text,
-                    filePath: filePath,
-                    presentation: .document
+                EmbeddedFileViewerView(
+                    content: .fromText(text, filePath: filePath),
+                    selectedTextPiRouter: piRouter
                 )
-                .environment(\.selectedTextPiActionRouter, piRouter)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .ignoresSafeArea(edges: .top)
             case .image(let data):
                 imageView(data)
             case .video(let url):
@@ -96,12 +102,15 @@ struct FileBrowserContentView: View {
             }
         }
         .background(Color.themeBgDark)
-        .navigationTitle(fileName)
+        .navigationTitle(isUsingFileViewer ? "" : fileName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if let shareable = shareableContent() {
-                    FileShareButton(content: shareable, style: .icon)
+            if !isUsingFileViewer {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if let shareable = shareableContent() {
+                        FileShareButton(content: shareable, style: .icon)
+                    }
                 }
             }
         }

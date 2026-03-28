@@ -11,9 +11,6 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Remo
 /// markdown, JSON, images as inline tool output.
 // periphery:ignore
 struct RemoteFileView: View {
-    static let contentPresentation: FileContentPresentation = .document
-    static let allowsNestedFullScreenExpansion = false
-
     let workspaceId: String
     let sessionId: String
     let path: String
@@ -45,48 +42,57 @@ struct RemoteFileView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isLoading {
-                    ProgressView("Loading \(filename)…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let errorMessage {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.title)
-                            .foregroundStyle(.themeRed)
-                        Text(errorMessage)
-                            .font(.subheadline)
-                            .foregroundStyle(.themeComment)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let imageData, let uiImage = UIImage(data: imageData) {
+        Group {
+            if let content {
+                // Text content: use the canonical full-screen viewer (same as timeline).
+                // The VC has its own nav controller with dismiss, copy, share, toggle.
+                FullScreenCodeView(
+                    content: .fromText(content, filePath: path),
+                    selectedTextPiRouter: piRouter
+                )
+            } else if let imageData, let uiImage = UIImage(data: imageData) {
+                NavigationStack {
                     ScrollView {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFit()
                             .padding()
                     }
-                } else if let content {
-                    FileContentView(content: content, filePath: path, presentation: Self.contentPresentation)
-                        .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
-                        .environment(\.selectedTextPiActionRouter, piRouter)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color.themeBg)
+                    .navigationTitle(filename)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Done") { dismiss() }
+                        }
+                    }
                 }
-            }
-            .background(Color.themeBg)
-            .navigationTitle(filename)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-                if let content {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Copy", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = content
+            } else {
+                NavigationStack {
+                    Group {
+                        if isLoading {
+                            ProgressView("Loading \(filename)…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if let errorMessage {
+                            VStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.title)
+                                    .foregroundStyle(.themeRed)
+                                Text(errorMessage)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.themeComment)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .background(Color.themeBg)
+                    .navigationTitle(filename)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Done") { dismiss() }
                         }
                     }
                 }

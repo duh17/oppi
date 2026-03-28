@@ -6,8 +6,23 @@ import UIKit
 /// Supports code (with syntax highlighting), diff, and markdown modes.
 /// Presented via ``FullScreenCodeView`` (UIViewControllerRepresentable wrapper)
 /// from SwiftUI callers, and directly from UIKit timeline cells.
+///
+/// Supports two presentation modes:
+/// - `.sheet`: standalone presentation with its own dismiss button (chevron.down).
+///   Used by timeline full-screen and SwiftUI `.sheet`/`.fullScreenCover`.
+/// - `.embedded(onDismiss:)`: embedded in a SwiftUI NavigationStack. Shows a
+///   back button (chevron.backward) that calls the provided closure.
 
 final class FullScreenCodeViewController: UIViewController {
+
+    /// Controls how the viewer presents its dismiss affordance.
+    enum PresentationMode {
+        /// Standalone sheet/fullScreenCover — chevron.down + `dismiss(animated:)`.
+        case sheet
+        /// Embedded inside a SwiftUI NavigationStack — chevron.backward + closure.
+        case embedded(onDismiss: @MainActor @Sendable () -> Void)
+    }
+
     private struct Presentation {
         let bodyContent: FullScreenCodeContent
         let copyText: String
@@ -23,6 +38,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private let content: FullScreenCodeContent
+    private let presentationMode: PresentationMode
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSessionId: String?
     private let selectedTextSourceLabel: String?
@@ -37,11 +53,13 @@ final class FullScreenCodeViewController: UIViewController {
 
     init(
         content: FullScreenCodeContent,
+        presentationMode: PresentationMode = .sheet,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
         selectedTextSourceLabel: String? = nil
     ) {
         self.content = content
+        self.presentationMode = presentationMode
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSessionId = selectedTextSessionId
         self.selectedTextSourceLabel = selectedTextSourceLabel
@@ -67,6 +85,10 @@ final class FullScreenCodeViewController: UIViewController {
         view.backgroundColor = UIColor(palette.bgDark)
 
         let nav = UINavigationController(rootViewController: makeContentController())
+        // Disable internal interactive pop — this nav only has one root VC.
+        // Prevents conflict with the hosting SwiftUI navigation's swipe-back
+        // when in embedded mode.
+        nav.interactivePopGestureRecognizer?.isEnabled = false
         nav.view.translatesAutoresizingMaskIntoConstraints = false
         addChild(nav)
         view.addSubview(nav.view)
@@ -84,8 +106,15 @@ final class FullScreenCodeViewController: UIViewController {
         let vc = UIViewController()
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
+        let doneIcon: String
+        switch presentationMode {
+        case .sheet:
+            doneIcon = "chevron.down"
+        case .embedded:
+            doneIcon = "chevron.backward"
+        }
         let doneButton = UIBarButtonItem(
-            image: UIImage(systemName: "chevron.down"),
+            image: UIImage(systemName: doneIcon),
             style: .plain,
             target: self,
             action: #selector(doneTapped)
@@ -446,7 +475,12 @@ final class FullScreenCodeViewController: UIViewController {
     // MARK: - Actions
 
     @objc private func doneTapped() {
-        dismiss(animated: true)
+        switch presentationMode {
+        case .sheet:
+            dismiss(animated: true)
+        case .embedded(let onDismiss):
+            onDismiss()
+        }
     }
 
     @objc private func copyTapped() {

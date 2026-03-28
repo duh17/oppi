@@ -14,6 +14,12 @@ struct SessionTouchedFileContentView: View {
     @Environment(\.apiClient) private var apiClient
     @State private var phase: Phase = .loading
 
+    /// Whether the UIKit file viewer is active (text content loaded).
+    private var isUsingFileViewer: Bool {
+        if case .text = phase { return true }
+        return false
+    }
+
     var body: some View {
         Group {
             switch phase {
@@ -27,12 +33,10 @@ struct SessionTouchedFileContentView: View {
                     description: Text(message)
                 )
             case .text(let content):
-                FileContentView(
-                    content: content,
-                    filePath: filePath,
-                    presentation: .document
+                EmbeddedFileViewerView(
+                    content: .fromText(content, filePath: filePath)
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .ignoresSafeArea(edges: .top)
             case .image(let data):
                 imageView(data)
             case .binary:
@@ -44,12 +48,15 @@ struct SessionTouchedFileContentView: View {
             }
         }
         .background(Color.themeBgDark)
-        .navigationTitle(fileName)
+        .navigationTitle(isUsingFileViewer ? "" : fileName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if let shareable = shareableContent() {
-                    FileShareButton(content: shareable, style: .icon)
+            if !isUsingFileViewer {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if let shareable = shareableContent() {
+                        FileShareButton(content: shareable, style: .icon)
+                    }
                 }
             }
         }
