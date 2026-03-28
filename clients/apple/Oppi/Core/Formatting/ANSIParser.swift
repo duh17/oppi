@@ -407,6 +407,10 @@ private struct SGRState {
             return
         }
 
+        if applyDirectExtendedColorFastPath(buf, from: start, to: end) {
+            return
+        }
+
         // Fast path: single-code sequences (most common).
         // Check if the sequence contains no semicolons.
         var hasSemicolon = false
@@ -423,10 +427,6 @@ private struct SGRState {
 
         if !hasSemicolon {
             applySingleCode(digitCount > 0 ? singleValue : 0)
-            return
-        }
-
-        if applyDirectExtendedColorFastPath(buf, from: start, to: end) {
             return
         }
 
