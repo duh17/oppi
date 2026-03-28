@@ -12,112 +12,258 @@ import UIKit
 ///
 /// Unknown sequences are silently stripped.
 ///
-/// Builds `NSMutableAttributedString` directly for O(n) construction,
-/// consistent with `SyntaxHighlighter`.
+/// Uses direct UTF-8 byte scanning (no regex) for O(n) performance.
+/// Builds `NSMutableAttributedString` directly, consistent with `SyntaxHighlighter`.
 enum ANSIParser {
 
     /// Strip all ANSI escape sequences, returning plain text.
     static func strip(_ input: String) -> String {
-        input.replacing(Self.escapePattern, with: "")
+        // Fast path: no ESC byte means no ANSI codes.
+        guard input.utf8.contains(0x1B) else { return input }
+
+        let utf8 = Array(input.utf8)
+        var result = [UInt8]()
+        result.reserveCapacity(utf8.count)
+        var i = 0
+        let count = utf8.count
+
+        while i < count {
+            if utf8[i] == 0x1B, i + 1 < count, utf8[i + 1] == 0x5B /* [ */ {
+                // Skip ESC [ ... final-byte
+                var j = i + 2
+                while j < count {
+                    let b = utf8[j]
+                    if b >= 0x40 && b <= 0x7E { // final byte A-Z a-z @-~
+                        j += 1
+                        break
+                    }
+                    j += 1
+                }
+                i = j
+            } else {
+                result.append(utf8[i])
+                i += 1
+            }
+        }
+
+        return String(bytes: result, encoding: .utf8) ?? input
     }
 
     /// Parse ANSI escape sequences into an `NSAttributedString`.
     ///
     /// Maps ANSI colors to the Tokyo Night palette for visual consistency.
+    /// Uses direct UTF-8 byte scanning (no regex) for O(n) performance.
     static func attributedString(
         from input: String,
         baseForeground: Color = .themeFg
     ) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        var state = SGRState()
         let baseFg = UIColor(baseForeground)
         let baseFont = AppFont.mono
 
-        let scanner = Scanner(input)
-        for segment in scanner {
-            switch segment {
-            case .text(let str):
-                var attrs: [NSAttributedString.Key: Any] = [
-                    .font: state.uiFont(base: baseFont),
-                    .foregroundColor: state.foregroundUIColor ?? baseFg,
-                ]
-                if state.underline {
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                }
-                if let bgColor = state.backgroundUIColor {
-                    attrs[.backgroundColor] = bgColor
-                }
-                result.append(NSAttributedString(string: str, attributes: attrs))
+        // Fast path: no ESC byte means no ANSI codes — return plain text directly.
+        guard input.utf8.contains(0x1B) else {
+            return NSAttributedString(
+                string: input,
+                attributes: [.font: baseFont, .foregroundColor: baseFg]
+            )
+        }
 
-            case .sgr(let codes):
-                state.apply(codes)
+        var fontCache = FontCache(base: baseFont)
+        var state = SGRState()
+
+        // Work with UTF-8 bytes for fast scanning.
+        let utf8 = Array(input.utf8)
+        let count = utf8.count
+
+        // Phase 1: Scan UTF-8 bytes. Build plain text (escapes removed) and
+        // record SGR events with their positions in the plain-text output.
+        var plainBytes = [UInt8]()
+        plainBytes.reserveCapacity(count)
+
+        // SGR event: (byte offset in plainBytes where this SGR takes effect, parsed codes)
+        var sgrEvents: [(offset: Int, codes: [Int])] = []
+
+        var i = 0
+        while i < count {
+            if utf8[i] == 0x1B, i + 1 < count, utf8[i + 1] == 0x5B /* [ */ {
+                // Found ESC [  — parse parameter bytes and find final byte
+                var j = i + 2
+                while j < count {
+                    let b = utf8[j]
+                    if b >= 0x40 && b <= 0x7E { // final byte
+                        break
+                    }
+                    j += 1
+                }
+
+                if j < count && utf8[j] == 0x6D /* 'm' */ {
+                    // SGR sequence — parse the parameters
+                    let codes = parseCSIParams(utf8, from: i + 2, to: j)
+                    sgrEvents.append((offset: plainBytes.count, codes: codes))
+                }
+                // else: non-SGR sequence — silently stripped
+
+                i = j + 1
+            } else {
+                plainBytes.append(utf8[i])
+                i += 1
             }
         }
 
+        // Phase 2: Build a byte→UTF-16 offset map for the plain text.
+        let plainString = String(bytes: plainBytes, encoding: .utf8) ?? ""
+        let plainCount = plainBytes.count
+
+        var byteToUTF16 = [Int](repeating: 0, count: plainCount + 1)
+        do {
+            var bIdx = 0
+            var u16Idx = 0
+            while bIdx < plainCount {
+                byteToUTF16[bIdx] = u16Idx
+                let b = plainBytes[bIdx]
+                let seqLen: Int
+                if b < 0x80 { seqLen = 1 }
+                else if b < 0xE0 { seqLen = 2 }
+                else if b < 0xF0 { seqLen = 3 }
+                else { seqLen = 4 }
+                let utf16Units = seqLen == 4 ? 2 : 1
+                bIdx += seqLen
+                u16Idx += utf16Units
+            }
+            byteToUTF16[plainCount] = u16Idx
+        }
+
+        // Phase 3: Create attributed string with base attributes, then apply
+        // SGR overrides in a single beginEditing/endEditing batch.
+        let result = NSMutableAttributedString(
+            string: plainString,
+            attributes: [.font: baseFont, .foregroundColor: baseFg]
+        )
+
+        guard !sgrEvents.isEmpty else { return result }
+
+        result.beginEditing()
+
+        // Walk SGR events. Each event changes state; apply that state to the
+        // text range from this event's offset to the next event's offset (or end).
+        for eventIdx in 0..<sgrEvents.count {
+            state.apply(sgrEvents[eventIdx].codes)
+
+            let rangeStartByte = sgrEvents[eventIdx].offset
+            let rangeEndByte = eventIdx + 1 < sgrEvents.count
+                ? sgrEvents[eventIdx + 1].offset
+                : plainCount
+
+            guard rangeEndByte > rangeStartByte else { continue }
+
+            let utf16Start = byteToUTF16[rangeStartByte]
+            let utf16End = byteToUTF16[rangeEndByte]
+            let rangeLen = utf16End - utf16Start
+            guard rangeLen > 0 else { continue }
+
+            let nsRange = NSRange(location: utf16Start, length: rangeLen)
+
+            // Apply font only when not the default
+            let font = fontCache.font(bold: state.bold, italic: state.italic)
+            if font !== baseFont {
+                result.addAttribute(.font, value: font, range: nsRange)
+            }
+
+            // Apply foreground color only when changed from base
+            if let fg = state.foregroundUIColor {
+                result.addAttribute(.foregroundColor, value: fg, range: nsRange)
+            }
+
+            if state.underline {
+                result.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+            }
+
+            if let bg = state.backgroundUIColor {
+                result.addAttribute(.backgroundColor, value: bg, range: nsRange)
+            }
+        }
+
+        result.endEditing()
         return result
     }
 
-    // MARK: - Regex
+    // MARK: - CSI Parameter Parsing
 
-    /// Matches any ANSI escape sequence: ESC [ ... final-byte
-    ///
-    /// Computed to avoid a global mutable-concurrency escape hatch.
-    fileprivate static var escapePattern: Regex<Substring> {
-        /\x1B\[[0-9;]*[A-Za-z]/
+    /// Parse semicolon-separated integer parameters from CSI sequence bytes.
+    /// Scans utf8[from..<to], returns array of integers.
+    private static func parseCSIParams(_ utf8: [UInt8], from start: Int, to end: Int) -> [Int] {
+        if start >= end { return [0] }
+
+        var codes = [Int]()
+        var current = 0
+        var hasDigit = false
+
+        for i in start..<end {
+            let b = utf8[i]
+            if b >= 0x30 && b <= 0x39 { // '0'-'9'
+                current = current &* 10 &+ Int(b &- 0x30)
+                hasDigit = true
+            } else if b == 0x3B { // ';'
+                codes.append(hasDigit ? current : 0)
+                current = 0
+                hasDigit = false
+            }
+            // Skip other parameter/intermediate bytes
+        }
+
+        codes.append(hasDigit ? current : 0)
+        return codes.isEmpty ? [0] : codes
     }
 }
 
-// MARK: - Scanner
+// MARK: - Font Cache
 
-/// Splits input into alternating text and SGR segments.
-private struct Scanner: Sequence, IteratorProtocol {
-    private let input: String
-    private var index: String.Index
+/// Caches UIFont variants to avoid repeated fontDescriptor lookups.
+private struct FontCache {
+    let base: UIFont
+    private var boldFont: UIFont?
+    private var italicFont: UIFont?
+    private var boldItalicFont: UIFont?
 
-    init(_ input: String) {
-        self.input = input
-        self.index = input.startIndex
+    init(base: UIFont) {
+        self.base = base
     }
 
-    enum Segment {
-        case text(String)
-        case sgr([Int])
-    }
+    mutating func font(bold: Bool, italic: Bool) -> UIFont {
+        if !bold && !italic { return base }
 
-    mutating func next() -> Segment? {
-        guard index < input.endIndex else { return nil }
-
-        // Find next ESC
-        if let match = input[index...].firstMatch(of: ANSIParser.escapePattern) {
-            let matchStart = match.range.lowerBound
-            let matchEnd = match.range.upperBound
-
-            // Emit text before the escape
-            if matchStart > index {
-                let text = String(input[index..<matchStart])
-                index = matchStart
-                return .text(text)
-            }
-
-            // Parse the SGR sequence
-            index = matchEnd
-            let raw = String(match.output)
-
-            // Only handle SGR (ends with 'm')
-            guard raw.hasSuffix("m") else {
-                return next() // skip non-SGR sequences
-            }
-
-            // Extract numbers between ESC[ and m
-            let numbersStr = raw.dropFirst(2).dropLast() // drop \e[ and m
-            let codes = numbersStr.split(separator: ";").compactMap { Int($0) }
-            return .sgr(codes.isEmpty ? [0] : codes)
+        if bold && italic {
+            if let cached = boldItalicFont { return cached }
+            let f = makeFont(bold: true, italic: true)
+            boldItalicFont = f
+            return f
         }
 
-        // No more escapes — emit remaining text
-        let text = String(input[index...])
-        index = input.endIndex
-        return .text(text)
+        if bold {
+            if let cached = boldFont { return cached }
+            let f = makeFont(bold: true, italic: false)
+            boldFont = f
+            return f
+        }
+
+        if let cached = italicFont { return cached }
+        let f = makeFont(bold: false, italic: true)
+        italicFont = f
+        return f
+    }
+
+    private func makeFont(bold: Bool, italic: Bool) -> UIFont {
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+        let baseTraits = base.fontDescriptor.symbolicTraits
+        if baseTraits.contains(.traitMonoSpace) {
+            traits.insert(.traitMonoSpace)
+        }
+        guard let descriptor = base.fontDescriptor.withSymbolicTraits(traits) else {
+            return base
+        }
+        return UIFont(descriptor: descriptor, size: base.pointSize)
     }
 }
 
@@ -131,25 +277,6 @@ private struct SGRState {
     var underline = false
     var foregroundUIColor: UIColor?
     var backgroundUIColor: UIColor?
-
-    func uiFont(base: UIFont) -> UIFont {
-        if !bold && !italic { return base }
-
-        var traits: UIFontDescriptor.SymbolicTraits = []
-        if bold { traits.insert(.traitBold) }
-        if italic { traits.insert(.traitItalic) }
-
-        // Preserve monospaced trait from base font.
-        let baseTraits = base.fontDescriptor.symbolicTraits
-        if baseTraits.contains(.traitMonoSpace) {
-            traits.insert(.traitMonoSpace)
-        }
-
-        guard let descriptor = base.fontDescriptor.withSymbolicTraits(traits) else {
-            return base
-        }
-        return UIFont(descriptor: descriptor, size: base.pointSize)
-    }
 
     mutating func apply(_ codes: [Int]) {
         var i = 0
@@ -216,7 +343,6 @@ private struct SGRState {
                     foregroundUIColor = color256(codes[i + 2])
                     i += 2
                 } else if i + 1 < codes.count, codes[i + 1] == 2, i + 4 < codes.count {
-                    // RGB: 38;2;r;g;b
                     foregroundUIColor = UIColor(
                         red: CGFloat(codes[i + 2]) / 255,
                         green: CGFloat(codes[i + 3]) / 255,
