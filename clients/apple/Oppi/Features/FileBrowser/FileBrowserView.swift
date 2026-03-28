@@ -17,8 +17,6 @@ struct FileBrowserView: View {
     @State private var error: String?
     @State private var searchText = ""
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
-    @State private var sheetContent: FullScreenCodeContent?
-    @State private var showSheet = false
 
     private var isRoot: Bool {
         initialPath.isEmpty || initialPath == "/"
@@ -64,13 +62,6 @@ struct FileBrowserView: View {
         }
         .task { await loadDirectory() }
         .task { ensureFileIndex() }
-        .sheet(isPresented: $showSheet) {
-            if let sheetContent {
-                FullScreenCodeView(content: sheetContent)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
-            }
-        }
     }
 
     // MARK: - Directory List
@@ -110,8 +101,12 @@ struct FileBrowserView: View {
         } else {
             List {
                 ForEach(fuzzyResults, id: \.path) { result in
-                    Button {
-                        Task { await loadAndPresent(path: result.path) }
+                    NavigationLink {
+                        FileBrowserContentView(
+                            workspaceId: workspaceId,
+                            filePath: result.path,
+                            fileName: (result.path as NSString).lastPathComponent
+                        )
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -127,7 +122,6 @@ struct FileBrowserView: View {
                                 .foregroundStyle(icon.color)
                         }
                     }
-                    .foregroundStyle(.primary)
                 }
             }
             .listStyle(.plain)
@@ -163,9 +157,14 @@ struct FileBrowserView: View {
                 }
             }
         } else {
-            Button {
+            NavigationLink {
                 let filePath = entry.path ?? (parentPath.isEmpty ? entry.name : "\(parentPath)\(entry.name)")
-                Task { await loadAndPresent(path: filePath) }
+                FileBrowserContentView(
+                    workspaceId: workspaceId,
+                    filePath: filePath,
+                    fileName: entry.name,
+                    fileSize: entry.size
+                )
             } label: {
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
@@ -182,22 +181,6 @@ struct FileBrowserView: View {
                         .foregroundStyle(icon.color)
                 }
             }
-            .foregroundStyle(.primary)
-        }
-    }
-
-    // MARK: - Sheet Presentation
-
-    /// Load file content and present in the full-screen sheet viewer.
-    private func loadAndPresent(path: String) async {
-        guard let api = apiClient else { return }
-        do {
-            let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: path)
-            guard let text = String(data: data, encoding: .utf8) else { return }
-            sheetContent = .fromText(text, filePath: path)
-            showSheet = true
-        } catch {
-            // Silently fail
         }
     }
 
