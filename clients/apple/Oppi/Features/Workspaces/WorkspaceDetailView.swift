@@ -17,7 +17,7 @@ struct WorkspaceDetailView: View {
 
     @State private var isCreating = false
     @State private var error: String?
-    @State private var lineageBySessionId: [String: SessionLineageSummary] = [:]
+
     @State private var sessionSearchText = ""
     @State private var searchStore = SessionSearchStore()
     @State private var expandedStoppedGroupIDs: Set<String> = []
@@ -31,13 +31,6 @@ struct WorkspaceDetailView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
-
-    private struct SessionLineageSummary {
-        let parentSessionName: String?
-        let parentSessionStatus: SessionStatus?
-        let childForkCount: Int
-        let activeChildForkCount: Int
-    }
 
     // MARK: - Computed
 
@@ -349,7 +342,7 @@ struct WorkspaceDetailView: View {
                 localSessions: data.localFiltered,
                 hasSearchQuery: hasSessionSearchQuery,
                 isImportingLocal: isImportingLocal,
-                lineageHint: { session in lineageHint(for: session) },
+                lineageHint: { _ in nil },
                 childSummary: { session in
                     childSummary(for: session.id, using: data.childIndex)
                 },
@@ -483,8 +476,6 @@ struct WorkspaceDetailView: View {
             await refreshPolicyFallback()
         }
         .task {
-            // NOTE: refreshLineage() removed — graph endpoint costs p95=2s and fork
-            // feature is non-functional. Re-enable when fork is fixed.
             await refreshLocalSessions()
             await refreshPolicyFallback()
             if let api = apiClient {
@@ -613,124 +604,8 @@ struct WorkspaceDetailView: View {
         return FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: sessionTitle(session)) != nil
     }
 
-    private func lineageHint(for session: Session) -> String? {
-        guard let summary = lineageBySessionId[session.id] else { return nil }
-
-        var parts: [String] = []
-
-        if let parentName = summary.parentSessionName {
-            if let parentStatus = summary.parentSessionStatus {
-                parts.append("Parent: \(parentName) (\(statusLabel(parentStatus)))")
-            } else {
-                parts.append("Parent: \(parentName)")
-            }
-        }
-
-        if summary.childForkCount > 0 {
-            let forkLabel = summary.childForkCount == 1 ? "Forks: 1" : "Forks: \(summary.childForkCount)"
-            if summary.activeChildForkCount > 0 {
-                let activeLabel = summary.activeChildForkCount == 1 ? "1 active" : "\(summary.activeChildForkCount) active"
-                parts.append("\(forkLabel) (\(activeLabel))")
-            } else {
-                parts.append(forkLabel)
-            }
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: " • ")
-    }
-
-    private func statusLabel(_ status: SessionStatus) -> String {
-        switch status {
-        case .starting: return "starting"
-        case .ready: return "ready"
-        case .busy: return "busy"
-        case .stopping: return "stopping"
-        case .stopped: return "stopped"
-        case .error: return "error"
-        }
-    }
-
     private func sessionTitle(_ session: Session) -> String {
         session.displayTitle
-    }
-
-    private func refreshLineage() async {
-        guard let api = apiClient else { return }
-
-        let sessions = workspaceSessions
-        guard !sessions.isEmpty else {
-            lineageBySessionId = [:]
-            return
-        }
-
-        do {
-            let graph = try await api.getWorkspaceGraph(workspaceId: workspace.id)
-            lineageBySessionId = buildLineageBySessionId(graph: graph, sessions: sessions)
-        } catch {
-            // Keep latest known lineage hints if graph fetch fails.
-        }
-    }
-
-    private func buildLineageBySessionId(
-        graph: WorkspaceGraphResponse,
-        sessions: [Session]
-    ) -> [String: SessionLineageSummary] {
-        let sessionsById = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-        let nodesById = Dictionary(uniqueKeysWithValues: graph.sessionGraph.nodes.map { ($0.id, $0) })
-        let childNodesByParent = Dictionary(grouping: graph.sessionGraph.nodes) { node in
-            node.parentId ?? ""
-        }
-
-        func preferredSession(for node: WorkspaceGraphResponse.SessionGraph.Node) -> Session? {
-            let candidates = node.attachedSessionIds.compactMap { sessionsById[$0] }
-            return candidates.max { lhs, rhs in
-                let lhsRunning = lhs.status != .stopped
-                let rhsRunning = rhs.status != .stopped
-                if lhsRunning != rhsRunning {
-                    return !lhsRunning && rhsRunning
-                }
-                return lhs.lastActivity < rhs.lastActivity
-            }
-        }
-
-        var result: [String: SessionLineageSummary] = [:]
-
-        for node in graph.sessionGraph.nodes {
-            let parentSession: Session? = {
-                guard let parentId = node.parentId,
-                      let parentNode = nodesById[parentId] else {
-                    return nil
-                }
-                return preferredSession(for: parentNode)
-            }()
-
-            let childNodes = childNodesByParent[node.id] ?? []
-            let childSessionIds = Set(childNodes.flatMap(\.attachedSessionIds))
-
-            for sessionId in node.attachedSessionIds where sessionsById[sessionId] != nil {
-                let effectiveParent: Session? = {
-                    guard let parentSession else { return nil }
-                    return parentSession.id == sessionId ? nil : parentSession
-                }()
-
-                let childSessions = childSessionIds
-                    .filter { $0 != sessionId }
-                    .compactMap { sessionsById[$0] }
-
-                let activeChildForkCount = childSessions.filter { $0.status != .stopped }.count
-
-                let summary = SessionLineageSummary(
-                    parentSessionName: effectiveParent.map(sessionTitle),
-                    parentSessionStatus: effectiveParent?.status,
-                    childForkCount: childSessions.count,
-                    activeChildForkCount: activeChildForkCount
-                )
-
-                result[sessionId] = summary
-            }
-        }
-
-        return result
     }
 
     // MARK: - Actions
