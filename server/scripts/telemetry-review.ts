@@ -32,7 +32,6 @@ const SLO_THRESHOLDS = {
   "chat.reducer_load_ms":      { p95: 200,    label: "Timeline rebuild",          group: "UX Quality" },
 
   // Network health — is connectivity reliable?
-  "chat.stream_open_ms":       { p95: 500,    label: "Stream open",               group: "Network" },
   "chat.subscribe_ack_ms":     { p95: 1_500,  label: "Subscribe ack",             group: "Network" },
   "chat.ws_connect_ms":        { p95: 5_000,  label: "WS connect (legacy)",       group: "Network" },
   "chat.queue_sync_ms":        { p95: 1_500,  label: "Queue sync",                group: "Network" },
