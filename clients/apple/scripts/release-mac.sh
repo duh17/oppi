@@ -154,6 +154,14 @@ BUN_VERSION=$("$BUN_BIN" --version 2>/dev/null || echo "unknown")
 BUN_SIZE=$(du -sh "$BUN_BIN" | awk '{print $1}')
 echo "Bun: $BUN_BIN (v$BUN_VERSION, $BUN_SIZE)"
 
+# Verify architecture — must be arm64 for Apple Silicon
+BUN_ARCH=$(file "$BUN_BIN" | grep -o 'arm64\|x86_64')
+if [[ "$BUN_ARCH" != "arm64" ]]; then
+    echo "Error: Bun binary is $BUN_ARCH, expected arm64"
+    echo "Install the arm64 version: brew install oven-sh/bun/bun"
+    exit 1
+fi
+
 cp "$BUN_BIN" "$RESOURCES/bun"
 chmod +x "$RESOURCES/bun"
 
@@ -207,6 +215,27 @@ echo "Total Resources: $TOTAL_SIZE (Bun $BUN_SIZE + server $AFTER_SIZE)"
 # ── Step 7: Re-sign (bundle was modified after initial signing) ──
 
 echo "--- Step 7: Re-signing app ---"
+
+# Sign the bundled Bun binary FIRST with its required JIT entitlements.
+# Bun's JavaScriptCore JIT needs allow-jit, allow-unsigned-executable-memory,
+# disable-executable-page-protection, and disable-library-validation.
+# Without these, Bun crashes on hardened runtime (codesign --options runtime).
+BUN_ENTITLEMENTS="$APPLE_DIR/BunRuntime.entitlements"
+codesign --force --options runtime \
+    --sign "$SIGNING_IDENTITY" \
+    --entitlements "$BUN_ENTITLEMENTS" \
+    "$RESOURCES/bun" \
+    2>&1
+echo "Bun binary signed with JIT entitlements."
+
+# Sign native .node addons (clipboard, ssh2 crypto, cpu-features)
+find "$RESOURCES/server/node_modules" -name "*.node" -type f 2>/dev/null | while read -r addon; do
+    codesign --force --options runtime \
+        --sign "$SIGNING_IDENTITY" \
+        "$addon" 2>&1
+done
+
+# Re-sign the outer app (covers everything else)
 codesign --deep --force --options runtime \
     --sign "$SIGNING_IDENTITY" \
     "$APP_PATH" \
@@ -215,6 +244,16 @@ codesign --deep --force --options runtime \
 # Verify signature
 codesign --verify --deep --strict "$APP_PATH" 2>&1
 echo "Signature verified."
+
+# Verify Bun kept its entitlements after outer re-sign
+BUN_JIT=$(codesign -d --entitlements :- "$RESOURCES/bun" 2>&1 | grep -c "allow-jit")
+if [[ "$BUN_JIT" -eq 0 ]]; then
+    echo "WARNING: Bun lost JIT entitlements after re-sign! Re-signing bun..."
+    codesign --force --options runtime \
+        --sign "$SIGNING_IDENTITY" \
+        --entitlements "$BUN_ENTITLEMENTS" \
+        "$RESOURCES/bun" 2>&1
+fi
 
 # ── Step 8: Create DMG ──
 
