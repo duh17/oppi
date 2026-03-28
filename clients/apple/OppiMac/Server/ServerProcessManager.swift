@@ -103,8 +103,20 @@ final class ServerProcessManager {
 
     /// Resolves the Bun runtime binary path.
     ///
-    /// Search order: Homebrew, common install locations, fallback to Node.js.
+    /// Search order:
+    /// 1. App bundle (release builds embed Bun in Resources/)
+    /// 2. Homebrew / common install locations
+    /// 3. Fallback to Node.js
     static func resolveRuntimePath() -> String? {
+        // App bundle — release builds embed the Bun binary in Resources/
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundledBun = (resourcePath as NSString).appendingPathComponent("bun")
+            if FileManager.default.isExecutableFile(atPath: bundledBun) {
+                return bundledBun
+            }
+        }
+
+        // System-installed Bun
         let bunCandidates = [
             "/opt/homebrew/bin/bun",
             "/usr/local/bin/bun",
@@ -113,7 +125,8 @@ final class ServerProcessManager {
         if let bun = bunCandidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
             return bun
         }
-        // Fallback to Node.js for backwards compat
+
+        // Fallback to Node.js for backwards compat (dev builds)
         return resolveNodePath()
     }
 
@@ -127,10 +140,11 @@ final class ServerProcessManager {
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// True if the resolved runtime is Bun (vs Node.js fallback).
-    static var runtimeIsBun: Bool {
-        guard let path = resolveRuntimePath() else { return false }
-        return path.hasSuffix("/bun")
+    /// True if the resolved runtime is the app-bundled Bun.
+    static var runtimeIsBundled: Bool {
+        guard let path = resolveRuntimePath(),
+              let resourcePath = Bundle.main.resourcePath else { return false }
+        return path.hasPrefix(resourcePath)
     }
 
     // MARK: - Lifecycle

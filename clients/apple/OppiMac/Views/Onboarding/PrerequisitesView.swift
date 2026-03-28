@@ -84,18 +84,18 @@ struct PrerequisitesView: View {
     // MARK: - Checks
 
     private static func checkNode() async -> PrereqStatus {
-        // Prefer Bun, fall back to Node.js
-        if let bunPath = await ProcessRunner.which("bun") {
-            if let version = await ProcessRunner.version(bunPath) {
-                return .passed("Bun \(version)")
+        // Check bundled Bun first (release builds embed it in Resources/)
+        if let runtimePath = await MainActor.run(body: { ServerProcessManager.resolveRuntimePath() }) {
+            if runtimePath.contains("Resources/bun") || runtimePath.contains(".app/") {
+                return .passed("Bundled")
             }
-            return .passed("Bun (at \(bunPath))")
-        }
-        if let nodePath = await ProcessRunner.which("node") {
-            if let version = await ProcessRunner.version(nodePath) {
-                return .passed("Node \(version)")
+            if runtimePath.hasSuffix("/bun") {
+                let version = await ProcessRunner.version(runtimePath)
+                return .passed("Bun \(version ?? "")")
             }
-            return .passed("Node (at \(nodePath))")
+            // Node.js fallback
+            let version = await ProcessRunner.version(runtimePath)
+            return .passed("Node \(version ?? "")")
         }
         return .failed("Not found — install Bun (brew install oven-sh/bun/bun)")
     }

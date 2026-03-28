@@ -127,32 +127,86 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 echo "Exported to $APP_PATH"
 
-# ── Step 5: Bundle server runtime ──
+# ── Step 5: Bundle Bun runtime ──
 
-echo "--- Step 5: Bundling server runtime ---"
+echo "--- Step 5: Bundling Bun runtime ---"
 RESOURCES="$APP_PATH/Contents/Resources"
-SERVER_BUNDLE="$RESOURCES/server"
 
+# Resolve the Bun binary — prefer local install, fall back to Homebrew
+BUN_BIN=""
+for candidate in \
+    "$HOME/.bun/bin/bun" \
+    "/opt/homebrew/bin/bun" \
+    "/usr/local/bin/bun"; do
+    resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
+    if [[ -n "$resolved" && -x "$resolved" ]]; then
+        BUN_BIN="$resolved"
+        break
+    fi
+done
+
+if [[ -z "$BUN_BIN" ]]; then
+    echo "Error: Bun not found — install with: brew install oven-sh/bun/bun"
+    exit 1
+fi
+
+BUN_VERSION=$("$BUN_BIN" --version 2>/dev/null || echo "unknown")
+BUN_SIZE=$(du -sh "$BUN_BIN" | awk '{print $1}')
+echo "Bun: $BUN_BIN (v$BUN_VERSION, $BUN_SIZE)"
+
+cp "$BUN_BIN" "$RESOURCES/bun"
+chmod +x "$RESOURCES/bun"
+
+# ── Step 6: Bundle server code + dependencies ──
+
+echo "--- Step 6: Bundling server runtime ---"
+SERVER_BUNDLE="$RESOURCES/server"
 mkdir -p "$SERVER_BUNDLE"
 
 # Copy server dist
 cp -R "$SERVER_DIR/dist" "$SERVER_BUNDLE/dist"
 
-# Install production-only node_modules
+# Install production-only dependencies using the bundled Bun
 cp "$SERVER_DIR/package.json" "$SERVER_BUNDLE/"
 cp "$SERVER_DIR/package-lock.json" "$SERVER_BUNDLE/"
 cd "$SERVER_BUNDLE"
-npm ci --production --ignore-scripts 2>&1 | tail -3
+"$RESOURCES/bun" install --production --ignore-scripts 2>&1 | tail -3
 # Clean up package files (only node_modules needed at runtime)
-rm -f "$SERVER_BUNDLE/package.json" "$SERVER_BUNDLE/package-lock.json"
+rm -f "$SERVER_BUNDLE/package.json" "$SERVER_BUNDLE/package-lock.json" "$SERVER_BUNDLE/bun.lock"
 
-# Report bundle size
-BUNDLE_SIZE=$(du -sh "$SERVER_BUNDLE" | awk '{print $1}')
-echo "Server runtime bundled ($BUNDLE_SIZE)"
+# ── Step 6b: Strip bloat from node_modules ──
 
-# ── Step 6: Re-sign (bundle was modified after initial signing) ──
+echo "--- Step 6b: Stripping bloat ---"
+NM="$SERVER_BUNDLE/node_modules"
+BEFORE_SIZE=$(du -sh "$SERVER_BUNDLE" | awk '{print $1}')
 
-echo "--- Step 6: Re-signing app ---"
+# Remove entire packages that are dead code on macOS
+rm -rf "$NM/koffi"                                     # Windows-only FFI (86MB)
+rm -rf "$NM/better-sqlite3"                            # Not needed under Bun (bun:sqlite)
+rm -rf "$NM/nan" "$NM/buildcheck" "$NM/node-gyp"      # Native build tooling
+rm -rf "$NM/@types"                                    # TypeScript declarations
+rm -rf "$NM/@mariozechner/clipboard-darwin-universal"   # Redundant with arm64
+
+# Remove test/example dirs ONLY at package root (avoid breaking internal doc/ dirs)
+for pkg_dir in "$NM"/*/ "$NM"/@*/*/ ; do
+    [ -d "$pkg_dir" ] || continue
+    rm -rf "${pkg_dir}test" "${pkg_dir}tests" "${pkg_dir}__tests__" \
+           "${pkg_dir}example" "${pkg_dir}examples" 2>/dev/null || true
+done
+
+# Remove READMEs, changelogs, source maps (never imported at runtime)
+find "$NM" \( -name "README*" -o -name "CHANGELOG*" -o -name "HISTORY*" \
+    -o -name "*.map" \) -type f -delete 2>/dev/null || true
+
+AFTER_SIZE=$(du -sh "$SERVER_BUNDLE" | awk '{print $1}')
+echo "Server: $BEFORE_SIZE -> $AFTER_SIZE (after stripping)"
+
+TOTAL_SIZE=$(du -sh "$RESOURCES" | awk '{print $1}')
+echo "Total Resources: $TOTAL_SIZE (Bun $BUN_SIZE + server $AFTER_SIZE)"
+
+# ── Step 7: Re-sign (bundle was modified after initial signing) ──
+
+echo "--- Step 7: Re-signing app ---"
 codesign --deep --force --options runtime \
     --sign "$SIGNING_IDENTITY" \
     "$APP_PATH" \
@@ -162,9 +216,9 @@ codesign --deep --force --options runtime \
 codesign --verify --deep --strict "$APP_PATH" 2>&1
 echo "Signature verified."
 
-# ── Step 7: Create DMG ──
+# ── Step 8: Create DMG ──
 
-echo "--- Step 7: Creating DMG ---"
+echo "--- Step 8: Creating DMG ---"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
 # Remove existing DMG if present
@@ -189,7 +243,7 @@ rm -rf "$DMG_STAGING"
 DMG_SIZE=$(du -sh "$DMG_PATH" | awk '{print $1}')
 echo "DMG created: $DMG_PATH ($DMG_SIZE)"
 
-# ── Step 8: Publish GitHub release (optional) ──
+# ── Step 9: Publish GitHub release (optional) ──
 
 if $PUBLISH; then
     echo "--- Step 8: Publishing GitHub release ---"
@@ -208,11 +262,10 @@ Self-hosted coding agent with mobile supervision.
 
 ### What's included
 - Oppi Mac app (menu bar) — manages the local server, session monitoring
-- Bundled server runtime + pi coding agent
+- Bundled Bun runtime + server + pi coding agent (no external dependencies)
 
 ### Prerequisites
 - macOS 15.0+
-- Node.js 20+ (install from [nodejs.org](https://nodejs.org) or \`brew install node\`)
 
 ### Install
 1. Download \`$DMG_NAME\` below
