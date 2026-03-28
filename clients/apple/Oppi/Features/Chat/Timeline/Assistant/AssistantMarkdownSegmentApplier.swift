@@ -317,28 +317,47 @@ final class AssistantMarkdownSegmentApplier {
                                 let newLength = fullNS.length
 
                                 if newLength > oldLength {
-                                    let delta = fullNS.attributedSubstring(
-                                        from: NSRange(location: oldLength, length: newLength - oldLength)
-                                    )
-                                    textView.textStorage.beginEditing()
-                                    textView.textStorage.append(delta)
-                                    textView.textStorage.endEditing()
-                                    cached.append(delta)
-                                    refreshTextViewLayoutAfterContentChange(textView)
+                                    // Verify the rendered plain text prefix is unchanged.
+                                    // CommonMark re-parsing can change earlier character
+                                    // positions when inline syntax closes (e.g. **bold**,
+                                    // `code`, [link](url)). When this happens, the delta
+                                    // from position oldLength in the new string doesn't
+                                    // match what's in the textStorage, producing garbled
+                                    // output. Fall back to full replacement in that case.
+                                    let prefixValid = fullNS.string.hasPrefix(cached.string)
 
-                                    let previousCount = lastStreamingTextCharCount
-                                    lastStreamingTextCharCount = cached.length
-                                    if cached.length > previousCount {
-                                        textRevealer.reveal(
-                                            in: textView,
-                                            normalizedText: cached,
-                                            previousVisibleCount: previousCount
+                                    if prefixValid {
+                                        let delta = fullNS.attributedSubstring(
+                                            from: NSRange(location: oldLength, length: newLength - oldLength)
                                         )
+                                        textView.textStorage.beginEditing()
+                                        textView.textStorage.append(delta)
+                                        textView.textStorage.endEditing()
+                                        cached.append(delta)
+                                        refreshTextViewLayoutAfterContentChange(textView)
+
+                                        let previousCount = lastStreamingTextCharCount
+                                        lastStreamingTextCharCount = cached.length
+                                        if cached.length > previousCount {
+                                            textRevealer.reveal(
+                                                in: textView,
+                                                normalizedText: cached,
+                                                previousVisibleCount: previousCount
+                                            )
+                                        }
+                                    } else {
+                                        // Markdown structure changed — full replacement.
+                                        textView.attributedText = fullNS
+                                        refreshTextViewLayoutAfterContentChange(textView)
+                                        cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                                        textRevealer.reset()
+                                        lastStreamingTextCharCount = fullNS.length
                                     }
                                 } else if newLength != oldLength {
                                     textView.attributedText = fullNS
                                     refreshTextViewLayoutAfterContentChange(textView)
                                     cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                                    textRevealer.reset()
                                     lastStreamingTextCharCount = fullNS.length
                                 }
                                 // else: same length — no change, skip
