@@ -19,6 +19,7 @@ struct WorkspaceDetailView: View {
     @State private var error: String?
     @State private var lineageBySessionId: [String: SessionLineageSummary] = [:]
     @State private var sessionSearchText = ""
+    @State private var searchStore = SessionSearchStore()
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var showEditWorkspace = false
@@ -398,7 +399,14 @@ struct WorkspaceDetailView: View {
         .navigationTitle(currentWorkspace.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search session name")
+        .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
+        .onChange(of: sessionSearchText) { _, newValue in
+            searchStore.search(
+                query: newValue,
+                workspaceId: workspace.id,
+                apiClient: apiClient
+            )
+        }
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId)
         }
@@ -535,7 +543,8 @@ struct WorkspaceDetailView: View {
             session: session,
             pendingCount: pending,
             activitySummary: summary,
-            children: children
+            children: children,
+            searchSnippet: searchStore.snippetsBySessionId[session.id]
         )
     }
 
@@ -564,11 +573,23 @@ struct WorkspaceDetailView: View {
         )
     }
 
+    /// Whether a session matches the current search.
+    ///
+    /// For short queries (< 3 chars) or while server results are loading,
+    /// falls back to local FuzzyMatch on title. Once server results arrive,
+    /// uses the server's FTS5 matched set.
     private func matchesSessionSearch(_ session: Session) -> Bool {
         guard hasSessionSearchQuery else {
             return true
         }
 
+        // If server search returned results, use those
+        if normalizedSessionSearchQuery.count >= SessionSearchStore.minQueryLength,
+           !searchStore.matchedSessionIds.isEmpty {
+            return searchStore.matchedSessionIds.contains(session.id)
+        }
+
+        // Local fallback: fuzzy match on title
         return FuzzyMatch.match(query: normalizedSessionSearchQuery, candidate: sessionTitle(session)) != nil
     }
 

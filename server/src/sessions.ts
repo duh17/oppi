@@ -79,6 +79,13 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server for per-turn operational metrics. */
   opsMetrics: ServerMetricCollector | null = null;
 
+  /** Injected by the server for full-text search index updates. */
+  searchIndex: {
+    markForReindex(sessionId: string): void;
+    flushForSession(sessionId: string): void;
+    deleteSession(sessionId: string): void;
+  } | null = null;
+
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
 
@@ -214,6 +221,21 @@ export class SessionManager extends EventEmitter {
   /** Process a pi agent event from the SDK subscribe callback. */
   private handlePiEvent(key: string, data: SessionBackendEvent): void {
     this.agentEventCoordinator.handlePiEvent(key, data);
+
+    // Update search index on relevant events
+    if (this.searchIndex) {
+      const sessionId = key; // sessionKey is identity
+      if (data.type === "message_end") {
+        const msg = (data as Record<string, unknown>).message as
+          | Record<string, unknown>
+          | undefined;
+        if (msg?.role === "assistant" || msg?.role === "user") {
+          this.searchIndex.markForReindex(sessionId);
+        }
+      } else if (data.type === "agent_end") {
+        this.searchIndex.flushForSession(sessionId);
+      }
+    }
   }
 
   // ─── Extension UI Protocol ───

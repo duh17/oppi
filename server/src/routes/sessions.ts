@@ -51,6 +51,40 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.json(res, { sessions });
   }
 
+  /** Full-text search across session content. */
+  function handleSearchSessions(url: URL, res: ServerResponse): void {
+    if (!ctx.searchIndex) {
+      helpers.error(res, 503, "Search index not available");
+      return;
+    }
+
+    const query = url.searchParams.get("q")?.trim();
+    if (!query) {
+      helpers.json(res, { results: [], query: "", totalResults: 0 });
+      return;
+    }
+
+    const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
+    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 100);
+
+    const results = ctx.searchIndex.search(query, workspaceId, limit);
+
+    // Attach full session objects for display
+    const enriched = results.map((r) => {
+      const session = ctx.storage.getSession(r.sessionId);
+      return {
+        ...r,
+        session: session ? ctx.ensureSessionContextWindow(session) : undefined,
+      };
+    });
+
+    helpers.json(res, {
+      results: enriched,
+      query,
+      totalResults: enriched.length,
+    });
+  }
+
   function handleListWorkspaceSessions(workspaceId: string, res: ServerResponse): void {
     const workspace = ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
@@ -645,7 +679,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   // ─── Touched File Access (files from session changeStats) ───
 
   const MAX_TOUCHED_IMAGE_SIZE = 50 * 1024 * 1024; // 50 MB
-  const MAX_TOUCHED_TEXT_SIZE = 1 * 1024 * 1024; // 1 MB
+  const MAX_TOUCHED_TEXT_SIZE = 10 * 1024 * 1024; // 10 MB
 
   async function handleGetTouchedFile(
     wsId: string,
@@ -934,6 +968,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     await ctx.sessions.stopSession(sessionId);
     ctx.storage.deleteSession(sessionId);
+    ctx.searchIndex?.deleteSession(sessionId);
 
     // Notify connected clients so they can remove stale session entries.
     ctx.streamMux.recordUserStreamEvent(sessionId, {
@@ -945,6 +980,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   return async ({ method, path, url, req, res }) => {
+    // ── Session search ──
+    if (path === "/sessions/search" && method === "GET") {
+      handleSearchSessions(url, res);
+      return true;
+    }
+
     // ── Bulk session list (all workspaces) ──
     if (path === "/sessions" && method === "GET") {
       handleListAllSessions(res);

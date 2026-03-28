@@ -1177,6 +1177,24 @@ describe("error handling", () => {
     expect(Array.isArray(body.sessions)).toBe(true);
   });
 
+  it("GET /sessions/search returns results for query", async () => {
+    const res = await get("/sessions/search?q=test&limit=10");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("results");
+    expect(body).toHaveProperty("query", "test");
+    expect(body).toHaveProperty("totalResults");
+    expect(Array.isArray(body.results)).toBe(true);
+  });
+
+  it("GET /sessions/search returns empty for missing query", async () => {
+    const res = await get("/sessions/search");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.results).toEqual([]);
+    expect(body.totalResults).toBe(0);
+  });
+
   it("returns 404 for nonexistent workspace", async () => {
     const res = await get("/workspaces/NONEXISTENT");
     expect(res.status).toBe(404);

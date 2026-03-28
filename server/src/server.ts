@@ -28,6 +28,7 @@ import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { ServerResourceSampler } from "./server-resource-sampler.js";
 import { ServerMetricCollector } from "./server-metric-collector.js";
+import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
@@ -286,6 +287,8 @@ export class Server {
   // Live Activity push bridge (debounced APNs updates)
   private liveActivity: LiveActivityBridge;
 
+  // Full-text search index (SQLite FTS5)
+  private searchIndex: SearchIndex | null = null;
   // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
   private streamMux!: UserStreamMux;
   // REST route handler (dispatch + all HTTP handlers)
@@ -460,6 +463,9 @@ export class Server {
       },
     });
     this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
+    if (this.searchIndex) {
+      this.sessions.searchIndex = this.searchIndex;
+    }
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
       this.liveActivity.handleSessionEvent(payload);
@@ -474,6 +480,13 @@ export class Server {
       // user-level stream ring, not per-session catch-up.
       this.streamMux.recordUserStreamEvent(payload.sessionId, payload.event);
     });
+
+    // Initialize search index (SQLite FTS5)
+    try {
+      this.searchIndex = new SearchIndex(config.dataDir, (id) => this.storage.getSession(id));
+    } catch (err) {
+      console.error("[server] Failed to initialize search index:", (err as Error).message);
+    }
 
     // Create route handler (dispatch + all HTTP business logic)
     this.routes = new RouteHandler({
@@ -492,6 +505,7 @@ export class Server {
       getModelCatalog: () => this.models.getAll(),
       getRuntimeUpdateStatus: (options) => this.runtimeUpdates.getStatus(options),
       runRuntimeUpdate: () => this.runtimeUpdates.updateRuntime(),
+      searchIndex: this.searchIndex ?? undefined,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),
@@ -654,6 +668,19 @@ export class Server {
         this.resourceSampler.start();
         this.opsMetrics.start();
 
+        // Background: sync search index (non-blocking, fires after listen)
+        if (this.searchIndex) {
+          const idx = this.searchIndex;
+          const sessions = this.storage.listSessions();
+          setTimeout(() => {
+            try {
+              idx.sync(sessions);
+            } catch (err) {
+              console.error("[search-index] sync error:", (err as Error).message);
+            }
+          }, 0);
+        }
+
         resolve();
       });
     });
@@ -679,6 +706,7 @@ export class Server {
     await this.gate.shutdown();
     this.liveActivity.shutdown();
     this.push.shutdown();
+    this.searchIndex?.close();
     this.wss.close();
     this.httpServer.close();
   }

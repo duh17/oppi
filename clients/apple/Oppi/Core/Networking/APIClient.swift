@@ -132,6 +132,26 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).sessions
     }
 
+    /// Full-text search across session content.
+    func searchSessions(
+        query: String,
+        workspaceId: String? = nil,
+        limit: Int = 20
+    ) async throws -> SessionSearchResponse {
+        var items = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let workspaceId {
+            items.append(URLQueryItem(name: "workspaceId", value: workspaceId))
+        }
+        var components = URLComponents()
+        components.queryItems = items
+        let qs = components.percentEncodedQuery ?? ""
+        let data = try await get("/sessions/search?\(qs)")
+        return try JSONDecoder().decode(SessionSearchResponse.self, from: data)
+    }
+
     // periphery:ignore - used by APIClientTests via @testable import
     /// Create a new session in a target workspace.
     ///

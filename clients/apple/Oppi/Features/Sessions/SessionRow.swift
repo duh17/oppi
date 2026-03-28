@@ -20,6 +20,7 @@ struct SessionRow: View {
     let activitySummary: String?
     let lineageHint: String?
     let children: ChildSummary?
+    let searchSnippet: AttributedString?
 
     /// Summary of spawned child sessions, shown as a badge on parent rows.
     struct ChildSummary {
@@ -33,13 +34,15 @@ struct SessionRow: View {
         pendingCount: Int,
         activitySummary: String? = nil,
         lineageHint: String? = nil,
-        children: ChildSummary? = nil
+        children: ChildSummary? = nil,
+        searchSnippet: AttributedString? = nil
     ) {
         self.session = session
         self.pendingCount = pendingCount
         self.activitySummary = activitySummary
         self.lineageHint = lineageHint
         self.children = children
+        self.searchSnippet = searchSnippet
     }
 
     private var title: String {
@@ -86,6 +89,14 @@ struct SessionRow: View {
                         .font(.caption)
                         .foregroundStyle(.themeFgDim)
                         .lineLimit(1)
+                }
+
+                // Row 1.75: search snippet (when searching)
+                if let searchSnippet {
+                    Text(searchSnippet)
+                        .font(.caption)
+                        .foregroundStyle(.themeFgDim)
+                        .lineLimit(2)
                 }
 
                 // Row 2: status pill + activity summary

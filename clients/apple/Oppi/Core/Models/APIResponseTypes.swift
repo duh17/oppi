@@ -473,6 +473,24 @@ extension LocalSession: Decodable {
     }
 }
 
+// MARK: - Session Search
+
+struct SessionSearchResponse: Decodable, Sendable {
+    let results: [SessionSearchResult]
+    let query: String
+    let totalResults: Int
+}
+
+struct SessionSearchResult: Decodable, Sendable, Identifiable {
+    var id: String { sessionId }
+    let sessionId: String
+    let workspaceId: String
+    let title: String
+    let snippet: String?
+    let rank: Double
+    let session: Session?
+}
+
 // MARK: - Errors
 
 enum APIError: LocalizedError {

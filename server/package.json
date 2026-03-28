@@ -56,17 +56,18 @@
     "test:e2e:pairing": "vitest run --config vitest.e2e.config.ts e2e/pairing-flow",
     "test:e2e:session": "vitest run --config vitest.e2e.config.ts e2e/paired-session",
     "test:e2e:linux": "vitest run --config vitest.e2e.config.ts",
-
     "check": "bash -c 'pids=(); tsc --noEmit & pids+=($!); eslint src/ & pids+=($!); knip & pids+=($!); prettier --check src/ & pids+=($!); rc=0; for p in \"${pids[@]}\"; do wait \"$p\" || rc=1; done; exit $rc'"
   },
   "dependencies": {
     "@earendil-works/gondolin": "^0.7.0",
     "@mariozechner/pi-coding-agent": "^0.62.0",
+    "better-sqlite3": "^12.8.0",
     "diff-match-patch": "^1.0.5",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
