@@ -145,6 +145,16 @@ if [[ ! -f "$BUN_ZIP" ]]; then
     mkdir -p "$BUN_CACHE_DIR"
     echo "Downloading Bun v$BUN_VERSION_PIN from GitHub..."
     curl -fsSL "$BUN_URL" -o "$BUN_ZIP"
+
+    # Verify SHA-256 checksum against Bun's published checksums
+    echo "Verifying SHA-256 checksum..."
+    SHASUMS_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION_PIN}/SHASUMS256.txt"
+    curl -fsSL "$SHASUMS_URL" -o "$BUN_CACHE_DIR/SHASUMS256.txt"
+    (cd "$BUN_CACHE_DIR" && grep "bun-darwin-aarch64.zip" SHASUMS256.txt | shasum -a 256 -c) || {
+        echo "ERROR: SHA-256 checksum verification failed!"
+        rm -f "$BUN_ZIP"
+        exit 1
+    }
 else
     echo "Using cached Bun download."
 fi
@@ -250,7 +260,7 @@ BUN_ENTITLEMENTS="$APPLE_DIR/BunRuntime.entitlements"
 # 1. Sign the bundled Bun binary with JIT entitlements.
 #    Bun's JavaScriptCore JIT requires: allow-jit, allow-unsigned-executable-memory,
 #    disable-executable-page-protection, disable-library-validation.
-codesign --force --options runtime \
+codesign --force --options runtime --timestamp \
     --sign "$SIGNING_IDENTITY" \
     --entitlements "$BUN_ENTITLEMENTS" \
     "$RESOURCES/bun" \
@@ -259,7 +269,7 @@ echo "  Signed: bun (JIT entitlements)"
 
 # 2. Sign native .node addons (clipboard, ssh2 crypto, cpu-features)
 find "$RESOURCES/server-seed/node_modules" -name "*.node" -type f 2>/dev/null | while read -r addon; do
-    codesign --force --options runtime \
+    codesign --force --options runtime --timestamp \
         --sign "$SIGNING_IDENTITY" \
         "$addon" 2>&1
     echo "  Signed: $(basename "$addon")"
@@ -270,14 +280,14 @@ find "$APP_PATH/Contents/Frameworks" "$APP_PATH/Contents/Helpers" \
     -type f -perm +111 2>/dev/null | while read -r binary; do
     # Skip non-Mach-O files
     file "$binary" | grep -q "Mach-O" || continue
-    codesign --force --options runtime \
+    codesign --force --options runtime --timestamp \
         --sign "$SIGNING_IDENTITY" \
         "$binary" 2>&1
     echo "  Signed: $(basename "$binary")"
 done
 
 # 4. Sign the outer .app (NO --deep — inner binaries already signed)
-codesign --force --options runtime \
+codesign --force --options runtime --timestamp \
     --sign "$SIGNING_IDENTITY" \
     "$APP_PATH" \
     2>&1

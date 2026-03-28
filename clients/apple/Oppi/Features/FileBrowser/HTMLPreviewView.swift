@@ -184,6 +184,12 @@ final class HTMLRenderView: UIView, WKNavigationDelegate {
     }
 
     // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        contentTracker.markProcessTerminated()
+        flushIfReady()
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         contentTracker.markProcessTerminated()
         flushIfReady()

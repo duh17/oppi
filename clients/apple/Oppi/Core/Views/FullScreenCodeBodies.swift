@@ -265,7 +265,8 @@ extension NativeFullScreenDiffBody: UITextViewDelegate {
 // MARK: - Terminal Body
 
 final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
-    private static let maxSynchronousANSIBytes = 512 * 1024
+    // ~4ms at measured 26 MB/s throughput, safely within 16ms frame budget
+    private static let maxSynchronousANSIBytes = 128 * 1024
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()

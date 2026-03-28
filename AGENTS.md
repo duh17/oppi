@@ -95,12 +95,26 @@ No partial protocol updates.
   - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
   - Multiple: repeat `-only-testing:` for each test
 
-## iOS Architecture
+## Apple Client Architecture
 
-Key principles:
+### Performance Philosophy
+
+For hot paths (chat timeline, streaming rendering, scroll containers), use the most performant native API Apple provides — not the highest-level abstraction. Concretely:
+
+- **iOS timeline**: `UICollectionView` + `UICollectionViewDiffableDataSource` + `UICollectionViewCompositionalLayout` + `UIContentConfiguration`
+- **macOS timeline**: `NSCollectionView` + `NSDiffableDataSourceSnapshot` + `NSCollectionViewCompositionalLayout` + `NSView`-based items
+- **Both**: bridged to SwiftUI via `UIViewRepresentable` / `NSViewRepresentable`
+
+SwiftUI is the right choice for forms, settings, navigation shells, session lists, workspace views — anything that isn't the streaming hot path.
+
+Before choosing an API for a performance-sensitive surface, check Apple's current documentation for the recommended approach. Use the lowest-level stable API that's actively maintained. Avoid wrapping performance-critical rendering in SwiftUI when AppKit/UIKit gives direct control over layout, diffing, and scroll position.
+
+### Key Principles
+
 - **Many small stores on purpose.** Each `@Observable` store is separate to prevent cross-store re-renders. Do not merge stores. To list them: `rg 'final class .*(Store|Reducer|Coalescer)\b' -t swift clients/apple/Oppi/ | sort`
 - **Prefer focused dependencies.** Views should use the narrowest environment object that works (`\.apiClient` > `ChatSessionState` > `ServerConnection`).
 - **iOS/Mac sharing.** Shared types and helpers go in `Shared/`. Do not duplicate logic between `Oppi/` and `OppiMac/`. If you're writing a view that exists in one target, check the other target first.
+- **Share state, fork views.** Models, networking, stores, reducers — share aggressively in `Shared/`. Views — share when pure SwiftUI (settings, lists, forms), fork when platform-specific rendering is needed (timeline cells, text input).
 - **Forward-compatible decoding.** `ServerMessage` has `.unknown(type:)`. Unknown server types are logged and skipped.
 
 ## Style

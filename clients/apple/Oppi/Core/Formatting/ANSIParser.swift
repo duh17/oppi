@@ -21,46 +21,41 @@ enum ANSIParser {
         // Fast path: no ESC byte means no ANSI codes.
         guard input.utf8.contains(0x1B) else { return input }
 
+        let buf = Array(input.utf8)
+        let count = buf.count
         var result = [UInt8]()
-        result.reserveCapacity(input.utf8.count)
+        result.reserveCapacity(count)
 
-        input.utf8.withContiguousStorageIfAvailable { buf in
-            let count = buf.count
-            var i = 0
-            while i < count {
-                if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
-                    var j = i + 2
-                    while j < count {
-                        let b = buf[j]
-                        if b >= 0x40 && b <= 0x7E {
-                            j += 1
-                            break
-                        }
+        var i = 0
+        while i < count {
+            if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
+                var j = i + 2
+                while j < count {
+                    let b = buf[j]
+                    if b >= 0x40 && b <= 0x7E {
                         j += 1
+                        break
                     }
-                    i = j
-                } else {
-                    // Scan forward through non-ESC bytes in bulk.
-                    let start = i
-                    while i < count && buf[i] != 0x1B {
-                        i += 1
-                    }
-                    if let base = buf.baseAddress {
-                        result.append(contentsOf: UnsafeBufferPointer(
-                            start: base + start, count: i - start
-                        ))
-                    }
+                    j += 1
                 }
+                i = j
+            } else {
+                // Scan forward through non-ESC bytes in bulk.
+                let start = i
+                while i < count && buf[i] != 0x1B {
+                    i += 1
+                }
+                result.append(contentsOf: buf[start..<i])
             }
         }
 
-        return String(bytes: result, encoding: .utf8) ?? input
+        return String(decoding: result, as: UTF8.self)
     }
 
     /// Parse ANSI escape sequences into an `NSAttributedString`.
     ///
     /// Maps ANSI colors to the Tokyo Night palette for visual consistency.
-    /// Single-pass UTF-8 scan → plain text + attribute runs → NSAttributedString.
+    /// Single-pass UTF-8 scan -> plain text + attribute runs -> NSAttributedString.
     static func attributedString(
         from input: String,
         baseForeground: Color = .themeFg
@@ -97,79 +92,74 @@ enum ANSIParser {
         var runStart16 = 0
         var hasSGR = false
 
-        input.utf8.withContiguousStorageIfAvailable { buf in
-            let count = buf.count
-            plainBytes.reserveCapacity(count)
-            var i = 0
+        let buf = Array(input.utf8)
+        let count = buf.count
+        plainBytes.reserveCapacity(count)
+        var i = 0
 
-            while i < count {
-                if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
-                    var j = i + 2
-                    while j < count {
-                        let b = buf[j]
-                        if b >= 0x40 && b <= 0x7E { break }
-                        j += 1
+        while i < count {
+            if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
+                var j = i + 2
+                while j < count {
+                    let b = buf[j]
+                    if b >= 0x40 && b <= 0x7E { break }
+                    j += 1
+                }
+
+                if j < count && buf[j] == 0x6D { // 'm' -> SGR
+                    let runLen16 = utf16Pos - runStart16
+                    if hasSGR && runLen16 > 0 {
+                        runs.append(AttrRun(
+                            utf16Start: runStart16,
+                            utf16Length: runLen16,
+                            font: fontCache.font(bold: state.bold, italic: state.italic),
+                            fg: state.foregroundUIColor,
+                            bg: state.backgroundUIColor,
+                            underline: state.underline
+                        ))
                     }
 
-                    if j < count && buf[j] == 0x6D { // 'm' → SGR
-                        let runLen16 = utf16Pos - runStart16
-                        if hasSGR && runLen16 > 0 {
-                            runs.append(AttrRun(
-                                utf16Start: runStart16,
-                                utf16Length: runLen16,
-                                font: fontCache.font(bold: state.bold, italic: state.italic),
-                                fg: state.foregroundUIColor,
-                                bg: state.backgroundUIColor,
-                                underline: state.underline
-                            ))
-                        }
+                    state.applyFromBuffer(buf, from: i + 2, to: j)
+                    hasSGR = true
+                    runStart16 = utf16Pos
+                }
 
-                        state.applyFromBuffer(buf, from: i + 2, to: j)
-                        hasSGR = true
-                        runStart16 = utf16Pos
-                    }
+                i = j + 1
+            } else {
+                // Fast inner loop: scan forward through ASCII bytes (< 0x80, != 0x1B)
+                // without per-byte branching. This covers the vast majority of
+                // terminal output (English text, numbers, punctuation).
+                let textStart = i
+                while i < count {
+                    let b = buf[i]
+                    if b == 0x1B || b >= 0x80 { break }
+                    i += 1
+                }
 
-                    i = j + 1
-                } else {
-                    // Fast inner loop: scan forward through ASCII bytes (< 0x80, != 0x1B)
-                    // without per-byte branching. This covers the vast majority of
-                    // terminal output (English text, numbers, punctuation).
-                    let textStart = i
-                    while i < count {
-                        let b = buf[i]
-                        if b == 0x1B || b >= 0x80 { break }
-                        i += 1
-                    }
+                if i > textStart {
+                    // Batch-append the ASCII chunk.
+                    let asciiLen = i - textStart
+                    plainBytes.append(contentsOf: buf[textStart..<i])
+                    utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
+                }
 
-                    if i > textStart {
-                        // Batch-append the ASCII chunk.
-                        let asciiLen = i - textStart
-                        if let base = buf.baseAddress {
-                            plainBytes.append(contentsOf: UnsafeBufferPointer(
-                                start: base + textStart, count: asciiLen
-                            ))
-                        }
-                        utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
-                    }
-
-                    // Handle non-ASCII byte (if that's what stopped us).
-                    if i < count && buf[i] >= 0x80 {
-                        let b = buf[i]
-                        plainBytes.append(b)
-                        if b < 0xC0 { i += 1 }
-                        else if b < 0xE0 {
-                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                            utf16Pos += 1; i += 2
-                        } else if b < 0xF0 {
-                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                            if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                            utf16Pos += 1; i += 3
-                        } else {
-                            if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                            if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                            if i + 3 < count { plainBytes.append(buf[i + 3]) }
-                            utf16Pos += 2; i += 4
-                        }
+                // Handle non-ASCII byte (if that's what stopped us).
+                if i < count && buf[i] >= 0x80 {
+                    let b = buf[i]
+                    plainBytes.append(b)
+                    if b < 0xC0 { utf16Pos += 1; i += 1 }
+                    else if b < 0xE0 {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        utf16Pos += 1; i += 2
+                    } else if b < 0xF0 {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                        utf16Pos += 1; i += 3
+                    } else {
+                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                        if i + 3 < count { plainBytes.append(buf[i + 3]) }
+                        utf16Pos += 2; i += 4
                     }
                 }
             }
@@ -191,7 +181,7 @@ enum ANSIParser {
         }
 
         // Phase 2: Build NSMutableAttributedString
-        let plainString = String(bytes: plainBytes, encoding: .utf8) ?? ""
+        let plainString = String(decoding: plainBytes, as: UTF8.self)
         let result = NSMutableAttributedString(
             string: plainString,
             attributes: [.font: baseFont, .foregroundColor: baseFg]
@@ -313,7 +303,7 @@ private struct InlineSGRCodes {
 
 // MARK: - Cached Theme Colors
 
-/// Pre-resolved UIColors for ANSI → Tokyo Night mapping.
+/// Pre-resolved UIColors for ANSI -> Tokyo Night mapping.
 /// Created once, avoids repeated `UIColor(Color.themeX)` bridge calls.
 private enum ANSIColorCache {
     // Foreground
@@ -394,10 +384,10 @@ private struct SGRState {
     var foregroundUIColor: UIColor?
     var backgroundUIColor: UIColor?
 
-    /// Apply SGR codes parsed directly from a UTF-8 buffer pointer.
-    /// Parses semicolon-separated integers inline — no array allocation.
+    /// Apply SGR codes parsed directly from a UTF-8 byte array.
+    /// Parses semicolon-separated integers inline -- no array allocation.
     mutating func applyFromBuffer(
-        _ buf: UnsafeBufferPointer<UInt8>,
+        _ buf: [UInt8],
         from start: Int,
         to end: Int
     ) {
@@ -433,7 +423,7 @@ private struct SGRState {
             return
         }
 
-        // Multi-code sequence — parse and apply in one pass to avoid the
+        // Multi-code sequence -- parse and apply in one pass to avoid the
         // intermediate InlineSGRCodes buffer.
         var current = 0
         var hasDigit = false
@@ -513,7 +503,7 @@ private struct SGRState {
     // MARK: - Fast Paths
 
     private mutating func applyDirectSingleCodeFastPath(
-        _ buf: UnsafeBufferPointer<UInt8>,
+        _ buf: [UInt8],
         from start: Int,
         to end: Int
     ) -> Bool {
@@ -542,7 +532,7 @@ private struct SGRState {
     }
 
     private mutating func applyDirectExtendedColorFastPath(
-        _ buf: UnsafeBufferPointer<UInt8>,
+        _ buf: [UInt8],
         from start: Int,
         to end: Int
     ) -> Bool {
@@ -588,7 +578,7 @@ private struct SGRState {
     }
 
     private func parseDecimal(
-        _ buf: UnsafeBufferPointer<UInt8>,
+        _ buf: [UInt8],
         from start: Int,
         to end: Int
     ) -> Int? {
@@ -603,7 +593,7 @@ private struct SGRState {
     }
 
     private func parseRGBTriplet(
-        _ buf: UnsafeBufferPointer<UInt8>,
+        _ buf: [UInt8],
         from start: Int,
         to end: Int
     ) -> (Int, Int, Int)? {

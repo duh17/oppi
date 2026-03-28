@@ -48,9 +48,11 @@ enum SessionTreeHelper {
     /// Build once per viewData computation instead of rebuilding
     /// Dictionary(grouping:) per root session (was O(n*m) → now O(n)).
     struct ChildIndex {
+        let sessionsById: [String: Session]
         private let childrenByParent: [String: [Session]]
 
         init(sessions: [Session]) {
+            sessionsById = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
             childrenByParent = Dictionary(grouping: sessions.filter { $0.parentSessionId != nil }) {
                 $0.parentSessionId ?? ""
             }
@@ -82,13 +84,17 @@ enum SessionTreeHelper {
     /// Count of all descendants.
     // periphery:ignore - used by SessionTreeHelperTests via @testable import
     static func descendantCount(of parentId: String, in sessions: [Session]) -> Int {
-        allDescendants(of: parentId, in: sessions).count
+        ChildIndex(sessions: sessions).allDescendants(of: parentId).count
     }
 
-    /// Status counts for all descendants.
-    static func descendantStatusCounts(of parentId: String, in sessions: [Session]) -> StatusCounts {
+    /// Status counts for all descendants. Accepts a pre-built index to avoid
+    /// redundant O(n) ChildIndex construction when called alongside other queries.
+    static func descendantStatusCounts(
+        of parentId: String,
+        using index: ChildIndex
+    ) -> StatusCounts {
         var counts = StatusCounts()
-        for session in allDescendants(of: parentId, in: sessions) {
+        for session in index.allDescendants(of: parentId) {
             counts.total += 1
             switch session.status {
             case .starting, .busy, .stopping: counts.working += 1
@@ -100,10 +106,25 @@ enum SessionTreeHelper {
         return counts
     }
 
+    /// Status counts for all descendants.
+    /// Builds a ChildIndex internally — use the `using index:` overload when
+    /// calling alongside other queries on the same session list.
+    static func descendantStatusCounts(of parentId: String, in sessions: [Session]) -> StatusCounts {
+        descendantStatusCounts(of: parentId, using: ChildIndex(sessions: sessions))
+    }
+
+    /// Aggregate cost: session + all descendants. Accepts a pre-built index to avoid
+    /// redundant O(n) ChildIndex construction when called alongside other queries.
+    static func descendantCost(of sessionId: String, using index: ChildIndex) -> Double {
+        let own = index.sessionsById[sessionId]?.cost ?? 0
+        return own + index.allDescendants(of: sessionId).reduce(0.0) { $0 + $1.cost }
+    }
+
     /// Aggregate cost: session + all descendants.
+    /// Builds a ChildIndex internally — use the `using index:` overload when
+    /// calling alongside other queries on the same session list.
     static func descendantCost(of sessionId: String, in sessions: [Session]) -> Double {
-        let own = sessions.first { $0.id == sessionId }?.cost ?? 0
-        return own + allDescendants(of: sessionId, in: sessions).reduce(0.0) { $0 + $1.cost }
+        descendantCost(of: sessionId, using: ChildIndex(sessions: sessions))
     }
 
     /// Aggregate pending count: session + direct children only.

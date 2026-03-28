@@ -64,8 +64,13 @@ export class SessionStopFlowCoordinator {
     });
   }
 
-  async stopSession(key: string, sessionId: string): Promise<void> {
+  async stopSession(key: string, sessionId: string, preStop?: () => void): Promise<void> {
     await this.deps.runtimeManager.withSessionLock(sessionId, async () => {
+      // Run pre-stop callback inside the lock so it serializes with
+      // WebSocket message handlers (e.g. respondToUIRequest). Without
+      // this, cancelPendingAsk could race with an ask answer arriving
+      // between the out-of-lock call and when the lock is acquired.
+      preStop?.();
       const active = this.deps.getActiveSession(key);
       if (!active) {
         return;

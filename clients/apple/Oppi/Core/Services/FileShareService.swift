@@ -392,36 +392,51 @@ enum FileShareService {
 
     /// Check if an image is effectively blank (solid color).
     ///
-    /// Samples a few pixels to detect all-black or all-white snapshots
-    /// from failed WKWebView GPU compositing.
+    /// Samples multiple pixels to detect GPU-compositing failures (transparent or
+    /// pure-black images). Sampling a single center pixel caused false positives for
+    /// normal white-background HTML pages.
     static func isBlankImage(_ image: UIImage) -> Bool {
         guard let cgImage = image.cgImage,
               cgImage.width > 10, cgImage.height > 10 else {
             return true
         }
 
-        // Sample center pixel via a 1x1 bitmap context
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        var pixel: [UInt8] = [0, 0, 0, 0]
-        guard let ctx = CGContext(
-            data: &pixel,
-            width: 1, height: 1,
-            bitsPerComponent: 8,
-            bytesPerRow: 4,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return true }
+        let w = cgImage.width, h = cgImage.height
+        // Sample center + four inset corners (20% from each edge)
+        let insetX = w / 5, insetY = h / 5
+        let points: [(Int, Int)] = [
+            (w / 2, h / 2),
+            (insetX, insetY),
+            (w - insetX, insetY),
+            (insetX, h - insetY),
+            (w - insetX, h - insetY),
+        ]
 
-        let cx = cgImage.width / 2
-        let cy = cgImage.height / 2
-        ctx.draw(cgImage, in: CGRect(x: -cx, y: -cy, width: cgImage.width, height: cgImage.height))
+        func samplePixel(x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8)? {
+            var pixel: [UInt8] = [0, 0, 0, 0]
+            guard let ctx = CGContext(
+                data: &pixel,
+                width: 1, height: 1,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
+            ctx.draw(cgImage, in: CGRect(x: -x, y: -y, width: w, height: h))
+            return (pixel[0], pixel[1], pixel[2], pixel[3])
+        }
 
-        let r = pixel[0], g = pixel[1], b = pixel[2], a = pixel[3]
-        // Blank if transparent or near-black or near-white
-        if a < 10 { return true }
-        if r < 5 && g < 5 && b < 5 { return true }
-        if r > 250 && g > 250 && b > 250 { return true }
-        return false
+        var blankCount = 0
+        for (x, y) in points {
+            guard let (r, g, b, a) = samplePixel(x: x, y: y) else { continue }
+            // Transparent or near-black = GPU failure signature
+            if a < 10 || (r < 5 && g < 5 && b < 5) {
+                blankCount += 1
+            }
+        }
+        // Require majority of sampled points to be blank before declaring failure
+        return blankCount > points.count / 2
     }
 
     /// Fallback: render HTML to PDF first, then rasterize the first page.

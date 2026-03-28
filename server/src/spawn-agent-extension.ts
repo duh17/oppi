@@ -676,7 +676,7 @@ function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): stri
 
 // Default fallback poll interval — only used as a safety net.
 // Progress updates are driven by subscribe events, not polling.
-const FALLBACK_POLL_INTERVAL_MS = 30_000;
+const FALLBACK_POLL_INTERVAL_MS = 5_000;
 
 /** Terminal session statuses — the child is done. */
 function isTerminal(status: string): boolean {
@@ -713,6 +713,8 @@ function waitForChildCompletion(
     let lastStatus = "";
     let lastMsgCount = 0;
     let resolved = false;
+    // Declared here so cleanup() can close over it before subscribe() assigns it.
+    let unsubscribe: () => void = () => {};
 
     const cleanup = (): void => {
       resolved = true;
@@ -761,9 +763,29 @@ function waitForChildCompletion(
       });
     };
 
-    // Check if already terminal (fast path)
+    // Subscribe to child events BEFORE the fast-path terminal check to eliminate
+    // the TOCTOU window where the child completes between check and subscribe.
+    // Drives both terminal detection AND progress updates.
+    unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
+      if (resolved) return;
+      if (msg.type === "session_ended") {
+        finalize(false);
+        return;
+      }
+      if (msg.type === "state") {
+        if (isTerminal(msg.session.status)) {
+          finalize(false);
+        } else {
+          emitProgress(msg.session);
+        }
+      }
+    });
+
+    // Check if already terminal (fast path) — after subscribe so any
+    // transition that occurs concurrently is caught by the subscriber above.
     const initial = ctx.getSession(childId);
     if (initial && isTerminal(initial.status)) {
+      unsubscribe();
       resolve({
         status: initial.status,
         lastMessage: initial.lastMessage ?? undefined,
@@ -785,28 +807,9 @@ function waitForChildCompletion(
       if (!resolved) finalize(true);
     }, timeoutMs);
 
-    // Subscribe to child events — drives both terminal detection AND
-    // progress updates. `state` messages carry the full Session object
-    // and fire on agent_start, agent_end, message_end, tool_start,
-    // stop/resume transitions — exactly the signals we need.
-    const unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
-      if (resolved) return;
-      if (msg.type === "session_ended") {
-        finalize(false);
-        return;
-      }
-      if (msg.type === "state") {
-        if (isTerminal(msg.session.status)) {
-          finalize(false);
-        } else {
-          emitProgress(msg.session);
-        }
-      }
-    });
-
     // Fallback poll — safety net only. All real progress is event-driven
     // via subscribe. This catches edge cases where a subscribe event is
-    // missed (e.g. race between subscribe setup and status transition).
+    // missed (e.g. unexpected gaps in the event stream).
     const fallbackTimer = setInterval(() => {
       if (resolved) return;
       const session = ctx.getSession(childId);

@@ -544,11 +544,11 @@ export class SessionManager extends EventEmitter {
   async stopSession(sessionId: string): Promise<void> {
     const key = this.sessionKey(sessionId);
     this.pendingPromptPreambles.delete(sessionId);
-    // Cancel pending ask so deferred selects unblock before the process is
-    // disposed. Without this, the pi process hangs waiting for extension UI
-    // responses during the grace period before force-terminate.
-    this.cancelPendingAsk(sessionId);
-    await this.stopFlowCoordinator.stopSession(key, sessionId);
+    // cancelPendingAsk runs inside the session lock (via preStop callback)
+    // so it serializes with respondToUIRequest, matching the sendAbort pattern.
+    await this.stopFlowCoordinator.stopSession(key, sessionId, () => {
+      this.cancelPendingAsk(sessionId);
+    });
   }
 
   async stopAll(): Promise<void> {

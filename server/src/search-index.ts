@@ -321,61 +321,63 @@ export class SearchIndex {
 
   /** Index a single session from its JSONL file. */
   indexSession(sessionId: string): void {
-    const session = this.getSession(sessionId);
-    if (!session) return;
+    this.db.transaction(() => {
+      const session = this.getSession(sessionId);
+      if (!session) return;
 
-    const jsonlPath = (session as unknown as Record<string, unknown>).piSessionFile as
-      | string
-      | undefined;
-    if (!jsonlPath) {
-      // No JSONL yet — index title only
+      const jsonlPath = (session as unknown as Record<string, unknown>).piSessionFile as
+        | string
+        | undefined;
+      if (!jsonlPath) {
+        // No JSONL yet — index title only
+        this.upsertRow(
+          sessionId,
+          session.workspaceId ?? "",
+          session.name ?? session.firstMessage ?? "",
+          "",
+          "",
+          "",
+        );
+        return;
+      }
+
+      let fileStat: { mtimeMs: number; size: number };
+      try {
+        const st = statSync(jsonlPath);
+        fileStat = { mtimeMs: st.mtimeMs, size: st.size };
+      } catch {
+        // File doesn't exist — index title only
+        this.upsertRow(
+          sessionId,
+          session.workspaceId ?? "",
+          session.name ?? session.firstMessage ?? "",
+          "",
+          "",
+          "",
+        );
+        return;
+      }
+
+      const content = extractContentFromJsonl(session, jsonlPath);
+      if (!content) return;
+
       this.upsertRow(
         sessionId,
         session.workspaceId ?? "",
-        session.name ?? session.firstMessage ?? "",
-        "",
-        "",
-        "",
+        content.title,
+        content.userMessages,
+        content.assistantMessages,
+        content.toolNames,
       );
-      return;
-    }
 
-    let fileStat: { mtimeMs: number; size: number };
-    try {
-      const st = statSync(jsonlPath);
-      fileStat = { mtimeMs: st.mtimeMs, size: st.size };
-    } catch {
-      // File doesn't exist — index title only
-      this.upsertRow(
+      this.stmtUpsertMeta.run(
         sessionId,
-        session.workspaceId ?? "",
-        session.name ?? session.firstMessage ?? "",
-        "",
-        "",
-        "",
+        jsonlPath,
+        Math.floor(fileStat.mtimeMs),
+        fileStat.size,
+        Date.now(),
       );
-      return;
-    }
-
-    const content = extractContentFromJsonl(session, jsonlPath);
-    if (!content) return;
-
-    this.upsertRow(
-      sessionId,
-      session.workspaceId ?? "",
-      content.title,
-      content.userMessages,
-      content.assistantMessages,
-      content.toolNames,
-    );
-
-    this.stmtUpsertMeta.run(
-      sessionId,
-      jsonlPath,
-      Math.floor(fileStat.mtimeMs),
-      fileStat.size,
-      Date.now(),
-    );
+    })();
   }
 
   private upsertRow(

@@ -359,8 +359,18 @@ final class AssistantMarkdownSegmentApplier {
                                     cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
                                     textRevealer.reset()
                                     lastStreamingTextCharCount = fullNS.length
+                                } else if !fullNS.isEqual(cached) {
+                                    // Same rendered length but different content/attributes —
+                                    // markdown structure changed without changing character count
+                                    // (for example, inline markers closed while new characters
+                                    // arrived in the same tick). Fall back to full replacement.
+                                    textView.attributedText = fullNS
+                                    refreshTextViewLayoutAfterContentChange(textView)
+                                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+                                    textRevealer.reset()
+                                    lastStreamingTextCharCount = fullNS.length
                                 }
-                                // else: same length — no change, skip
+                                // else: same length and same attributed content — truly no change, skip
                             } else {
                                 // First tick or cache mismatch — full initialization
                                 let fullNS = NSAttributedString(attributed)
