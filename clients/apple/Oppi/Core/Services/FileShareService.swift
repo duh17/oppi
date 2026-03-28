@@ -14,6 +14,41 @@ import WebKit
 @MainActor
 enum FileShareService {
 
+    // MARK: - Export Configuration
+    //
+    // All rendering knobs live here. Change these to adjust share output quality.
+
+    /// Image export scale factor. @3x guarantees crisp output on all displays
+    /// and produces consistent results regardless of sim vs device.
+    /// Cost: 3x point dimensions → e.g. 800pt wide = 2400px. ~200–400KB PNG typical.
+    private static let imageScale: CGFloat = 3.0
+
+    /// Layout width for text-based exports (markdown, code, HTML).
+    /// This is the point-width of the "page" — content is laid out to fit.
+    private static let textLayoutWidth: CGFloat = 800
+
+    /// Minimum image width for graphical exports (mermaid, latex).
+    /// Prevents narrow diagrams from looking tiny when shared.
+    private static let graphicalMinWidth: CGFloat = 600
+
+    /// Font size for graphical renderers (mermaid, latex) in export.
+    private static let graphicalFontSize: CGFloat = 20
+
+    /// Font size for code/JSON/plaintext PDF export.
+    private static let codePDFFontSize: CGFloat = 14
+
+    /// Padding around content in image/PDF exports.
+    private static let exportPadding: CGFloat = 40
+
+    /// Padding around code content in PDF exports.
+    private static let codePDFPadding: CGFloat = 24
+
+    /// Maximum image height before clamping (prevents OOM on huge files).
+    private static let maxImageHeight: CGFloat = 8000
+
+    /// Maximum HTML snapshot height.
+    private static let maxHTMLHeight: CGFloat = 16000
+
     // MARK: - Types
 
     /// Content that can be shared. Maps from FullScreenCodeContent.
@@ -231,7 +266,10 @@ enum FileShareService {
         return DocumentRenderPipeline.renderGraphicalToImage(
             size: layout.size,
             draw: layout.draw,
-            backgroundColor: currentBackgroundColor
+            backgroundColor: currentBackgroundColor,
+            padding: exportPadding,
+            minWidth: graphicalMinWidth,
+            format: exportImageFormat
         )
     }
 
@@ -240,7 +278,11 @@ enum FileShareService {
             text: source, config: exportConfig
         )
         return DocumentRenderPipeline.renderLatexExpressionsToImage(
-            layout: layout, backgroundColor: currentBackgroundColor
+            layout: layout,
+            backgroundColor: currentBackgroundColor,
+            padding: exportPadding,
+            minWidth: graphicalMinWidth,
+            format: exportImageFormat
         )
     }
 
@@ -256,7 +298,7 @@ enum FileShareService {
             textSelectionEnabled: false,
             plainTextFallbackThreshold: nil
         ))
-        return snapshotView(view, width: 800, padding: 40, backgroundColor: currentBackgroundColor)
+        return snapshotView(view, width: textLayoutWidth, padding: exportPadding, backgroundColor: currentBackgroundColor)
     }
 
     private static func renderOrgModeToImage(_ source: String) -> UIImage {
@@ -269,7 +311,7 @@ enum FileShareService {
     /// GPU renders <canvas> elements (Chart.js, D3, etc.), then takes a
     /// full-height snapshot via takeSnapshot(). Removes the web view after.
     private static func renderHTMLToImage(_ source: String) async -> UIImage {
-        let layoutWidth: CGFloat = 800
+        let layoutWidth = textLayoutWidth
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
 
@@ -313,7 +355,7 @@ enum FileShareService {
         let fullHeight = max(contentHeight ?? 600, 100)
 
         // Cap at reasonable max to avoid memory issues
-        let maxHeight: CGFloat = 16000
+        let maxHeight = maxHTMLHeight
         let clampedHeight = min(fullHeight, maxHeight)
 
         // Resize to full content
@@ -383,7 +425,7 @@ enum FileShareService {
         }
 
         let pageRect = page.getBoxRect(.mediaBox)
-        let scale: CGFloat = 2.0
+        let scale = imageScale
         let size = CGSize(width: pageRect.width * scale, height: pageRect.height * scale)
 
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -398,43 +440,50 @@ enum FileShareService {
         }
     }
 
+    /// Render code/JSON/plaintext to image using NSAttributedString drawing.
+    ///
+    /// Bypasses UITextView entirely — no window needed. Uses the same
+    /// syntax highlighting as the full-screen viewer.
     private static func renderCodeToImage(_ source: String, language: String?) -> UIImage {
         let palette = ThemeRuntimeState.currentPalette()
-        let body = NativeFullScreenCodeBody(
-            content: source,
-            language: language,
-            startLine: 1,
-            palette: palette,
-            alwaysBounceVertical: false,
-            selectedTextPiRouter: nil,
-            selectedTextSourceContext: nil
+        let attrString = buildHighlightedAttributedString(source, language: language, palette: palette)
+        let drawWidth = textLayoutWidth - codePDFPadding * 2
+
+        let textRect = attrString.boundingRect(
+            with: CGSize(width: drawWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
         )
-        // NativeFullScreenCodeBody uses NSTextLayoutManager which needs
-        // a window attachment for layout to produce non-zero height.
-        return snapshotView(
-            body,
-            width: 800,
-            padding: 0,
-            backgroundColor: UIColor(palette.bgDark),
-            attachToWindow: true
+
+        let imageSize = CGSize(
+            width: textLayoutWidth,
+            height: min(ceil(textRect.height) + codePDFPadding * 2, maxImageHeight)
         )
+
+        let renderer = UIGraphicsImageRenderer(size: imageSize, format: exportImageFormat)
+        return renderer.image { ctx in
+            UIColor(palette.bgDark).setFill()
+            ctx.fill(CGRect(origin: .zero, size: imageSize))
+            attrString.draw(with: CGRect(
+                x: codePDFPadding, y: codePDFPadding,
+                width: drawWidth, height: textRect.height
+            ), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+        }
     }
 
     /// Snapshot a UIView at the given width with padding.
     ///
-    /// Some views (e.g. `NativeFullScreenCodeBody` with `NSTextLayoutManager`)
-    /// need a window attachment for layout to produce non-zero height.
-    /// Set `attachToWindow: true` for those cases.
+    /// Used for markdown/org snapshots via AssistantMarkdownContentView
+    /// which layout correctly offscreen. Code/JSON use attributed string
+    /// drawing instead (see renderCodeToImage).
     private static func snapshotView(
         _ view: UIView,
         width: CGFloat,
         padding: CGFloat,
-        backgroundColor: UIColor,
-        attachToWindow: Bool = false
+        backgroundColor: UIColor
     ) -> UIImage {
         let contentWidth = width - padding * 2
 
-        // Size to content
         view.translatesAutoresizingMaskIntoConstraints = false
         let hostView = UIView(frame: CGRect(x: 0, y: 0, width: contentWidth, height: 10000))
         hostView.addSubview(view)
@@ -443,45 +492,19 @@ enum FileShareService {
             view.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
             view.topAnchor.constraint(equalTo: hostView.topAnchor),
         ])
-
-        // Attach to window for views that need the view hierarchy for layout
-        // (NSTextLayoutManager, UITextView). Insert at z=0 behind all content.
-        let window: UIWindow? = attachToWindow ? UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first?.windows.first : nil
-        if let window {
-            hostView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: 10000)
-            window.insertSubview(hostView, at: 0)
-        }
-
         hostView.layoutIfNeeded()
 
         let contentHeight = view.bounds.height
+        guard contentHeight > 0 else { return placeholderImage() }
 
-        if let window, contentHeight <= 0 {
-            // Retry: force a run-loop tick for deferred layout
-            hostView.setNeedsLayout()
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
-            hostView.layoutIfNeeded()
-        }
-
-        defer {
-            hostView.removeFromSuperview()
-        }
-
-        let finalHeight = view.bounds.height
-        guard finalHeight > 0 else { return placeholderImage() }
-
-        // Cap at a reasonable maximum to avoid massive images
-        let maxHeight: CGFloat = 8000
-        let clampedHeight = min(finalHeight, maxHeight)
+        let clampedHeight = min(contentHeight, maxImageHeight)
 
         let imageSize = CGSize(
             width: width,
             height: clampedHeight + padding * 2
         )
 
-        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        let renderer = UIGraphicsImageRenderer(size: imageSize, format: exportImageFormat)
         return renderer.image { ctx in
             backgroundColor.setFill()
             ctx.fill(CGRect(origin: .zero, size: imageSize))
@@ -560,56 +583,54 @@ enum FileShareService {
 
     /// Render code/JSON/plaintext to PDF using NSAttributedString drawing.
     ///
-    /// This bypasses UITextView entirely — no window attachment needed.
-    /// Uses the same syntax highlighting as the full-screen viewer.
+    /// Bypasses UITextView — no window needed. Uses the same syntax highlighting
+    /// as the full-screen viewer. Font size from `codePDFFontSize`.
     private static func renderCodeToPDF(_ source: String, language: String?) -> Data {
         let palette = ThemeRuntimeState.currentPalette()
-        let font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let attrString = buildHighlightedAttributedString(source, language: language, palette: palette)
+        let drawWidth = textLayoutWidth - codePDFPadding * 2
 
-        // Build highlighted attributed string
-        let attrString: NSAttributedString
-        let syntaxLang = language.map { SyntaxLanguage.detect($0) }
-        if let syntaxLang, syntaxLang != .unknown {
-            attrString = FullScreenCodeHighlighter.buildHighlightedText(source, language: syntaxLang)
-        } else {
-            attrString = NSAttributedString(
-                string: source,
-                attributes: [
-                    .font: font,
-                    .foregroundColor: UIColor(palette.fg),
-                ]
-            )
-        }
-
-        let maxWidth: CGFloat = 800
-        let padding: CGFloat = 24
-        let drawWidth = maxWidth - padding * 2
-
-        // Measure text height
         let textRect = attrString.boundingRect(
             with: CGSize(width: drawWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         )
-        let pageHeight = ceil(textRect.height) + padding * 2
-        let pageSize = CGSize(width: maxWidth, height: pageHeight)
+        let pageHeight = ceil(textRect.height) + codePDFPadding * 2
+        let pageSize = CGSize(width: textLayoutWidth, height: pageHeight)
 
         let pdfRenderer = UIGraphicsPDFRenderer(
             bounds: CGRect(origin: .zero, size: pageSize)
         )
         return pdfRenderer.pdfData { ctx in
             ctx.beginPage()
-
-            // Background
             UIColor(palette.bgDark).setFill()
             UIRectFill(CGRect(origin: .zero, size: pageSize))
-
-            // Draw text
             attrString.draw(with: CGRect(
-                x: padding, y: padding,
+                x: codePDFPadding, y: codePDFPadding,
                 width: drawWidth, height: textRect.height
             ), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
         }
+    }
+
+    /// Build a syntax-highlighted NSAttributedString for code export.
+    /// Shared between image and PDF code renderers.
+    private static func buildHighlightedAttributedString(
+        _ source: String,
+        language: String?,
+        palette: ThemePalette
+    ) -> NSAttributedString {
+        let font = UIFont.monospacedSystemFont(ofSize: codePDFFontSize, weight: .regular)
+        let syntaxLang = language.map { SyntaxLanguage.detect($0) }
+        if let syntaxLang, syntaxLang != .unknown {
+            return FullScreenCodeHighlighter.buildHighlightedText(source, language: syntaxLang)
+        }
+        return NSAttributedString(
+            string: source,
+            attributes: [
+                .font: font,
+                .foregroundColor: UIColor(palette.fg),
+            ]
+        )
     }
 
     /// Render markdown to PDF by snapshotting AssistantMarkdownContentView.
@@ -632,7 +653,7 @@ enum FileShareService {
     /// selectable text and proper layout. Chart.js canvases are converted
     /// to static images before capture to survive PDF rendering.
     private static func renderHTMLToPDF(_ source: String) async -> Data {
-        let layoutWidth: CGFloat = 800
+        let layoutWidth = textLayoutWidth
         let config = WKWebViewConfiguration()
         // Ephemeral data store — no persistent cookies/cache from export renders.
         // CDN fetches still work, just without disk cache (fine for one-shot export).
@@ -894,24 +915,32 @@ enum FileShareService {
         }
     }
 
-    /// Render config for export: uses current theme, document-quality sizing.
+    // MARK: - Derived Config (from constants above)
+
+    /// Render config for graphical renderers (mermaid, latex).
     private static var exportConfig: RenderConfiguration {
         RenderConfiguration(
-            fontSize: 20,
-            maxWidth: 800,
+            fontSize: graphicalFontSize,
+            maxWidth: textLayoutWidth,
             theme: currentRenderTheme,
             displayMode: .document
         )
     }
 
+    /// Image renderer format at fixed export scale.
+    private static var exportImageFormat: UIGraphicsImageRendererFormat {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = imageScale
+        return format
+    }
+
     /// Current theme's RenderTheme for CGContext renderers.
-    /// Maps the app's ThemeID color scheme to the matching RenderTheme.
     private static var currentRenderTheme: RenderTheme {
         let themeID = ThemeRuntimeState.currentThemeID()
         return themeID.preferredColorScheme == .light ? .light : .fallback
     }
 
-    /// Current theme's background color for image export.
+    /// Current theme's background color for image/PDF export.
     private static var currentBackgroundColor: UIColor {
         UIColor(ThemeRuntimeState.currentPalette().bgDark)
     }

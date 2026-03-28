@@ -118,17 +118,26 @@ enum DocumentRenderPipeline {
         size: CGSize,
         draw: @escaping (CGContext, CGPoint) -> Void,
         backgroundColor: UIColor,
-        padding: CGFloat = 40
+        padding: CGFloat = 40,
+        minWidth: CGFloat = 100,
+        format: UIGraphicsImageRendererFormat? = nil
     ) -> UIImage {
         let imageSize = CGSize(
-            width: max(size.width + padding * 2, 100),
+            width: max(size.width + padding * 2, minWidth),
             height: max(size.height + padding * 2, 100)
         )
-        let imageRenderer = UIGraphicsImageRenderer(size: imageSize)
+        // Center content horizontally when image is wider than content
+        let xOffset = (imageSize.width - size.width) / 2
+        let imageRenderer: UIGraphicsImageRenderer
+        if let format {
+            imageRenderer = UIGraphicsImageRenderer(size: imageSize, format: format)
+        } else {
+            imageRenderer = UIGraphicsImageRenderer(size: imageSize)
+        }
         return imageRenderer.image { ctx in
             backgroundColor.setFill()
             ctx.fill(CGRect(origin: .zero, size: imageSize))
-            draw(ctx.cgContext, CGPoint(x: padding, y: padding))
+            draw(ctx.cgContext, CGPoint(x: xOffset, y: padding))
         }
     }
 
@@ -158,7 +167,9 @@ enum DocumentRenderPipeline {
     static func renderLatexExpressionsToImage(
         layout: LatexMultiLayout,
         backgroundColor: UIColor,
-        padding: CGFloat = 40
+        padding: CGFloat = 40,
+        minWidth: CGFloat = 100,
+        format: UIGraphicsImageRendererFormat? = nil
     ) -> UIImage {
         guard !layout.expressions.isEmpty else {
             return placeholderImage()
@@ -173,7 +184,9 @@ enum DocumentRenderPipeline {
                 }
             },
             backgroundColor: backgroundColor,
-            padding: padding
+            padding: padding,
+            minWidth: minWidth,
+            format: format
         )
     }
 
