@@ -263,6 +263,9 @@ export class WorkspaceRuntime {
         this.workspaceSlots.delete(wsKey);
       }
     }
+
+    // Clean up per-session mutex to prevent unbounded growth
+    this.sessionMutexes.delete(identity.sessionId);
   }
 
   // ─── Queries ───

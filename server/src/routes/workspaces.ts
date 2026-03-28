@@ -11,7 +11,6 @@ import {
   getCommitFileDiff,
   getCommitLog,
 } from "../git-commits.js";
-import { buildWorkspaceGraph, SessionHeaderCache } from "../graph.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
@@ -32,9 +31,6 @@ import {
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  /** Shared cache for JSONL session headers — immutable, cached permanently. */
-  const sessionHeaderCache = new SessionHeaderCache();
-
   function removeUnknownSkills(workspace: Workspace): Workspace {
     const knownSkills = workspace.skills.filter((name) => ctx.skillRegistry.get(name));
     if (knownSkills.length === workspace.skills.length) {
@@ -533,54 +529,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, response, 201);
   }
 
-  function handleGetWorkspaceGraph(workspaceId: string, url: URL, res: ServerResponse): void {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const sessions = ctx.storage
-      .listSessions()
-      .filter((session) => session.workspaceId === workspaceId);
-
-    const currentSessionId = url.searchParams.get("sessionId") || undefined;
-    if (currentSessionId && !sessions.some((session) => session.id === currentSessionId)) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-
-    const includeParam = url.searchParams.get("include") || "session";
-    const includeParts = includeParam
-      .split(",")
-      .map((part) => part.trim().toLowerCase())
-      .filter((part) => part.length > 0);
-    const includeEntryGraph = includeParts.includes("entry");
-
-    const entrySessionId = url.searchParams.get("entrySessionId") || undefined;
-    const includePaths = url.searchParams.get("includePaths") === "true";
-
-    const activeSessionIds = new Set<string>();
-    for (const session of sessions) {
-      if (ctx.sessions.isActive(session.id)) {
-        activeSessionIds.add(session.id);
-      }
-    }
-
-    const graph = buildWorkspaceGraph({
-      workspaceId,
-      sessions,
-      activeSessionIds,
-      currentSessionId,
-      includeEntryGraph,
-      entrySessionId,
-      includePaths,
-      headerCache: sessionHeaderCache,
-    });
-
-    helpers.json(res, { ...graph });
-  }
-
   return async ({ method, path, url, req, res }) => {
     if (path === "/local-sessions" && method === "GET") {
       await handleListLocalSessions(res);
@@ -664,12 +612,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsReviewSessionMatch = path.match(/^\/workspaces\/([^/]+)\/review\/session$/);
     if (wsReviewSessionMatch && method === "POST") {
       await handleCreateWorkspaceReviewSession(wsReviewSessionMatch[1], req, res);
-      return true;
-    }
-
-    const wsGraphMatch = path.match(/^\/workspaces\/([^/]+)\/graph$/);
-    if (wsGraphMatch && method === "GET") {
-      handleGetWorkspaceGraph(wsGraphMatch[1], url, res);
       return true;
     }
 
