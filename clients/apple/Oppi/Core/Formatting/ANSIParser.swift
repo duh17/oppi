@@ -426,6 +426,10 @@ private struct SGRState {
             return
         }
 
+        if applyDirectExtendedColorFastPath(buf, from: start, to: end) {
+            return
+        }
+
         // Multi-code sequence — parse all codes
         var codes = InlineSGRCodes()
         var current = 0
@@ -479,6 +483,101 @@ private struct SGRState {
             applySingleCode(code)
             i += 1
         }
+    }
+
+    // MARK: - Fast Paths
+
+    private mutating func applyDirectExtendedColorFastPath(
+        _ buf: UnsafeBufferPointer<UInt8>,
+        from start: Int,
+        to end: Int
+    ) -> Bool {
+        guard end - start >= 6 else { return false }
+
+        if buf[start] == 0x33, buf[start + 1] == 0x38, buf[start + 2] == 0x3B { // 38;
+            if buf[start + 3] == 0x35, buf[start + 4] == 0x3B, // 5;
+               let value = parseDecimal(buf, from: start + 5, to: end) {
+                foregroundUIColor = color256(value)
+                return true
+            }
+            if buf[start + 3] == 0x32, buf[start + 4] == 0x3B, // 2;
+               let rgb = parseRGBTriplet(buf, from: start + 5, to: end) {
+                foregroundUIColor = UIColor(
+                    red: CGFloat(rgb.0) / 255,
+                    green: CGFloat(rgb.1) / 255,
+                    blue: CGFloat(rgb.2) / 255,
+                    alpha: 1
+                )
+                return true
+            }
+        }
+
+        if buf[start] == 0x34, buf[start + 1] == 0x38, buf[start + 2] == 0x3B { // 48;
+            if buf[start + 3] == 0x35, buf[start + 4] == 0x3B,
+               let value = parseDecimal(buf, from: start + 5, to: end) {
+                backgroundUIColor = color256(value)
+                return true
+            }
+            if buf[start + 3] == 0x32, buf[start + 4] == 0x3B,
+               let rgb = parseRGBTriplet(buf, from: start + 5, to: end) {
+                backgroundUIColor = UIColor(
+                    red: CGFloat(rgb.0) / 255,
+                    green: CGFloat(rgb.1) / 255,
+                    blue: CGFloat(rgb.2) / 255,
+                    alpha: 1
+                )
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func parseDecimal(
+        _ buf: UnsafeBufferPointer<UInt8>,
+        from start: Int,
+        to end: Int
+    ) -> Int? {
+        guard start < end else { return nil }
+        var value = 0
+        for i in start..<end {
+            let b = buf[i]
+            guard b >= 0x30 && b <= 0x39 else { return nil }
+            value = value * 10 + Int(b - 0x30)
+        }
+        return value
+    }
+
+    private func parseRGBTriplet(
+        _ buf: UnsafeBufferPointer<UInt8>,
+        from start: Int,
+        to end: Int
+    ) -> (Int, Int, Int)? {
+        var values = (0, 0, 0)
+        var component = 0
+        var current = 0
+        var hasDigit = false
+
+        for i in start..<end {
+            let b = buf[i]
+            if b >= 0x30 && b <= 0x39 {
+                current = current * 10 + Int(b - 0x30)
+                hasDigit = true
+            } else if b == 0x3B {
+                guard hasDigit, component < 2 else { return nil }
+                if component == 0 { values.0 = current }
+                else { values.1 = current }
+                component += 1
+                current = 0
+                hasDigit = false
+            } else {
+                return nil
+            }
+        }
+
+        guard hasDigit, component == 2 else { return nil }
+        values.2 = current
+        return values
     }
 
     // MARK: - Single Code
