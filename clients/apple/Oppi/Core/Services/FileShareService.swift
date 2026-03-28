@@ -6,11 +6,21 @@ import WebKit
 
 /// Converts file content into shareable formats (image, PDF, source file).
 ///
-/// Renders using the app's current theme. Uses device screen scale for resolution.
+/// **Design doc**: `.internal/designs/share-sheet.md`
+/// **Architecture**: `docs/ARCHITECTURE.md` → "Share / export system"
 ///
-/// Two rendering strategies:
-/// - **CGContext re-render** for Mermaid/LaTeX: fresh render at export quality
-/// - **View snapshot** for Markdown/Org/Code: offscreen UIView with current theme palette
+/// All rendering knobs are in the "Export Configuration" section below.
+/// Three render dispatchers (`renderImage`, `renderPDF`, `renderSource`)
+/// route each content type to its renderer. Three format selectors
+/// (`availableFormats`, `defaultFormat`, `formatDisplayInfo`) control
+/// what the user sees in the share picker.
+///
+/// Rendering strategies:
+/// - **CGContext draw** for Mermaid/LaTeX (via DocumentRenderPipeline)
+/// - **NSAttributedString.draw()** for Code/JSON/Plain (syntax-highlighted)
+/// - **UIView snapshot** for Markdown/Org (AssistantMarkdownContentView)
+/// - **WKWebView** for HTML (pdf() or takeSnapshot())
+/// - **Pass-through** for image data / PDF data
 @MainActor
 enum FileShareService {
 

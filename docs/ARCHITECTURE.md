@@ -437,6 +437,27 @@ Row configurations no longer thread `themeID: ThemeID`. Instead, rows read `Them
 
 `TimelineInteractionContext` replaces per-row `selectedTextPiRouter` + `selectedTextSourceContext` optional threading. Lives on `ChatTimelineControllerContext`, synced each apply cycle. Rows query it at apply-time for π action context.
 
+### Share / export system
+
+File content can be exported as image (PNG @3x), PDF, or source file. All rendering config and dispatch lives in `FileShareService.swift`.
+
+**Config block** (lines 24–50): `imageScale`, `textLayoutWidth`, `graphicalMinWidth`, `graphicalFontSize`, `codePDFFontSize`, `exportPadding`, `codePDFPadding`, `maxImageHeight`, `maxHTMLHeight`. Every rendering parameter traces back to this block.
+
+**Three render dispatchers** (switch on content type):
+- `renderImage(_:)` — CGContext draw (mermaid/latex), NSAttributedString.draw() (code/json/plain), UIView snapshot (markdown/org), WKWebView (HTML)
+- `renderPDF(_:)` — CGContext PDF (mermaid/latex), NSAttributedString PDF (code/json/plain), image-embed (markdown/org), WKWebView.pdf() (HTML)
+- `renderSource(_:)` — write temp file with appropriate extension
+
+**Three format selectors**: `availableFormats(for:)`, `defaultFormat(for:)`, `formatDisplayInfo(_:for:)`.
+
+**Pipeline**: `DocumentRenderPipeline.swift` centralizes parse → layout → draw for graphical renderers (mermaid, latex). Used by both in-app display and export — no duplication.
+
+**Presentation**: All file viewing uses `FullScreenCodeViewController` as a `.pageSheet` (glass pill chrome). Entry points: tool row expand, inline file expand, session files tab, file browser. Exception: git-changed files push `WorkspaceReviewFileDetailView` (needs diff tabs).
+
+**Tests**: `FileShareArtifactTests.swift` generates real artifacts for all 22 export paths (8 content types × available formats). Validates non-blank images, valid PDFs (header + CGPDFDocument + rasterize check), source round-trips. Artifacts at `clients/apple/.build/share-artifacts/`.
+
+Design doc: `.internal/designs/share-sheet.md`.
+
 ### Store isolation rules (as implemented)
 
 Separate `@Observable` stores are used to avoid cross-feature re-renders:
