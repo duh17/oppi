@@ -98,6 +98,13 @@ struct FileBrowserContentView: View {
         .background(Color.themeBgDark)
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let shareable = shareableContentForBrowser() {
+                    FileShareButton(content: shareable, style: .icon)
+                }
+            }
+        }
         .task { await loadContent() }
         .task { await checkNetworkCost() }
     }
@@ -216,6 +223,34 @@ struct FileBrowserContentView: View {
             }
         } catch {
             content = .error(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Share
+
+    /// Build a shareable content descriptor from the current loaded content.
+    private func shareableContentForBrowser() -> FileShareService.ShareableContent? {
+        switch content {
+        case .text(let text):
+            let fileType = FileType.detect(from: filePath, content: text)
+            switch fileType {
+            case .markdown: return .markdown(text)
+            case .html: return .html(text)
+            case .json: return .json(text)
+            case .latex: return .latex(text)
+            case .orgMode: return .orgMode(text)
+            case .mermaid: return .mermaid(text)
+            case .code(let lang): return .code(text, language: lang.displayName)
+            case .graphviz: return .code(text, language: "dot")
+            case .plain: return .plainText(text)
+            default: return .plainText(text)
+            }
+        case .image(let data):
+            return .imageData(data, filename: fileName)
+        case .pdf(let data):
+            return .pdfData(data, filename: fileName)
+        default:
+            return nil
         }
     }
 

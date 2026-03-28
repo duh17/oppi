@@ -155,10 +155,23 @@ final class FullScreenImageViewController: UIViewController {
     }
 
     @objc private func shareTapped() {
-        let activity = UIActivityViewController(activityItems: [image], applicationActivities: nil)
-        activity.popoverPresentationController?.sourceView = view
-        activity.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 44, width: 0, height: 0)
-        present(activity, animated: true)
+        guard let pngData = image.pngData() else { return }
+        let shareable = FileShareService.ShareableContent.imageData(pngData, filename: "image.png")
+        Task {
+            let item = await FileShareService.render(shareable, as: .image)
+            let activity = UIActivityViewController(
+                activityItems: item.activityItems,
+                applicationActivities: nil
+            )
+            activity.completionWithItemsHandler = { _, _, _, _ in
+                FileShareService.cleanupTempFiles()
+            }
+            activity.popoverPresentationController?.sourceView = view
+            activity.popoverPresentationController?.sourceRect = CGRect(
+                x: view.bounds.midX, y: view.bounds.maxY - 44, width: 0, height: 0
+            )
+            present(activity, animated: true)
+        }
     }
 
     @objc private func saveTapped(_: UIBarButtonItem) {
