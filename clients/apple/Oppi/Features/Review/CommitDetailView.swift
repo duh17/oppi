@@ -12,17 +12,6 @@ struct CommitDetailView: View {
     @State private var error: String?
     @State private var selectedFile: GitCommitFileInfo?
 
-    /// Pi quick-action router for diff text selection.
-    /// Explicitly created because this view is presented in a sheet,
-    /// and the inner file-diff sheet won't inherit the root environment.
-    private var piRouter: SelectedTextPiActionRouter {
-        let nav = navigation
-        return SelectedTextPiActionRouter { request in
-            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            nav.showQuickSession = true
-        }
-    }
-
     var body: some View {
         Group {
             if let detail {
@@ -47,7 +36,7 @@ struct CommitDetailView: View {
         .sheet(item: $selectedFile) { file in
             NavigationStack {
                 CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
-                    .environment(\.selectedTextPiActionRouter, piRouter)
+                    .environment(\.selectedTextPiActionRouter, navigation.makeQuickSessionPiRouter())
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { selectedFile = nil }

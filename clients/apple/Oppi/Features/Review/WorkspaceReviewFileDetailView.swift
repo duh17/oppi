@@ -38,11 +38,7 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var navigateToReview: ReviewSessionNavDestination?
 
     private var piRouter: SelectedTextPiActionRouter {
-        let nav = navigation
-        return SelectedTextPiActionRouter { request in
-            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            nav.showQuickSession = true
-        }
+        navigation.makeQuickSessionPiRouter()
     }
 
     private func diffSourceContext(filePath: String) -> SelectedTextSourceContext {

@@ -18,11 +18,7 @@ struct SkillFileView: View {
     @State private var error: String?
 
     private var piRouter: SelectedTextPiActionRouter {
-        let nav = navigation
-        return SelectedTextPiActionRouter { request in
-            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            nav.showQuickSession = true
-        }
+        navigation.makeQuickSessionPiRouter()
     }
 
     private var fileName: String {

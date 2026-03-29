@@ -29,11 +29,7 @@ struct RemoteFileView: View {
     }
 
     private var piRouter: SelectedTextPiActionRouter {
-        let nav = navigation
-        return SelectedTextPiActionRouter { request in
-            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            nav.showQuickSession = true
-        }
+        navigation.makeQuickSessionPiRouter()
     }
 
     private var isImagePath: Bool {

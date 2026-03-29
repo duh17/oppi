@@ -50,11 +50,7 @@ struct FileBrowserContentView: View {
 
     /// Router that triggers a quick session with the selected text.
     private var piRouter: SelectedTextPiActionRouter {
-        let nav = navigation
-        return SelectedTextPiActionRouter { request in
-            nav.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            nav.showQuickSession = true
-        }
+        navigation.makeQuickSessionPiRouter()
     }
 
     /// Whether the UIKit file viewer is active (text content loaded).
