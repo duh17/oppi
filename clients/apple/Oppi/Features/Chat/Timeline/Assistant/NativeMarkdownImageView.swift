@@ -32,6 +32,14 @@ final class NativeMarkdownImageView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// Active height constraint — managed explicitly so we can swap between
+    /// loading placeholder (80pt), loaded (aspect-fit), and error (collapsed) states.
+    private var heightConstraint: NSLayoutConstraint?
+
+    /// Placeholder height shown while loading. Ensures the view is visible
+    /// in the stack view during async fetches (workspace or URLSession).
+    private static let loadingPlaceholderHeight: CGFloat = 80
+
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
         layer.cornerRadius = 8
@@ -65,7 +73,13 @@ final class NativeMarkdownImageView: UIView {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         imageView.addGestureRecognizer(tapGesture)
 
+        // Start with loading placeholder height so stack view allocates space.
+        let hc = heightAnchor.constraint(equalToConstant: Self.loadingPlaceholderHeight)
+        heightConstraint = hc
+
         NSLayoutConstraint.activate([
+            hc,
+
             // Loading state: spinner + alt
             spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -14),
@@ -159,6 +173,10 @@ final class NativeMarkdownImageView: UIView {
         altLabel.textColor = UIColor(palette.comment)
         altLabel.text = alt.isEmpty ? nil : alt
 
+        // Ensure loading placeholder height is active.
+        heightConstraint?.constant = Self.loadingPlaceholderHeight
+        isHidden = false
+
         spinner.startAnimating()
         altLabel.isHidden = alt.isEmpty
         imageView.isHidden = true
@@ -174,19 +192,18 @@ final class NativeMarkdownImageView: UIView {
         let aspectRatio = image.size.height / max(image.size.width, 1)
         let displayWidth = bounds.width > 0
             ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? bounds.width)
+            : (window?.windowScene?.screen.bounds.width ?? 360)
         let naturalHeight = displayWidth * aspectRatio
         let displayHeight = min(naturalHeight, Self.maxRenderHeight)
 
-        // Reset height constraint.
-        for constraint in constraints where constraint.firstAttribute == .height {
-            constraint.isActive = false
-        }
-        heightAnchor.constraint(equalToConstant: max(displayHeight, 80)).isActive = true
+        heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
 
         imageView.image = image
         imageView.isHidden = false
         backgroundColor = .clear
+
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
     }
 
     private func showErrorState(alt: String) {
@@ -194,6 +211,7 @@ final class NativeMarkdownImageView: UIView {
         imageView.isHidden = true
 
         if alt.isEmpty {
+            heightConstraint?.constant = 0
             isHidden = true
             return
         }
@@ -202,6 +220,8 @@ final class NativeMarkdownImageView: UIView {
         errorLabel.textColor = UIColor(palette.comment)
         errorLabel.text = "[\(alt)]"
         errorLabel.isHidden = false
+        // Shrink to fit the error label instead of holding loading placeholder height.
+        heightConstraint?.constant = 40
         backgroundColor = .clear
     }
 
