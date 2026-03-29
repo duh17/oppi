@@ -12,7 +12,7 @@
     "cyan": "#179299",
     "green": "#40a02b",
     "orange": "#fe640b",
-    "purple": "#8839ef",
+    "purple": "#6f72b8",
     "red": "#d20f39",
     "yellow": "#df8e1d",
     "thinkingText": "#6c6f85",
@@ -41,7 +41,7 @@
     "toolDiffContext": "#8c8fa1",
 
     "syntaxComment": "#8c8fa1",
-    "syntaxKeyword": "#8839ef",
+    "syntaxKeyword": "#6f72b8",
     "syntaxFunction": "#1e66f5",
     "syntaxVariable": "#4c4f69",
     "syntaxString": "#40a02b",
@@ -54,7 +54,7 @@
     "thinkingMinimal": "#8c8fa1",
     "thinkingLow": "#209fb5",
     "thinkingMedium": "#1e66f5",
-    "thinkingHigh": "#8839ef",
-    "thinkingXhigh": "#ea76cb"
+    "thinkingHigh": "#6f72b8",
+    "thinkingXhigh": "#c779b8"
   }
 }

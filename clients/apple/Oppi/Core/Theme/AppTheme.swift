@@ -220,21 +220,28 @@ extension AppTheme {
         )
     }
 
-    /// Dark — frosted glass accents on dark system backgrounds.
+    /// Dark — deep ink surfaces with soft editor-style contrast.
     static let dark = AppTheme.from(
         palette: ThemePalettes.dark,
-        diffAddedBg: c(0x73B987).opacity(0.12),
-        diffRemovedBg: c(0xDC6E73).opacity(0.10)
+        diffAddedBg: c(0x73B07C).opacity(0.10),
+        diffRemovedBg: c(0xCC7488).opacity(0.08)
     )
 
-    /// Light — clean, understated accents on white.
+    /// OLED — true black variant of Dark with brighter secondary text.
+    static let oled = AppTheme.from(
+        palette: ThemePalettes.oled,
+        diffAddedBg: c(0x6FAF78).opacity(0.10),
+        diffRemovedBg: c(0xCC7388).opacity(0.08)
+    )
+
+    /// Light — Latte-inspired surfaces with softened accent contrast.
     static let light = AppTheme.from(
         palette: ThemePalettes.light,
-        diffAddedBg: c(0x3A8550).opacity(0.10),
-        diffRemovedBg: c(0xC44E54).opacity(0.08)
+        diffAddedBg: c(0x2A9D8F).opacity(0.10),
+        diffRemovedBg: c(0xC0505A).opacity(0.08)
     )
 
-    /// Night — OLED black with warm accents, minimal eye strain.
+    /// Night — warm dark-room reading mode with minimal eye strain.
     static let night = AppTheme.from(
         palette: ThemePalettes.night,
         diffAddedBg: c(0x6A9060).opacity(0.10),
@@ -247,6 +254,8 @@ extension ThemeID {
         switch self {
         case .dark:
             return .dark
+        case .oled:
+            return .oled
         case .light:
             return .light
         case .night:

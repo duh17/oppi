@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
-/// Tests for ThemePalettes built-in definitions — verifies all three palettes
+/// Tests for ThemePalettes built-in definitions — verifies all built-in palettes
 /// have complete token sets and that the convenience initializer derives tokens
 /// correctly from the 13-color base.
 @Suite("ThemePalettes built-ins")
@@ -82,6 +82,10 @@ struct ThemePaletteBuiltinTests {
 
     @Test func darkPaletteHasAll49Tokens() {
         assertAllTokensPresent(ThemePalettes.dark, name: "dark")
+    }
+
+    @Test func oledPaletteHasAll49Tokens() {
+        assertAllTokensPresent(ThemePalettes.oled, name: "oled")
     }
 
     @Test func lightPaletteHasAll49Tokens() {

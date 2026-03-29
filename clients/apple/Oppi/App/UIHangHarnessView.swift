@@ -621,9 +621,10 @@ struct UIHangHarnessView: View {
     private var themeOrdinal: Int {
         switch themeID {
         case .dark: return 0
-        case .light: return 1
-        case .night: return 2
-        case .custom: return 3
+        case .oled: return 1
+        case .light: return 2
+        case .night: return 3
+        case .custom: return 4
         }
     }
 
@@ -1400,6 +1401,8 @@ struct UIHangHarnessView: View {
     private func toggleTheme() {
         switch themeID {
         case .dark:
+            themeID = .oled
+        case .oled:
             themeID = .light
         case .light:
             themeID = .night

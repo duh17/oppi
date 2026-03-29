@@ -140,12 +140,13 @@ extension ThemePalette {
 
 enum ThemeID: Hashable, Codable, Sendable {
     case dark
+    case oled
     case light
     case night
     case custom(String)
 
     /// Built-in themes (shipped in the app). Custom/imported themes added separately.
-    static let builtins: [Self] = [.dark, .light, .night]
+    static let builtins: [Self] = [.dark, .oled, .light, .night]
 
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
@@ -153,6 +154,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     var rawValue: String {
         switch self {
         case .dark: return "dark"
+        case .oled: return "oled"
         case .light: return "light"
         case .night: return "night"
         case .custom(let name): return "custom:\(name)"
@@ -162,6 +164,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     init(rawValue: String) {
         switch rawValue {
         case "dark": self = .dark
+        case "oled": self = .oled
         case "light": self = .light
         case "night": self = .night
         default:
@@ -192,6 +195,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     var displayName: String {
         switch self {
         case .dark: return "Dark"
+        case .oled: return "OLED"
         case .light: return "Light"
         case .night: return "Night"
         case .custom(let name): return name
@@ -201,11 +205,13 @@ enum ThemeID: Hashable, Codable, Sendable {
     var detail: String {
         switch self {
         case .dark:
-            return "Native dark with muted, frosted accents."
+            return "Deep ink dark with calm editor-style contrast."
+        case .oled:
+            return "True black OLED dark with modern accents for dark rooms."
         case .light:
-            return "Native light with clean, understated accents."
+            return "Latte-inspired light with soft, lower-chroma accents."
         case .night:
-            return "OLED black with warm accents. Minimizes eye strain in the dark."
+            return "Warm low-stimulation dark for late-night reading."
         case .custom:
             return ""
         }
@@ -213,7 +219,7 @@ enum ThemeID: Hashable, Codable, Sendable {
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .dark, .night:
+        case .dark, .oled, .night:
             return .dark
         case .light:
             return .light
@@ -230,6 +236,8 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch self {
         case .dark:
             return ThemePalettes.dark
+        case .oled:
+            return ThemePalettes.oled
         case .light:
             return ThemePalettes.light
         case .night:
@@ -257,70 +265,134 @@ enum ThemePalettes {
         )
     }
 
-    /// Dark — native dark with desaturated, frosted accents.
+    /// Dark — deep ink editor theme inspired by Tokyo Night, pushed a touch darker.
     ///
-    /// Backgrounds use system semantic colors. Accent colors are intentionally
-    /// muted — like system colors seen through frosted glass.
+    /// Uses layered navy-charcoal surfaces instead of pure black so chat, code,
+    /// tool output, and dividers keep their shape without feeling washed out.
     static let dark = ThemePalette(
         // Base 13
-        bg: Color(uiColor: .systemBackground),
-        bgDark: Color(uiColor: .secondarySystemBackground),
-        bgHighlight: Color(uiColor: .tertiarySystemBackground),
-        fg: Color(uiColor: .label),
-        fgDim: Color(uiColor: .secondaryLabel),
-        comment: Color(uiColor: .tertiaryLabel),
-        blue: c(0x649BE6),  // soft blue
-        cyan: c(0x78B9B2),  // muted teal
-        green: c(0x73B987),  // sage
-        orange: c(0xCDA06E),  // warm amber
-        purple: c(0xA091C8),  // dusty lavender
-        red: c(0xDC6E73),  // rosewood
-        yellow: c(0xC8B678),  // warm khaki
-        thinkingText: Color(uiColor: .secondaryLabel),
+        bg: c(0x1A1D29),
+        bgDark: c(0x151823),
+        bgHighlight: c(0x252B3D),
+        fg: c(0xC8D1EB),
+        fgDim: c(0xA2ACC9),
+        comment: c(0x6B7390),
+        blue: c(0x7AA2F7),
+        cyan: c(0x78C8F2),
+        green: c(0x8FBE78),
+        orange: c(0xD8A86C),
+        purple: c(0xA08FD4),
+        red: c(0xE07A8C),
+        yellow: c(0xD4B06A),
+        thinkingText: c(0x8E98B7),
         // User message
-        userMessageBg: Color(uiColor: .tertiarySystemBackground),
-        userMessageText: Color(uiColor: .label),
+        userMessageBg: c(0x252B3D),
+        userMessageText: c(0xC8D1EB),
         // Tool state
-        toolPendingBg: c(0x649BE6).opacity(0.12),
-        toolSuccessBg: c(0x73B987).opacity(0.08),
-        toolErrorBg: c(0xDC6E73).opacity(0.10),
-        toolTitle: Color(uiColor: .label),
-        toolOutput: Color(uiColor: .secondaryLabel),
+        toolPendingBg: c(0x7AA2F7).opacity(0.13),
+        toolSuccessBg: c(0x8FBE78).opacity(0.10),
+        toolErrorBg: c(0xE07A8C).opacity(0.10),
+        toolTitle: c(0xC8D1EB),
+        toolOutput: c(0xA2ACC9),
         // Markdown
-        mdHeading: c(0x649BE6),  // blue
-        mdLink: c(0x78B9B2),  // teal
-        mdLinkUrl: Color(uiColor: .tertiaryLabel),
-        mdCode: c(0x78B9B2),  // teal
-        mdCodeBlock: c(0x73B987),  // green
-        mdCodeBlockBorder: c(0x48484A),
-        mdQuote: Color(uiColor: .secondaryLabel),
-        mdQuoteBorder: c(0x48484A),
-        mdHr: c(0x48484A),
-        mdListBullet: c(0xCDA06E),  // orange
+        mdHeading: c(0x7AA2F7),
+        mdLink: c(0x78C8F2),
+        mdLinkUrl: c(0x6B7390),
+        mdCode: c(0x78C8F2),
+        mdCodeBlock: c(0x8FBE78),
+        mdCodeBlockBorder: c(0x31384D),
+        mdQuote: c(0xA2ACC9),
+        mdQuoteBorder: c(0x31384D),
+        mdHr: c(0x31384D),
+        mdListBullet: c(0xD8A86C),
         // Diffs
-        toolDiffAdded: c(0x5AAA75),  // lighter sage for readability
-        toolDiffRemoved: c(0xC45A60),  // warmer red
-        toolDiffContext: Color(uiColor: .tertiaryLabel),
-        // Syntax (Xcode dark inspired, slightly muted)
-        syntaxComment: Color(uiColor: .tertiaryLabel),
-        syntaxKeyword: c(0xA091C8),  // purple
-        syntaxFunction: c(0x649BE6),  // blue
-        syntaxVariable: Color(uiColor: .label),
-        syntaxString: c(0xDC6E73),  // red/rose (Xcode dark uses red for strings)
-        syntaxNumber: c(0xCDA06E),  // orange
-        syntaxType: c(0x78B9B2),  // teal
-        syntaxOperator: Color(uiColor: .label),
-        syntaxPunctuation: Color(uiColor: .secondaryLabel),
-        // Thinking (monochromatic gray → subtle tint)
-        thinkingOff: c(0x48484A),
-        thinkingMinimal: c(0x636366),
-        thinkingLow: c(0x6E87A0),
-        thinkingMedium: c(0x8296B4),
-        thinkingHigh: c(0x9B91B9),
-        thinkingXhigh: c(0xAF96CD)
+        toolDiffAdded: c(0x73B07C),
+        toolDiffRemoved: c(0xCC7488),
+        toolDiffContext: c(0x6B7390),
+        // Syntax (Tokyo Night-ish, but slightly calmer)
+        syntaxComment: c(0x6B7390),
+        syntaxKeyword: c(0xA08FD4),
+        syntaxFunction: c(0x7AA2F7),
+        syntaxVariable: c(0xC8D1EB),
+        syntaxString: c(0x8FBE78),
+        syntaxNumber: c(0xD8A86C),
+        syntaxType: c(0x78C8F2),
+        syntaxOperator: c(0xC8D1EB),
+        syntaxPunctuation: c(0xA2ACC9),
+        // Thinking (slate → blue → cyan → soft violet)
+        thinkingOff: c(0x31384D),
+        thinkingMinimal: c(0x505A78),
+        thinkingLow: c(0x5E82C6),
+        thinkingMedium: c(0x67B4DD),
+        thinkingHigh: c(0xA08FD4),
+        thinkingXhigh: c(0xB596DE)
     )
 
-    /// Night — OLED black with warm, low-saturation accents.
+    /// OLED — true black variant of Dark for dark rooms and battery maximalism.
+    ///
+    /// Keeps the same cool, modern family as Dark, but tightens the surfaces all
+    /// the way down to black. Secondary text is intentionally brighter than the
+    /// first pass so bash/tool output stays readable.
+    static let oled = ThemePalette(
+        // Base 13
+        bg: c(0x000000),
+        bgDark: c(0x04060D),
+        bgHighlight: c(0x101522),
+        fg: c(0xCAD3EE),
+        fgDim: c(0xAEB8D6),
+        comment: c(0x7A84A6),
+        blue: c(0x76A0F4),
+        cyan: c(0x76C6E6),
+        green: c(0x89B971),
+        orange: c(0xD7A96B),
+        purple: c(0x9F8AD9),
+        red: c(0xE07A8C),
+        yellow: c(0xD4B06A),
+        thinkingText: c(0x97A2C4),
+        // User message
+        userMessageBg: c(0x101522),
+        userMessageText: c(0xCAD3EE),
+        // Tool state
+        toolPendingBg: c(0x76A0F4).opacity(0.14),
+        toolSuccessBg: c(0x89B971).opacity(0.10),
+        toolErrorBg: c(0xE07A8C).opacity(0.10),
+        toolTitle: c(0xCAD3EE),
+        toolOutput: c(0xAEB8D6),
+        // Markdown
+        mdHeading: c(0x76A0F4),
+        mdLink: c(0x76C6E6),
+        mdLinkUrl: c(0x7A84A6),
+        mdCode: c(0x76C6E6),
+        mdCodeBlock: c(0x89B971),
+        mdCodeBlockBorder: c(0x22293B),
+        mdQuote: c(0xAEB8D6),
+        mdQuoteBorder: c(0x22293B),
+        mdHr: c(0x22293B),
+        mdListBullet: c(0xD7A96B),
+        // Diffs
+        toolDiffAdded: c(0x6FAF78),
+        toolDiffRemoved: c(0xCC7388),
+        toolDiffContext: c(0x7A84A6),
+        // Syntax
+        syntaxComment: c(0x7A84A6),
+        syntaxKeyword: c(0x9F8AD9),
+        syntaxFunction: c(0x76A0F4),
+        syntaxVariable: c(0xCAD3EE),
+        syntaxString: c(0x89B971),
+        syntaxNumber: c(0xD7A96B),
+        syntaxType: c(0x76C6E6),
+        syntaxOperator: c(0xCAD3EE),
+        syntaxPunctuation: c(0xAEB8D6),
+        // Thinking
+        thinkingOff: c(0x202637),
+        thinkingMinimal: c(0x46506D),
+        thinkingLow: c(0x5D80C5),
+        thinkingMedium: c(0x64AFDB),
+        thinkingHigh: c(0x9F8AD9),
+        thinkingXhigh: c(0xB393E0)
+    )
+
+    /// Night — warm dark-room theme with low-saturation accents.
     ///
     /// Designed for reading in the dark. Key choices:
     /// - Near-black background (#0E0D0B) avoids OLED smearing vs pure #000000
@@ -387,67 +459,68 @@ enum ThemePalettes {
         thinkingXhigh: c(0xA87890)
     )
 
-    /// Light — native light with clean, understated accents.
+    /// Light — Latte Things-inspired light theme with softer accent chroma.
     ///
-    /// Same frosted-glass philosophy as Dark but for light backgrounds.
-    /// Accents are deeper/more saturated to maintain contrast on white.
+    /// Uses the warm paper/granite surfaces from the bundled Latte Things theme,
+    /// but tones the mauve family down so the overall UI leans more blue/teal
+    /// than purple.
     static let light = ThemePalette(
         // Base 13
-        bg: Color(uiColor: .systemBackground),
-        bgDark: Color(uiColor: .secondarySystemBackground),
-        bgHighlight: Color(uiColor: .tertiarySystemBackground),
-        fg: Color(uiColor: .label),
-        fgDim: Color(uiColor: .secondaryLabel),
-        comment: Color(uiColor: .tertiaryLabel),
-        blue: c(0x3478C6),  // deeper blue
-        cyan: c(0x2E8A82),  // deeper teal
-        green: c(0x3A8550),  // deeper sage
-        orange: c(0xA87530),  // deeper amber
-        purple: c(0x7662A8),  // deeper lavender
-        red: c(0xC44E54),  // deeper rosewood
-        yellow: c(0x9A8540),  // deeper khaki
-        thinkingText: Color(uiColor: .secondaryLabel),
+        bg: c(0xEFF1F5),
+        bgDark: c(0xE6E9EF),
+        bgHighlight: c(0xCCD0DA),
+        fg: c(0x4C4F69),
+        fgDim: c(0x5C5F77),
+        comment: c(0x8C8FA1),
+        blue: c(0x1E66F5),
+        cyan: c(0x179299),
+        green: c(0x40A02B),
+        orange: c(0xFE640B),
+        purple: c(0x6F72B8),  // softened indigo vs Latte's brighter mauve
+        red: c(0xD20F39),
+        yellow: c(0xDF8E1D),
+        thinkingText: c(0x6C6F85),
         // User message
-        userMessageBg: Color(uiColor: .tertiarySystemBackground),
-        userMessageText: Color(uiColor: .label),
+        userMessageBg: c(0xDCE0E8),
+        userMessageText: c(0x4C4F69),
         // Tool state
-        toolPendingBg: c(0x3478C6).opacity(0.10),
-        toolSuccessBg: c(0x3A8550).opacity(0.08),
-        toolErrorBg: c(0xC44E54).opacity(0.10),
-        toolTitle: Color(uiColor: .label),
-        toolOutput: Color(uiColor: .secondaryLabel),
+        toolPendingBg: c(0xDEE3F2),
+        toolSuccessBg: c(0xDFEADB),
+        toolErrorBg: c(0xF0DDE0),
+        toolTitle: c(0x4C4F69),
+        toolOutput: c(0x6C6F85),
         // Markdown
-        mdHeading: c(0x3478C6),  // blue
-        mdLink: c(0x2E8A82),  // teal
-        mdLinkUrl: Color(uiColor: .tertiaryLabel),
-        mdCode: c(0x2E8A82),  // teal
-        mdCodeBlock: c(0x3A8550),  // green
-        mdCodeBlockBorder: c(0xC7C7CC),
-        mdQuote: Color(uiColor: .secondaryLabel),
-        mdQuoteBorder: c(0xC7C7CC),
-        mdHr: c(0xC7C7CC),
-        mdListBullet: c(0xA87530),  // orange
+        mdHeading: c(0x1E66F5),
+        mdLink: c(0x209FB5),
+        mdLinkUrl: c(0x8C8FA1),
+        mdCode: c(0x179299),
+        mdCodeBlock: c(0x40A02B),
+        mdCodeBlockBorder: c(0x8C8FA1),
+        mdQuote: c(0x8C8FA1),
+        mdQuoteBorder: c(0xBCC0CC),
+        mdHr: c(0xDF8E1D),
+        mdListBullet: c(0xFE640B),
         // Diffs
-        toolDiffAdded: c(0x2D7A42),  // deep green
-        toolDiffRemoved: c(0xB03A40),  // deep red
-        toolDiffContext: Color(uiColor: .tertiaryLabel),
-        // Syntax (Xcode light inspired, clean)
-        syntaxComment: Color(uiColor: .tertiaryLabel),
-        syntaxKeyword: c(0x7662A8),  // purple
-        syntaxFunction: c(0x3478C6),  // blue
-        syntaxVariable: Color(uiColor: .label),
-        syntaxString: c(0xC44E54),  // red/rose
-        syntaxNumber: c(0xA87530),  // orange
-        syntaxType: c(0x2E8A82),  // teal
-        syntaxOperator: Color(uiColor: .label),
-        syntaxPunctuation: Color(uiColor: .secondaryLabel),
-        // Thinking (light grays → subtle color tint)
-        thinkingOff: c(0xAEAEB2),
-        thinkingMinimal: c(0x8E8E93),
-        thinkingLow: c(0x5A7A90),
-        thinkingMedium: c(0x4A6D85),
-        thinkingHigh: c(0x6E5A8A),
-        thinkingXhigh: c(0x8A4EB0)
+        toolDiffAdded: c(0x2A9D8F),
+        toolDiffRemoved: c(0xC0505A),
+        toolDiffContext: c(0x8C8FA1),
+        // Syntax (Latte Things inspired, with less mauve)
+        syntaxComment: c(0x8C8FA1),
+        syntaxKeyword: c(0x6F72B8),
+        syntaxFunction: c(0x1E66F5),
+        syntaxVariable: c(0x4C4F69),
+        syntaxString: c(0x40A02B),
+        syntaxNumber: c(0xFE640B),
+        syntaxType: c(0x179299),
+        syntaxOperator: c(0x04A5E5),
+        syntaxPunctuation: c(0x6C6F85),
+        // Thinking (keep the Latte ramp, but soften the higher mauves)
+        thinkingOff: c(0xACB0BE),
+        thinkingMinimal: c(0x8C8FA1),
+        thinkingLow: c(0x209FB5),
+        thinkingMedium: c(0x1E66F5),
+        thinkingHigh: c(0x6F72B8),
+        thinkingXhigh: c(0xC779B8)
     )
 }
 // swiftlint:enable function_body_length

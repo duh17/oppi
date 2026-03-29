@@ -12,6 +12,10 @@ struct ThemeIDTests {
         #expect(ThemeID.dark.rawValue == "dark")
     }
 
+    @Test func oledRawValue() {
+        #expect(ThemeID.oled.rawValue == "oled")
+    }
+
     @Test func lightRawValue() {
         #expect(ThemeID.light.rawValue == "light")
     }
@@ -28,6 +32,11 @@ struct ThemeIDTests {
     @Test func roundTripDark() {
         let id = ThemeID(rawValue: "dark")
         #expect(id == .dark)
+    }
+
+    @Test func roundTripOled() {
+        let id = ThemeID(rawValue: "oled")
+        #expect(id == .oled)
     }
 
     @Test func roundTripLight() {
@@ -70,6 +79,12 @@ struct ThemeIDTests {
         #expect(str == "\"dark\"")
     }
 
+    @Test func encodeOled() throws {
+        let data = try JSONEncoder().encode(ThemeID.oled)
+        let str = String(data: data, encoding: .utf8)
+        #expect(str == "\"oled\"")
+    }
+
     @Test func encodeLight() throws {
         let data = try JSONEncoder().encode(ThemeID.light)
         let str = String(data: data, encoding: .utf8)
@@ -94,6 +109,12 @@ struct ThemeIDTests {
         #expect(id == .dark)
     }
 
+    @Test func decodeOled() throws {
+        let data = Data("\"oled\"".utf8)
+        let id = try JSONDecoder().decode(ThemeID.self, from: data)
+        #expect(id == .oled)
+    }
+
     @Test func decodeUnknown() throws {
         let data = Data("\"future-theme\"".utf8)
         let id = try JSONDecoder().decode(ThemeID.self, from: data)
@@ -104,6 +125,7 @@ struct ThemeIDTests {
 
     @Test func displayNames() {
         #expect(ThemeID.dark.displayName == "Dark")
+        #expect(ThemeID.oled.displayName == "OLED")
         #expect(ThemeID.light.displayName == "Light")
         #expect(ThemeID.night.displayName == "Night")
         #expect(ThemeID.custom("Nord").displayName == "Nord")
@@ -113,6 +135,7 @@ struct ThemeIDTests {
 
     @Test func detailStrings() {
         #expect(!ThemeID.dark.detail.isEmpty)
+        #expect(!ThemeID.oled.detail.isEmpty)
         #expect(!ThemeID.light.detail.isEmpty)
         #expect(!ThemeID.night.detail.isEmpty)
         #expect(ThemeID.custom("X").detail.isEmpty, "Custom themes have no detail text")
@@ -122,6 +145,10 @@ struct ThemeIDTests {
 
     @Test func darkPrefersDarkScheme() {
         #expect(ThemeID.dark.preferredColorScheme == .dark)
+    }
+
+    @Test func oledPrefersDarkScheme() {
+        #expect(ThemeID.oled.preferredColorScheme == .dark)
     }
 
     @Test func lightPrefersLightScheme() {
@@ -144,6 +171,13 @@ struct ThemeIDTests {
         let palette = ThemeID.dark.palette
         // The dark palette should have non-default colors for at least the base 13
         // We can't compare Color values directly, so just verify the palette exists
+        _ = palette.bg
+        _ = palette.fg
+        _ = palette.blue
+    }
+
+    @Test func oledPaletteIsNotNil() {
+        let palette = ThemeID.oled.palette
         _ = palette.bg
         _ = palette.fg
         _ = palette.blue
@@ -172,19 +206,22 @@ struct ThemeIDTests {
 
     // MARK: - builtins
 
-    @Test func builtinsContainsDarkLightAndNight() {
+    @Test func builtinsContainsDarkOledLightAndNight() {
         #expect(ThemeID.builtins.contains(.dark))
+        #expect(ThemeID.builtins.contains(.oled))
         #expect(ThemeID.builtins.contains(.light))
         #expect(ThemeID.builtins.contains(.night))
-        #expect(ThemeID.builtins.count == 3)
+        #expect(ThemeID.builtins.count == 4)
     }
 
     // MARK: - Hashable
 
     @Test func hashableEquality() {
         #expect(ThemeID.dark == ThemeID.dark)
+        #expect(ThemeID.dark != ThemeID.oled)
         #expect(ThemeID.dark != ThemeID.light)
         #expect(ThemeID.dark != ThemeID.night)
+        #expect(ThemeID.oled == ThemeID.oled)
         #expect(ThemeID.night == ThemeID.night)
         #expect(ThemeID.custom("A") == ThemeID.custom("A"))
         #expect(ThemeID.custom("A") != ThemeID.custom("B"))

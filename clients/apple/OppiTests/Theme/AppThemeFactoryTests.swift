@@ -136,6 +136,13 @@ struct AppThemeFactoryTests {
         _ = theme.syntax.keyword
     }
 
+    @Test func oledVariantIsConstructed() {
+        let theme = AppTheme.oled
+        #expect(theme.code.fontSize == 11)
+        _ = theme.bg.primary
+        _ = theme.syntax.keyword
+    }
+
     @Test func lightVariantIsConstructed() {
         let theme = AppTheme.light
         #expect(theme.code.fontSize == 11)
@@ -150,11 +157,12 @@ struct AppThemeFactoryTests {
         _ = theme.syntax.keyword
     }
 
-    // MARK: - All three built-in palettes produce valid themes
+    // MARK: - All built-in palettes produce valid themes
 
     @Test func allBuiltinPalettesProduceValidThemes() {
         let palettes: [(String, ThemePalette)] = [
             ("dark", ThemePalettes.dark),
+            ("oled", ThemePalettes.oled),
             ("light", ThemePalettes.light),
             ("night", ThemePalettes.night),
         ]
@@ -171,6 +179,12 @@ struct AppThemeFactoryTests {
 
     @Test func themeIDDarkReturnsAppThemeDark() {
         let theme = ThemeID.dark.appTheme
+        #expect(theme.code.fontSize == 11)
+        _ = theme.bg.primary
+    }
+
+    @Test func themeIDOledReturnsAppThemeOled() {
+        let theme = ThemeID.oled.appTheme
         #expect(theme.code.fontSize == 11)
         _ = theme.bg.primary
     }
