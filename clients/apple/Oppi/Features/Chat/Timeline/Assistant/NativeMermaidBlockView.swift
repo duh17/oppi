@@ -50,6 +50,9 @@ final class NativeMermaidBlockView: UIView {
     /// Height constraint for the image view inside the scroll view.
     private var imageHeightConstraint: NSLayoutConstraint?
 
+    /// Horizontal centering constraint for the image inside the scroll view.
+    private var imageCenterXConstraint: NSLayoutConstraint?
+
     /// Cap diagram height in the timeline to keep cells reasonable.
     private static let maxInlineHeight: CGFloat = 400
 
@@ -93,7 +96,22 @@ final class NativeMermaidBlockView: UIView {
         imageWidthConstraint = imgWidth
         imageHeightConstraint = imgHeight
 
+        // Center horizontally in the scroll view's frame (visible area), not
+        // the content guide. This keeps the diagram centered when it's narrower
+        // than the container. The constraint is at low priority so it yields
+        // to the content guide edges when the content is wider / zoomed in.
+        let centerX = diagramImageView.centerXAnchor.constraint(
+            equalTo: scrollView.frameLayoutGuide.centerXAnchor
+        )
+        centerX.priority = .defaultHigh
+        imageCenterXConstraint = centerX
+
+        // Tap to open fullscreen — use a single-tap that doesn't interfere
+        // with the scroll view's pinch gesture.
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tapGesture.numberOfTapsRequired = 1
+        // Don't delay scroll view touches waiting for tap to fail.
+        tapGesture.cancelsTouchesInView = false
         scrollView.addGestureRecognizer(tapGesture)
 
         NSLayoutConstraint.activate([
@@ -110,11 +128,16 @@ final class NativeMermaidBlockView: UIView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             scrollHeight,
 
-            // Image view pinned to scroll view content layout guide
+            // Image view sized by constraints, pinned to content guide
             diagramImageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            diagramImageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            diagramImageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             diagramImageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            diagramImageView.leadingAnchor.constraint(
+                greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor
+            ),
+            diagramImageView.trailingAnchor.constraint(
+                lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor
+            ),
+            centerX,
             imgWidth,
             imgHeight,
         ])
@@ -241,10 +264,12 @@ final class NativeMermaidBlockView: UIView {
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
     }
 
-    @objc private func handleTap() {
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        // Ignore taps when zoomed in — user is panning, not trying to open fullscreen.
+        if scrollView.zoomScale > 1.05 { return }
+
         guard let code = currentCode, isShowingDiagram else { return }
 
-        // Open the full-screen mermaid viewer with export support.
         let fullScreenContent = FullScreenCodeContent.mermaid(content: code, filePath: nil)
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             fullScreenContent,
@@ -254,6 +279,25 @@ final class NativeMermaidBlockView: UIView {
             selectedTextSourceLabel: selectedTextSourceContext?.sourceLabel
         )
     }
+
+    // MARK: - Centering after zoom
+
+    /// Re-center the image view within the scroll view after zoom changes.
+    /// Without this, zooming out leaves the image stuck in the top-left corner.
+    private func centerImageInScrollView() {
+        let scrollSize = scrollView.bounds.size
+        let contentSize = scrollView.contentSize
+
+        let horizontalInset = max(0, (scrollSize.width - contentSize.width) / 2)
+        let verticalInset = max(0, (scrollSize.height - contentSize.height) / 2)
+
+        scrollView.contentInset = UIEdgeInsets(
+            top: verticalInset,
+            left: horizontalInset,
+            bottom: verticalInset,
+            right: horizontalInset
+        )
+    }
 }
 
 // MARK: - UIScrollViewDelegate (pinch-to-zoom)
@@ -261,5 +305,9 @@ final class NativeMermaidBlockView: UIView {
 extension NativeMermaidBlockView: UIScrollViewDelegate {
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         diagramImageView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerImageInScrollView()
     }
 }
