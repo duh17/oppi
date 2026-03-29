@@ -6,9 +6,10 @@ import UIKit
 /// to a syntax-highlighted code block while the fence is still open during
 /// streaming. Parses and rasterizes via `DocumentRenderPipeline` +
 /// `MermaidFlowchartRenderer` on a background thread, then displays the
-/// resulting image on the main thread.
+/// resulting image in a pinch-to-zoom scroll view.
 ///
-/// Tap opens a fullscreen image of the rendered diagram.
+/// Tap opens `FullScreenCodeViewController` with full export support
+/// (image, PDF, source).
 @MainActor
 final class NativeMermaidBlockView: UIView {
 
@@ -17,19 +18,37 @@ final class NativeMermaidBlockView: UIView {
     /// Code block shown while the fence is open (streaming) or on parse failure.
     private let codeBlockView = NativeCodeBlockView()
 
-    /// Rendered diagram container, shown when the fence is closed and parse succeeds.
-    private let diagramContainer = UIView()
+    /// Rendered diagram container with pinch-to-zoom.
+    private let scrollView: UIScrollView = {
+        let sv = UIScrollView()
+        sv.minimumZoomScale = 1.0
+        sv.maximumZoomScale = 4.0
+        sv.showsVerticalScrollIndicator = false
+        sv.showsHorizontalScrollIndicator = false
+        sv.bouncesZoom = true
+        sv.bounces = false
+        sv.alwaysBounceVertical = false
+        sv.clipsToBounds = true
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        return sv
+    }()
 
-    /// Rasterized diagram image view.
+    /// Rasterized diagram image view (inside scroll view for zoom).
     private let diagramImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleAspectFit
         iv.clipsToBounds = true
+        iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
     }()
 
-    /// Height constraint for the diagram container, updated after layout.
-    private var diagramHeightConstraint: NSLayoutConstraint?
+    /// Height constraint for the scroll container, updated after layout.
+    private var scrollHeightConstraint: NSLayoutConstraint?
+
+    /// Width constraint for the image view inside the scroll view.
+    private var imageWidthConstraint: NSLayoutConstraint?
+    /// Height constraint for the image view inside the scroll view.
+    private var imageHeightConstraint: NSLayoutConstraint?
 
     /// Cap diagram height in the timeline to keep cells reasonable.
     private static let maxInlineHeight: CGFloat = 400
@@ -39,8 +58,9 @@ final class NativeMermaidBlockView: UIView {
     private var currentCode: String?
     private var isShowingDiagram = false
     private var renderTask: Task<Void, Never>?
-    /// Cached rendered image for fullscreen tap.
-    private var cachedImage: UIImage?
+    /// Selected-text context forwarded to the inner code block.
+    private var selectedTextPiRouter: SelectedTextPiActionRouter?
+    private var selectedTextSourceContext: SelectedTextSourceContext?
 
     // MARK: - Init
 
@@ -58,21 +78,23 @@ final class NativeMermaidBlockView: UIView {
         codeBlockView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(codeBlockView)
 
-        diagramContainer.translatesAutoresizingMaskIntoConstraints = false
-        diagramContainer.clipsToBounds = true
-        diagramContainer.layer.cornerRadius = 8
-        diagramContainer.isHidden = true
-        addSubview(diagramContainer)
+        scrollView.delegate = self
+        scrollView.layer.cornerRadius = 8
+        scrollView.isHidden = true
+        addSubview(scrollView)
 
-        diagramImageView.translatesAutoresizingMaskIntoConstraints = false
-        diagramContainer.addSubview(diagramImageView)
+        scrollView.addSubview(diagramImageView)
 
-        let heightConstraint = diagramContainer.heightAnchor.constraint(equalToConstant: 200)
-        diagramHeightConstraint = heightConstraint
+        let scrollHeight = scrollView.heightAnchor.constraint(equalToConstant: 200)
+        scrollHeightConstraint = scrollHeight
+
+        let imgWidth = diagramImageView.widthAnchor.constraint(equalToConstant: 1)
+        let imgHeight = diagramImageView.heightAnchor.constraint(equalToConstant: 1)
+        imageWidthConstraint = imgWidth
+        imageHeightConstraint = imgHeight
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        diagramContainer.addGestureRecognizer(tapGesture)
-        diagramContainer.isUserInteractionEnabled = true
+        scrollView.addGestureRecognizer(tapGesture)
 
         NSLayoutConstraint.activate([
             // Code block fills self
@@ -81,18 +103,20 @@ final class NativeMermaidBlockView: UIView {
             codeBlockView.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeBlockView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Diagram container fills self
-            diagramContainer.topAnchor.constraint(equalTo: topAnchor),
-            diagramContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
-            diagramContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            diagramContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightConstraint,
+            // Scroll view fills self
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollHeight,
 
-            // Image view fills diagram container
-            diagramImageView.topAnchor.constraint(equalTo: diagramContainer.topAnchor),
-            diagramImageView.leadingAnchor.constraint(equalTo: diagramContainer.leadingAnchor),
-            diagramImageView.trailingAnchor.constraint(equalTo: diagramContainer.trailingAnchor),
-            diagramImageView.bottomAnchor.constraint(equalTo: diagramContainer.bottomAnchor),
+            // Image view pinned to scroll view content layout guide
+            diagramImageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            diagramImageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            diagramImageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            diagramImageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            imgWidth,
+            imgHeight,
         ])
     }
 
@@ -102,10 +126,9 @@ final class NativeMermaidBlockView: UIView {
     func applyAsCode(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         renderTask?.cancel()
         renderTask = nil
-        cachedImage = nil
 
         codeBlockView.isHidden = false
-        diagramContainer.isHidden = true
+        scrollView.isHidden = true
         isShowingDiagram = false
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
@@ -123,14 +146,13 @@ final class NativeMermaidBlockView: UIView {
             guard let self else { return }
 
             let theme = ThemeRuntimeState.currentRenderTheme()
-            // Compute available width from current bounds, falling back to screen width.
             let availableWidth = self.bounds.width > 0
                 ? self.bounds.width
                 : (self.window?.windowScene?.screen.bounds.width ?? 360)
 
-            // Run parse + layout off the main thread. The result contains a
-            // non-Sendable draw closure, so we render to a UIImage on the
-            // detached task and also capture size for the main-thread display.
+            // Parse + layout + rasterize off the main thread.
+            // GraphicalLayout contains a non-Sendable draw closure, so we
+            // rasterize to a UIImage on the same detached task.
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
                 let layout = DocumentRenderPipeline.layoutGraphical(
                     parser: MermaidParser(),
@@ -145,9 +167,8 @@ final class NativeMermaidBlockView: UIView {
                 )
                 guard layout.size.width > 0, layout.size.height > 0 else { return nil }
 
-                // Rasterize on this thread while we have the draw closure.
                 let format = UIGraphicsImageRendererFormat()
-                format.scale = 2.0 // Retina quality
+                format.scale = 2.0
                 let renderer = UIGraphicsImageRenderer(size: layout.size, format: format)
                 let image = renderer.image { ctx in
                     layout.draw(ctx.cgContext, .zero)
@@ -171,6 +192,8 @@ final class NativeMermaidBlockView: UIView {
         router: SelectedTextPiActionRouter?,
         sourceContext: SelectedTextSourceContext?
     ) {
+        selectedTextPiRouter = router
+        selectedTextSourceContext = sourceContext
         codeBlockView.configureSelectedTextPi(router: router, sourceContext: sourceContext)
     }
 
@@ -182,28 +205,28 @@ final class NativeMermaidBlockView: UIView {
     // MARK: - Private
 
     private func showDiagram(image: UIImage, naturalSize: CGSize, palette: ThemePalette) {
-        cachedImage = image
-
-        // Scale to fit available width.
         let availableWidth = bounds.width > 0
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
         let scale = min(1.0, availableWidth / naturalSize.width)
         let displayHeight = min(naturalSize.height * scale, Self.maxInlineHeight)
 
-        diagramContainer.backgroundColor = UIColor(palette.bgHighlight)
-        diagramHeightConstraint?.constant = displayHeight
+        scrollView.backgroundColor = UIColor(palette.bgHighlight)
+        scrollHeightConstraint?.constant = displayHeight
 
-        // Use the image view approach — simpler and avoids Sendable issues.
+        // Size the image view to the scaled content size.
+        let scaledWidth = naturalSize.width * scale
+        let scaledHeight = naturalSize.height * scale
+        imageWidthConstraint?.constant = scaledWidth
+        imageHeightConstraint?.constant = scaledHeight
+
         diagramImageView.image = image
-        diagramImageView.frame = CGRect(
-            x: 0, y: 0,
-            width: naturalSize.width * scale,
-            height: naturalSize.height * scale
-        )
+
+        // Reset zoom on new content.
+        scrollView.zoomScale = 1.0
 
         codeBlockView.isHidden = true
-        diagramContainer.isHidden = false
+        scrollView.isHidden = false
         isShowingDiagram = true
 
         invalidateIntrinsicContentSize()
@@ -213,13 +236,30 @@ final class NativeMermaidBlockView: UIView {
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
         codeBlockView.isHidden = false
-        diagramContainer.isHidden = true
+        scrollView.isHidden = true
         isShowingDiagram = false
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
     }
 
     @objc private func handleTap() {
-        guard let image = cachedImage else { return }
-        FullScreenImageViewController.present(image: image)
+        guard let code = currentCode, isShowingDiagram else { return }
+
+        // Open the full-screen mermaid viewer with export support.
+        let fullScreenContent = FullScreenCodeContent.mermaid(content: code, filePath: nil)
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            fullScreenContent,
+            from: self,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSessionId: selectedTextSourceContext?.sessionId,
+            selectedTextSourceLabel: selectedTextSourceContext?.sourceLabel
+        )
+    }
+}
+
+// MARK: - UIScrollViewDelegate (pinch-to-zoom)
+
+extension NativeMermaidBlockView: UIScrollViewDelegate {
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        diagramImageView
     }
 }

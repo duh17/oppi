@@ -1,6 +1,6 @@
 # Inline Rendering Test
 
-This file validates inline mermaid diagrams and images in the chat timeline.
+Validates inline mermaid diagrams and images in the chat timeline.
 
 ## Mermaid Diagrams
 
@@ -55,44 +55,39 @@ mindmap
       K8s
 ```
 
-### Using mmd alias
+### mmd alias
 
 ```mmd
 graph LR
     A --> B --> C
 ```
 
-## Images
+## Online Images
 
-### Online URL (https)
+### GitHub avatar (https, PNG, always up)
 
-![Placeholder image](https://picsum.photos/300/200)
+![GitHub user 1](https://avatars.githubusercontent.com/u/1?v=4)
 
-### Online URL (http)
+### Wikipedia image (https, JPEG)
 
-![HTTP test](http://via.placeholder.com/200x100.png)
+![Wikipedia globe](https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png)
 
-### Relative path (workspace file)
+### Picsum photo (https, redirect)
 
-![Screenshot](screenshots/example.png)
+![Random photo](https://picsum.photos/id/237/300/200)
 
-### Mixed content (image in paragraph - should NOT render as image)
+## Edge Cases
 
-Check out this diagram: ![inline](https://picsum.photos/50/50) pretty cool right?
+### Mixed paragraph (should NOT render as standalone image)
 
-## Regular Code Blocks (should NOT render as diagrams)
+Check this out: ![tiny](https://avatars.githubusercontent.com/u/2?v=4&s=32) inline with text.
+
+### Regular code blocks (not mermaid)
 
 ```python
 def hello():
     print("This is python, not mermaid")
 ```
-
-```swift
-let x = 42
-print("Swift code block")
-```
-
-## Edge Cases
 
 ### Empty mermaid block
 
