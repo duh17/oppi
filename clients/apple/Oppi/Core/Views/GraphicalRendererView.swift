@@ -101,6 +101,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         fitContentIfNeeded()
+        centerContentHorizontally()
     }
 
     /// Scale down to fit width if content is wider than the view, otherwise show at 1x.
@@ -113,8 +114,18 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         }
     }
 
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerContentHorizontally()
+    }
+
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         contentView
+    }
+
+    /// Adjust left inset so the content is horizontally centered when narrower than the viewport.
+    private func centerContentHorizontally() {
+        let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
+        scrollView.contentInset = UIEdgeInsets(top: scrollView.contentInset.top, left: offsetX, bottom: scrollView.contentInset.bottom, right: 0)
     }
 }
 
