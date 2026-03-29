@@ -272,9 +272,16 @@ extension View {
 
 struct FullScreenCodeView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
-    let selectedTextPiRouter: SelectedTextPiActionRouter?
+    var selectedTextPiRouter: SelectedTextPiActionRouter?
     let selectedTextSessionId: String?
     let selectedTextSourceLabel: String?
+
+    @Environment(\.selectedTextPiActionRouter) private var environmentPiRouter
+
+    /// Effective router: explicit parameter wins, falls back to environment.
+    private var effectivePiRouter: SelectedTextPiActionRouter? {
+        selectedTextPiRouter ?? environmentPiRouter
+    }
 
     init(
         content: FullScreenCodeContent,
@@ -291,7 +298,7 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextPiRouter: effectivePiRouter,
             selectedTextSessionId: selectedTextSessionId,
             selectedTextSourceLabel: selectedTextSourceLabel
         )

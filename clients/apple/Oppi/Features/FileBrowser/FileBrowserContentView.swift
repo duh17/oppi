@@ -24,7 +24,6 @@ struct FileBrowserContentView: View {
     var fileSize: Int?
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(AppNavigation.self) private var navigation
     @State private var content: FileContentPhase = .loading
     @State private var isExpensiveNetwork = false
 
@@ -46,11 +45,6 @@ struct FileBrowserContentView: View {
         default:
             return .text
         }
-    }
-
-    /// Router that triggers a quick session with the selected text.
-    private var piRouter: SelectedTextPiActionRouter {
-        navigation.makeQuickSessionPiRouter()
     }
 
     /// Whether the UIKit file viewer is active (text content loaded).
@@ -77,8 +71,7 @@ struct FileBrowserContentView: View {
                 )
             case .text(let text):
                 EmbeddedFileViewerView(
-                    content: .fromText(text, filePath: filePath),
-                    selectedTextPiRouter: piRouter
+                    content: .fromText(text, filePath: filePath)
                 )
                 .ignoresSafeArea(edges: .top)
             case .image(let data):

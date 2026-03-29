@@ -12,14 +12,9 @@ struct SkillFileView: View {
     let filePath: String
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(AppNavigation.self) private var navigation
     @State private var content: String?
     @State private var isLoading = true
     @State private var error: String?
-
-    private var piRouter: SelectedTextPiActionRouter {
-        navigation.makeQuickSessionPiRouter()
-    }
 
     private var fileName: String {
         filePath.components(separatedBy: "/").last ?? filePath
@@ -34,8 +29,7 @@ struct SkillFileView: View {
         Group {
             if let content {
                 EmbeddedFileViewerView(
-                    content: .fromText(content, filePath: filePath),
-                    selectedTextPiRouter: piRouter
+                    content: .fromText(content, filePath: filePath)
                 )
                 .ignoresSafeArea(edges: .top)
             } else if isLoading {
