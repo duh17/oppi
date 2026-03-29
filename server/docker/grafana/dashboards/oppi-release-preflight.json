@@ -3232,6 +3232,382 @@
           }
         ]
       }
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "MetricKit (device-level)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 173 },
+      "panels": []
+    },
+    {
+      "id": 61,
+      "type": "barchart",
+      "title": "Crashes and Hangs (MetricKit diagnostics)",
+      "description": "Daily count of crash and hang diagnostic payloads reported by MetricKit.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 174 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "crashes" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "hangs" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "cpu_exceptions" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "auto",
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "stacking": "normal",
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "xTickLabelRotation": 0,
+        "showValue": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  date(window_start_ms/1000, 'unixepoch', 'localtime') as day,\n  SUM(CASE WHEN summary_json LIKE '%crashDiag%' THEN 1 ELSE 0 END) as crashes,\n  SUM(CASE WHEN summary_json LIKE '%hangDiag%' THEN 1 ELSE 0 END) as hangs,\n  SUM(CASE WHEN summary_json LIKE '%cpuException%' THEN 1 ELSE 0 END) as cpu_exceptions\nFROM metrickit_payloads\nWHERE kind = 'diagnostic'\n  AND window_start_ms BETWEEN $__from AND $__to\nGROUP BY day\nORDER BY day",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "App Responsiveness (MetricKit hang histogram buckets)",
+      "description": "Number of hang diagnostic events per day from MetricKit. Includes crash, hang, and CPU exception categories.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 174 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "lineWidth": 0, "fillOpacity": 80, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  COUNT(*) as value\nFROM metrickit_payloads\nWHERE kind = 'diagnostic'\n  AND window_start_ms BETWEEN $__from AND $__to\nGROUP BY date(window_start_ms/1000, 'unixepoch', 'localtime')\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "CPU and GPU Time (MetricKit daily)",
+      "description": "Cumulative CPU and GPU time per 24-hour MetricKit reporting window.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 182 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 5, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [
+              { "id": "displayName", "value": "CPU Time" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "displayName", "value": "GPU Time" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(summary_json, '$.cpuMetrics'), '$.cumulativeCPUTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND summary_json LIKE '%cpuMetrics%'\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(summary_json, '$.gpuMetrics'), '$.cumulativeGPUTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND summary_json LIKE '%gpuMetrics%'\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Peak Memory Usage (MetricKit daily)",
+      "description": "Peak memory usage reported by MetricKit per 24-hour window. Extracted from raw payload to avoid summary truncation.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 182 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "unit": "decmbytes",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 5, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.memoryMetrics.peakMemoryUsage'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.memoryMetrics.peakMemoryUsage') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 65,
+      "type": "timeseries",
+      "title": "Network Transfer (MetricKit daily)",
+      "description": "Cumulative WiFi and cellular download/upload per 24-hour MetricKit window.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 190 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "decmbytes",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 5, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [
+              { "id": "displayName", "value": "WiFi Down" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "displayName", "value": "WiFi Up" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "C" },
+            "properties": [
+              { "id": "displayName", "value": "Cellular Down" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "D" },
+            "properties": [
+              { "id": "displayName", "value": "Cellular Up" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiDownload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiDownload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiUpload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiUpload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularDownload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularDownload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularUpload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularUpload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 66,
+      "type": "timeseries",
+      "title": "Disk I/O and Storage (MetricKit daily)",
+      "description": "Cumulative logical writes and total disk space used per 24-hour MetricKit window.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 190 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "decmbytes",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 5, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [
+              { "id": "displayName", "value": "Logical Writes" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "displayName", "value": "App Data Size" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.diskIOMetrics.cumulativeLogicalWrites'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.diskIOMetrics.cumulativeLogicalWrites') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.diskSpaceUsageMetrics.totalDataFileSize'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.diskSpaceUsageMetrics.totalDataFileSize') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 67,
+      "type": "timeseries",
+      "title": "App Launch Time (MetricKit daily)",
+      "description": "Cumulative foreground and background time per 24-hour MetricKit window.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 198 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 5, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [
+              { "id": "displayName", "value": "Foreground" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "displayName", "value": "Background" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "semi-dark-blue" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeForegroundTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeForegroundTime') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "time series",
+          "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeBackgroundTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeBackgroundTime') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
+          "timeColumns": ["time"],
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 68,
+      "type": "table",
+      "title": "MetricKit Payload Log",
+      "description": "Raw log of all MetricKit payloads received. Shows payload type, build, window range, and key summary fields.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 206 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "received", "desc": true }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  datetime(received_at_ms/1000, 'unixepoch', 'localtime') as received,\n  kind,\n  build_number as build,\n  app_version as version,\n  datetime(window_start_ms/1000, 'unixepoch', 'localtime') as window_start,\n  datetime(window_end_ms/1000, 'unixepoch', 'localtime') as window_end,\n  CASE\n    WHEN kind = 'diagnostic' AND summary_json LIKE '%crashDiag%' THEN 'crash'\n    WHEN kind = 'diagnostic' AND summary_json LIKE '%hangDiag%' THEN 'hang'\n    WHEN kind = 'diagnostic' AND summary_json LIKE '%cpuException%' THEN 'cpu_exception'\n    WHEN kind = 'metric' AND summary_json LIKE '%cpuMetrics%' THEN 'full_daily'\n    WHEN kind = 'metric' THEN 'disk_snapshot'\n    ELSE kind\n  END as payload_type\nFROM metrickit_payloads\nWHERE window_start_ms BETWEEN $__from AND $__to\n   OR received_at_ms BETWEEN $__from AND $__to\nORDER BY received_at_ms DESC\nLIMIT 100",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "30s",
