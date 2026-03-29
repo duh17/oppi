@@ -198,10 +198,13 @@ final class NativeMermaidBlockView: UIView {
     @objc private func handleTap() {
         guard let code = currentCode, isShowingDiagram else { return }
 
-        let fullScreenContent = FullScreenCodeContent.mermaid(content: code, filePath: nil)
-        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
-            fullScreenContent,
-            from: self,
+        // Use the same static presentation approach as NativeMarkdownImageView.
+        // Walking the responder chain from `self` via nearestViewController()
+        // can fail silently when the view hierarchy doesn't have a clean
+        // UIViewController chain.
+        let content = FullScreenCodeContent.mermaid(content: code, filePath: nil)
+        FullScreenCodeViewController.present(
+            content: content,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSessionId: selectedTextSourceContext?.sessionId,
             selectedTextSourceLabel: selectedTextSourceContext?.sourceLabel

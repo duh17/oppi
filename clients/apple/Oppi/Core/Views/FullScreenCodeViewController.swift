@@ -69,6 +69,42 @@ final class FullScreenCodeViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// Present the code viewer from the topmost view controller.
+    /// Works from both UIKit and SwiftUI contexts without needing a
+    /// responder-chain walk from a specific source view.
+    static func present(
+        content: FullScreenCodeContent,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextSessionId: String? = nil,
+        selectedTextSourceLabel: String? = nil
+    ) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first,
+              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else { return }
+        var presenter = root
+        while let presented = presenter.presentedViewController {
+            presenter = presented
+        }
+        // Don't stack on top of an existing fullscreen viewer.
+        if presenter is FullScreenCodeViewController
+            || presenter is FullScreenImageViewController { return }
+
+        let controller = FullScreenCodeViewController(
+            content: content,
+            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextSessionId: selectedTextSessionId,
+            selectedTextSourceLabel: selectedTextSourceLabel
+        )
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID()
+            .preferredColorScheme == .light ? .light : .dark
+        presenter.present(controller, animated: true)
+    }
+
     deinit {
         if let liveSourceObserverID,
            case .liveSource(_, let stream) = content {
