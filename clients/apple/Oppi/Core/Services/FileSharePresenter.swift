@@ -3,14 +3,18 @@ import UIKit
 
 // MARK: - FileSharePresenter
 
-/// Presents `UIActivityViewController` from SwiftUI contexts.
+/// Single entry point for all share/export interactions across SwiftUI and UIKit.
 ///
-/// Bridges the gap between SwiftUI views and UIKit's share sheet.
-/// Finds the topmost presented view controller and presents from there.
+/// Owns the full share flow: format selection → render → activity controller.
+/// UIKit callers use ``makeShareBarButtonItem(for:tintColor:)`` to get a
+/// fully-wired button. SwiftUI callers use ``FileShareButton``.
+/// Both delegate to the same render + present logic here.
 @MainActor
 enum FileSharePresenter {
 
-    /// Share content using the smart default format (PDF for rendered types).
+    // MARK: - Render + Present
+
+    /// Share content using the smart default format.
     static func shareDefault(_ content: FileShareService.ShareableContent) async {
         let format = FileShareService.defaultFormat(for: content)
         await share(content, format: format)
@@ -25,7 +29,76 @@ enum FileSharePresenter {
         presentActivityController(item: item)
     }
 
-    private static func presentActivityController(item: FileShareService.ShareItem) {
+    // MARK: - UIKit Bar Button Factory
+
+    /// Create a fully-wired share bar button item.
+    ///
+    /// Single-format content (images, PDFs): tap exports directly.
+    /// Multi-format content (code, markdown, etc.): tap opens format picker menu.
+    ///
+    /// Used by ``FullScreenCodeViewController``, ``FullScreenImageViewController``,
+    /// and any UIKit surface that needs a share button.
+    static func makeShareBarButtonItem(
+        for content: FileShareService.ShareableContent,
+        tintColor: UIColor? = nil
+    ) -> UIBarButtonItem {
+        let formats = FileShareService.availableFormats(for: content)
+        let shareImage = UIImage(systemName: "square.and.arrow.up")
+        let button: UIBarButtonItem
+
+        if formats.count <= 1 {
+            // Single format — tap exports directly
+            button = UIBarButtonItem(
+                image: shareImage,
+                primaryAction: UIAction { _ in
+                    Task { @MainActor in
+                        await shareDefault(content)
+                    }
+                }
+            )
+        } else {
+            // Multiple formats — tap opens format picker menu
+            button = UIBarButtonItem(
+                image: shareImage,
+                menu: buildFormatMenu(for: content)
+            )
+        }
+
+        button.tintColor = tintColor
+        return button
+    }
+
+    // MARK: - Format Menu
+
+    /// Build a UIMenu with format options for the given content.
+    ///
+    /// Each menu item renders the content in that format and presents
+    /// the system share sheet. Shared between bar button items and
+    /// any other UIKit surface that needs a format picker.
+    static func buildFormatMenu(
+        for content: FileShareService.ShareableContent
+    ) -> UIMenu {
+        let formats = FileShareService.availableFormats(for: content)
+        let actions = formats.map { format in
+            let info = FileShareService.formatDisplayInfo(format, for: content)
+            return UIAction(
+                title: info.label,
+                image: UIImage(systemName: info.icon)
+            ) { _ in
+                Task { @MainActor in
+                    await share(content, format: format)
+                }
+            }
+        }
+        return UIMenu(children: actions)
+    }
+
+    // MARK: - Activity Controller Presentation
+
+    /// Present UIActivityViewController from the topmost view controller.
+    ///
+    /// Handles popover positioning for iPad. Cleans up temp files on completion.
+    static func presentActivityController(item: FileShareService.ShareItem) {
         guard let topVC = topViewController() else { return }
 
         let ac = UIActivityViewController(
@@ -65,10 +138,11 @@ enum FileSharePresenter {
 
 // MARK: - FileShareButton
 
-/// Reusable share button for document-mode file views.
+/// Reusable share button for SwiftUI surfaces.
 ///
 /// Single-format content: tap exports directly (no picker needed).
 /// Multi-format content: tap opens format picker menu.
+/// Delegates all logic to ``FileSharePresenter``.
 struct FileShareButton: View {
     let content: FileShareService.ShareableContent
     let style: ButtonStyle
@@ -91,7 +165,6 @@ struct FileShareButton: View {
         let formats = FileShareService.availableFormats(for: content)
 
         if formats.count <= 1 {
-            // Single format — tap exports directly, no picker
             Button {
                 Task { await exportDefault() }
             } label: {
@@ -99,13 +172,13 @@ struct FileShareButton: View {
             }
             .disabled(isExporting)
         } else {
-            // Multiple formats — tap opens format picker
             Menu {
                 ForEach(formats, id: \.self) { format in
                     Button {
                         Task { await export(format: format) }
                     } label: {
-                        Label(formatLabel(format), systemImage: formatIcon(format))
+                        let info = FileShareService.formatDisplayInfo(format, for: content)
+                        Label(info.label, systemImage: info.icon)
                     }
                 }
             } label: {
@@ -147,13 +220,4 @@ struct FileShareButton: View {
         defer { isExporting = false }
         await FileSharePresenter.share(content, format: format)
     }
-
-    private func formatLabel(_ format: FileShareService.ExportFormat) -> String {
-        FileShareService.formatDisplayInfo(format, for: content).label
-    }
-
-    private func formatIcon(_ format: FileShareService.ExportFormat) -> String {
-        FileShareService.formatDisplayInfo(format, for: content).icon
-    }
 }
-

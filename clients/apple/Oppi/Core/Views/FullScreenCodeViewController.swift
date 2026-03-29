@@ -186,26 +186,13 @@ final class FullScreenCodeViewController: UIViewController {
         copyButton = copy
         rightItems.append(copy)
 
-        // Share button — single format: tap exports directly.
-        // Multiple formats: tap opens format picker menu.
         if let shareable = shareableContent() {
-            let formats = FileShareService.availableFormats(for: shareable)
-            let shareButton: UIBarButtonItem
-            if formats.count <= 1 {
-                shareButton = UIBarButtonItem(
-                    image: UIImage(systemName: "square.and.arrow.up"),
-                    style: .plain,
-                    target: self,
-                    action: #selector(shareDefaultTapped)
+            rightItems.append(
+                FileSharePresenter.makeShareBarButtonItem(
+                    for: shareable,
+                    tintColor: UIColor(palette.fgDim)
                 )
-            } else {
-                shareButton = UIBarButtonItem(
-                    image: UIImage(systemName: "square.and.arrow.up"),
-                    menu: makeShareMenu(formats: formats)
-                )
-            }
-            shareButton.tintColor = UIColor(palette.fgDim)
-            rightItems.append(shareButton)
+            )
         }
 
         if let toggleTitle = presentation.sourceToggleTitle {
@@ -575,60 +562,6 @@ final class FullScreenCodeViewController: UIViewController {
         case .liveSource(let snapshot, _):
             return .plainText(snapshot.text)
         }
-    }
-
-    @objc private func shareDefaultTapped() {
-        shareDefaultFormat()
-    }
-
-    private func shareDefaultFormat() {
-        guard let shareable = shareableContent() else { return }
-        Task {
-            let item = await FileShareService.renderDefault(shareable)
-            presentShareSheet(item: item)
-        }
-    }
-
-    private func share(format: FileShareService.ExportFormat) {
-        guard let shareable = shareableContent() else { return }
-        Task {
-            let item = await FileShareService.render(shareable, as: format)
-            presentShareSheet(item: item)
-        }
-    }
-
-    private func presentShareSheet(item: FileShareService.ShareItem) {
-        let vc = UIActivityViewController(
-            activityItems: item.activityItems,
-            applicationActivities: nil
-        )
-        vc.completionWithItemsHandler = { _, _, _, _ in
-            FileShareService.cleanupTempFiles()
-        }
-        if let popover = vc.popoverPresentationController,
-           let barItems = contentHostController?.navigationItem.rightBarButtonItems {
-            popover.barButtonItem = barItems.first(where: {
-                $0.image == UIImage(systemName: "square.and.arrow.up")
-            })
-        }
-        present(vc, animated: true)
-    }
-
-    private func makeShareMenu(formats: [FileShareService.ExportFormat]) -> UIMenu {
-        let actions = formats.map { format in
-            let (title, icon) = formatDisplayInfo(format)
-            return UIAction(title: title, image: UIImage(systemName: icon)) { [weak self] _ in
-                self?.share(format: format)
-            }
-        }
-        return UIMenu(children: actions)
-    }
-
-    private func formatDisplayInfo(
-        _ format: FileShareService.ExportFormat
-    ) -> (String, String) {
-        let info = FileShareService.formatDisplayInfo(format, for: shareableContent())
-        return (info.label, info.icon)
     }
 
     @objc private func toggleSource() {
