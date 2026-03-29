@@ -49,6 +49,32 @@ struct StreamingInlineReparseTests {
         }.joined(separator: "\n---\n")
     }
 
+    private func firstTextView(in stackView: UIStackView) -> UITextView? {
+        stackView.arrangedSubviews.first { $0 is UITextView } as? UITextView
+    }
+
+    private func countHiddenCharacters(in textView: UITextView) -> Int {
+        let storage = textView.textStorage
+        var hidden = 0
+        storage.enumerateAttribute(
+            .foregroundColor,
+            in: NSRange(location: 0, length: storage.length)
+        ) { value, range, _ in
+            if let color = value as? UIColor, color == .clear {
+                hidden += range.length
+            }
+        }
+        return hidden
+    }
+
+    private func extractRevealer(from applier: AssistantMarkdownSegmentApplier) throws -> StreamingTextRevealer {
+        let mirror = Mirror(reflecting: applier)
+        guard let revealer = mirror.children.first(where: { $0.label == "textRevealer" })?.value as? StreamingTextRevealer else {
+            throw NSError(domain: "StreamingInlineReparseTests", code: 1)
+        }
+        return revealer
+    }
+
     // MARK: - Bold closure
 
     @Test func boldClosureFallsBackToFullReplacement() {
@@ -69,6 +95,22 @@ struct StreamingInlineReparseTests {
         #expect(!text2.contains("**"), "Literal ** should be gone after bold closes")
     }
 
+    @Test func boldClosureWithSameRenderedLengthStillUpdates() {
+        let (stackView, applier) = makeApplier()
+
+        // Tick 1 plain text length: "A **bo" == 6
+        streamTick(applier: applier, content: "A **bo")
+        let text1 = extractPlainText(from: stackView)
+        #expect(text1 == "A **bo")
+
+        // Tick 2 rendered plain text length is also 6: "A bold"
+        // The streaming fast path must not treat equal length as "no change".
+        streamTick(applier: applier, content: "A **bold**")
+        let text2 = extractPlainText(from: stackView)
+        #expect(text2 == "A bold")
+        #expect(!text2.contains("**"))
+    }
+
     // MARK: - Inline code closure
 
     @Test func inlineCodeClosureFallsBackToFullReplacement() {
@@ -84,6 +126,19 @@ struct StreamingInlineReparseTests {
         let text2 = extractPlainText(from: stackView)
         #expect(text2.contains("some_function"), "Code text should be present")
         #expect(text2.contains("and more"), "Continuation should be present")
+    }
+
+    @Test func inlineCodeClosureWithSameRenderedLengthStillUpdates() {
+        let (stackView, applier) = makeApplier()
+
+        streamTick(applier: applier, content: "A `cod")
+        let text1 = extractPlainText(from: stackView)
+        #expect(text1 == "A `cod")
+
+        streamTick(applier: applier, content: "A `code`")
+        let text2 = extractPlainText(from: stackView)
+        #expect(text2 == "A code")
+        #expect(!text2.contains("`"))
     }
 
     // MARK: - Link closure
@@ -118,6 +173,29 @@ struct StreamingInlineReparseTests {
         streamTick(applier: applier, content: "Hello world and more")
         let text2 = extractPlainText(from: stackView)
         #expect(text2 == "Hello world and more")
+    }
+
+    @Test func overlappingRevealContinuesFromCurrentVisibleBoundary() throws {
+        let (stackView, applier) = makeApplier()
+
+        // Initial content is fully visible.
+        streamTick(applier: applier, content: "Hello")
+
+        // Tick 2 starts revealing the appended tail. No display-link frame has
+        // fired yet in this test, so only the original 5 chars are visible.
+        streamTick(applier: applier, content: "Hello world")
+
+        // Tick 3 arrives before tick 2 finished revealing.
+        streamTick(applier: applier, content: "Hello world again")
+
+        let textView = try #require(firstTextView(in: stackView))
+        #expect(countHiddenCharacters(in: textView) > 0, "Tail should still be mid-reveal")
+
+        let revealer = try extractRevealer(from: applier)
+        #expect(
+            revealer.currentVisibleCount == 5,
+            "Overlapping reveals must continue from the true visible boundary, not the previous full text length"
+        )
     }
 
     // MARK: - Stream finish renders correctly

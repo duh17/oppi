@@ -29,6 +29,11 @@ final class StreamingTextRevealer {
     private var visibleCount: Int = 0
     /// Total characters in the text view.
     private var totalCount: Int = 0
+
+    /// Visible-character count tracked across overlapping reveal calls.
+    /// This lets callers continue a reveal from the true on-screen boundary
+    /// instead of assuming the previous batch already finished animating.
+    var currentVisibleCount: Int { visibleCount }
     /// Characters to reveal per display frame.
     private var charsPerFrame: Double = 3.0
     /// Fractional accumulator for sub-character reveal rates.
@@ -96,6 +101,15 @@ final class StreamingTextRevealer {
         let remainingRange = NSRange(location: visibleCount, length: totalCount - visibleCount)
         restoreOriginalColors(in: remainingRange, textView: textView, original: originalText)
         visibleCount = totalCount
+        stopDisplayLink()
+    }
+
+    /// Mark the current text as already fully visible without starting an animation.
+    /// Use this after a full replacement / initial render so overlapping future
+    /// streaming updates can start from the real visible boundary.
+    func setFullyVisibleCount(_ count: Int) {
+        visibleCount = count
+        totalCount = count
         stopDisplayLink()
     }
 
