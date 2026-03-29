@@ -153,25 +153,40 @@ final class SessionGridBadgeView: UIView {
 
     @available(iOS 18.0, *)
     private static func renderGenmoji(data: Data, size: CGFloat) -> UIImage? {
-        // NSAdaptiveImageGlyph imageContent is opaque — render via a temporary UILabel
-        // with an attributed string containing the glyph
         guard let glyph = try? NSAdaptiveImageGlyph(imageContent: data) else { return nil }
-        let label = UILabel()
-        label.numberOfLines = 1
-        let attrStr = NSMutableAttributedString(string: " ")
-        attrStr.addAttribute(.adaptiveImageGlyph, value: glyph, range: NSRange(location: 0, length: 1))
-        attrStr.addAttribute(.font, value: UIFont.systemFont(ofSize: size * 0.8), range: NSRange(location: 0, length: 1))
-        label.attributedText = attrStr
-        label.sizeToFit()
 
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        // Render via UITextView which has native Genmoji support
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+
+        let attrStr = NSMutableAttributedString(string: "\u{FFFC}")
+        attrStr.addAttribute(
+            .adaptiveImageGlyph,
+            value: glyph,
+            range: NSRange(location: 0, length: 1)
+        )
+        attrStr.addAttribute(
+            .font,
+            value: UIFont.systemFont(ofSize: size * 0.8),
+            range: NSRange(location: 0, length: 1)
+        )
+        textView.attributedText = attrStr
+        textView.sizeToFit()
+
+        let renderSize = CGSize(width: size, height: size)
+        let renderer = UIGraphicsImageRenderer(size: renderSize)
         return renderer.image { ctx in
-            let scale = min(size / max(label.bounds.width, 1), size / max(label.bounds.height, 1))
-            let scaledW = label.bounds.width * scale
-            let scaledH = label.bounds.height * scale
+            let viewSize = textView.bounds.size
+            guard viewSize.width > 0, viewSize.height > 0 else { return }
+            let scale = min(size / viewSize.width, size / viewSize.height)
+            let scaledW = viewSize.width * scale
+            let scaledH = viewSize.height * scale
             ctx.cgContext.translateBy(x: (size - scaledW) / 2, y: (size - scaledH) / 2)
             ctx.cgContext.scaleBy(x: scale, y: scale)
-            label.layer.render(in: ctx.cgContext)
+            textView.layer.render(in: ctx.cgContext)
         }
     }
 }

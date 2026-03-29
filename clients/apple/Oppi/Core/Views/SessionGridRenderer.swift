@@ -90,7 +90,7 @@ enum SessionGridRenderer {
                 }
             }
         }
-        var growList = Array(growCandidates)
+        var growList = Array(growCandidates).sorted()
         growList.shuffle(using: &rng)
         let growCount = max(1, growList.count * 22 / 100)
         for i in growList.prefix(growCount) {

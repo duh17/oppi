@@ -5,8 +5,7 @@ struct SettingsView: View {
 
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var assistantAvatar = AssistantAvatar.current
-    @State private var showEmojiInput = false
-    @State private var emojiText = ""
+    @State private var showAvatarPicker = false
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
@@ -42,63 +41,17 @@ struct SettingsView: View {
                     ThemeImportView()
                 }
 
-                // Assistant Avatar
-                HStack {
-                    Text("Assistant Avatar")
-                    Spacer()
-                    HStack(spacing: 8) {
-                        ForEach(Array(AssistantAvatar.builtinCases.enumerated()), id: \.offset) { _, avatar in
-                            Button {
-                                assistantAvatar = avatar
-                                AssistantAvatar.setCurrent(avatar)
-                                SessionGridBadgeView.clearCache()
-                            } label: {
-                                Text(avatar.displayName)
-                                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(assistantAvatar == avatar ? .themeFg : .themeComment)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        assistantAvatar == avatar
-                                            ? Color.themeFg.opacity(0.12)
-                                            : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 6)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Button {
-                            showEmojiInput = true
-                        } label: {
-                            let isEmoji = if case .emoji = assistantAvatar { true } else { false }
-                            Text(isEmoji ? assistantAvatar.displayName : "😊")
-                                .font(.system(size: 14))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    isEmoji
-                                        ? Color.themeFg.opacity(0.12)
-                                        : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 6)
-                                )
-                        }
-                        .buttonStyle(.plain)
+                Button {
+                    showAvatarPicker = true
+                } label: {
+                    LabeledContent("Assistant Avatar") {
+                        Text(assistantAvatar.displayName)
+                            .foregroundStyle(.themeComment)
                     }
                 }
-                .alert("Pick an emoji", isPresented: $showEmojiInput) {
-                    TextField("Emoji", text: $emojiText)
-                        .textInputAutocapitalization(.never)
-                    Button("Set") {
-                        let trimmed = String(emojiText.prefix(1))
-                        if !trimmed.isEmpty {
-                            assistantAvatar = .emoji(trimmed)
-                            AssistantAvatar.setCurrent(.emoji(trimmed))
-                            SessionGridBadgeView.clearCache()
-                        }
-                        emojiText = ""
-                    }
-                    Button("Cancel", role: .cancel) { emojiText = "" }
+                .sheet(isPresented: $showAvatarPicker) {
+                    AvatarPickerView(avatar: $assistantAvatar)
+                        .presentationDetents([.medium])
                 }
 
                 Picker("Spinner Style", selection: $spinnerStyle) {
