@@ -1,5 +1,24 @@
 import UIKit
 
+// MARK: - Rendering Mode
+
+/// Controls how async content (mermaid diagrams, syntax highlighting, images)
+/// is rendered in the markdown pipeline.
+///
+/// The same `AssistantMarkdownContentView` is used for both live chat display
+/// and static export (image/PDF). Live mode dispatches expensive work to
+/// background threads for scroll performance. Export mode renders everything
+/// synchronously so the view is complete before snapshotting.
+enum ContentRenderingMode: Equatable, Sendable {
+    /// Async rendering for live display. Mermaid renders on background thread,
+    /// syntax highlighting is scheduled, images load via URLSession.
+    case live
+
+    /// Synchronous rendering for export/snapshot. All content renders on the
+    /// current thread so `view.layer.render(in:)` captures complete output.
+    case export
+}
+
 // MARK: - Native Markdown Content View
 
 /// Native UIKit markdown renderer for assistant messages.
@@ -25,10 +44,12 @@ final class AssistantMarkdownContentView: UIView {
         let serverBaseURL: URL?
         /// Surface tag for streaming markdown perf instrumentation.
         let perfSurface: MarkdownStreamingPerf.Surface?
-        /// When true, render mermaid diagrams synchronously on the current
-        /// thread instead of dispatching to a background task. Used by export
-        /// paths that snapshot the view immediately after layout.
-        let synchronousRendering: Bool
+        /// Controls whether async work (mermaid rendering, syntax highlighting,
+        /// image loading) runs on background threads or the current thread.
+        ///
+        /// - `.live`: async rendering for scroll performance (default)
+        /// - `.export`: synchronous rendering so snapshots capture all content
+        let renderingMode: ContentRenderingMode
 
         init(
             content: String,
@@ -41,7 +62,7 @@ final class AssistantMarkdownContentView: UIView {
             workspaceID: String? = nil,
             serverBaseURL: URL? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
-            synchronousRendering: Bool = false
+            renderingMode: ContentRenderingMode = .live
         ) {
             self.content = content
             self.isStreaming = isStreaming
@@ -53,7 +74,7 @@ final class AssistantMarkdownContentView: UIView {
             self.workspaceID = workspaceID
             self.serverBaseURL = serverBaseURL
             self.perfSurface = perfSurface
-            self.synchronousRendering = synchronousRendering
+            self.renderingMode = renderingMode
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -67,7 +88,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.perfSurface == rhs.perfSurface
-                && lhs.synchronousRendering == rhs.synchronousRendering
+                && lhs.renderingMode == rhs.renderingMode
         }
     }
 

@@ -102,21 +102,30 @@ final class NativeMarkdownImageView: UIView {
         ])
     }
 
-    func apply(url: URL, alt: String, fetchWorkspaceFile: FetchWorkspaceFile?) {
+    func apply(url: URL, alt: String, fetchWorkspaceFile: FetchWorkspaceFile?, renderingMode: ContentRenderingMode = .live) {
         guard url != currentURL else { return }
         currentURL = url
 
         loadTask?.cancel()
-        showLoadingState(alt: alt)
 
-        // Check synchronous cache first.
+        // Check synchronous cache first — works for both live and export modes.
         if let cached = Self.imageCache.object(forKey: url as NSURL) {
             showLoadedState(image: cached)
             return
         }
 
-        loadTask = Task { [weak self] in
-            await self?.loadImage(url: url, alt: alt, fetch: fetchWorkspaceFile)
+        switch renderingMode {
+        case .export:
+            // Export mode: show alt text immediately. No async network load —
+            // the snapshot happens right after layout, so a loading spinner
+            // would be captured. Alt text is honest and renders instantly.
+            showExportPlaceholder(alt: alt)
+
+        case .live:
+            showLoadingState(alt: alt)
+            loadTask = Task { [weak self] in
+                await self?.loadImage(url: url, alt: alt, fetch: fetchWorkspaceFile)
+            }
         }
     }
 
@@ -164,6 +173,24 @@ final class NativeMarkdownImageView: UIView {
             guard !Task.isCancelled else { return }
             showErrorState(alt: alt)
         }
+    }
+
+    /// Export mode: show alt text in a styled box. No spinner, no async load.
+    /// If the image was previously viewed, the cache check above already
+    /// handled it. This path is for uncached images only.
+    private func showExportPlaceholder(alt: String) {
+        let palette = ThemeRuntimeState.currentPalette()
+        backgroundColor = UIColor(palette.bgHighlight)
+        altLabel.textColor = UIColor(palette.comment)
+        altLabel.text = alt.isEmpty ? "[image]" : alt
+
+        heightConstraint?.constant = alt.isEmpty ? 30 : 40
+        isHidden = false
+
+        spinner.stopAnimating()
+        altLabel.isHidden = false
+        imageView.isHidden = true
+        errorLabel.isHidden = true
     }
 
     private func showLoadingState(alt: String) {

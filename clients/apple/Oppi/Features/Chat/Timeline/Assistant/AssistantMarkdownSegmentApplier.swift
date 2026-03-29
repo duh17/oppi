@@ -120,7 +120,7 @@ final class AssistantMarkdownSegmentApplier {
                 stackView.addArrangedSubview(codeView)
                 codeBlockViews[index] = codeView
                 if !isOpen {
-                    scheduleHighlight(index: index, language: language, code: code)
+                    applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
                 }
 
             case .table(let headers, let rows):
@@ -138,7 +138,7 @@ final class AssistantMarkdownSegmentApplier {
 
             case .image(let alt, let url):
                 let imageView = NativeMarkdownImageView()
-                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
                 stackView.addArrangedSubview(imageView)
                 imageViews[index] = imageView
 
@@ -154,7 +154,7 @@ final class AssistantMarkdownSegmentApplier {
                 if isOpen {
                     mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
                 } else {
-                    config.synchronousRendering ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                    config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                 }
                 stackView.addArrangedSubview(mermaidView)
                 mermaidViews[index] = mermaidView
@@ -248,7 +248,7 @@ final class AssistantMarkdownSegmentApplier {
                 stackView.addArrangedSubview(codeView)
                 codeBlockViews[index] = codeView
                 if !isOpen {
-                    scheduleHighlight(index: index, language: language, code: code)
+                    applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
                 }
 
             case .table(let headers, let rows):
@@ -266,7 +266,7 @@ final class AssistantMarkdownSegmentApplier {
 
             case .image(let alt, let url):
                 let imageView = NativeMarkdownImageView()
-                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
                 stackView.addArrangedSubview(imageView)
                 imageViews[index] = imageView
 
@@ -282,7 +282,7 @@ final class AssistantMarkdownSegmentApplier {
                 if isOpen {
                     mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
                 } else {
-                    config.synchronousRendering ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                    config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                 }
                 stackView.addArrangedSubview(mermaidView)
                 mermaidViews[index] = mermaidView
@@ -436,7 +436,7 @@ final class AssistantMarkdownSegmentApplier {
                         )
                         codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
                         if !isOpen && highlightTasks[index] == nil {
-                            scheduleHighlight(index: index, language: language, code: code)
+                            applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
                         }
                     }
                 }
@@ -456,7 +456,7 @@ final class AssistantMarkdownSegmentApplier {
             case .image(let alt, let url):
                 // Image views manage their own load lifecycle — nothing to diff in-place.
                 if let imageView = imageViews[index] {
-                    imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile)
+                    imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
                 }
 
             case .mermaidDiagram(let code):
@@ -471,7 +471,7 @@ final class AssistantMarkdownSegmentApplier {
                     if isOpen {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
                     } else {
-                        config.synchronousRendering ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                        config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                     }
                 }
             }
@@ -548,18 +548,29 @@ final class AssistantMarkdownSegmentApplier {
         return hr
     }
 
-    private func scheduleHighlight(index: Int, language: String?, code: String) {
+    private func applyHighlight(index: Int, language: String?, code: String, mode: ContentRenderingMode) {
         guard let langStr = language,
               SyntaxLanguage.detect(langStr) != .unknown else { return }
 
         let lang = SyntaxLanguage.detect(langStr)
-        highlightTasks[index]?.cancel()
-        highlightTasks[index] = Task { [weak self] in
-            let wrapper = await Task.detached(priority: .userInitiated) {
-                SendableNSAttributedString(SyntaxHighlighter.highlight(code, language: lang))
-            }.value
-            guard !Task.isCancelled else { return }
-            self?.codeBlockViews[index]?.applyHighlightedCode(wrapper.value)
+
+        switch mode {
+        case .export:
+            // Synchronous — highlight on the current thread so the snapshot
+            // captures colored syntax, not plain text.
+            let highlighted = SyntaxHighlighter.highlight(code, language: lang)
+            codeBlockViews[index]?.applyHighlightedCode(highlighted)
+
+        case .live:
+            // Async — dispatch to background thread to avoid scroll jank.
+            highlightTasks[index]?.cancel()
+            highlightTasks[index] = Task { [weak self] in
+                let wrapper = await Task.detached(priority: .userInitiated) {
+                    SendableNSAttributedString(SyntaxHighlighter.highlight(code, language: lang))
+                }.value
+                guard !Task.isCancelled else { return }
+                self?.codeBlockViews[index]?.applyHighlightedCode(wrapper.value)
+            }
         }
     }
 }
