@@ -65,7 +65,7 @@ final class VoiceInputRouteResolver {
 
         let probeStart = ContinuousClock.now
         let reachable = await Self.remoteEndpointReachable(endpoint)
-        let durationMs = Self.elapsedMs(since: probeStart)
+        let durationMs = probeStart.elapsedMs()
 
         remoteProbeCache = RemoteProbeCache(
             endpoint: endpoint,
@@ -105,9 +105,5 @@ final class VoiceInputRouteResolver {
         }
     }
 
-    nonisolated private static func elapsedMs(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
-        return Int(elapsed.components.seconds * 1000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
+
 }

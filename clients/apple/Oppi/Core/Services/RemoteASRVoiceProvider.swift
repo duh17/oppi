@@ -188,7 +188,7 @@ private final class RemoteASRVoiceSession: VoiceTranscriptionSession {
         let analyzerStart = ContinuousClock.now
         let resultStream = transcriber.start()
         startResultsBridge(resultStream)
-        let analyzerStartMs = Self.elapsedMs(since: analyzerStart)
+        let analyzerStartMs = analyzerStart.elapsedMs()
 
         let audioStart = ContinuousClock.now
         let (engine, levelStream) = try RemoteAudioEngineHelper.startEngine(
@@ -197,7 +197,7 @@ private final class RemoteASRVoiceSession: VoiceTranscriptionSession {
         )
         audioEngine = engine
         startAudioLevelBridge(levelStream)
-        let audioStartMs = Self.elapsedMs(since: audioStart)
+        let audioStartMs = audioStart.elapsedMs()
 
         return VoiceSessionStartTimings(
             analyzerStartMs: analyzerStartMs,
@@ -303,9 +303,5 @@ private final class RemoteASRVoiceSession: VoiceTranscriptionSession {
         }
     }
 
-    private static func elapsedMs(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
-        return Int(elapsed.components.seconds * 1000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
+
 }

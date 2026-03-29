@@ -230,10 +230,10 @@ struct ModelBreakdownSection: View {
                             .foregroundStyle(.themeGreen)
                     }
 
-                    Text("R: \(formatTokens(item.cacheRead))")
+                    Text("R: \(item.cacheRead.formattedTokenCount())")
                         .foregroundStyle(.themeComment)
 
-                    Text("W: \(formatTokens(item.cacheWrite))")
+                    Text("W: \(item.cacheWrite.formattedTokenCount())")
                         .foregroundStyle(.themeComment)
 
                     Spacer()
@@ -246,14 +246,5 @@ struct ModelBreakdownSection: View {
 
     // MARK: - Formatting
 
-    private func formatTokens(_ value: Int) -> String {
-        if value >= 1_000_000_000 {
-            return String(format: "%.1fB", Double(value) / 1_000_000_000)
-        } else if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        } else if value >= 1_000 {
-            return String(format: "%.0fK", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
+
 }

@@ -290,11 +290,7 @@ final class RemoteASRTranscriber: @unchecked Sendable {
         let startTime = ContinuousClock.now
         do {
             let response = try await transcribe(wavData: wavData, overlapText: overlapText)
-            let elapsed = ContinuousClock.now - startTime
-            let ms = Int(
-                elapsed.components.seconds * 1000
-                    + elapsed.components.attoseconds / 1_000_000_000_000_000
-            )
+            let ms = startTime.elapsedMs()
 
             let trimmed = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {

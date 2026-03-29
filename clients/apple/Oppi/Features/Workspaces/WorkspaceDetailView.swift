@@ -419,6 +419,9 @@ struct WorkspaceDetailView: View {
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId)
         }
+        .navigationDestination(for: FileBrowserNavTarget.self) { target in
+            FileBrowserView(workspaceId: target.workspaceId, initialPath: target.path)
+        }
         .navigationDestination(
             item: $navigateToSessionId
         ) { sessionId in
@@ -435,9 +438,7 @@ struct WorkspaceDetailView: View {
                 .disabled(isCreating)
             }
             ToolbarItemGroup(placement: .bottomBar) {
-                NavigationLink {
-                    FileBrowserView(workspaceId: workspace.id, initialPath: "")
-                } label: {
+                NavigationLink(value: FileBrowserNavTarget(workspaceId: workspace.id, path: "")) {
                     Image(systemName: "folder")
                         .foregroundStyle(.themeComment)
                 }

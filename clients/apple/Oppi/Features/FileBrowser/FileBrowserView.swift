@@ -1,9 +1,46 @@
 import SwiftUI
 
+// MARK: - Navigation Target
+
+/// Value-based navigation target for the file browser.
+///
+/// Pushed onto the workspace's `NavigationPath` so each directory level
+/// is a real stack entry — preserving swipe-back between directories.
+/// The breadcrumb bar uses `NavigationPath.removeLast(_:)` to jump
+/// to any ancestor without intermediate pop animations.
+struct FileBrowserNavTarget: Hashable {
+    let workspaceId: String
+    let path: String
+
+    /// Number of directory levels deep from the file browser root.
+    /// Root ("" or "/") is depth 0, "src/" is 1, "src/components/" is 2, etc.
+    var depth: Int {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        if trimmed.isEmpty { return 0 }
+        return trimmed.split(separator: "/").count
+    }
+
+    /// Path segments for breadcrumb display.
+    /// Returns [(label, depth)] pairs where depth 0 = root.
+    var breadcrumbSegments: [(label: String, depth: Int)] {
+        var segments: [(String, Int)] = [("Files", 0)]
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        let parts = trimmed.split(separator: "/")
+        for (i, part) in parts.enumerated() {
+            segments.append((String(part), i + 1))
+        }
+        return segments
+    }
+}
+
 /// Workspace file browser — entry point view.
 ///
 /// Shows directory contents with navigation into subdirectories,
 /// search, and tap-to-view for text/code files.
+///
+/// Each directory level is a value-based push on the workspace
+/// NavigationPath, preserving swipe-back. A breadcrumb bar shows
+/// the full path and supports jumping to any ancestor directory.
 ///
 /// Search uses a shared file index cached in `FileIndexStore`.
 /// All filtering happens locally on-device for instant feedback.
@@ -12,6 +49,7 @@ struct FileBrowserView: View {
     let initialPath: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(AppNavigation.self) private var navigation
     @Environment(FileIndexStore.self) private var fileIndexStore
     @State private var listing: DirectoryListingResponse?
     @State private var error: String?
@@ -24,6 +62,16 @@ struct FileBrowserView: View {
 
     private var fileIndex: [String]? {
         fileIndexStore.paths
+    }
+
+    /// Current depth for breadcrumb pop calculations.
+    private var currentDepth: Int {
+        FileBrowserNavTarget(workspaceId: workspaceId, path: initialPath).depth
+    }
+
+    /// Breadcrumb segments for the current path.
+    private var breadcrumbSegments: [(label: String, depth: Int)] {
+        FileBrowserNavTarget(workspaceId: workspaceId, path: initialPath).breadcrumbSegments
     }
 
     var body: some View {
@@ -91,6 +139,24 @@ struct FileBrowserView: View {
             )
         } else {
             List {
+                // Breadcrumb bar (only when not at root)
+                if !isRoot {
+                    Section {
+                        FileBrowserBreadcrumb(
+                            segments: breadcrumbSegments,
+                            currentDepth: currentDepth,
+                            onNavigate: { targetDepth in
+                                let popCount = currentDepth - targetDepth
+                                guard popCount > 0, navigation.workspacePath.count >= popCount else { return }
+                                navigation.workspacePath.removeLast(popCount)
+                            }
+                        )
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                }
+
                 ForEach(response.entries) { entry in
                     fileEntryRow(entry, relativeTo: initialPath)
                 }
@@ -171,14 +237,14 @@ struct FileBrowserView: View {
         relativeTo parentPath: String
     ) -> some View {
         if entry.isDirectory {
-            NavigationLink {
+            NavigationLink(value: {
                 let dirPath = if let path = entry.path {
                     path.hasSuffix("/") ? path : "\(path)/"
                 } else {
                     parentPath.isEmpty ? "\(entry.name)/" : "\(parentPath)\(entry.name)/"
                 }
-                Self(workspaceId: workspaceId, initialPath: dirPath)
-            } label: {
+                return FileBrowserNavTarget(workspaceId: workspaceId, path: dirPath)
+            }()) {
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(showFullPath ? (entry.path ?? entry.name) : entry.name)
@@ -253,6 +319,52 @@ struct FileBrowserView: View {
                 if currentTrimmed == query {
                     fuzzyResults = results
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Breadcrumb Bar
+
+/// Horizontal scrollable breadcrumb showing the directory path.
+///
+/// Each segment is tappable to navigate to that directory level.
+/// Auto-scrolls to keep the current (rightmost) segment visible.
+private struct FileBrowserBreadcrumb: View {
+    let segments: [(label: String, depth: Int)]
+    let currentDepth: Int
+    let onNavigate: (Int) -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                        if index > 0 {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.themeComment.opacity(0.5))
+                        }
+                        Button {
+                            if segment.depth < currentDepth {
+                                onNavigate(segment.depth)
+                            }
+                        } label: {
+                            Text(segment.label)
+                                .font(.caption.weight(segment.depth == currentDepth ? .semibold : .medium))
+                                .foregroundStyle(segment.depth == currentDepth ? Color.accentColor : .themeComment)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(index)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .onAppear {
+                proxy.scrollTo(segments.count - 1, anchor: .trailing)
             }
         }
     }

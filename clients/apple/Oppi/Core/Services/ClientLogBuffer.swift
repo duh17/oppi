@@ -47,7 +47,7 @@ actor ClientLogBuffer {
 
         entries.append(
             ClientLogEntry(
-                timestamp: Self.nowMs(),
+                timestamp: Date.nowMs(),
                 level: level,
                 category: trimmedCategory,
                 message: trimmedMessage,
@@ -88,9 +88,7 @@ actor ClientLogBuffer {
         "wsSession",
     ]
 
-    private static func nowMs() -> Int64 {
-        Int64((Date().timeIntervalSince1970 * 1_000.0).rounded())
-    }
+
 }
 
 enum ClientLog {

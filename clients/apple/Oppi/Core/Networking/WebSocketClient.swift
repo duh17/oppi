@@ -548,13 +548,13 @@ final class WebSocketClient {
                     let transportTag = self?.preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
                     let messageType = streamMessage.message.typeLabel
 
-                    let inboundReceivedAtMs = ChatMetricsService.nowMs()
+                    let inboundReceivedAtMs = Date.nowMs()
                     let inboundMeta = InboundMeta(
                         seq: streamMessage.seq,
                         currentSeq: streamMessage.currentSeq,
                         receivedAtMs: inboundReceivedAtMs
                     )
-                    let mainActorHopStartedAtMs = ChatMetricsService.nowMs()
+                    let mainActorHopStartedAtMs = Date.nowMs()
                     await MainActor.run {
                         guard let self,
                               let sessionId = streamMessage.sessionId,
@@ -586,7 +586,7 @@ final class WebSocketClient {
                             }
                         }
                     }
-                    let mainActorHopDurationMs = max(0, ChatMetricsService.nowMs() - mainActorHopStartedAtMs)
+                    let mainActorHopDurationMs = max(0, Date.nowMs() - mainActorHopStartedAtMs)
                     if mainActorHopDurationMs >= 1_000 {
                         self?.wsLogError(
                             "WS main-actor hop lag",

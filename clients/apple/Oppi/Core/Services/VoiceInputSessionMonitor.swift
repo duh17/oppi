@@ -35,7 +35,7 @@ final class VoiceInputSessionMonitor {
                     if !firstTranscriptRecorded,
                        let resultType = Self.firstTranscriptResultType(for: event) {
                         firstTranscriptRecorded = true
-                        onFirstTranscript(Self.elapsedMs(since: recordingStartTime), resultType)
+                        onFirstTranscript(recordingStartTime.elapsedMs(), resultType)
                     }
 
                     onEvent(event)
@@ -90,9 +90,5 @@ final class VoiceInputSessionMonitor {
         }
     }
 
-    nonisolated private static func elapsedMs(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
-        return Int(elapsed.components.seconds * 1000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
+
 }

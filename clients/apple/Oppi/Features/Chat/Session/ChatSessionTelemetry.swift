@@ -21,7 +21,7 @@ enum ChatSessionTelemetry {
 
     // MARK: - Timing helpers
 
-    static func nowMs() -> Int64 { ChatMetricsService.nowMs() }
+    static func nowMs() -> Int64 { Date.nowMs() }
 
     // MARK: - Connect / transport
 

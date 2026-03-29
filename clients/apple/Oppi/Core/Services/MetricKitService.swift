@@ -42,7 +42,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
     func didReceive(_ payloads: [MXMetricPayload]) {
         guard !payloads.isEmpty else { return }
-        let now = nowMs()
+        let now = Date.nowMs()
         let items = payloads.map { payload in
             MetricKitPayloadSerializer.item(
                 from: payload,
@@ -56,7 +56,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         guard !payloads.isEmpty else { return }
-        let now = nowMs()
+        let now = Date.nowMs()
         let items = payloads.map { payload in
             MetricKitPayloadSerializer.item(
                 from: payload,
@@ -94,9 +94,6 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         "iPhone"
     }
 
-    private func nowMs() -> Int64 {
-        Int64((Date().timeIntervalSince1970 * 1_000).rounded())
-    }
 }
 
 extension MetricKitService: @unchecked Sendable {}
@@ -166,7 +163,7 @@ private actor MetricKitUploadQueue {
             backlog.removeFirst(min(maxBatchSize, backlog.count))
 
             let request = MetricKitUploadRequest(
-                generatedAt: nowMs(),
+                generatedAt: Date.nowMs(),
                 appVersion: metadata.appVersion,
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
@@ -185,9 +182,6 @@ private actor MetricKitUploadQueue {
         }
     }
 
-    private func nowMs() -> Int64 {
-        Int64((Date().timeIntervalSince1970 * 1_000).rounded())
-    }
 }
 
 // MARK: - Payload item builder (internal for testing)
@@ -377,7 +371,7 @@ actor ChatMetricsService {
         sessionId: String? = nil,
         workspaceId: String? = nil,
         tags: [String: String] = [:],
-        timestampMs: Int64 = ChatMetricsService.nowMs()
+        timestampMs: Int64 = Date.nowMs()
     ) {
         guard value.isFinite else { return }
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
@@ -456,7 +450,7 @@ actor ChatMetricsService {
             backlog.removeFirst(min(maxBatchSize, backlog.count))
 
             let request = ChatMetricUploadRequest(
-                generatedAt: ChatMetricsService.nowMs(),
+                generatedAt: Date.nowMs(),
                 appVersion: metadata.appVersion,
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
@@ -489,7 +483,5 @@ actor ChatMetricsService {
         flushIfNeeded()
     }
 
-    nonisolated static func nowMs() -> Int64 {
-        Int64((Date().timeIntervalSince1970 * 1_000).rounded())
-    }
+
 }

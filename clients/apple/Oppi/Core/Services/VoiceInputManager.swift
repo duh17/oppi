@@ -319,7 +319,7 @@ final class VoiceInputManager {
                 )
             )
 
-            let durationMs = elapsedMs(since: prewarmStart)
+            let durationMs = prewarmStart.elapsedMs()
             recordVoiceMetric(
                 .voicePrewarmMs,
                 valueMs: durationMs,
@@ -329,7 +329,7 @@ final class VoiceInputManager {
             )
             logger.info("Pre-warmed \(engine.logName) model (locale: \(localeID))")
         } catch is CancellationError {
-            let durationMs = elapsedMs(since: prewarmStart)
+            let durationMs = prewarmStart.elapsedMs()
             recordVoiceMetric(
                 .voicePrewarmMs,
                 valueMs: durationMs,
@@ -339,7 +339,7 @@ final class VoiceInputManager {
             )
             logger.info("Pre-warm cancelled for \(engine.logName) (locale: \(localeID))")
         } catch {
-            let durationMs = elapsedMs(since: prewarmStart)
+            let durationMs = prewarmStart.elapsedMs()
             recordVoiceMetric(
                 .voicePrewarmMs,
                 valueMs: durationMs,
@@ -460,7 +460,7 @@ final class VoiceInputManager {
             emitStartupTelemetry(timings, annotation: metricAnnotation)
             logger.error("Voice setup: recording started in \(timings.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
         } catch is CancellationError {
-            let totalMs = elapsedMs(since: startTime)
+            let totalMs = startTime.elapsedMs()
             recordVoiceMetric(
                 .voiceSetupMs,
                 valueMs: totalMs,
@@ -474,7 +474,7 @@ final class VoiceInputManager {
             state = .idle
             return
         } catch {
-            let totalMs = elapsedMs(since: startTime)
+            let totalMs = startTime.elapsedMs()
             let userFacingMessage = userFacingErrorMessage(for: error)
             recordVoiceMetric(
                 .voiceSetupMs,
@@ -603,12 +603,12 @@ final class VoiceInputManager {
         modelPathTag = preparation.pathTag
         timings.pathTag = modelPathTag
         timings.providerTags = preparation.setupMetricTags
-        timings.modelReadyMs = elapsedMs(since: modelPhaseStart)
+        timings.modelReadyMs = modelPhaseStart.elapsedMs()
 
         let transcriberStart = ContinuousClock.now
         let session = try provider.makeSession(context: context, preparation: preparation)
         activeLanguageLabel = Self.languageLabel(for: locale)
-        timings.transcriberCreateMs = elapsedMs(since: transcriberStart)
+        timings.transcriberCreateMs = transcriberStart.elapsedMs()
 
         try ensureStartRequestActive(requestID)
 
@@ -647,7 +647,7 @@ final class VoiceInputManager {
 
         timings.analyzerStartMs = sessionTimings.analyzerStartMs
         timings.audioStartMs = sessionTimings.audioStartMs
-        timings.totalMs = elapsedMs(since: startTime)
+        timings.totalMs = startTime.elapsedMs()
 
         return timings
     }
@@ -770,11 +770,7 @@ final class VoiceInputManager {
         }
     }
 
-    private func elapsedMs(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
-        return Int(elapsed.components.seconds * 1000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
+
 }
 
 // MARK: - Testing Support

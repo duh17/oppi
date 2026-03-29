@@ -353,7 +353,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         inputBuilder = builder
         try await newAnalyzer.start(inputSequence: sequence)
         startResultsBridge()
-        let analyzerStartMs = Self.elapsedMs(since: analyzerStart)
+        let analyzerStartMs = analyzerStart.elapsedMs()
 
         let audioStart = ContinuousClock.now
         guard let inputBuilder else {
@@ -365,7 +365,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         )
         audioEngine = engine
         startAudioLevelBridge(levelStream)
-        let audioStartMs = Self.elapsedMs(since: audioStart)
+        let audioStartMs = audioStart.elapsedMs()
 
         return VoiceSessionStartTimings(
             analyzerStartMs: analyzerStartMs,
@@ -463,9 +463,5 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         audioLevelContinuation.finish()
     }
 
-    private static func elapsedMs(since start: ContinuousClock.Instant) -> Int {
-        let elapsed = ContinuousClock.now - start
-        return Int(elapsed.components.seconds * 1000
-            + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
+
 }

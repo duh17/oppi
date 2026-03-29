@@ -299,8 +299,8 @@ struct CommitFileDiffView: View {
                         .font(.caption2.weight(.medium))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(statusColor.opacity(0.12), in: Capsule())
-                        .foregroundStyle(statusColor)
+                        .background(GitStatusColor.color(for: file.status).opacity(0.12), in: Capsule())
+                        .foregroundStyle(GitStatusColor.color(for: file.status))
                 }
 
                 if let parentPath = file.path.parentPathForDisplay {
@@ -334,15 +334,7 @@ struct CommitFileDiffView: View {
         .padding(.bottom, 8)
     }
 
-    private var statusColor: Color {
-        switch file.status {
-        case "M": return .themeOrange
-        case "A": return .themeDiffAdded
-        case "D": return .themeDiffRemoved
-        case "R", "C": return .themeCyan
-        default: return .themeComment
-        }
-    }
+
 
     // MARK: - Data Loading
 

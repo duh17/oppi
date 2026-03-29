@@ -249,8 +249,8 @@ struct WorkspaceReviewFileDetailView: View {
                         .font(.caption2.weight(.medium))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(statusColor.opacity(0.12), in: Capsule())
-                        .foregroundStyle(statusColor)
+                        .background(GitStatusColor.color(for: file.status).opacity(0.12), in: Capsule())
+                        .foregroundStyle(GitStatusColor.color(for: file.status))
                 }
 
                 if let parentPath = file.path.parentPathForDisplay {
@@ -284,17 +284,7 @@ struct WorkspaceReviewFileDetailView: View {
         .padding(.bottom, 8)
     }
 
-    private var statusColor: Color {
-        switch file.status.trimmingCharacters(in: .whitespaces) {
-        case "M": return .themeOrange
-        case "A": return .themeDiffAdded
-        case "D": return .themeDiffRemoved
-        case "R", "C": return .themeCyan
-        case "??": return .themeComment
-        case "UU", "AA", "DD": return .themeDiffRemoved
-        default: return .themeFg
-        }
-    }
+
 
     private func createReviewSession(action: WorkspaceReviewSessionAction) async {
         guard launchActionInFlight == nil else { return }
