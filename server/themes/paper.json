@@ -1,0 +1,62 @@
+{
+  "name": "Paper",
+  "colorScheme": "light",
+  "colors": {
+    "bg":          "#F8F4EC",
+    "bgDark":      "#F0ECE4",
+    "bgHighlight": "#E6E1D8",
+    "fg":          "#1C1B1A",
+    "fgDim":       "#4A4A4A",
+    "comment":     "#525252",
+    "blue":        "#2858A0",
+    "cyan":        "#18706A",
+    "green":       "#306828",
+    "orange":      "#8A5020",
+    "purple":      "#6040A0",
+    "red":         "#B83030",
+    "yellow":      "#6A5A18",
+
+    "thinkingText":   "#4A4A4A",
+
+    "userMessageBg":   "#F0ECE4",
+    "userMessageText": "#1C1B1A",
+
+    "toolPendingBg":  "#E0E4EE",
+    "toolSuccessBg":  "#DEE8DE",
+    "toolErrorBg":    "#EEDEDE",
+    "toolTitle":      "#1C1B1A",
+    "toolOutput":     "#4A4A4A",
+
+    "mdHeading":         "#2858A0",
+    "mdLink":            "#18706A",
+    "mdLinkUrl":         "#525252",
+    "mdCode":            "#18706A",
+    "mdCodeBlock":       "#306828",
+    "mdCodeBlockBorder": "#D0CCCA",
+    "mdQuote":           "#525252",
+    "mdQuoteBorder":     "#D0CCCA",
+    "mdHr":              "#D0CCCA",
+    "mdListBullet":      "#8A5020",
+
+    "toolDiffAdded":   "#306828",
+    "toolDiffRemoved": "#B83030",
+    "toolDiffContext":  "#525252",
+
+    "syntaxComment":     "#525252",
+    "syntaxKeyword":     "#6040A0",
+    "syntaxFunction":    "#2858A0",
+    "syntaxVariable":    "#1C1B1A",
+    "syntaxString":      "#306828",
+    "syntaxNumber":      "#8A5020",
+    "syntaxType":        "#18706A",
+    "syntaxOperator":    "#1C1B1A",
+    "syntaxPunctuation": "#4A4A4A",
+
+    "thinkingOff":     "#C8C4BC",
+    "thinkingMinimal": "#808080",
+    "thinkingLow":     "#2858A0",
+    "thinkingMedium":  "#18706A",
+    "thinkingHigh":    "#6040A0",
+    "thinkingXhigh":   "#B83030"
+  }
+}

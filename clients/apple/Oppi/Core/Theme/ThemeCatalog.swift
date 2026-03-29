@@ -276,7 +276,7 @@ enum ThemePalettes {
         bgHighlight: c(0x252B3D),
         fg: c(0xC8D1EB),
         fgDim: c(0xA2ACC9),
-        comment: c(0x828DAB),
+        comment: c(0x98A4C4),
         blue: c(0x7AA2F7),
         cyan: c(0x78C8F2),
         green: c(0x8FBE78),
@@ -297,7 +297,7 @@ enum ThemePalettes {
         // Markdown
         mdHeading: c(0x7AA2F7),
         mdLink: c(0x78C8F2),
-        mdLinkUrl: c(0x828DAB),
+        mdLinkUrl: c(0x98A4C4),
         mdCode: c(0x78C8F2),
         mdCodeBlock: c(0x8FBE78),
         mdCodeBlockBorder: c(0x31384D),
@@ -308,9 +308,9 @@ enum ThemePalettes {
         // Diffs
         toolDiffAdded: c(0x73B07C),
         toolDiffRemoved: c(0xCC7488),
-        toolDiffContext: c(0x6B7390),
+        toolDiffContext: c(0x98A4C4),
         // Syntax (Tokyo Night-ish, but slightly calmer)
-        syntaxComment: c(0x6B7390),
+        syntaxComment: c(0x98A4C4),
         syntaxKeyword: c(0xA08FD4),
         syntaxFunction: c(0x7AA2F7),
         syntaxVariable: c(0xC8D1EB),
@@ -340,7 +340,7 @@ enum ThemePalettes {
         bgHighlight: c(0x101522),
         fg: c(0xCAD3EE),
         fgDim: c(0xAEB8D6),
-        comment: c(0x7A84A6),
+        comment: c(0x8490B0),
         blue: c(0x76A0F4),
         cyan: c(0x76C6E6),
         green: c(0x89B971),
@@ -361,7 +361,7 @@ enum ThemePalettes {
         // Markdown
         mdHeading: c(0x76A0F4),
         mdLink: c(0x76C6E6),
-        mdLinkUrl: c(0x7A84A6),
+        mdLinkUrl: c(0x8490B0),
         mdCode: c(0x76C6E6),
         mdCodeBlock: c(0x89B971),
         mdCodeBlockBorder: c(0x22293B),
@@ -372,9 +372,9 @@ enum ThemePalettes {
         // Diffs
         toolDiffAdded: c(0x6FAF78),
         toolDiffRemoved: c(0xCC7388),
-        toolDiffContext: c(0x7A84A6),
+        toolDiffContext: c(0x8490B0),
         // Syntax
-        syntaxComment: c(0x7A84A6),
+        syntaxComment: c(0x8490B0),
         syntaxKeyword: c(0x9F8AD9),
         syntaxFunction: c(0x76A0F4),
         syntaxVariable: c(0xCAD3EE),
@@ -406,8 +406,8 @@ enum ThemePalettes {
         bgDark: c(0x080807),  // deepest shadow (code blocks)
         bgHighlight: c(0x1C1A18),  // warm dark elevation
         fg: c(0xC8BFB0),  // warm parchment (~10.5:1 contrast on bg)
-        fgDim: c(0x8A8278),  // warm stone (~5:1)
-        comment: c(0x625C56),  // warm ash (~3:1, intentionally low for de-emphasis)
+        fgDim: c(0x9C9488),  // warm stone (brightened for readability) (~5:1)
+        comment: c(0x9C9488),  // warm ash (brightened for readability)
         blue: c(0x7E90A4),  // dusty steel (warm blue, desaturated)
         cyan: c(0x6E9C94),  // sage teal (shifted green, minimal blue)
         green: c(0x7C9C6E),  // forest moss
@@ -415,7 +415,7 @@ enum ThemePalettes {
         purple: c(0x9684AA),  // dusty plum
         red: c(0xB86C6E),  // muted rose
         yellow: c(0xB4A270),  // wheat gold
-        thinkingText: c(0x8A8278),
+        thinkingText: c(0x9C9488),
         // User message
         userMessageBg: c(0x1C1A18),
         userMessageText: c(0xC8BFB0),
@@ -424,32 +424,32 @@ enum ThemePalettes {
         toolSuccessBg: c(0x7C9C6E).opacity(0.08),
         toolErrorBg: c(0xB86C6E).opacity(0.08),
         toolTitle: c(0xC8BFB0),
-        toolOutput: c(0x8A8278),
+        toolOutput: c(0x9C9488),
         // Markdown
         mdHeading: c(0x7E90A4),  // dusty steel
         mdLink: c(0x6E9C94),  // sage teal
-        mdLinkUrl: c(0x625C56),
+        mdLinkUrl: c(0x9C9488),
         mdCode: c(0x6E9C94),  // sage teal
         mdCodeBlock: c(0x7C9C6E),  // moss
         mdCodeBlockBorder: c(0x2A2826),
-        mdQuote: c(0x8A8278),
+        mdQuote: c(0x9C9488),
         mdQuoteBorder: c(0x2A2826),
         mdHr: c(0x2A2826),
         mdListBullet: c(0xC49468),  // amber
         // Diffs
         toolDiffAdded: c(0x6A9060),  // earthy green
         toolDiffRemoved: c(0xA85858),  // deep warm red
-        toolDiffContext: c(0x625C56),
+        toolDiffContext: c(0x9C9488),
         // Syntax (warm-shifted, muted)
-        syntaxComment: c(0x625C56),
+        syntaxComment: c(0x9C9488),
         syntaxKeyword: c(0x9684AA),  // dusty plum
         syntaxFunction: c(0x7E90A4),  // dusty steel
         syntaxVariable: c(0xC8BFB0),
-        syntaxString: c(0xB86C6E),  // muted rose
+        syntaxString: c(0xBD7072),  // muted rose (brightened for AA)
         syntaxNumber: c(0xC49468),  // amber
         syntaxType: c(0x6E9C94),  // sage teal
         syntaxOperator: c(0xC8BFB0),
-        syntaxPunctuation: c(0x8A8278),
+        syntaxPunctuation: c(0x9C9488),
         // Thinking (warm monochromatic)
         thinkingOff: c(0x3A3632),
         thinkingMinimal: c(0x5C5650),
