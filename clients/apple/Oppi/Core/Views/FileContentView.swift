@@ -17,6 +17,9 @@ struct FileContentView: View {
     let startLine: Int
     let isError: Bool
     let presentation: FileContentPresentation
+    var workspaceID: String?
+    var serverBaseURL: URL?
+    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
     /// Maximum lines to render inline (performance bound).
     nonisolated static let maxDisplayLines = 300
@@ -26,13 +29,19 @@ struct FileContentView: View {
         filePath: String? = nil,
         startLine: Int = 1,
         isError: Bool = false,
-        presentation: FileContentPresentation = .inline
+        presentation: FileContentPresentation = .inline,
+        workspaceID: String? = nil,
+        serverBaseURL: URL? = nil,
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.content = content
         self.filePath = filePath
         self.startLine = max(1, startLine)
         self.isError = isError
         self.presentation = presentation
+        self.workspaceID = workspaceID
+        self.serverBaseURL = serverBaseURL
+        self.fetchWorkspaceFile = fetchWorkspaceFile
     }
 
     var body: some View {
@@ -49,7 +58,14 @@ struct FileContentView: View {
     private func contentView(for fileType: FileType) -> some View {
         switch fileType {
         case .markdown:
-            MarkdownFileView(content: content, filePath: filePath, presentation: presentation)
+            MarkdownFileView(
+                content: content,
+                filePath: filePath,
+                presentation: presentation,
+                workspaceID: workspaceID,
+                serverBaseURL: serverBaseURL,
+                fetchWorkspaceFile: fetchWorkspaceFile
+            )
         case .html:
             HTMLFileView(content: content, filePath: filePath, presentation: presentation)
         case .code(let language):

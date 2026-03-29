@@ -71,7 +71,7 @@ struct FileBrowserContentView: View {
                 )
             case .text(let text):
                 EmbeddedFileViewerView(
-                    content: .fromText(text, filePath: filePath)
+                    content: fullScreenContent(text: text)
                 )
                 .ignoresSafeArea(edges: .top)
             case .image(let data):
@@ -225,6 +225,26 @@ struct FileBrowserContentView: View {
     }
 
     // MARK: - Share
+
+    /// Build full-screen content with workspace context for relative image resolution.
+    private func fullScreenContent(text: String) -> FullScreenCodeContent {
+        let base = FullScreenCodeContent.fromText(text, filePath: filePath)
+        // Inject workspace context for markdown files so relative images resolve.
+        if case .markdown(let content, let path, _) = base, let api = apiClient {
+            return .markdown(
+                content: content,
+                filePath: path,
+                workspaceContext: .init(
+                    workspaceID: workspaceId,
+                    serverBaseURL: api.baseURL,
+                    fetchWorkspaceFile: { [workspaceId] wsID, filePath in
+                        try await api.fetchWorkspaceFile(workspaceID: wsID.isEmpty ? workspaceId : wsID, path: filePath)
+                    }
+                )
+            )
+        }
+        return base
+    }
 
     /// Build shareable content from the current loaded phase.
     private func shareableContent() -> FileShareService.ShareableContent? {

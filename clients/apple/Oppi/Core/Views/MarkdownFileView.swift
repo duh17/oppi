@@ -11,6 +11,9 @@ struct MarkdownFileView: View {
     let content: String
     let filePath: String?
     let presentation: FileContentPresentation
+    var workspaceID: String?
+    var serverBaseURL: URL?
+    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
     var body: some View {
         RenderableDocumentWrapper(
@@ -19,15 +22,18 @@ struct MarkdownFileView: View {
             filePath: filePath,
             presentation: presentation,
             fullScreenContent: .markdown(content: content, filePath: filePath),
-            renderedViewFactory: { [content, filePath] in
+            renderedViewFactory: { [content, workspaceID, serverBaseURL, fetchWorkspaceFile] in
                 let view = AssistantMarkdownContentView()
                 view.backgroundColor = .clear
+                view.fetchWorkspaceFile = fetchWorkspaceFile
                 view.apply(configuration: .init(
                     content: content,
                     isStreaming: false,
                     themeID: ThemeRuntimeState.currentThemeID(),
                     textSelectionEnabled: true,
-                    plainTextFallbackThreshold: presentation == .document ? nil : AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold
+                    plainTextFallbackThreshold: presentation == .document ? nil : AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
+                    workspaceID: workspaceID,
+                    serverBaseURL: serverBaseURL
                 ))
                 return view
             }

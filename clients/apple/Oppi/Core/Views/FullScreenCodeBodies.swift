@@ -500,6 +500,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let plainTextFallbackThreshold: Int?
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let workspaceID: String?
+    private let serverBaseURL: URL?
 
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
@@ -519,12 +521,17 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         palette: ThemePalette,
         plainTextFallbackThreshold: Int? = AssistantMarkdownContentView.Configuration.defaultPlainTextFallbackThreshold,
         selectedTextPiRouter: SelectedTextPiActionRouter?,
-        selectedTextSourceContext: SelectedTextSourceContext?
+        selectedTextSourceContext: SelectedTextSourceContext?,
+        workspaceID: String? = nil,
+        serverBaseURL: URL? = nil,
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.stream = stream
         self.plainTextFallbackThreshold = plainTextFallbackThreshold
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+        self.workspaceID = workspaceID
+        self.serverBaseURL = serverBaseURL
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: true)
         latestSnapshot = initialSnapshot
@@ -564,6 +571,7 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             markdownWidthConstraint,
         ])
 
+        markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         render(snapshot: initialSnapshot)
 
         streamObserverID = stream?.addObserver { [weak self] snapshot in
@@ -607,6 +615,8 @@ final class NativeFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             plainTextFallbackThreshold: plainTextFallbackThreshold,
             selectedTextPiRouter: selectedTextPiRouter,
             selectedTextSourceContext: selectedTextSourceContext,
+            workspaceID: workspaceID,
+            serverBaseURL: serverBaseURL,
             perfSurface: .fullScreenThinking
         ))
 

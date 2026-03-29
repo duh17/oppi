@@ -192,7 +192,7 @@ indirect enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case plainText(content: String, filePath: String?)
     case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
-    case markdown(content: String, filePath: String?)
+    case markdown(content: String, filePath: String?, workspaceContext: WorkspaceContext? = nil)
     case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(content: String, command: String?, stream: TerminalTraceStream? = nil)
@@ -203,6 +203,13 @@ indirect enum FullScreenCodeContent {
     case orgMode(content: String, filePath: String?)
     case mermaid(content: String, filePath: String?)
     case graphviz(content: String, filePath: String?)
+
+    /// Workspace context for resolving relative image paths in markdown files.
+    struct WorkspaceContext: @unchecked Sendable {
+        let workspaceID: String
+        let serverBaseURL: URL
+        let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
+    }
 
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> FullScreenCodeContent {

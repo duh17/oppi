@@ -295,8 +295,8 @@ final class FullScreenCodeViewController: UIViewController {
                     filePath: filePath
                 )
             )
-        case .markdown(let text, let filePath):
-            return NativeFullScreenMarkdownBody(
+        case .markdown(let text, let filePath, let wsContext):
+            let body = NativeFullScreenMarkdownBody(
                 content: text,
                 stream: nil,
                 palette: palette,
@@ -305,8 +305,12 @@ final class FullScreenCodeViewController: UIViewController {
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenMarkdown,
                     filePath: filePath
-                )
+                ),
+                workspaceID: wsContext?.workspaceID,
+                serverBaseURL: wsContext?.serverBaseURL,
+                fetchWorkspaceFile: wsContext?.fetchWorkspaceFile
             )
+            return body
         case .html(let text, let filePath):
             let piHandler = makePiWebViewHandler(
                 router: selectedTextPiRouter,
@@ -450,7 +454,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func bodyContent(for content: FullScreenCodeContent) -> FullScreenCodeContent {
         if showSource {
-            if case .markdown(let text, let filePath) = content {
+            if case .markdown(let text, let filePath, _) = content {
                 return .plainText(content: text, filePath: filePath)
             }
             if case .html(let text, let filePath) = content {
@@ -530,7 +534,7 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .diff(_, let newText, _, _):
             return newText
-        case .markdown(let text, _):
+        case .markdown(let text, _, _):
             return text
         case .html(let text, _):
             return text
@@ -584,7 +588,7 @@ final class FullScreenCodeViewController: UIViewController {
         switch content {
         case .mermaid(let text, _): return .mermaid(text)
         case .latex(let text, _): return .latex(text)
-        case .markdown(let text, _): return .markdown(text)
+        case .markdown(let text, _, _): return .markdown(text)
         case .orgMode(let text, _): return .orgMode(text)
         case .html(let text, _): return .html(text)
         case .graphviz(let text, _): return .code(text, language: "dot")
