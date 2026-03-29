@@ -496,7 +496,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func absoluteURLImageSourceIsNotPromoted() {
+    @Test func absoluteHTTPSURLImageIsPromotedToImageSegment() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Remote", source: "https://example.com/image.png")])
         ]
@@ -505,10 +505,27 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
-        // Absolute URL — should NOT be promoted to .image (no auth needed for external URLs)
         #expect(segments.count == 1)
-        if case .image = segments[0] {
-            Issue.record("Absolute URL should not be promoted to .image segment")
+        if case .image(let alt, let url) = segments[0] {
+            #expect(alt == "Remote")
+            #expect(url.absoluteString == "https://example.com/image.png")
+        } else {
+            Issue.record("Expected .image segment for https URL, got \(segments[0])")
+        }
+    }
+
+    @Test func absoluteHTTPURLImageIsPromotedToImageSegment() {
+        let blocks: [MarkdownBlock] = [
+            .paragraph([.image(alt: "HTTP", source: "http://cdn.example.com/photo.jpg")])
+        ]
+        // No workspace context needed for absolute URLs
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .image(let alt, let url) = segments[0] {
+            #expect(alt == "HTTP")
+            #expect(url.absoluteString == "http://cdn.example.com/photo.jpg")
+        } else {
+            Issue.record("Expected .image segment for http URL, got \(segments[0])")
         }
     }
 

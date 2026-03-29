@@ -1,8 +1,11 @@
 import UIKit
 
-/// UIKit view that loads and displays a workspace image referenced in markdown.
+/// UIKit view that loads and displays an image referenced in markdown.
 ///
-/// Lifecycle: apply(url:alt:apiClient:) triggers an async load. States:
+/// Supports both workspace-relative paths (loaded via the workspace file API)
+/// and absolute http/https URLs (loaded via URLSession).
+///
+/// Lifecycle: apply(url:alt:fetchWorkspaceFile:) triggers an async load. States:
 /// - loading: spinner + alt text label
 /// - loaded: image view (tap to fullscreen)
 /// - failed: bracketed alt text in comment color
@@ -104,19 +107,37 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func loadImage(url: URL, alt: String, fetch: FetchWorkspaceFile?) async {
-        guard let fetch else {
-            showErrorState(alt: alt)
-            return
+        // Try workspace file path first.
+        if let components = WorkspaceFileURL.parse(url), let fetch {
+            do {
+                let data = try await fetch(components.workspaceID, components.filePath)
+                guard !Task.isCancelled else { return }
+                if let image = UIImage(data: data) {
+                    Self.imageCache.setObject(image, forKey: url as NSURL)
+                    showLoadedState(image: image)
+                    return
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+            }
         }
 
-        guard let components = WorkspaceFileURL.parse(url) else {
+        // Fall back to direct URL fetch (http/https).
+        guard let scheme = url.scheme, scheme == "http" || scheme == "https" else {
             showErrorState(alt: alt)
             return
         }
 
         do {
-            let data = try await fetch(components.workspaceID, components.filePath)
+            let (data, response) = try await URLSession.shared.data(from: url)
             guard !Task.isCancelled else { return }
+
+            // Validate HTTP response.
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200 ..< 300).contains(httpResponse.statusCode) {
+                showErrorState(alt: alt)
+                return
+            }
 
             guard let image = UIImage(data: data) else {
                 showErrorState(alt: alt)

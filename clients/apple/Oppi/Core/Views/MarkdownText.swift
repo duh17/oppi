@@ -279,8 +279,15 @@ enum FlatSegment: Sendable {
 
     // MARK: - Image URL Resolution
 
-    /// Return a fully resolved workspace file URL if `inlines` contains exactly
-    /// one `.image` node with a relative path and workspace context is available.
+    /// Return a resolved URL if `inlines` contains exactly one `.image` node.
+    ///
+    /// Handles two cases:
+    /// - **Relative paths** (e.g. `screenshots/img.png`): resolved against
+    ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
+    /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
+    ///   through directly for `NativeMarkdownImageView` to fetch via URLSession.
+    ///
+    /// Skips `data:` URIs (too large to display inline).
     private static func resolveStandaloneImage(
         inlines: [MarkdownInline],
         workspaceID: String?,
@@ -289,15 +296,24 @@ enum FlatSegment: Sendable {
         guard inlines.count == 1,
               case .image(_, let source) = inlines[0],
               let source,
-              !source.isEmpty,
-              let workspaceID,
-              !workspaceID.isEmpty,
-              let baseURL = serverBaseURL else {
+              !source.isEmpty else {
             return nil
         }
 
-        // Only handle relative paths — skip data: URIs and absolute URLs.
-        if source.contains("://") || source.hasPrefix("data:") {
+        // Skip data: URIs — they can be huge and aren't practical inline.
+        if source.hasPrefix("data:") {
+            return nil
+        }
+
+        // Absolute URL (http/https) — pass through directly.
+        if let url = URL(string: source), let scheme = url.scheme,
+           scheme == "http" || scheme == "https" {
+            return url
+        }
+
+        // Relative path — resolve against workspace file API.
+        guard let workspaceID, !workspaceID.isEmpty,
+              let baseURL = serverBaseURL else {
             return nil
         }
 
