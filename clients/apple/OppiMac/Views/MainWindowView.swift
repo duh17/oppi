@@ -16,10 +16,13 @@ struct MainWindowView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SidebarTab.allCases, selection: $selectedTab) { tab in
-                Label(tab.title, systemImage: tab.icon)
+            List(selection: $selectedTab) {
+                ForEach(SidebarTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.icon)
+                        .tag(tab)
+                }
             }
-            .navigationTitle("Oppi")
+            .listStyle(.sidebar)
         } detail: {
             if let tab = selectedTab {
                 detailView(for: tab)

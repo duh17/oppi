@@ -821,6 +821,12 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
                 contentView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -14),
                 contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
                 contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
+                // Pin content width to the scroll view's visible frame width minus
+                // horizontal padding (14 * 2 = 28). Without this, text-based content
+                // views (e.g. AssistantMarkdownContentView for org mode) have no width
+                // reference inside the scroll view's content layout guide and collapse
+                // to their intrinsic content width.
+                contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -28),
             ])
         }
     }
