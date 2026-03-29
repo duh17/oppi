@@ -928,42 +928,81 @@ struct NativeMermaidBlockViewTests {
         return nil
     }
 
-    @Test func diagramTapGestureReceivesTouchesInDiagramArea() async throws {
-        let view = makeDiagramView()
-        let palette = ThemeRuntimeState.currentPalette()
-        view.applyAsDiagram(code: "graph TD\n    A-->B", palette: palette)
+    /// The tap overlay must win hit-testing over the scroll view when the
+    /// diagram is rendered, ensuring taps reach the overlay's gesture
+    /// recognizer instead of being swallowed by UIScrollView's zoom handling.
+    @Test func tapOverlayWinsHitTestOverScrollView() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
 
-        var diagramImageView: UIImageView?
+        // Simulate real hierarchy: collectionView > cell > stack > mermaidView
+        let layout = UICollectionViewFlowLayout()
+        layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
+        let collectionView = UICollectionView(frame: window.bounds, collectionViewLayout: layout)
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        // Add the same "dismiss keyboard" tap as ChatTimelineCollectionView
+        let dismissTap = UITapGestureRecognizer()
+        dismissTap.cancelsTouchesInView = false
+        collectionView.addGestureRecognizer(dismissTap)
+        window.addSubview(collectionView)
+
+        let cell = UIView(frame: CGRect(x: 0, y: 0, width: 393, height: 300))
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.frame = cell.bounds
+        stack.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        cell.addSubview(stack)
+
+        let mermaidView = NativeMermaidBlockView()
+        stack.addArrangedSubview(mermaidView)
+        collectionView.addSubview(cell)
+
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+
+        let palette = ThemeRuntimeState.currentPalette()
+        mermaidView.applyAsDiagram(code: "graph TD\n    A-->B", palette: palette)
+
+        // Wait for async render
+        var rendered = false
         for _ in 0..<500 {
-            view.layoutIfNeeded()
-            if let imageView = firstRenderedDiagramImageView(in: view) {
-                diagramImageView = imageView
+            window.layoutIfNeeded()
+            if firstRenderedDiagramImageView(in: mermaidView) != nil {
+                rendered = true
                 break
             }
             try await Task.sleep(for: .milliseconds(20))
         }
+        #expect(rendered, "Diagram must render before testing tap")
 
-        guard let diagramImageView else {
-            Issue.record("Expected rendered mermaid diagram image view")
+        // Hit-test from the window at the mermaid view's center
+        let center = mermaidView.convert(
+            CGPoint(x: mermaidView.bounds.midX, y: mermaidView.bounds.midY),
+            to: window
+        )
+        guard let hitView = window.hitTest(center, with: nil) else {
+            Issue.record("hitTest returned nil at \(center)")
             return
         }
 
-        let diagramCenter = CGPoint(x: diagramImageView.bounds.midX, y: diagramImageView.bounds.midY)
-        let diagramCenterInRoot = view.convert(diagramCenter, from: diagramImageView)
-        guard let hitView = view.hitTest(diagramCenterInRoot, with: nil) else {
-            Issue.record("Expected a hit-test target in the rendered diagram area")
-            return
-        }
+        // The hit view must NOT be the scroll view or its subviews —
+        // it must be the tap overlay (which sits above the scroll view).
+        #expect(
+            !(hitView is UIScrollView),
+            "Hit view should be the tap overlay, not UIScrollView"
+        )
+        #expect(
+            !(hitView is UIImageView),
+            "Hit view should be the tap overlay, not UIImageView inside scroll view"
+        )
 
-        let imageViewTaps = (diagramImageView.gestureRecognizers ?? [])
+        // The hit view (overlay) must have a single-tap gesture
+        let taps = (hitView.gestureRecognizers ?? [])
             .compactMap { $0 as? UITapGestureRecognizer }
             .filter { $0.numberOfTapsRequired == 1 }
+        #expect(!taps.isEmpty, "Hit view must own a single-tap gesture. Hit: \(type(of: hitView))")
 
-        #expect(!imageViewTaps.isEmpty, "Expected the diagram image view to own the single-tap gesture")
-        #expect(
-            hitView === diagramImageView,
-            "Expected taps in the diagram area to hit the diagram image view. Hit view: \(type(of: hitView))"
-        )
+        window.resignKey()
     }
 
     @Test func mermaidExportRendersNonBlankImage() async {

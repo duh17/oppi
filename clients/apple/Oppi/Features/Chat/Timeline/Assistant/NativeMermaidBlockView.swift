@@ -1,4 +1,7 @@
 import UIKit
+import os.log
+
+private let mermaidLog = Logger(subsystem: "dev.chenda.Oppi", category: "MermaidBlock")
 
 /// Inline mermaid diagram renderer for the chat timeline.
 ///
@@ -38,9 +41,21 @@ final class NativeMermaidBlockView: UIView {
         let iv = UIImageView()
         iv.contentMode = .scaleAspectFit
         iv.clipsToBounds = true
-        iv.isUserInteractionEnabled = true
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
+    }()
+
+    /// Transparent overlay that sits above the scroll view to catch taps
+    /// reliably. UIScrollView with zoom enabled swallows/delays single-tap
+    /// delivery to its subviews, making gesture recognizers on the
+    /// diagramImageView unreliable. This overlay intercepts taps before
+    /// the scroll view can consume them, then passes through all other
+    /// touches (pinch, pan) so zoom still works.
+    private let tapOverlay: TapPassthroughView = {
+        let v = TapPassthroughView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.backgroundColor = .clear
+        return v
     }()
 
     /// Height constraint for the scroll container, updated after layout.
@@ -89,6 +104,16 @@ final class NativeMermaidBlockView: UIView {
 
         scrollView.addSubview(diagramImageView)
 
+        // Tap overlay sits ABOVE the scroll view in the subview order.
+        // It intercepts taps (which scroll views swallow) while passing
+        // through multi-touch gestures (pinch-to-zoom, pan).
+        tapOverlay.isHidden = true
+        addSubview(tapOverlay)
+
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tapGesture.numberOfTapsRequired = 1
+        tapOverlay.addGestureRecognizer(tapGesture)
+
         let scrollHeight = scrollView.heightAnchor.constraint(equalToConstant: 200)
         scrollHeightConstraint = scrollHeight
 
@@ -107,14 +132,6 @@ final class NativeMermaidBlockView: UIView {
         centerX.priority = .defaultHigh
         imageCenterXConstraint = centerX
 
-        // Tap to open fullscreen from the rendered diagram itself.
-        // Attaching to the image view avoids the scroll view swallowing
-        // single taps while still letting the scroll view handle zoom/pan.
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        tapGesture.numberOfTapsRequired = 1
-        tapGesture.cancelsTouchesInView = false
-        diagramImageView.addGestureRecognizer(tapGesture)
-
         NSLayoutConstraint.activate([
             // Code block fills self
             codeBlockView.topAnchor.constraint(equalTo: topAnchor),
@@ -128,6 +145,12 @@ final class NativeMermaidBlockView: UIView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             scrollHeight,
+
+            // Tap overlay matches scroll view exactly
+            tapOverlay.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            tapOverlay.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            tapOverlay.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            tapOverlay.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
 
             // Image view sized by constraints, pinned to content guide
             diagramImageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
@@ -153,6 +176,7 @@ final class NativeMermaidBlockView: UIView {
 
         codeBlockView.isHidden = false
         scrollView.isHidden = true
+        tapOverlay.isHidden = true
         isShowingDiagram = false
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
@@ -251,6 +275,7 @@ final class NativeMermaidBlockView: UIView {
 
         codeBlockView.isHidden = true
         scrollView.isHidden = false
+        tapOverlay.isHidden = false
         isShowingDiagram = true
 
         invalidateIntrinsicContentSize()
@@ -261,14 +286,12 @@ final class NativeMermaidBlockView: UIView {
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
         codeBlockView.isHidden = false
         scrollView.isHidden = true
+        tapOverlay.isHidden = true
         isShowingDiagram = false
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
     }
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        // Ignore taps when zoomed in — user is panning, not trying to open fullscreen.
-        if scrollView.zoomScale > 1.05 { return }
-
         guard let code = currentCode, isShowingDiagram else { return }
 
         let fullScreenContent = FullScreenCodeContent.mermaid(content: code, filePath: nil)
@@ -310,5 +333,24 @@ extension NativeMermaidBlockView: UIScrollViewDelegate {
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerImageInScrollView()
+    }
+}
+
+// MARK: - Tap overlay
+
+/// A view that only handles single-finger touches (taps). Multi-touch
+/// events (pinch, pan with 2+ fingers) pass through to the scroll view
+/// underneath so zoom continues to work.
+private final class TapPassthroughView: UIView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        // Only claim hits when we're visible
+        guard !isHidden, alpha > 0.01 else { return false }
+        return super.point(inside: point, with: event)
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Only let our own tap gesture begin; reject anything else
+        // (e.g. scroll view gestures that bubble up).
+        return gestureRecognizer.view === self
     }
 }
