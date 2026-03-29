@@ -31,6 +31,8 @@ struct WorkspaceDetailView: View {
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
+    @State private var olderSessionCount: Int = 0
+    @State private var isLoadingOlder = false
 
     // MARK: - Computed
 
@@ -356,7 +358,12 @@ struct WorkspaceDetailView: View {
                     Task { await importAndResumeLocal(local) }
                 },
                 expandedGroupIDs: $expandedStoppedGroupIDs,
-                collapsedGroupIDs: $collapsedStoppedGroupIDs
+                collapsedGroupIDs: $collapsedStoppedGroupIDs,
+                olderSessionCount: olderSessionCount,
+                isLoadingOlder: isLoadingOlder,
+                onLoadOlder: {
+                    Task { await loadOlderSessions() }
+                }
             )
 
             if data.wsEmpty {
@@ -691,10 +698,29 @@ struct WorkspaceDetailView: View {
     private func refreshSessions() async {
         guard let api = apiClient else { return }
         do {
-            let sessions = try await api.listWorkspaceSessions(workspaceId: workspace.id)
-            for session in sessions {
+            let response = try await api.listWorkspaceSessions(
+                workspaceId: workspace.id,
+                recentDays: 3
+            )
+            for session in response.sessions {
                 sessionStore.upsert(session)
             }
+            olderSessionCount = max(0, (response.totalCount ?? response.sessions.count) - response.sessions.count)
+        } catch {
+            // Keep cached data
+        }
+    }
+
+    private func loadOlderSessions() async {
+        guard let api = apiClient else { return }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        do {
+            let response = try await api.listWorkspaceSessions(workspaceId: workspace.id)
+            for session in response.sessions {
+                sessionStore.upsert(session)
+            }
+            olderSessionCount = 0
         } catch {
             // Keep cached data
         }

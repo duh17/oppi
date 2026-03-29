@@ -518,9 +518,10 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
 
-      const body = JSON.parse(res.body) as { sessions: unknown[]; workspace: unknown };
+      const body = JSON.parse(res.body) as { sessions: unknown[]; workspace: unknown; totalCount: number };
       expect(body.sessions).toHaveLength(1);
       expect(body.workspace).toBeDefined();
+      expect(body.totalCount).toBe(1);
     });
 
     it("returns 404 for sessions in nonexistent workspace", async () => {

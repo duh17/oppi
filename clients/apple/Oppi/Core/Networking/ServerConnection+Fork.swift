@@ -78,7 +78,7 @@ extension ServerConnection {
         sessionStore.upsert(forkedSession)
 
         if let refreshed = try? await apiClient.listWorkspaceSessions(workspaceId: workspaceId) {
-            for session in refreshed {
+            for session in refreshed.sessions {
                 sessionStore.upsert(session)
             }
         }

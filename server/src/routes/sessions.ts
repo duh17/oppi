@@ -96,11 +96,24 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const sessions = ctx.storage
-      .listSessionsByWorkspace(workspaceId)
-      .map((s) => ctx.ensureSessionContextWindow(s));
+    const allSessions = ctx.storage.listSessionsByWorkspace(workspaceId);
+    const totalCount = allSessions.length;
 
-    helpers.compressedJson(req, res, { sessions, workspace });
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const recentDaysParam = url.searchParams.get("recentDays");
+    const recentDays = recentDaysParam ? Number.parseInt(recentDaysParam, 10) : 0;
+
+    let filtered: typeof allSessions;
+    if (recentDays > 0) {
+      const cutoffMs = Date.now() - recentDays * 86_400_000;
+      filtered = allSessions.filter((s) => s.status !== "stopped" || s.lastActivity >= cutoffMs);
+    } else {
+      filtered = allSessions;
+    }
+
+    const sessions = filtered.map((s) => ctx.ensureSessionContextWindow(s));
+
+    helpers.compressedJson(req, res, { sessions, workspace, totalCount });
   }
 
   async function handleCreateWorkspaceSession(

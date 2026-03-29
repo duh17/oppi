@@ -611,11 +611,19 @@ actor APIClient {
 
     // MARK: - Workspace-scoped Sessions (v2 API)
 
+    struct WorkspaceSessionsResponse: Decodable {
+        let sessions: [Session]
+        let totalCount: Int?
+    }
+
     /// List sessions for a specific workspace.
-    func listWorkspaceSessions(workspaceId: String) async throws -> [Session] {
-        let data = try await get("/workspaces/\(workspaceId)/sessions")
-        struct Response: Decodable { let sessions: [Session] }
-        return try JSONDecoder().decode(Response.self, from: data).sessions
+    func listWorkspaceSessions(workspaceId: String, recentDays: Int? = nil) async throws -> WorkspaceSessionsResponse {
+        var path = "/workspaces/\(workspaceId)/sessions"
+        if let days = recentDays {
+            path += "?recentDays=\(days)"
+        }
+        let data = try await get(path)
+        return try JSONDecoder().decode(WorkspaceSessionsResponse.self, from: data)
     }
 
     /// Discover local pi TUI sessions not yet managed by oppi.

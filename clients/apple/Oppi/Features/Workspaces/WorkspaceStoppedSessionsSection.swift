@@ -14,6 +14,10 @@ struct WorkspaceStoppedSessionsSection: View {
     @Binding var expandedGroupIDs: Set<String>
     @Binding var collapsedGroupIDs: Set<String>
 
+    let olderSessionCount: Int
+    let isLoadingOlder: Bool
+    let onLoadOlder: () -> Void
+
     private enum StoppedItem: Identifiable {
         case session(Session)
         case local(LocalSession)
@@ -180,6 +184,33 @@ struct WorkspaceStoppedSessionsSection: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+            }
+        }
+
+        if olderSessionCount > 0 {
+            Section {
+                Button {
+                    onLoadOlder()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isLoadingOlder {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .foregroundStyle(.themeComment)
+                        }
+                        Text("\(olderSessionCount) older sessions")
+                            .foregroundStyle(.themeComment)
+                        Spacer()
+                        if !isLoadingOlder {
+                            Image(systemName: "arrow.down.circle")
+                                .foregroundStyle(.themeComment)
+                        }
+                    }
+                }
+                .disabled(isLoadingOlder)
+                .listRowBackground(Color.themeBg)
             }
         }
     }
