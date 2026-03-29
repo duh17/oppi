@@ -170,6 +170,10 @@ export class Storage {
     return this.sessionStore.listSessions();
   }
 
+  listSessionsByWorkspace(workspaceId: string): Session[] {
+    return this.sessionStore.listSessionsByWorkspace(workspaceId);
+  }
+
   deleteSession(sessionId: string): boolean {
     return this.sessionStore.deleteSession(sessionId);
   }

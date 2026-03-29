@@ -477,6 +477,7 @@ struct WorkspaceDetailView: View {
             await refreshPolicyFallback()
         }
         .task {
+            await refreshSessions()
             await refreshLocalSessions()
             await refreshPolicyFallback()
             if let api = apiClient {
@@ -495,11 +496,6 @@ struct WorkspaceDetailView: View {
             if let pendingId = navigation.quickSessionPendingSessionId {
                 navigation.quickSessionPendingSessionId = nil
                 navigateToSessionId = pendingId
-            }
-            Task {
-                await refreshSessions()
-                await refreshLocalSessions()
-                await refreshPolicyFallback()
             }
         }
         .overlay {

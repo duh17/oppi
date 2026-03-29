@@ -45,10 +45,10 @@ const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   /** Bulk list: all sessions across all workspaces in one response. */
-  function handleListAllSessions(res: ServerResponse): void {
+  function handleListAllSessions(req: IncomingMessage, res: ServerResponse): void {
     const sessions = ctx.storage.listSessions().map((s) => ctx.ensureSessionContextWindow(s));
 
-    helpers.json(res, { sessions });
+    helpers.compressedJson(req, res, { sessions });
   }
 
   /** Full-text search across session content. */
@@ -85,7 +85,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
-  function handleListWorkspaceSessions(workspaceId: string, res: ServerResponse): void {
+  function handleListWorkspaceSessions(
+    workspaceId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
     const workspace = ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
@@ -93,11 +97,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const sessions = ctx.storage
-      .listSessions()
-      .filter((s) => s.workspaceId === workspaceId)
+      .listSessionsByWorkspace(workspaceId)
       .map((s) => ctx.ensureSessionContextWindow(s));
 
-    helpers.json(res, { sessions, workspace });
+    helpers.compressedJson(req, res, { sessions, workspace });
   }
 
   async function handleCreateWorkspaceSession(
@@ -988,7 +991,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     // ── Bulk session list (all workspaces) ──
     if (path === "/sessions" && method === "GET") {
-      handleListAllSessions(res);
+      handleListAllSessions(req, res);
       return true;
     }
 
@@ -997,7 +1000,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
     if (wsSessionsMatch) {
       if (method === "GET") {
-        handleListWorkspaceSessions(wsSessionsMatch[1], res);
+        handleListWorkspaceSessions(wsSessionsMatch[1], req, res);
         return true;
       }
       if (method === "POST") {

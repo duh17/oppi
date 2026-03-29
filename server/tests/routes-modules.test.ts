@@ -499,6 +499,7 @@ describe("routes modules", () => {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           listSessions: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
+          listSessionsByWorkspace: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
         },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;

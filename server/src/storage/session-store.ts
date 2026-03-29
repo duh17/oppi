@@ -187,6 +187,17 @@ export class SessionStore {
     return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
   }
 
+  listSessionsByWorkspace(workspaceId: string): Session[] {
+    const cache = this.ensureCache();
+    const sessions: Session[] = [];
+    for (const session of cache.values()) {
+      if (session.workspaceId === workspaceId) {
+        sessions.push(session);
+      }
+    }
+    return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
+  }
+
   deleteSession(sessionId: string): boolean {
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return false;
