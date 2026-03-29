@@ -2,6 +2,8 @@ import Testing
 import UIKit
 @testable import Oppi
 
+private final class BundleToken {}
+
 /// Tests for HTML → PDF and HTML → Image export pipelines.
 ///
 /// These run on the simulator (WKWebView needs a window for GPU compositing).
@@ -154,6 +156,47 @@ struct HTMLExportTests {
         #expect(url.pathExtension == "html")
         let written = try? String(contentsOf: url, encoding: .utf8)
         #expect(written == simpleHTML)
+    }
+
+    // MARK: - Chart.js (real agent output)
+
+    @Test func chartJsPDFProducesValidPDF() async {
+        guard let html = chartJsFixtureHTML() else {
+            Issue.record("Fixture chartjs-markets-dashboard.html not found in test bundle")
+            return
+        }
+        let result = await FileShareService.render(.html(html), as: .pdf)
+        guard case .pdf(let data, _) = result else {
+            Issue.record("Expected .pdf")
+            return
+        }
+        let header = String(data: data.prefix(5), encoding: .ascii)
+        #expect(header == "%PDF-", "Should produce valid PDF")
+        // Chart.js HTML with tables + charts should produce substantial PDF
+        #expect(data.count > 5_000, "Chart.js PDF too small")
+    }
+
+    @Test func chartJsImageIsNotBlank() async {
+        guard let html = chartJsFixtureHTML() else {
+            Issue.record("Fixture chartjs-markets-dashboard.html not found in test bundle")
+            return
+        }
+        let result = await FileShareService.render(.html(html), as: .image)
+        guard case .image(let image) = result else {
+            Issue.record("Expected .image")
+            return
+        }
+        #expect(image.size.width > 100, "Image too narrow")
+        #expect(image.size.height > 100, "Image too short")
+        #expect(!FileShareService.isBlankImage(image), "Chart.js image should not be blank")
+    }
+
+    private func chartJsFixtureHTML() -> String? {
+        guard let url = Bundle(for: BundleToken.self)
+            .url(forResource: "chartjs-markets-dashboard", withExtension: "html") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
     }
 
     // MARK: - isBlankImage helper

@@ -276,7 +276,7 @@ enum ThemePalettes {
         bgHighlight: c(0x252B3D),
         fg: c(0xC8D1EB),
         fgDim: c(0xA2ACC9),
-        comment: c(0x6B7390),
+        comment: c(0x828DAB),
         blue: c(0x7AA2F7),
         cyan: c(0x78C8F2),
         green: c(0x8FBE78),
@@ -297,7 +297,7 @@ enum ThemePalettes {
         // Markdown
         mdHeading: c(0x7AA2F7),
         mdLink: c(0x78C8F2),
-        mdLinkUrl: c(0x6B7390),
+        mdLinkUrl: c(0x828DAB),
         mdCode: c(0x78C8F2),
         mdCodeBlock: c(0x8FBE78),
         mdCodeBlockBorder: c(0x31384D),
