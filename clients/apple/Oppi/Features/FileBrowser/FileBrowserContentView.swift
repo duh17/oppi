@@ -238,7 +238,7 @@ struct FileBrowserContentView: View {
                     workspaceID: workspaceId,
                     serverBaseURL: api.baseURL,
                     fetchWorkspaceFile: { [workspaceId] wsID, filePath in
-                        try await api.fetchWorkspaceFile(workspaceID: wsID.isEmpty ? workspaceId : wsID, path: filePath)
+                        try await api.browseWorkspaceFile(workspaceId: wsID.isEmpty ? workspaceId : wsID, path: filePath)
                     }
                 )
             )
