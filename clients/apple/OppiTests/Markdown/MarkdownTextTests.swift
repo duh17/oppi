@@ -805,3 +805,43 @@ struct OnlineImageEndToEndTests {
         #expect(imageSegments.count == 2, "Expected 2 image segments, got \(imageSegments.count). All segments: \(segments)")
     }
 }
+
+@Suite("Online image without workspace context")
+struct OnlineImageNoWorkspaceTests {
+
+    @Test func httpsImageWorksWithoutWorkspaceContext() {
+        // This is exactly what MarkdownFileView does — no workspaceID, no serverBaseURL
+        let md = "![GitHub avatar](https://avatars.githubusercontent.com/u/1?v=4)"
+        let blocks = parseCommonMark(md)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        // Must produce .image, not .text with [GitHub avatar]
+        #expect(segments.count == 1, "Expected 1 segment, got \(segments.count)")
+        if case .image(let alt, let url) = segments[0] {
+            #expect(alt == "GitHub avatar")
+            #expect(url.scheme == "https")
+        } else {
+            Issue.record("Expected .image segment without workspace context, got \(segments[0])")
+        }
+    }
+
+    @Test func fullMarkdownFileContent() {
+        // Simulate the exact test file content
+        let md = """
+        ## Online Images
+
+        ### GitHub avatar
+
+        ![GitHub user 1](https://avatars.githubusercontent.com/u/1?v=4)
+
+        ### Wikipedia image
+
+        ![Wikipedia globe](https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png)
+        """
+        let blocks = parseCommonMark(md)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        let imageSegments = segments.filter {
+            if case .image = $0 { return true } else { return false }
+        }
+        #expect(imageSegments.count == 2, "Expected 2 image segments in full markdown. All segments: \(segments.map { "\($0)" }.joined(separator: ", "))")
+    }
+}
