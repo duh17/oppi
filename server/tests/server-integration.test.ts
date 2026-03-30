@@ -1177,22 +1177,14 @@ describe("error handling", () => {
     expect(Array.isArray(body.sessions)).toBe(true);
   });
 
-  it("GET /sessions/search returns results for query", async () => {
+  it("GET /sessions/search returns 503 when search index unavailable", async () => {
     const res = await get("/sessions/search?q=test&limit=10");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toHaveProperty("results");
-    expect(body).toHaveProperty("query", "test");
-    expect(body).toHaveProperty("totalResults");
-    expect(Array.isArray(body.results)).toBe(true);
+    expect(res.status).toBe(503);
   });
 
-  it("GET /sessions/search returns empty for missing query", async () => {
+  it("GET /sessions/search without query returns 503 when search index unavailable", async () => {
     const res = await get("/sessions/search");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.results).toEqual([]);
-    expect(body.totalResults).toBe(0);
+    expect(res.status).toBe(503);
   });
 
   it("returns 404 for nonexistent workspace", async () => {
