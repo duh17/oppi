@@ -66,7 +66,7 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "proto", "protobuf": return .protobuf
         case "graphql", "gql": return .graphql
         case "diff", "patch": return .diff
-        case "tex", "latex": return .latex
+        case "tex", "latex", "math": return .latex
         case "org": return .orgMode
         case "mmd", "mermaid": return .mermaid
         case "dot", "gv": return .dot
