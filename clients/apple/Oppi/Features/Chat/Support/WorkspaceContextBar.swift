@@ -95,7 +95,6 @@ struct WorkspaceContextBar: View {
     @State private var additionalCommits: [GitCommitSummary] = []
     @State private var hasMoreCommits = true
     @State private var isLoadingMore = false
-    @State private var expandedContentHeight: CGFloat = 0
 
     // Drag-select state
     @State private var rowFrames: [String: CGRect] = [:]
@@ -203,8 +202,18 @@ struct WorkspaceContextBar: View {
         (gitStatus?.recentCommits ?? []) + additionalCommits
     }
 
-    /// Maximum height for the expanded scroll content (absolute cap).
-    private let maxExpandedHeight: CGFloat = 480
+    /// Dynamic max height for the scrollable content area.
+    /// Estimates row heights to hug content; capped at 480.
+    /// Note: selectionActionBar is outside the ScrollView — not counted here.
+    private var expandedMaxHeight: CGFloat {
+        let agentRows = CGFloat(childSessions.count) * 44
+        let fileRows = CGFloat(displayFiles.count) * 26
+        let commitRows = CGFloat(allCommits.count) * 17
+        let loadMoreRow: CGFloat = hasMoreCommits ? 24 : 0
+        let sectionHeaders: CGFloat = (!childSessions.isEmpty && !displayFiles.isEmpty) ? 48 : 24
+        let chrome: CGFloat = 20
+        return min(agentRows + fileRows + commitRows + loadMoreRow + sectionHeaders + chrome, 480)
+    }
 
     // MARK: - Body
 
@@ -371,19 +380,8 @@ struct WorkspaceContextBar: View {
         VStack(spacing: 0) {
             ScrollView {
                 expandedPanel
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ExpandedContentHeightKey.self,
-                                value: geo.size.height
-                            )
-                        }
-                    )
             }
-            .onPreferenceChange(ExpandedContentHeightKey.self) { expandedContentHeight = $0 }
-            .frame(maxHeight: expandedContentHeight > 0
-                ? min(expandedContentHeight, maxExpandedHeight)
-                : maxExpandedHeight)
+            .frame(maxHeight: expandedMaxHeight)
 
             if isSelecting {
                 selectionActionBar
@@ -985,9 +983,4 @@ private struct RowFramePreferenceKey: PreferenceKey {
     }
 }
 
-private struct ExpandedContentHeightKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
+
