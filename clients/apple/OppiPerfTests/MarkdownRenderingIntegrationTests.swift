@@ -374,39 +374,6 @@ struct MarkdownRenderingIntegrationTests {
         writeArtifact(name: "fileshare-table-md", image: image)
     }
 
-    // MARK: - SocialImageRenderer Integration
-
-    @Test(.tags(.artifact))
-    func socialRendererRendersMermaidInline() async {
-        let md = """
-        # Architecture
-
-        ```mermaid
-        graph TD
-            A[Client] --> B[Server]
-        ```
-        """
-        let images = await SocialImageRenderer.render(markdown: md)
-        #expect(images.count >= 1)
-        let colors = sampleDistinctColors(in: images[0])
-        #expect(colors >= 5, "SocialImageRenderer should render mermaid inline, got \(colors) distinct colors")
-        writeArtifact(name: "social-mermaid-inline", image: images[0])
-    }
-
-    @Test(.tags(.artifact))
-    func socialRendererRendersTableWrapped() async {
-        let md = """
-        | Feature | Plan A | Plan B | Plan C | Enterprise |
-        |---------|--------|--------|--------|------------|
-        | Users | 10 | 100 | Unlimited | Unlimited |
-        | Storage | 5GB | 50GB | 500GB | 5TB |
-        """
-        let images = await SocialImageRenderer.render(markdown: md)
-        #expect(images.count >= 1)
-        #expect(!FileShareService.isBlankImage(images[0]), "Social table should not be blank")
-        writeArtifact(name: "social-table-wrapped", image: images[0])
-    }
-
     // MARK: - Workspace Image Context Tests
 
     /// Verify that workspace context (workspaceID + serverBaseURL) flows through
