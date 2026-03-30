@@ -15,7 +15,7 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            Section {
+            Section("Appearance") {
                 Picker("Theme", selection: Binding(
                     get: { themeStore.selectedThemeID },
                     set: { themeStore.selectedThemeID = $0 }
@@ -45,8 +45,15 @@ struct SettingsView: View {
                     showAvatarPicker = true
                 } label: {
                     LabeledContent("Assistant Avatar") {
-                        Text(assistantAvatar.displayName)
-                            .foregroundStyle(.themeComment)
+                        HStack(spacing: 10) {
+                            Text(assistantAvatarSummary)
+                                .foregroundStyle(.themeComment)
+                            AssistantAvatarPreview(
+                                avatar: assistantAvatar,
+                                sessionId: "settings-avatar-preview",
+                                size: 22
+                            )
+                        }
                     }
                 }
                 .sheet(isPresented: $showAvatarPicker) {
@@ -63,34 +70,11 @@ struct SettingsView: View {
                     AppPreferences.Appearance.setSpinnerStyle(newValue)
                 }
 
-                LabeledContent("Preview") {
+                LabeledContent("Spinner Preview") {
                     WorkingSpinnerView(tintColor: .themeFg, style: spinnerStyle)
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
                 }
-
-                NavigationLink {
-                    AutoTitleSettingsView()
-                } label: {
-                    LabeledContent("Auto-name Sessions") {
-                        Text(autoTitleProviderLabel)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-
-                Picker("Keep screen awake", selection: $screenAwakePreset) {
-                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
-                        Text(preset.label).tag(preset)
-                    }
-                }
-                .onChange(of: screenAwakePreset) { _, newValue in
-                    ScreenAwakePreferences.setTimeoutPreset(newValue)
-                    ScreenAwakeController.shared.refreshFromPreferences()
-                }
-            } header: {
-                Text("Appearance")
-            } footer: {
-                Text(screenAwakeFooter)
             }
 
             Section {
@@ -117,12 +101,41 @@ struct SettingsView: View {
                 )
             }
 
-            Section("Quick Actions") {
+            Section {
+                NavigationLink {
+                    AutoTitleSettingsView()
+                } label: {
+                    LabeledContent("Auto-name Sessions") {
+                        Text(autoTitleProviderLabel)
+                            .foregroundStyle(.themeComment)
+                    }
+                }
+
+                Picker("Keep screen awake", selection: $screenAwakePreset) {
+                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .onChange(of: screenAwakePreset) { _, newValue in
+                    ScreenAwakePreferences.setTimeoutPreset(newValue)
+                    ScreenAwakeController.shared.refreshFromPreferences()
+                }
+            } header: {
+                Text("Sessions")
+            } footer: {
+                Text(screenAwakeFooter)
+            }
+
+            Section {
                 NavigationLink {
                     PiActionsSettingsView()
                 } label: {
-                    Label("Text Selection Actions", systemImage: "contextualmenu.and.cursorarrow")
+                    Label("π Actions", systemImage: "contextualmenu.and.cursorarrow")
                 }
+            } header: {
+                Text("Text Selection")
+            } footer: {
+                Text("Customize the π menu shown when selecting text in chat and file views.")
             }
 
             if ReleaseFeatures.liveActivitiesEnabled {
@@ -137,9 +150,9 @@ struct SettingsView: View {
 
             securitySection
 
-            Section("Cache") {
+            Section("Storage") {
                 if let cacheSizeText {
-                    LabeledContent("Size", value: cacheSizeText)
+                    LabeledContent("Local Cache", value: cacheSizeText)
                 }
                 Button("Clear Local Cache") {
                     Task.detached {
@@ -152,7 +165,7 @@ struct SettingsView: View {
             .task { cacheSizeText = await Self.formattedCacheSize() }
 
             Section("About") {
-                LabeledContent("Version", value: "1.0.0")
+                LabeledContent("Version", value: appVersionLabel)
             }
         }
         .onAppear {
@@ -183,6 +196,23 @@ struct SettingsView: View {
         case .onDevice: return "On-device"
         case .off: return "Off"
         }
+    }
+
+    private var assistantAvatarSummary: String {
+        switch assistantAvatar {
+        case .emoji:
+            return "Emoji"
+        case .genmoji:
+            return "Genmoji"
+        case .piText, .golGrid:
+            return assistantAvatar.displayName
+        }
+    }
+
+    private var appVersionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        return "\(version) (\(build))"
     }
 
     private var screenAwakeFooter: String {

@@ -15,10 +15,34 @@ enum AssistantAvatar: Equatable, Sendable {
 
     var displayName: String {
         switch self {
-        case .piText: return "π"
-        case .golGrid: return "PioL"
+        case .piText: return "Classic π"
+        case .golGrid: return "Grid π"
         case .emoji(let char): return char
         case .genmoji: return "Genmoji"
+        }
+    }
+
+    var pickerDescription: String? {
+        switch self {
+        case .piText:
+            return "Monospaced assistant glyph"
+        case .golGrid:
+            return "Game of Life grid with spark cells"
+        case .emoji, .genmoji:
+            return nil
+        }
+    }
+
+    var cacheIdentifier: String {
+        switch self {
+        case .piText:
+            return "piText"
+        case .golGrid:
+            return "golGrid"
+        case .emoji(let char):
+            return "emoji:\(char)"
+        case .genmoji(let data):
+            return "genmoji:\(data.count):\(data.hashValue)"
         }
     }
 

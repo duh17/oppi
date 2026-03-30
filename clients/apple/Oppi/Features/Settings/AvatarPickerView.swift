@@ -37,17 +37,31 @@ struct AvatarPickerView: View {
             SessionGridBadgeView.clearCache()
             dismiss()
         } label: {
-            HStack {
-                Text(option.displayName)
-                    .font(.system(size: 16, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.themeFg)
+            HStack(spacing: 12) {
+                AssistantAvatarPreview(avatar: option, sessionId: "avatar-picker-\(option.displayName)", size: 30)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.displayName)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.themeFg)
+
+                    if let description = option.pickerDescription {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
+                }
+
                 Spacer()
+
                 if avatar == option {
-                    Image(systemName: "checkmark")
+                    Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.themeGreen)
                 }
             }
+            .padding(.vertical, 2)
         }
+        .buttonStyle(.plain)
     }
 
     private var emojiSection: some View {
@@ -89,52 +103,84 @@ private struct EmojiInputRow: View {
     let onSelectGenmoji: (Data) -> Void
 
     var body: some View {
-        HStack {
-            Text("Pick emoji")
-                .foregroundStyle(.themeComment)
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.themeComment.opacity(0.10))
+                Image(systemName: "face.smiling")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.themeBlue)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Emoji or Genmoji")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.themeFg)
+                Text("Choose a custom assistant badge")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+
             Spacer()
+
             EmojiTextField(onSelect: onSelect, onSelectGenmoji: onSelectGenmoji)
                 .frame(width: 44, height: 44)
+                .background(Color.themeComment.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+        .padding(.vertical, 2)
     }
 }
 
-// MARK: - UIKit Emoji TextField
+struct AssistantAvatarPreview: View {
+    let avatar: AssistantAvatar
+    var sessionId: String = "assistant-avatar-preview"
+    var size: CGFloat = 28
 
-/// UITextField that forces the emoji keyboard and detects Genmoji.
+    var body: some View {
+        Image(uiImage: AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: size * 2))
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .background(Color.themeComment.opacity(0.10), in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous))
+    }
+}
+
+// MARK: - UIKit Emoji/Genmoji Input
+
+/// UITextView-backed input that forces the emoji keyboard and detects Genmoji.
+/// Uses UITextView (not UITextField) because supportsAdaptiveImageGlyph
+/// is only available on UITextView.
 private struct EmojiTextField: UIViewRepresentable {
     let onSelect: (String) -> Void
     let onSelectGenmoji: (Data) -> Void
 
-    func makeUIView(context: Context) -> EmojiUITextField {
-        let field = EmojiUITextField()
-        field.delegate = context.coordinator
-        field.textAlignment = .center
-        field.font = .systemFont(ofSize: 28)
-        field.placeholder = "😊"
-        field.tintColor = .clear // hide cursor
+    func makeUIView(context: Context) -> EmojiUITextView {
+        let view = EmojiUITextView()
+        view.delegate = context.coordinator
+        view.font = .systemFont(ofSize: 28)
+        view.textAlignment = .center
+        view.backgroundColor = .clear
+        view.tintColor = .clear
+        view.isScrollEnabled = false
+        view.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        view.textContainer.maximumNumberOfLines = 1
 
-        // Enable Genmoji on iOS 18+
         if #available(iOS 18.0, *) {
-            field.supportsAdaptiveImageGlyph = true
+            view.supportsAdaptiveImageGlyph = true
         }
 
-        field.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.textDidChange(_:)),
-            for: .editingChanged
-        )
-
-        return field
+        return view
     }
 
-    func updateUIView(_ uiView: EmojiUITextField, context: Context) {}
+    func updateUIView(_ uiView: EmojiUITextView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelect: onSelect, onSelectGenmoji: onSelectGenmoji)
     }
 
-    final class Coordinator: NSObject, UITextFieldDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate {
         let onSelect: (String) -> Void
         let onSelectGenmoji: (Data) -> Void
 
@@ -143,10 +189,11 @@ private struct EmojiTextField: UIViewRepresentable {
             self.onSelectGenmoji = onSelectGenmoji
         }
 
-        @objc func textDidChange(_ textField: UITextField) {
-            // Check for Genmoji first (iOS 18+)
-            if #available(iOS 18.0, *),
-               let attrText = textField.attributedText {
+        func textViewDidChange(_ textView: UITextView) {
+            guard let attrText = textView.attributedText, attrText.length > 0 else { return }
+
+            // Check for Genmoji (iOS 18+)
+            if #available(iOS 18.0, *) {
                 let range = NSRange(location: 0, length: attrText.length)
                 var foundGenmoji = false
                 attrText.enumerateAttribute(
@@ -155,42 +202,30 @@ private struct EmojiTextField: UIViewRepresentable {
                     options: []
                 ) { value, _, stop in
                     if let glyph = value as? NSAdaptiveImageGlyph {
-                        onSelectGenmoji(glyph.imageContent)
+                        self.onSelectGenmoji(glyph.imageContent)
                         foundGenmoji = true
                         stop.pointee = true
                     }
                 }
                 if foundGenmoji {
-                    textField.text = ""
+                    textView.text = ""
                     return
                 }
             }
 
-            // Regular emoji
-            guard let text = textField.text, !text.isEmpty else { return }
-            // Take just the first character/emoji
+            // Regular emoji — take the first character
+            let text = textView.text ?? ""
             if let first = text.first {
-                let emoji = String(first)
-                onSelect(emoji)
-                textField.text = ""
+                onSelect(String(first))
+                textView.text = ""
             }
-        }
-
-        func textField(
-            _ textField: UITextField,
-            shouldChangeCharactersIn range: NSRange,
-            replacementString string: String
-        ) -> Bool {
-            // Allow the change — we handle it in textDidChange
-            true
         }
     }
 }
 
-/// UITextField subclass that always shows the emoji keyboard.
-private final class EmojiUITextField: UITextField {
+/// UITextView subclass that always shows the emoji keyboard.
+private final class EmojiUITextView: UITextView {
     override var textInputMode: UITextInputMode? {
-        // Find the emoji input mode
         for mode in UITextInputMode.activeInputModes {
             if mode.primaryLanguage == "emoji" {
                 return mode

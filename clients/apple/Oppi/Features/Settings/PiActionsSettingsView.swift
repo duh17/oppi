@@ -51,7 +51,7 @@ struct PiActionsSettingsView: View {
             }
         }
         .themedListSurface()
-        .navigationTitle("Pi Actions")
+        .navigationTitle("π Actions")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -81,7 +81,7 @@ struct PiActionsSettingsView: View {
             .presentationDetents([.medium, .large])
         }
         .confirmationDialog(
-            "Reset all pi actions to defaults?",
+            "Reset all π actions to defaults?",
             isPresented: $showResetConfirmation,
             titleVisibility: .visible
         ) {

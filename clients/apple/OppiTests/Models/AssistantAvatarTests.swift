@@ -14,10 +14,17 @@ struct AssistantAvatarTests {
 
     @Test("display names")
     func displayNames() {
-        #expect(AssistantAvatar.piText.displayName == "π")
-        #expect(AssistantAvatar.golGrid.displayName == "PioL")
+        #expect(AssistantAvatar.piText.displayName == "Classic π")
+        #expect(AssistantAvatar.golGrid.displayName == "Grid π")
         #expect(AssistantAvatar.emoji("🤖").displayName == "🤖")
         #expect(AssistantAvatar.emoji("🧠").displayName == "🧠")
+    }
+
+    @Test("invalid persisted value falls back to grid")
+    func invalidPersistedValueFallsBackToGrid() {
+        UserDefaults.standard.set("totally-unknown", forKey: "assistantAvatarType")
+        #expect(AssistantAvatar.current == .golGrid)
+        UserDefaults.standard.removeObject(forKey: "assistantAvatarType")
     }
 
     @Test("default is piText")
@@ -56,5 +63,12 @@ struct AssistantAvatarTests {
         #expect(AssistantAvatar.emoji("🤖") == .emoji("🤖"))
         #expect(AssistantAvatar.emoji("🤖") != .emoji("🧠"))
         #expect(AssistantAvatar.emoji("🤖") != .piText)
+    }
+
+    @Test("cache identifiers distinguish emoji values")
+    func cacheIdentifiers() {
+        #expect(AssistantAvatar.piText.cacheIdentifier == "piText")
+        #expect(AssistantAvatar.golGrid.cacheIdentifier == "golGrid")
+        #expect(AssistantAvatar.emoji("🤖").cacheIdentifier != AssistantAvatar.emoji("🧠").cacheIdentifier)
     }
 }

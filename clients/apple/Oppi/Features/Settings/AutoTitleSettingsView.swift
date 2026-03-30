@@ -14,6 +14,7 @@ struct AutoTitleSettingsView: View {
     @State private var models: [ModelInfo] = []
     @State private var isLoadingModels = false
     @State private var isLoadingConfig = false
+    @State private var hasLoadedInitialState = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -34,7 +35,12 @@ struct AutoTitleSettingsView: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                    } else if !models.isEmpty {
+                    } else if groupedModels.isEmpty {
+                        LabeledContent("Model") {
+                            Text("No compatible models")
+                                .foregroundStyle(.themeComment)
+                        }
+                    } else {
                         Picker("Model", selection: $selectedModel) {
                             ForEach(groupedModels) { group in
                                 Section(group.provider) {
@@ -64,10 +70,11 @@ struct AutoTitleSettingsView: View {
         .navigationTitle("Auto-name Sessions")
         .onChange(of: provider) { _, newValue in
             AppPreferences.Session.setAutoTitleProvider(newValue)
+            guard hasLoadedInitialState else { return }
             syncServerConfig()
         }
         .onChange(of: selectedModel) { oldValue, newValue in
-            guard !newValue.isEmpty, oldValue != newValue else { return }
+            guard hasLoadedInitialState, !newValue.isEmpty, oldValue != newValue else { return }
             syncServerConfig()
         }
         .task {
@@ -77,32 +84,8 @@ struct AutoTitleSettingsView: View {
 
     // MARK: - Grouped Models
 
-    /// Providers whose APIs don't support standard chat completions
-    /// (system + user messages). These models return empty responses
-    /// when called via completeSimple.
-    private static let incompatibleProviders: Set<String> = ["openai-codex"]
-
     private var groupedModels: [ModelGroup] {
-        let compatible = models.filter { !Self.incompatibleProviders.contains($0.provider) }
-        let byProvider = Dictionary(grouping: compatible, by: \.provider)
-        return byProvider
-            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
-            .map { provider, items in
-                ModelGroup(
-                    provider: provider,
-                    models: items.map { info in
-                        let fullId = info.id.hasPrefix("\(info.provider)/")
-                            ? info.id
-                            : "\(info.provider)/\(info.id)"
-                        return ModelGroup.Entry(
-                            id: info.id,
-                            fullId: fullId,
-                            name: info.name
-                        )
-                    }
-                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                )
-            }
+        AutoTitleModelCatalog.compatibleModelGroups(from: models)
     }
 
     private var footerText: String {
@@ -121,6 +104,7 @@ struct AutoTitleSettingsView: View {
     private func loadInitialState() async {
         guard let api = apiClient else { return }
 
+        hasLoadedInitialState = false
         isLoadingConfig = true
         isLoadingModels = true
         errorMessage = nil
@@ -129,6 +113,7 @@ struct AutoTitleSettingsView: View {
         async let configTask: Void = loadServerConfig(api: api)
         async let modelsTask: Void = loadModels(api: api)
         _ = await (configTask, modelsTask)
+        hasLoadedInitialState = true
     }
 
     private func loadServerConfig(api: APIClient) async {
@@ -147,11 +132,9 @@ struct AutoTitleSettingsView: View {
         defer { isLoadingModels = false }
         do {
             models = try await api.listModels()
-            // If no model is selected yet, pick the first one
-            if selectedModel.isEmpty, let first = models.first {
-                selectedModel = first.id.hasPrefix("\(first.provider)/")
-                    ? first.id
-                    : "\(first.provider)/\(first.id)"
+            if selectedModel.isEmpty,
+               let firstCompatible = AutoTitleModelCatalog.firstCompatibleModelID(from: models) {
+                selectedModel = firstCompatible
             }
         } catch {
             errorMessage = "Failed to load models: \(error.localizedDescription)"
@@ -177,6 +160,7 @@ struct AutoTitleSettingsView: View {
         Task {
             do {
                 try await api.setAutoTitleConfig(config)
+                errorMessage = nil
             } catch {
                 errorMessage = "Failed to save config: \(error.localizedDescription)"
             }
@@ -186,7 +170,48 @@ struct AutoTitleSettingsView: View {
 
 // MARK: - Model Grouping
 
-private struct ModelGroup: Identifiable {
+/// Shared helpers for filtering and normalizing auto-title model choices.
+enum AutoTitleModelCatalog {
+    /// Providers whose APIs don't support standard chat completions
+    /// (system + user messages). These models return empty responses
+    /// when called via completeSimple.
+    static let incompatibleProviders: Set<String> = ["openai-codex"]
+
+    static func fullModelID(for info: ModelInfo) -> String {
+        info.id.hasPrefix("\(info.provider)/")
+            ? info.id
+            : "\(info.provider)/\(info.id)"
+    }
+
+    static func compatibleModelGroups(from models: [ModelInfo]) -> [ModelGroup] {
+        let compatible = models.filter { !incompatibleProviders.contains($0.provider) }
+        let byProvider = Dictionary(grouping: compatible, by: \.provider)
+        return byProvider
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .map { provider, items in
+                ModelGroup(
+                    provider: provider,
+                    models: items.map { info in
+                        ModelGroup.Entry(
+                            id: info.id,
+                            fullId: fullModelID(for: info),
+                            name: info.name
+                        )
+                    }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                )
+            }
+    }
+
+    static func firstCompatibleModelID(from models: [ModelInfo]) -> String? {
+        compatibleModelGroups(from: models)
+            .flatMap(\.models)
+            .first?
+            .fullId
+    }
+}
+
+struct ModelGroup: Identifiable {
     let provider: String
     let models: [Entry]
 

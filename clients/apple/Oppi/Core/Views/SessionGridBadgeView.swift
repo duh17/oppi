@@ -1,86 +1,23 @@
 import UIKit
 
-/// Renders the assistant avatar as a cached `UIImage` in a `UIImageView`.
-///
-/// Supports all `AssistantAvatar` types:
-/// - `.piText` → rendered π character
-/// - `.golGrid` → Game of Life grid, unique per session
-/// - `.emoji` → rendered emoji character
-/// - `.genmoji` → NSAdaptiveImageGlyph image
-///
-/// One render per (sessionId, avatar, theme) combo, then pure UIImageView.
-final class SessionGridBadgeView: UIView {
-
-    private let imageView = UIImageView()
-    private static var imageCache = NSCache<NSString, UIImage>()
-
-    var sessionId: String = "" {
-        didSet { updateIfNeeded() }
-    }
-
-    private var lastCacheKey: String?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = false
-        backgroundColor = .clear
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("Not supported") }
-
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: 18, height: 18)
-    }
-
-    /// Call when avatar preference changes to flush stale cached images.
-    static func clearCache() {
-        imageCache.removeAllObjects()
-    }
-
-    private func updateIfNeeded() {
-        let avatar = AssistantAvatar.current
-        let themeId = ThemeRuntimeState.currentThemeID()
-        let cacheKey = "\(sessionId):\(themeId):\(avatar.displayName)"
-        guard cacheKey != lastCacheKey else { return }
-        lastCacheKey = cacheKey
-
-        if let cached = Self.imageCache.object(forKey: cacheKey as NSString) {
-            imageView.image = cached
-            return
-        }
-
-        let image: UIImage
+/// Shared image renderer for assistant avatars.
+enum AssistantAvatarRenderer {
+    static func render(avatar: AssistantAvatar, sessionId: String, size: CGFloat) -> UIImage {
         switch avatar {
         case .golGrid:
-            image = Self.renderGrid(sessionId: sessionId, size: 36)
+            return renderGrid(sessionId: sessionId, size: size)
         case .piText:
-            image = Self.renderText("π", size: 36)
+            return renderText("π", size: size)
         case .emoji(let char):
-            image = Self.renderEmoji(char, size: 36)
+            return renderEmoji(char, size: size)
         case .genmoji(let data):
             if #available(iOS 18.0, *),
-               let genmojiImage = Self.renderGenmoji(data: data, size: 36) {
-                image = genmojiImage
-            } else {
-                image = Self.renderText("π", size: 36)
+               let genmojiImage = renderGenmoji(data: data, size: size) {
+                return genmojiImage
             }
+            return renderText("π", size: size)
         }
-
-        Self.imageCache.setObject(image, forKey: cacheKey as NSString)
-        imageView.image = image
     }
-
-    // MARK: - Renderers
 
     private static func renderGrid(sessionId: String, size: CGFloat) -> UIImage {
         let palette = ThemeRuntimeState.currentPalette()
@@ -188,5 +125,70 @@ final class SessionGridBadgeView: UIView {
             ctx.cgContext.scaleBy(x: scale, y: scale)
             textView.layer.render(in: ctx.cgContext)
         }
+    }
+}
+
+/// Renders the assistant avatar as a cached `UIImage` in a `UIImageView`.
+///
+/// Supports all `AssistantAvatar` types:
+/// - `.piText` → rendered π character
+/// - `.golGrid` → Game of Life grid, unique per session
+/// - `.emoji` → rendered emoji character
+/// - `.genmoji` → NSAdaptiveImageGlyph image
+///
+/// One render per (sessionId, avatar, theme) combo, then pure UIImageView.
+final class SessionGridBadgeView: UIView {
+
+    private let imageView = UIImageView()
+    private static var imageCache = NSCache<NSString, UIImage>()
+
+    var sessionId: String = "" {
+        didSet { updateIfNeeded() }
+    }
+
+    private var lastCacheKey: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Not supported") }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: 18, height: 18)
+    }
+
+    /// Call when avatar preference changes to flush stale cached images.
+    static func clearCache() {
+        imageCache.removeAllObjects()
+    }
+
+    private func updateIfNeeded() {
+        let avatar = AssistantAvatar.current
+        let themeId = ThemeRuntimeState.currentThemeID()
+        let cacheKey = "\(sessionId):\(themeId):\(avatar.cacheIdentifier)"
+        guard cacheKey != lastCacheKey else { return }
+        lastCacheKey = cacheKey
+
+        if let cached = Self.imageCache.object(forKey: cacheKey as NSString) {
+            imageView.image = cached
+            return
+        }
+
+        let image = AssistantAvatarRenderer.render(avatar: avatar, sessionId: sessionId, size: 36)
+        Self.imageCache.setObject(image, forKey: cacheKey as NSString)
+        imageView.image = image
     }
 }
