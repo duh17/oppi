@@ -352,7 +352,6 @@ schemes:
     test:
       targets:
         - name: OppiTests
-          parallelizable: true
           randomExecutionOrder: true
         - name: OppiUITests
         - name: OppiE2ETests

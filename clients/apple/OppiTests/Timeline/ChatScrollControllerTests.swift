@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 @testable import Oppi
 
-@Suite("ChatScrollController")
+@Suite("ChatScrollController", .serialized)
 @MainActor
 struct ChatScrollControllerTests {
 
