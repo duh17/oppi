@@ -17,6 +17,8 @@ final class AssistantMarkdownSegmentApplier {
     private var imageViews: [Int: NativeMarkdownImageView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
+    /// References to LaTeX block views for in-place updates.
+    private var latexViews: [Int: NativeLatexBlockView] = [:]
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
 
     /// Smooth character reveal for the actively streaming text segment.
@@ -56,6 +58,7 @@ final class AssistantMarkdownSegmentApplier {
         tableViews.removeAll()
         imageViews.removeAll()
         mermaidViews.removeAll()
+        latexViews.removeAll()
         renderedSegmentSignatures = []
     }
 
@@ -158,6 +161,23 @@ final class AssistantMarkdownSegmentApplier {
                 }
                 stackView.addArrangedSubview(mermaidView)
                 mermaidViews[index] = mermaidView
+
+            case .latexBlock(let code):
+                let latexView = NativeLatexBlockView()
+                let isOpen = config.isStreaming
+                    && index == segments.count - 1
+                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                latexView.configureSelectedTextPi(
+                    router: config.selectedTextPiRouter,
+                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                )
+                if isOpen {
+                    latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+                } else {
+                    config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                }
+                stackView.addArrangedSubview(latexView)
+                latexViews[index] = latexView
             }
         }
 
@@ -221,6 +241,7 @@ final class AssistantMarkdownSegmentApplier {
             tableViews.removeValue(forKey: index)
             imageViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
+            latexViews.removeValue(forKey: index)
             highlightTasks[index]?.cancel()
             highlightTasks.removeValue(forKey: index)
         }
@@ -286,6 +307,23 @@ final class AssistantMarkdownSegmentApplier {
                 }
                 stackView.addArrangedSubview(mermaidView)
                 mermaidViews[index] = mermaidView
+
+            case .latexBlock(let code):
+                let latexView = NativeLatexBlockView()
+                let isOpen = config.isStreaming
+                    && index == segments.count - 1
+                    && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                latexView.configureSelectedTextPi(
+                    router: config.selectedTextPiRouter,
+                    sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                )
+                if isOpen {
+                    latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+                } else {
+                    config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                }
+                stackView.addArrangedSubview(latexView)
+                latexViews[index] = latexView
             }
         }
 
@@ -474,6 +512,22 @@ final class AssistantMarkdownSegmentApplier {
                         config.renderingMode == .export ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
                     }
                 }
+
+            case .latexBlock(let code):
+                if let latexView = latexViews[index] {
+                    let isOpen = config.isStreaming
+                        && index == segments.count - 1
+                        && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                    latexView.configureSelectedTextPi(
+                        router: config.selectedTextPiRouter,
+                        sourceContext: assistantCodeBlockSourceContext(language: "latex", config: config)
+                    )
+                    if isOpen {
+                        latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+                    } else {
+                        config.renderingMode == .export ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                    }
+                }
             }
         }
     }
@@ -582,6 +636,7 @@ private enum SegmentSignature: Equatable {
     case thematicBreak
     case image(url: URL)
     case mermaidDiagram
+    case latexBlock
 
     init(_ segment: FlatSegment) {
         switch segment {
@@ -597,6 +652,8 @@ private enum SegmentSignature: Equatable {
             self = .image(url: url)
         case .mermaidDiagram:
             self = .mermaidDiagram
+        case .latexBlock:
+            self = .latexBlock
         }
     }
 }

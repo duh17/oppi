@@ -189,6 +189,9 @@ enum FlatSegment: Sendable {
     /// A mermaid diagram code block. The applier decides whether to render
     /// the diagram or show as a code block based on streaming state.
     case mermaidDiagram(code: String)
+    /// A LaTeX math code block. Rendered as a formula when the fence is
+    /// closed, or as a syntax-highlighted code block while streaming.
+    case latexBlock(code: String)
 
     /// Convert CommonMark blocks into renderable segments.
     ///
@@ -241,6 +244,8 @@ enum FlatSegment: Sendable {
                 flushPendingText()
                 if let lang = language, SyntaxLanguage.detect(lang) == .mermaid {
                     result.append(.mermaidDiagram(code: code))
+                } else if let lang = language, SyntaxLanguage.detect(lang) == .latex {
+                    result.append(.latexBlock(code: code))
                 } else {
                     result.append(.codeBlock(language: language, code: code))
                 }
