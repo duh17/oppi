@@ -105,6 +105,31 @@ struct StringPathTests {
         let path = "relative/path/file.txt"
         #expect(path.shortenedPath == "relative/path/file.txt")
     }
+
+    @Test func workspaceRelativePathKeepsRelativeInput() {
+        let path = "docs/images/screenshot.png"
+        #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == "docs/images/screenshot.png")
+    }
+
+    @Test func workspaceRelativePathTrimsLeadingDotSlash() {
+        let path = "./docs/images/screenshot.png"
+        #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == "docs/images/screenshot.png")
+    }
+
+    @Test func workspaceRelativePathRelativizesAbsoluteInput() {
+        let path = (NSString(string: "~/workspace/oppi/docs/images/screenshot.png").expandingTildeInPath)
+        #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == "docs/images/screenshot.png")
+    }
+
+    @Test func workspaceRelativePathReturnsRootRelativeFile() {
+        let path = (NSString(string: "~/workspace/oppi/README.md").expandingTildeInPath)
+        #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == "README.md")
+    }
+
+    @Test func workspaceRelativePathRejectsOutsideWorkspace() {
+        let path = "/tmp/screenshot.png"
+        #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == nil)
+    }
 }
 
 // MARK: - SessionStatus+Color

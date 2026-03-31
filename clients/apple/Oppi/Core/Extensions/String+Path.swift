@@ -12,6 +12,42 @@ extension String {
         return self
     }
 
+    /// Convert a path into a workspace-relative path suitable for workspace/session file APIs.
+    ///
+    /// - Relative inputs stay relative (with leading `./` trimmed).
+    /// - Absolute inputs are relativized against `hostMount` when they live inside that workspace.
+    /// - Paths outside the workspace return `nil`.
+    func workspaceRelativePath(hostMount: String?) -> String? {
+        var normalized = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        normalized = normalized.replacingOccurrences(of: "\\", with: "/")
+        while normalized.hasPrefix("./") {
+            normalized.removeFirst(2)
+        }
+
+        if !normalized.hasPrefix("/") && !normalized.hasPrefix("~") {
+            return normalized.isEmpty ? nil : normalized
+        }
+
+        guard let hostMount, !hostMount.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let expandedRoot = NSString(string: hostMount).expandingTildeInPath
+        let expandedPath = NSString(string: normalized).expandingTildeInPath
+        let rootPath = URL(fileURLWithPath: expandedRoot).standardizedFileURL.path
+        let absolutePath = URL(fileURLWithPath: expandedPath).standardizedFileURL.path
+
+        guard absolutePath == rootPath || absolutePath.hasPrefix(rootPath + "/") else {
+            return nil
+        }
+
+        let relative = String(absolutePath.dropFirst(rootPath.count))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return relative.isEmpty ? nil : relative
+    }
+
     var lastPathComponentForDisplay: String {
         let normalized = normalizedDisplayPath
         guard !normalized.isEmpty else { return normalized }

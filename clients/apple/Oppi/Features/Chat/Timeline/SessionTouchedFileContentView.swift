@@ -12,12 +12,45 @@ struct SessionTouchedFileContentView: View {
     let fileName: String
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @State private var phase: Phase = .loading
+    @State private var loadedServerBaseURL: URL?
+    @State private var fetchSessionFileData: ((String) async throws -> Data)?
 
     /// Whether the UIKit file viewer is active (text content loaded).
     private var isUsingFileViewer: Bool {
         if case .text = phase { return true }
         return false
+    }
+
+    private var currentWorkspaceHostMount: String? {
+        if let activeServerId = workspaceStore.activeServerId,
+           let workspace = workspaceStore.workspacesByServer[activeServerId]?
+           .first(where: { $0.id == workspaceId }) {
+            return workspace.hostMount
+        }
+
+        return workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.hostMount
+    }
+
+    private func fullScreenContent(text: String) -> FullScreenCodeContent {
+        guard let serverBaseURL = loadedServerBaseURL,
+              let fetchSessionFileData,
+              let sourcePath = filePath.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
+            return .fromText(text, filePath: filePath)
+        }
+
+        return .fromText(
+            text,
+            filePath: sourcePath,
+            workspaceContext: .init(
+                workspaceID: workspaceId,
+                serverBaseURL: serverBaseURL,
+                fetchWorkspaceFile: { _, path in
+                    try await fetchSessionFileData(path)
+                }
+            )
+        )
     }
 
     var body: some View {
@@ -34,7 +67,7 @@ struct SessionTouchedFileContentView: View {
                 )
             case .text(let content):
                 EmbeddedFileViewerView(
-                    content: .fromText(content, filePath: filePath)
+                    content: fullScreenContent(text: content)
                 )
                 .ignoresSafeArea(edges: .top)
             case .image(let data):
@@ -102,6 +135,14 @@ struct SessionTouchedFileContentView: View {
         guard let api = apiClient else {
             phase = .error("Not connected")
             return
+        }
+        loadedServerBaseURL = api.baseURL
+        fetchSessionFileData = { [api, workspaceId, sessionId] path in
+            try await api.getSessionFileData(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                path: path
+            )
         }
         do {
             let data = try await api.browseSessionTouchedFile(

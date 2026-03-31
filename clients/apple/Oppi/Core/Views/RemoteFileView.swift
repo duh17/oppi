@@ -17,12 +17,16 @@ struct RemoteFileView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var loadedServerBaseURL: URL?
+    @State private var fetchSessionFileData: ((String) async throws -> Data)?
+    @State private var resolvedWorkspaceId: String?
 
     private var filename: String {
         (path as NSString).lastPathComponent
@@ -37,13 +41,47 @@ struct RemoteFileView: View {
         return ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].contains(ext)
     }
 
+    private var currentWorkspaceHostMount: String? {
+        let targetWorkspaceId = resolvedWorkspaceId ?? (workspaceId.isEmpty ? nil : workspaceId)
+        guard let targetWorkspaceId else { return nil }
+
+        if let activeServerId = workspaceStore.activeServerId,
+           let workspace = workspaceStore.workspacesByServer[activeServerId]?
+           .first(where: { $0.id == targetWorkspaceId }) {
+            return workspace.hostMount
+        }
+
+        return workspaceStore.workspaces.first(where: { $0.id == targetWorkspaceId })?.hostMount
+    }
+
+    private func fullScreenContent(text: String) -> FullScreenCodeContent {
+        guard let resolvedWorkspaceId,
+              let serverBaseURL = loadedServerBaseURL,
+              let fetchSessionFileData,
+              let sourcePath = path.workspaceRelativePath(hostMount: currentWorkspaceHostMount) else {
+            return .fromText(text, filePath: path)
+        }
+
+        return .fromText(
+            text,
+            filePath: sourcePath,
+            workspaceContext: .init(
+                workspaceID: resolvedWorkspaceId,
+                serverBaseURL: serverBaseURL,
+                fetchWorkspaceFile: { _, filePath in
+                    try await fetchSessionFileData(filePath)
+                }
+            )
+        )
+    }
+
     var body: some View {
         Group {
             if let content {
                 // Text content: use the canonical full-screen viewer (same as timeline).
                 // The VC has its own nav controller with dismiss, copy, share, toggle.
                 FullScreenCodeView(
-                    content: .fromText(content, filePath: path),
+                    content: fullScreenContent(text: content),
                     selectedTextPiRouter: piRouter
                 )
             } else if let imageData, let uiImage = UIImage(data: imageData) {
@@ -117,6 +155,16 @@ struct RemoteFileView: View {
             isLoading = false
             return
         }
+
+        loadedServerBaseURL = api.baseURL
+        fetchSessionFileData = { [api, resolvedWorkspaceId, sessionId] filePath in
+            try await api.getSessionFileData(
+                workspaceId: resolvedWorkspaceId,
+                sessionId: sessionId,
+                path: filePath
+            )
+        }
+        self.resolvedWorkspaceId = resolvedWorkspaceId
 
         do {
             if isImagePath {

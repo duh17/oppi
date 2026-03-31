@@ -4,13 +4,13 @@
 
 ![Session and search](session-combined.png)
 
-## Mermaid diagrams
+## Session timeline and files
 
-![Mermaid](markdown-rendering.png)
+![Timeline and files](timeline-combined.png)
 
-## ANSI terminal output
+## Markdown with Mermaid and ANSI terminal output
 
-![Bash](bash-output.png)
+![Markdown and bash](markdown-bash-combined.png)
 
 ## Edit diff
 
@@ -28,13 +28,9 @@
 
 ![Permission and safety](permission-safety-combined.png)
 
-## Session timeline and commit detail
+## Git context bar and commit detail
 
-![Timeline and commits](inspect-combined.png)
-
-## Multi-agent
-
-![Multi-agent](multi-agent.png)
+![Context bar and commit](context-commit-combined.png)
 
 ## HTML and markdown rendering
 

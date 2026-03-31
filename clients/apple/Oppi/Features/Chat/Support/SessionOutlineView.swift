@@ -544,10 +544,10 @@ private struct OutlineRow: View {
         case .thinking: return "sparkle"
         case .toolCall(_, let tool, _, _, _, _, _):
             switch tool {
-            case "bash", "Bash": return "terminal"
-            case "read", "Read": return "doc.text"
-            case "write", "Write": return "square.and.pencil"
-            case "edit", "Edit": return "pencil"
+            case "bash", "Bash": return "dollarsign"
+            case "read", "Read": return "magnifyingglass"
+            case "write", "Write": return "pencil"
+            case "edit", "Edit": return "arrow.left.arrow.right"
             default: return "wrench"
             }
         case .permission: return "exclamationmark.shield"
