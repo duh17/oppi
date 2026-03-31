@@ -1,29 +1,37 @@
 # Screenshots
 
-## Context inspector
+## Session with file context and fuzzy search
 
-Token usage, context composition breakdown (base prompt, AGENTS.md, skills, messages), and loaded skills.
+![Session and search](session-combined.png)
 
-![Context inspector](context-inspector.png)
+## Mermaid diagrams
 
-## Bash with ANSI rendering
+![Mermaid](markdown-rendering.png)
 
-Terminal output with true-color ANSI escape sequences rendered natively.
+## ANSI terminal output
 
-![Bash output](bash-output.png)
+![Bash](bash-output.png)
 
-## Write + Edit with diff
+## Edit diff
 
-File write with syntax highlighting, followed by a surgical edit showing added/removed lines.
+![Edit diff](edit-diff-rendering.png)
 
-![Edit and diff rendering](edit-diff-rendering.png)
+## Ask tool
 
-## Extension rendering
+![Ask](ask-combined.png)
 
-Custom pi extension output rendered inline.
+## Context inspector and safety rules
 
-![Extension rendering](extension-rendering.png)
+![Context and safety](context-safety-combined.png)
 
-## Demo video
+## Session timeline and commit detail
 
-https://github.com/user-attachments/assets/<uuid>
+![Timeline and commits](inspect-combined.png)
+
+## Multi-agent
+
+![Multi-agent](multi-agent.png)
+
+## HTML and markdown rendering
+
+![Rendering](rendering-combined.png)
