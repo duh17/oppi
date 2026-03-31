@@ -225,10 +225,17 @@ struct WorkspaceHomeView: View {
     private func hasAttention(for workspaceId: String, serverId: String) -> Bool {
         let conn = coordinator.connection(for: serverId)
         let serverPermissions = conn?.permissionStore.pending ?? []
-        return sessionsFor(workspaceId, serverId: serverId).contains { session in
+
+        // Permissions: check all sessions (child permissions surface on the parent row)
+        let allSessions = sessionsFor(workspaceId, serverId: serverId)
+        let hasPermission = allSessions.contains { session in
             serverPermissions.contains { $0.sessionId == session.id }
-            || session.status == .error
         }
+        if hasPermission { return true }
+
+        // Error status: check root sessions only. Error children of stopped
+        // parents are unactionable and shouldn't flag the workspace.
+        return rootSessionsFor(workspaceId, serverId: serverId).contains { $0.status == .error }
     }
 
     private func latestActivity(for workspaceId: String, serverId: String) -> Date {

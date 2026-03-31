@@ -145,4 +145,49 @@ struct WorkspaceHomeRootCountTests {
         // Both are orphans (parents not in list), so they become roots
         #expect(activeCount(from: sessions) == 2)
     }
+
+    // MARK: - Attention (error status)
+
+    /// Reimplements WorkspaceHomeView.hasAttention error-status check.
+    /// Only root sessions with .error status trigger attention.
+    private func hasErrorAttention(from sessions: [Session]) -> Bool {
+        rootSessions(from: sessions).contains { $0.status == .error }
+    }
+
+    @Test func errorRootTriggersAttention() {
+        let sessions = [
+            makeTestSession(id: "r1", status: .error),
+        ]
+        #expect(hasErrorAttention(from: sessions) == true)
+    }
+
+    @Test func errorChildOfStoppedParentDoesNotTriggerAttention() {
+        // The exact bug: 4 error children of a stopped parent
+        // were showing the attention "!" indicator on the workspace row
+        var c1 = makeTestSession(id: "c1", status: .error)
+        c1.parentSessionId = "parent"
+
+        let sessions = [
+            makeTestSession(id: "parent", status: .stopped),
+            makeTestSession(id: "r1", status: .ready),
+            c1,
+        ]
+
+        // The stopped parent is excluded from roots (it IS a root but stopped)
+        // The error child is excluded because its parent is in the list
+        #expect(hasErrorAttention(from: sessions) == false)
+    }
+
+    @Test func errorChildOfActiveParentDoesNotTriggerAttention() {
+        var c1 = makeTestSession(id: "c1", status: .error)
+        c1.parentSessionId = "parent"
+
+        let sessions = [
+            makeTestSession(id: "parent", status: .busy),
+            c1,
+        ]
+
+        // Parent is active (busy), child is filtered out — only root checked
+        #expect(hasErrorAttention(from: sessions) == false)
+    }
 }
