@@ -32,6 +32,14 @@
 
 ![Context bar and commit](context-commit-combined.png)
 
+## Server stats and daily drill-down
+
+![Server stats](server-combined.png)
+
+## Auto-name sessions
+
+![Settings](settings.png)
+
 ## HTML and markdown rendering
 
 ![Rendering](rendering-combined.png)
