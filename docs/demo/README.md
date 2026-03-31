@@ -20,9 +20,13 @@
 
 ![Ask](ask-combined.png)
 
-## Context inspector and safety rules
+## Context inspector
 
-![Context and safety](context-safety-combined.png)
+![Context](context-inspector-solo.png)
+
+## Permission gate and safety rules
+
+![Permission and safety](permission-safety-combined.png)
 
 ## Session timeline and commit detail
 
