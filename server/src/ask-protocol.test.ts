@@ -103,7 +103,6 @@ describe("extension_ui_request with ask method", () => {
         },
       ],
       allowCustom: true,
-      timeout: 120000,
     };
     if (msg.type === "extension_ui_request") {
       expect(msg.questions).toHaveLength(2);

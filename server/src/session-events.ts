@@ -195,6 +195,13 @@ export class SessionEventProcessor {
         session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
         shouldFlushNow = true;
 
+        // Cancel any pending ask deferred selects so the SDK doesn't hang.
+        // This can happen when the agent loop ends (e.g. stop, error) before
+        // the user responded to the ask card on the phone.
+        if (active.pendingAsk && active.pendingAsk.deferred.length > 0) {
+          this.resolveAskDeferred(key, active, {}, true);
+        }
+
         // Turn duration
         if (metrics && active.turnStartedAt) {
           metrics.record("server.turn_duration_ms", Date.now() - active.turnStartedAt, {
@@ -352,7 +359,6 @@ export class SessionEventProcessor {
         multiSelect: q.multiSelect,
       })),
       allowCustom: (args.allowCustom as boolean) ?? true,
-      timeout: 120000,
     };
 
     active.pendingAsk = {
