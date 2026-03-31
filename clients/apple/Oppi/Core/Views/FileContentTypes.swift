@@ -36,8 +36,11 @@ enum FileType: Equatable {
 
         // Well-known filenames without extension
         switch filename {
-        case "dockerfile", "containerfile", "makefile", "gnumakefile":
+        case "dockerfile", "containerfile", "makefile", "gnumakefile",
+             "justfile":
             return .code(language: .shell)
+        case "rakefile":
+            return .code(language: .ruby)
         case ".gitignore", ".dockerignore", ".prettierignore", ".eslintignore",
              ".npmignore", ".hgignore":
             return .code(language: .shell)

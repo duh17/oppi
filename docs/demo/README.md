@@ -12,17 +12,17 @@
 
 ![Markdown and bash](markdown-bash-combined.png)
 
-## Edit diff
+## Edit and file diff
 
-![Edit diff](edit-diff-rendering.png)
+![Diff](diff-combined.png)
 
 ## Ask tool
 
 ![Ask](ask-combined.png)
 
-## Context inspector
+## Workspace editor and context inspector
 
-![Context](context-inspector-solo.png)
+![Workspace and context](workspace-context-combined.png)
 
 ## Permission gate and safety rules
 

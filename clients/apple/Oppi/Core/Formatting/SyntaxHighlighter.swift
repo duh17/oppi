@@ -45,19 +45,19 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "swift": return .swift
         case "ts", "tsx", "mts", "cts", "typescript": return .typescript
         case "js", "jsx", "mjs", "cjs", "javascript": return .javascript
-        case "py", "pyi", "python": return .python
+        case "py", "pyi", "pyw", "python": return .python
         case "go", "golang": return .go
         case "rs", "rust": return .rust
-        case "rb", "ruby": return .ruby
-        case "sh", "bash", "zsh", "fish", "shell": return .shell
+        case "rb", "erb", "ruby": return .ruby
+        case "sh", "bash", "zsh", "fish", "ksh", "csh", "shell": return .shell
         case "html", "htm": return .html
-        case "css", "scss", "less": return .css
-        case "json", "jsonl", "geojson": return .json
+        case "css", "scss", "less", "sass": return .css
+        case "json", "jsonl", "geojson", "jsonc": return .json
         case "yaml", "yml": return .yaml
         case "toml": return .toml
         case "sql": return .sql
         case "c", "h": return .c
-        case "cpp", "cc", "cxx", "hpp", "hxx", "c++": return .cpp
+        case "cpp", "cc", "cxx", "hpp", "hxx", "hh", "c++": return .cpp
         case "java": return .java
         case "kt", "kts", "kotlin": return .kotlin
         case "zig": return .zig

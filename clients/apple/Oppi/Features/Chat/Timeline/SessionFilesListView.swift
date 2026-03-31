@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Displays the list of files touched (written/edited) by a session.
 ///
-/// Each row shows the file icon, filename, parent path, and a language/type badge.
+/// Each row shows the file icon, filename, and parent path.
 /// When `searchText` is non-empty, filters using `FuzzyMatch` and highlights
 /// matched characters in filename and parent path.
 ///
@@ -63,7 +63,6 @@ struct SessionFilesListView: View {
         let icon = FileIcon.forPath(path)
         let fileName = path.lastPathComponentForDisplay
         let parentPath = path.parentPathForDisplay
-        let fileType = FileType.detect(from: path)
         let gitFile = gitFilesByPath[path]
         let (filePositions, parentPositions) = Self.splitPositions(matchPositions, in: path)
 
@@ -79,7 +78,7 @@ struct SessionFilesListView: View {
                 } label: {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
-                        fileType: fileType, gitFile: gitFile,
+                        gitFile: gitFile,
                         filePositions: filePositions, parentPositions: parentPositions
                     )
                 }
@@ -102,7 +101,7 @@ struct SessionFilesListView: View {
                 } label: {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
-                        fileType: fileType, gitFile: gitFile,
+                        gitFile: gitFile,
                         filePositions: filePositions, parentPositions: parentPositions
                     )
                 }
@@ -110,7 +109,7 @@ struct SessionFilesListView: View {
                 // No workspace context — best effort plain display
                 fileRowContent(
                     icon: icon, fileName: fileName, parentPath: parentPath,
-                    fileType: fileType, gitFile: gitFile,
+                    gitFile: gitFile,
                     filePositions: filePositions, parentPositions: parentPositions
                 )
             }
@@ -122,7 +121,6 @@ struct SessionFilesListView: View {
         icon: FileIcon,
         fileName: String,
         parentPath: String?,
-        fileType: FileType,
         gitFile: GitFileStatus?,
         filePositions: [Int],
         parentPositions: [Int]
@@ -140,32 +138,19 @@ struct SessionFilesListView: View {
 
                 // File name + parent path
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        if filePositions.isEmpty {
-                            Text(fileName)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.themeFg)
-                                .lineLimit(1)
-                        } else {
-                            Text(Self.highlighted(
-                                fileName,
-                                positions: filePositions,
-                                baseColor: .themeFg,
-                                baseFont: .subheadline.weight(.medium)
-                            ))
+                    if filePositions.isEmpty {
+                        Text(fileName)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.themeFg)
                             .lineLimit(1)
-                        }
-
-                        // Language / type badge
-                        Text(fileType.displayLabel)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(badgeColor(for: fileType))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                badgeColor(for: fileType).opacity(0.1),
-                                in: RoundedRectangle(cornerRadius: 4)
-                            )
+                    } else {
+                        Text(Self.highlighted(
+                            fileName,
+                            positions: filePositions,
+                            baseColor: .themeFg,
+                            baseFont: .subheadline.weight(.medium)
+                        ))
+                        .lineLimit(1)
                     }
 
                     if let parentPath {
@@ -280,31 +265,5 @@ struct SessionFilesListView: View {
 
     private func isAbsolutePath(_ path: String) -> Bool {
         path.hasPrefix("/") || path.hasPrefix("~")
-    }
-
-    private func badgeColor(for fileType: FileType) -> Color {
-        switch fileType {
-        case .html: return .themeOrange
-        case .markdown: return .themeBlue
-        case .json: return .themeYellow
-        case .code(let lang):
-            switch lang {
-            case .swift: return .themeOrange
-            case .typescript: return .themeBlue
-            case .javascript: return .themeYellow
-            case .python: return .themeCyan
-            case .go: return .themeCyan
-            case .rust: return .themeOrange
-            case .ruby: return .themeRed
-            case .shell: return .themeGreen
-            default: return .themeFgDim
-            }
-        case .image: return .themePurple
-        case .latex: return .themeGreen
-        case .orgMode: return .themeCyan
-        case .mermaid: return .themePurple
-        case .graphviz: return .themeOrange
-        default: return .themeComment
-        }
     }
 }
