@@ -57,7 +57,8 @@ struct FileSuggestionList: View {
                     } else {
                         HighlightedSuggestionText(
                             path: suggestion.path,
-                            matchPositions: suggestion.matchPositions
+                            matchPositions: suggestion.matchPositions,
+                            isDirectory: suggestion.isDirectory
                         )
                         .lineLimit(1)
                     }
@@ -82,39 +83,55 @@ struct FileSuggestionList: View {
 
 // MARK: - Highlighted Suggestion Text
 
-/// Renders a file path with matched characters highlighted.
-/// Shows only the filename portion but highlights based on full-path match positions.
+/// Renders just the filename with matched characters highlighted.
+/// Match positions are full-path indices — only those within the filename range are shown.
 private struct HighlightedSuggestionText: View {
     let path: String
     let matchPositions: [Int]
+    let isDirectory: Bool
 
     var body: some View {
         Text(attributedText)
     }
 
     private var attributedText: AttributedString {
-        let scalars = Array(path.unicodeScalars)
-        let matchSet = Set(matchPositions)
-        var result = AttributedString()
+        let normalizedPath = (isDirectory && path.hasSuffix("/")) ? String(path.dropLast()) : path
+        let scalars = Array(normalizedPath.unicodeScalars)
 
+        // Find where the filename starts (after the last `/`)
+        let filenameOffset: Int
+        if let lastSlash = scalars.lastIndex(of: "/") {
+            filenameOffset = lastSlash + 1
+        } else {
+            filenameOffset = 0
+        }
+
+        let filenameScalars = Array(scalars[filenameOffset...])
+        let matchSet = Set(matchPositions.compactMap { pos -> Int? in
+            let adjusted = pos - filenameOffset
+            guard adjusted >= 0, adjusted < filenameScalars.count else { return nil }
+            return adjusted
+        })
+
+        var result = AttributedString()
         var i = 0
-        while i < scalars.count {
+        while i < filenameScalars.count {
             if matchSet.contains(i) {
                 var end = i
-                while end + 1 < scalars.count, matchSet.contains(end + 1) {
+                while end + 1 < filenameScalars.count, matchSet.contains(end + 1) {
                     end += 1
                 }
-                var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                var segment = AttributedString(String(String.UnicodeScalarView(filenameScalars[i...end])))
                 segment.foregroundColor = .themeYellow
                 segment.font = .system(.subheadline, design: .monospaced).bold()
                 result.append(segment)
                 i = end + 1
             } else {
                 var end = i
-                while end + 1 < scalars.count, !matchSet.contains(end + 1) {
+                while end + 1 < filenameScalars.count, !matchSet.contains(end + 1) {
                     end += 1
                 }
-                var segment = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
+                var segment = AttributedString(String(String.UnicodeScalarView(filenameScalars[i...end])))
                 segment.foregroundColor = .themeFgDim
                 segment.font = .system(.subheadline, design: .monospaced)
                 result.append(segment)
