@@ -79,8 +79,7 @@ struct OppiApp: App {
     private var serverStore: ServerStore { coordinator.serverStore }
 #if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
-    @State private var autoClientLogUploadInFlight = false
-    @State private var lastAutoClientLogUploadMs: Int64 = 0
+
 #endif
     @State private var inAppBrowserDestination: InAppBrowserDestination?
     @State private var inviteBootstrapInFlight = false
@@ -463,21 +462,12 @@ struct OppiApp: App {
     private func handleWatchdogStall(_ context: MainThreadStallContext) async {
         guard scenePhase == .active else { return }
         guard !navigation.showOnboarding else { return }
-        guard !autoClientLogUploadInFlight else { return }
-
-        let nowMs = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
-        let cooldownMs: Int64 = 90_000
-        guard nowMs - lastAutoClientLogUploadMs >= cooldownMs else { return }
 
         guard let sessionId = connection.sessionStore.activeSessionId else { return }
-        guard let api = connection.apiClient else { return }
-
-        autoClientLogUploadInFlight = true
-        lastAutoClientLogUploadMs = nowMs
 
         ClientLog.error(
             "Diagnostics",
-            "Auto-upload triggered by main-thread stall",
+            "Main-thread stall detected",
             metadata: [
                 "sessionId": sessionId,
                 "thresholdMs": String(context.thresholdMs),
@@ -490,48 +480,6 @@ struct OppiApp: App {
             footprintMB: context.footprintMB,
             sessionId: sessionId
         )
-
-        let entries = await ClientLogBuffer.shared.snapshot(limit: 500, sessionId: sessionId)
-        guard !entries.isEmpty else {
-            autoClientLogUploadInFlight = false
-            return
-        }
-
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-
-        let request = ClientLogUploadRequest(
-            generatedAt: nowMs,
-            trigger: "stall-watchdog-auto",
-            appVersion: version,
-            buildNumber: build,
-            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            deviceModel: UIDevice.current.model,
-            entries: entries
-        )
-
-        guard let workspaceId = connection.sessionStore.workspaceId(for: sessionId), !workspaceId.isEmpty else {
-            autoClientLogUploadInFlight = false
-            return
-        }
-
-        do {
-            try await api.uploadClientLogs(workspaceId: workspaceId, sessionId: sessionId, request: request)
-            ClientLog.info("Diagnostics", "Auto-uploaded \(entries.count) client log entries after stall", metadata: [
-                "sessionId": sessionId,
-            ])
-        } catch {
-            ClientLog.error(
-                "Diagnostics",
-                "Auto-upload failed",
-                metadata: [
-                    "sessionId": sessionId,
-                    "error": error.localizedDescription,
-                ]
-            )
-        }
-
-        autoClientLogUploadInFlight = false
     }
 #endif
 

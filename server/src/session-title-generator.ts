@@ -155,7 +155,10 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
         return null;
       }
       const auth = await this.modelRegistry.getApiKeyAndHeaders(model);
-      const apiKey = auth.ok ? auth.apiKey : undefined;
+      // completeSimple throws if apiKey is falsy, even for local models that
+      // don't need auth (e.g. mlx-server). Use a placeholder so the request
+      // goes through — the local server ignores the Authorization header.
+      const apiKey = (auth.ok ? auth.apiKey : undefined) || "no-key-needed";
       const abortController = new AbortController();
       const timeout = setTimeout(() => abortController.abort(), GENERATION_TIMEOUT_MS);
 

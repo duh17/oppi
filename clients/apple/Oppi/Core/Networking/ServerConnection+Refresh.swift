@@ -33,14 +33,6 @@ extension ServerConnection {
         _onRefreshBreadcrumbForTesting?(message, metadata, level)
 
         Task.detached(priority: .utility) {
-#if DEBUG
-            await ClientLogBuffer.shared.record(
-                level: level,
-                category: "Refresh",
-                message: message,
-                metadata: metadata
-            )
-#endif
             await SentryService.shared.recordBreadcrumb(
                 level: level,
                 category: "Refresh",

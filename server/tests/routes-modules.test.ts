@@ -499,7 +499,9 @@ describe("routes modules", () => {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           listSessions: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
-          listSessionsByWorkspace: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
+          listSessionsByWorkspace: vi.fn(() => [
+            { id: "s1", workspaceId: "ws-1", name: "Session 1" },
+          ]),
         },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;
@@ -518,7 +520,11 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(200);
 
-      const body = JSON.parse(res.body) as { sessions: unknown[]; workspace: unknown; totalCount: number };
+      const body = JSON.parse(res.body) as {
+        sessions: unknown[];
+        workspace: unknown;
+        totalCount: number;
+      };
       expect(body.sessions).toHaveLength(1);
       expect(body.workspace).toBeDefined();
       expect(body.totalCount).toBe(1);
@@ -651,110 +657,6 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.body)).toEqual({ error: "since must be a non-negative integer" });
-    });
-
-    it("rejects client-log uploads when OPPI_TELEMETRY_MODE disables telemetry", async () => {
-      const previousMode = process.env.OPPI_TELEMETRY_MODE;
-      process.env.OPPI_TELEMETRY_MODE = "public";
-
-      try {
-        const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
-        const res = makeResponse();
-
-        const handled = await dispatch({
-          method: "POST",
-          path: "/workspaces/ws-1/sessions/s1/client-logs",
-          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/client-logs"),
-          req: makeRequest({
-            generatedAt: Date.now(),
-            entries: [
-              {
-                timestamp: Date.now(),
-                level: "info",
-                category: "Test",
-                message: "hello",
-              },
-            ],
-          }) as never,
-          res: res as never,
-        });
-
-        expect(handled).toBe(true);
-        expect(res.statusCode).toBe(403);
-        expect(JSON.parse(res.body)).toEqual({
-          error: "telemetry uploads disabled by OPPI_TELEMETRY_MODE",
-        });
-      } finally {
-        if (previousMode === undefined) {
-          delete process.env.OPPI_TELEMETRY_MODE;
-        } else {
-          process.env.OPPI_TELEMETRY_MODE = previousMode;
-        }
-      }
-    });
-
-    it("accepts client-log uploads and appends JSONL envelope", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-client-logs-"));
-      const previousMode = process.env.OPPI_TELEMETRY_MODE;
-      process.env.OPPI_TELEMETRY_MODE = "internal";
-
-      try {
-        const dispatch = createSessionRoutes(
-          {
-            storage: {
-              getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
-              getDataDir: vi.fn(() => dataDir),
-              getOwnerName: vi.fn(() => "tester"),
-            },
-          } as unknown as RouteContext,
-          createRouteHelpers(),
-        );
-        const res = makeResponse();
-        const generatedAt = Date.now();
-
-        const handled = await dispatch({
-          method: "POST",
-          path: "/workspaces/ws-1/sessions/s1/client-logs",
-          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/client-logs"),
-          req: makeRequest({
-            generatedAt,
-            trigger: "manual",
-            entries: [
-              {
-                timestamp: generatedAt,
-                level: "info",
-                category: "UI",
-                message: "hello world",
-                metadata: { source: "test" },
-              },
-            ],
-          }) as never,
-          res: res as never,
-        });
-
-        expect(handled).toBe(true);
-        expect(res.statusCode).toBe(200);
-        expect(JSON.parse(res.body)).toEqual({ ok: true, accepted: 1 });
-
-        const logPath = join(dataDir, "client-logs", "s1.jsonl");
-        const lines = readFileSync(logPath, "utf8").trim().split("\n");
-        expect(lines).toHaveLength(1);
-        const record = JSON.parse(lines[0]) as {
-          sessionId: string;
-          workspaceId?: string;
-          entries: Array<{ message: string }>;
-        };
-        expect(record.sessionId).toBe("s1");
-        expect(record.workspaceId).toBe("ws-1");
-        expect(record.entries[0]?.message).toBe("hello world");
-      } finally {
-        if (previousMode === undefined) {
-          delete process.env.OPPI_TELEMETRY_MODE;
-        } else {
-          process.env.OPPI_TELEMETRY_MODE = previousMode;
-        }
-        rmSync(dataDir, { recursive: true, force: true });
-      }
     });
 
     it("returns false for unrelated routes", async () => {
@@ -1052,7 +954,6 @@ describe("routes modules", () => {
                 sessionId: "session-1",
                 tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
               },
-
             ],
           }) as never,
           res: res as never,

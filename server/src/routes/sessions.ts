@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
-import { access, appendFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -25,11 +25,7 @@ import {
   validateLocalSessionPath,
   validateCwdAlignment,
 } from "../local-sessions.js";
-import {
-  telemetryUploadsEnabledFromEnv,
-  type ClientLogUploadRequest,
-  type Session,
-} from "../types.js";
+import { type Session } from "../types.js";
 import { ts } from "../log-utils.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -443,112 +439,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       ? ctx.ensureSessionContextWindow(updatedSession)
       : updatedSession;
     helpers.json(res, { ok: true, session: hydratedUpdated });
-  }
-
-  async function handleUploadClientLogs(
-    sessionId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!telemetryUploadsEnabledFromEnv()) {
-      helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
-      return;
-    }
-
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-
-    const body = await helpers.parseBody<ClientLogUploadRequest>(req);
-    const rawEntries = Array.isArray(body.entries) ? body.entries : [];
-    if (rawEntries.length === 0) {
-      helpers.error(res, 400, "entries array required");
-      return;
-    }
-
-    const receivedAt = Date.now();
-    const maxEntries = 1_000;
-    const maxMessageChars = 4_000;
-    const maxMetadataValueChars = 512;
-
-    const entries = rawEntries
-      .slice(-maxEntries)
-      .map((entry) => {
-        const metadata: Record<string, string> = {};
-        if (entry.metadata) {
-          for (const [key, value] of Object.entries(entry.metadata)) {
-            if (typeof value !== "string") continue;
-            metadata[key.slice(0, 64)] = value.slice(0, maxMetadataValueChars);
-          }
-        }
-
-        const level =
-          entry.level === "debug" ||
-          entry.level === "info" ||
-          entry.level === "warning" ||
-          entry.level === "error"
-            ? entry.level
-            : "info";
-
-        return {
-          timestamp:
-            typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp)
-              ? Math.trunc(entry.timestamp)
-              : receivedAt,
-          level,
-          category:
-            typeof entry.category === "string" && entry.category.trim().length > 0
-              ? entry.category.trim().slice(0, 64)
-              : "unknown",
-          message: typeof entry.message === "string" ? entry.message.slice(0, maxMessageChars) : "",
-          metadata,
-        };
-      })
-      .filter((entry) => entry.message.length > 0);
-
-    if (entries.length === 0) {
-      helpers.error(res, 400, "No valid log entries");
-      return;
-    }
-
-    const logsDir = join(ctx.storage.getDataDir(), "client-logs");
-    if (!(await pathExists(logsDir))) {
-      await mkdir(logsDir, { recursive: true, mode: 0o700 });
-    }
-
-    const logPath = join(logsDir, `${sessionId}.jsonl`);
-    const envelope = {
-      receivedAt,
-      generatedAt:
-        typeof body.generatedAt === "number" && Number.isFinite(body.generatedAt)
-          ? Math.trunc(body.generatedAt)
-          : receivedAt,
-      trigger:
-        typeof body.trigger === "string" && body.trigger.trim().length > 0
-          ? body.trigger.trim().slice(0, 64)
-          : "manual",
-      appVersion: typeof body.appVersion === "string" ? body.appVersion.slice(0, 64) : undefined,
-      buildNumber: typeof body.buildNumber === "string" ? body.buildNumber.slice(0, 64) : undefined,
-      osVersion: typeof body.osVersion === "string" ? body.osVersion.slice(0, 128) : undefined,
-      deviceModel: typeof body.deviceModel === "string" ? body.deviceModel.slice(0, 64) : undefined,
-      sessionId,
-      workspaceId: session.workspaceId,
-      entries,
-    };
-
-    await appendFile(logPath, `${JSON.stringify(envelope)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-
-    console.log("[diagnostics] client logs uploaded", {
-      user: ctx.storage.getOwnerName(),
-      sessionId,
-      entries: entries.length,
-    });
-    helpers.json(res, { ok: true, accepted: entries.length });
   }
 
   // ─── Tool Output by ID ───
@@ -1030,14 +920,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
     if (wsSessionStopMatch && method === "POST") {
       await handleStopSession(wsSessionStopMatch[2], res);
-      return true;
-    }
-
-    const wsSessionClientLogsMatch = path.match(
-      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/client-logs$/,
-    );
-    if (wsSessionClientLogsMatch && method === "POST") {
-      await handleUploadClientLogs(wsSessionClientLogsMatch[2], req, res);
       return true;
     }
 

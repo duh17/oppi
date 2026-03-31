@@ -35,9 +35,7 @@ struct ChatView: View {
     @State private var renameText = ""
     @State private var copiedSessionID = false
     @State private var forkedSessionToOpen: ForkRoute?
-#if DEBUG
-    @State private var uploadingClientLogs = false
-#endif
+
     @State private var showCompactConfirmation = false
     @State private var showContextInspector = false
     @State private var suppressNextContextTap = false
@@ -544,10 +542,6 @@ struct ChatView: View {
             Button("Copy Session ID", systemImage: "doc.on.doc") {
                 copySessionID()
             }
-            Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
-                uploadClientLogs()
-            }
-            .disabled(uploadingClientLogs)
         }
 #endif
     }
@@ -773,54 +767,7 @@ struct ChatView: View {
         }
     }
 
-#if DEBUG
-    private func uploadClientLogs() {
-        guard !uploadingClientLogs else { return }
-        guard let api = connection.apiClient else {
-            reducer.process(.error(sessionId: sessionId, message: "No API client available"))
-            return
-        }
-        guard let workspaceId = session?.workspaceId, !workspaceId.isEmpty else {
-            reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
-            return
-        }
 
-        uploadingClientLogs = true
-        ClientLog.info("ChatView", "Manual client log upload requested", metadata: [
-            "sessionId": sessionId,
-        ])
-
-        Task { @MainActor in
-            defer { uploadingClientLogs = false }
-
-            let entries = await ClientLogBuffer.shared.snapshot(limit: 800, sessionId: sessionId)
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-            let request = ClientLogUploadRequest(
-                generatedAt: Int64((Date().timeIntervalSince1970 * 1_000).rounded()),
-                trigger: "manual-toolbar",
-                appVersion: version,
-                buildNumber: build,
-                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-                deviceModel: UIDevice.current.model,
-                entries: entries
-            )
-
-            do {
-                try await api.uploadClientLogs(workspaceId: workspaceId, sessionId: sessionId, request: request)
-                reducer.appendSystemEvent("Uploaded \(entries.count) client log entries")
-                ClientLog.info("ChatView", "Client log upload succeeded", metadata: [
-                    "sessionId": sessionId,
-                    "entries": String(entries.count),
-                ])
-            } catch {
-                let message = "Client log upload failed: \(error.localizedDescription)"
-                reducer.process(.error(sessionId: sessionId, message: message))
-                ClientLog.error("ChatView", message, metadata: ["sessionId": sessionId])
-            }
-        }
-    }
-#endif
 
     // MARK: - Sheets & Alerts
 

@@ -564,24 +564,6 @@ export interface UpdateWorkspaceRequest {
   sandboxConfig?: { allowedHosts?: string[] } | null;
 }
 
-export interface ClientLogUploadEntry {
-  timestamp: number;
-  level: "debug" | "info" | "warning" | "error";
-  category: string;
-  message: string;
-  metadata?: Record<string, string>;
-}
-
-export interface ClientLogUploadRequest {
-  generatedAt: number;
-  trigger?: string;
-  appVersion?: string;
-  buildNumber?: string;
-  osVersion?: string;
-  deviceModel?: string;
-  entries: ClientLogUploadEntry[];
-}
-
 export function telemetryUploadsEnabledFromEnv(mode = process.env.OPPI_TELEMETRY_MODE): boolean {
   const raw = mode?.trim().toLowerCase() ?? "";
   if (!raw) {
