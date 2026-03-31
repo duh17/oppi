@@ -236,6 +236,7 @@ enum ToolCallFormatting {
     }
 
     static func editOldAndNewText(from args: [String: JSONValue]?) -> (oldText: String, newText: String)? {
+        // Legacy format: top-level oldText/newText
         let oldText = firstStringValue(
             in: args,
             keys: ["oldText", "old_text", "oldString", "old_string", "before", "beforeText"]
@@ -244,9 +245,28 @@ enum ToolCallFormatting {
             in: args,
             keys: ["newText", "new_text", "newString", "new_string", "after", "afterText"]
         )
+        if let oldText, let newText {
+            return (oldText: oldText, newText: newText)
+        }
 
-        guard let oldText, let newText else { return nil }
-        return (oldText: oldText, newText: newText)
+        // New format: edits array [{oldText, newText}]
+        guard let editsArray = args?["edits"]?.arrayValue, !editsArray.isEmpty else { return nil }
+
+        var olds: [String] = []
+        var news: [String] = []
+
+        for edit in editsArray {
+            guard let editObj = edit.objectValue,
+                  let old = editObj["oldText"]?.stringValue,
+                  let new = editObj["newText"]?.stringValue else {
+                continue
+            }
+            olds.append(old)
+            news.append(new)
+        }
+
+        guard !olds.isEmpty else { return nil }
+        return (oldText: olds.joined(separator: "\n"), newText: news.joined(separator: "\n"))
     }
 
     static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {
