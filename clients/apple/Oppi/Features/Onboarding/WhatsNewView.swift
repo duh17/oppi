@@ -62,19 +62,13 @@ struct WhatsNewView: View {
             icon: "folder",
             iconColor: .themeCyan,
             title: String(localized: "File Browser"),
-            description: String(localized: "Browse and search workspace files with breadcrumb navigation. Renders markdown, PDF, code, images, and video.")
-        ),
-        WhatsNewFeature(
-            icon: "magnifyingglass",
-            iconColor: .themeYellow,
-            title: String(localized: "Full-Text Search"),
-            description: String(localized: "Search across all sessions using SQLite FTS5 indexing. Fuzzy matching for files, models, and session outlines.")
+            description: String(localized: "Browse and search workspace files. Renders markdown, HTML, PDF, code, images, and video. Export via share sheet.")
         ),
         WhatsNewFeature(
             icon: "paintpalette",
-            iconColor: .themeRed,
-            title: String(localized: "Themes"),
-            description: String(localized: "OLED, Night, and Paper themes. Code blocks meet WCAG AA contrast. Configurable assistant avatar and code font.")
+            iconColor: .themeYellow,
+            title: String(localized: "Themes and Appearance"),
+            description: String(localized: "Dark, OLED, Light, and Night themes with custom import. Configurable assistant avatar and code font.")
         ),
     ]
 
