@@ -354,18 +354,8 @@ enum ToolTimelineRowUIHelpers {
     }
 
     static func toolSymbolName(for toolNamePrefix: String?) -> String? {
-        switch toolNamePrefix {
-        case "$":
-            return "dollarsign"
-        case "read":
-            return "magnifyingglass"
-        case "write":
-            return "pencil"
-        case "edit":
-            return "arrow.left.arrow.right"
-        default:
-            return nil
-        }
+        guard let toolNamePrefix else { return nil }
+        return ToolCallFormatting.sfSymbolName(for: toolNamePrefix)
     }
 
     /// Resolve a language badge string to either an asset catalog image or an SF Symbol.

@@ -193,6 +193,27 @@ enum ToolCallFormatting {
     static func isFindTool(_ name: String) -> Bool { normalized(name) == "find" }
     static func isLsTool(_ name: String) -> Bool { normalized(name) == "ls" }
 
+    // MARK: - Tool SF Symbol
+
+    /// Canonical SF Symbol name for a built-in tool.
+    ///
+    /// Accepts either a raw tool name (`"bash"`, `"Read"`) or a
+    /// `toolNamePrefix` (`"$"`, `"read"`). Returns `nil` for unknown/extension tools.
+    static func sfSymbolName(for toolName: String) -> String? {
+        switch toolName {
+        case "$", "bash", "Bash":
+            return "dollarsign"
+        case "read", "Read":
+            return "magnifyingglass"
+        case "write", "Write":
+            return "pencil"
+        case "edit", "Edit":
+            return "arrow.left.arrow.right"
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Edit Diff Stats
 
     /// Compute +added/-removed line counts from edit args.

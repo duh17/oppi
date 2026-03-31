@@ -543,13 +543,7 @@ private struct OutlineRow: View {
         case .audioClip: return "waveform"
         case .thinking: return "sparkle"
         case .toolCall(_, let tool, _, _, _, _, _):
-            switch tool {
-            case "bash", "Bash": return "dollarsign"
-            case "read", "Read": return "magnifyingglass"
-            case "write", "Write": return "pencil"
-            case "edit", "Edit": return "arrow.left.arrow.right"
-            default: return "wrench"
-            }
+            return ToolCallFormatting.sfSymbolName(for: tool) ?? "wrench"
         case .permission: return "exclamationmark.shield"
         case .permissionResolved: return "checkmark.shield"
         case .systemEvent: return "info.circle"
