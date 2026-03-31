@@ -698,6 +698,26 @@ export function translatePiEvent(
         return EMPTY_MESSAGES;
       }
 
+      // Check for error stop reason (e.g. 413 request_too_large from Anthropic).
+      // Pi delivers these as message_end with stopReason: "error" + errorMessage.
+      // The PiMessage type doesn't include these fields, so access via asRecord().
+      const msgRecord = asRecord(message as unknown);
+      if (msgRecord && msgRecord.stopReason === "error") {
+        const rawError =
+          typeof msgRecord.errorMessage === "string" ? msgRecord.errorMessage : "Unknown error";
+
+        // Extract a human-readable message for known error types.
+        let userError = rawError;
+        if (rawError.includes("request_too_large")) {
+          userError =
+            "Request too large - the conversation has exceeded the maximum request size. Start a new session to continue.";
+        }
+
+        ctx.streamedAssistantText = "";
+        ctx.hasStreamedThinking = false;
+        return [{ type: "error", error: userError }];
+      }
+
       const out: ServerMessage[] = [];
 
       // Recover thinking only when it wasn't already streamed live.
