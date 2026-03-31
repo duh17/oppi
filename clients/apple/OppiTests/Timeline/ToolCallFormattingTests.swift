@@ -258,6 +258,69 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.editDiffStats(from: ["oldText": .string("a")]) == nil)
     }
 
+    // MARK: - Edits Array Format
+
+    @Test func editOldAndNewTextFromEditsArray() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "edits": .array([
+                .object(["oldText": .string("let a = 1"), "newText": .string("let a = 2")]),
+            ]),
+        ]
+
+        let pair = ToolCallFormatting.editOldAndNewText(from: args)
+        #expect(pair?.oldText == "let a = 1")
+        #expect(pair?.newText == "let a = 2")
+    }
+
+    @Test func editOldAndNewTextFromEditsArrayMultiEdit() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "edits": .array([
+                .object(["oldText": .string("a"), "newText": .string("b")]),
+                .object(["oldText": .string("x"), "newText": .string("y")]),
+            ]),
+        ]
+
+        let pair = ToolCallFormatting.editOldAndNewText(from: args)
+        #expect(pair?.oldText == "a\nx")
+        #expect(pair?.newText == "b\ny")
+    }
+
+    @Test func editDiffStatsFromEditsArray() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "edits": .array([
+                .object(["oldText": .string("let a = 1\n"), "newText": .string("let a = 2\n")]),
+            ]),
+        ]
+
+        let stats = ToolCallFormatting.editDiffStats(from: args)
+        #expect(stats?.added == 1)
+        #expect(stats?.removed == 1)
+    }
+
+    @Test func editOldAndNewTextLegacyFormatStillWorks() {
+        // Legacy format should still work when both top-level and edits exist
+        let args: [String: JSONValue] = [
+            "oldText": .string("legacy_old"),
+            "newText": .string("legacy_new"),
+        ]
+
+        let pair = ToolCallFormatting.editOldAndNewText(from: args)
+        #expect(pair?.oldText == "legacy_old")
+        #expect(pair?.newText == "legacy_new")
+    }
+
+    @Test func editOldAndNewTextNilForEmptyEditsArray() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "edits": .array([]),
+        ]
+
+        #expect(ToolCallFormatting.editOldAndNewText(from: args) == nil)
+    }
+
     // MARK: - Format Bytes
 
     @Test func formatBytesSmall() {
