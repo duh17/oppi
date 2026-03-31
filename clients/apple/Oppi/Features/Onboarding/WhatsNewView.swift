@@ -41,28 +41,40 @@ struct WhatsNewView: View {
 
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            icon: "lock.shield",
+            icon: "questionmark.bubble",
             iconColor: .themeGreen,
-            title: String(localized: "TLS"),
-            description: String(localized: "Connections are pinned to your server's TLS certificate.")
+            title: String(localized: "Ask Cards"),
+            description: String(localized: "Agent questions appear as interactive cards with tappable options. Pending questions persist across session switches.")
         ),
         WhatsNewFeature(
-            icon: "cube.transparent",
+            icon: "arrow.triangle.branch",
             iconColor: .themePurple,
-            title: String(localized: "Glass Chat Interface"),
-            description: String(localized: "Chat scrolls behind translucent bars with soft edge effects.")
+            title: String(localized: "Sub-Agent Sessions"),
+            description: String(localized: "Agents spawn child sessions for parallel work. Collapsible tree shows status and cost per branch.")
         ),
         WhatsNewFeature(
-            icon: "sparkle",
+            icon: "doc.richtext",
             iconColor: .themeOrange,
-            title: String(localized: "Thinking Trace"),
-            description: String(localized: "Scrollable live preview while the model thinks. Tap to read the full trace.")
+            title: String(localized: "Inline Rendering"),
+            description: String(localized: "Mermaid diagrams, LaTeX math, and images render directly in the chat timeline with pinch-to-zoom.")
         ),
         WhatsNewFeature(
-            icon: "mic.badge.waveform",
+            icon: "folder",
             iconColor: .themeCyan,
-            title: String(localized: "Voice Input"),
-            description: String(localized: "On-device speech-to-text. Tap the mic to dictate prompts.")
+            title: String(localized: "File Browser"),
+            description: String(localized: "Browse and search workspace files with breadcrumb navigation. Renders markdown, PDF, code, images, and video.")
+        ),
+        WhatsNewFeature(
+            icon: "magnifyingglass",
+            iconColor: .themeYellow,
+            title: String(localized: "Full-Text Search"),
+            description: String(localized: "Search across all sessions using SQLite FTS5 indexing. Fuzzy matching for files, models, and session outlines.")
+        ),
+        WhatsNewFeature(
+            icon: "paintpalette",
+            iconColor: .themeRed,
+            title: String(localized: "Themes"),
+            description: String(localized: "OLED, Night, and Paper themes. Code blocks meet WCAG AA contrast. Configurable assistant avatar and code font.")
         ),
     ]
 
