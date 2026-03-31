@@ -200,12 +200,26 @@ struct WorkspaceHomeView: View {
         return (conn?.sessionStore.sessions ?? []).filter { $0.workspaceId == workspaceId }
     }
 
+    /// Root sessions only (no children whose parent is in the same workspace).
+    ///
+    /// Matches the detail view's root filtering — children are accessible
+    /// through their parent's row, so counting them separately inflates
+    /// the active/stopped badges vs what the user sees inside.
+    private func rootSessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
+        let all = sessionsFor(workspaceId, serverId: serverId)
+        let allIds = Set(all.map(\.id))
+        return all.filter { session in
+            guard let parentId = session.parentSessionId else { return true }
+            return !allIds.contains(parentId)
+        }
+    }
+
     private func activeCount(for workspaceId: String, serverId: String) -> Int {
-        sessionsFor(workspaceId, serverId: serverId).filter { $0.status != .stopped }.count
+        rootSessionsFor(workspaceId, serverId: serverId).filter { $0.status != .stopped }.count
     }
 
     private func stoppedCount(for workspaceId: String, serverId: String) -> Int {
-        sessionsFor(workspaceId, serverId: serverId).filter { $0.status == .stopped }.count
+        rootSessionsFor(workspaceId, serverId: serverId).filter { $0.status == .stopped }.count
     }
 
     private func hasAttention(for workspaceId: String, serverId: String) -> Bool {

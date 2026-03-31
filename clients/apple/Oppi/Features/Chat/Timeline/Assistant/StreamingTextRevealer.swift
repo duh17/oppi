@@ -72,7 +72,11 @@ final class StreamingTextRevealer {
         guard total > previousVisibleCount else { return }
 
         self.textView = textView
-        self.originalText = normalizedText
+        // Snapshot: normalizedText may be a mutable NSMutableAttributedString
+        // that the caller continues to mutate. Storing a reference caused
+        // NSRangeException crashes when the display link tick enumerated
+        // attributes on a string whose storage was concurrently modified.
+        self.originalText = NSAttributedString(attributedString: normalizedText)
         self.visibleCount = previousVisibleCount
         self.totalCount = total
 
@@ -144,12 +148,13 @@ final class StreamingTextRevealer {
             return
         }
 
-        // If textStorage was mutated externally (e.g. user cut/paste), bail out
-        // to avoid out-of-bounds access on the now-shorter storage.
+        // If textStorage or originalText was mutated/replaced externally,
+        // bail out to avoid out-of-bounds access.
         let storageLength = textView.textStorage.length
-        guard storageLength >= totalCount else {
-            visibleCount = storageLength
-            totalCount = storageLength
+        let originalLength = originalText.length
+        guard storageLength >= totalCount, originalLength >= totalCount else {
+            visibleCount = min(storageLength, originalLength)
+            totalCount = visibleCount
             stopDisplayLink()
             return
         }
@@ -178,11 +183,26 @@ final class StreamingTextRevealer {
         original: NSAttributedString
     ) {
         let storageLength = textView.textStorage.length
+        let originalLength = original.length
+        let rangeEnd = range.location + range.length
         guard range.length > 0,
-              range.location + range.length <= original.length,
-              range.location + range.length <= storageLength else { return }
-        original.enumerateAttribute(.foregroundColor, in: range) { color, attrRange, _ in
-            if let color, attrRange.location + attrRange.length <= storageLength {
+              rangeEnd <= originalLength,
+              rangeEnd <= storageLength else { return }
+
+        // Clamp enumeration to the validated original length as defense-in-depth.
+        // The guard above should be sufficient, but NSMutableAttributedString
+        // internals (NSMutableRLEArray) throw NSRangeException on stale ranges
+        // and Swift cannot catch Objective-C exceptions.
+        let safeEnd = min(rangeEnd, originalLength)
+        let safeRange = NSRange(location: range.location, length: safeEnd - range.location)
+        guard safeRange.length > 0 else { return }
+
+        original.enumerateAttribute(.foregroundColor, in: safeRange) { color, attrRange, stop in
+            guard attrRange.location + attrRange.length <= storageLength else {
+                stop.pointee = true
+                return
+            }
+            if let color {
                 textView.textStorage.addAttribute(.foregroundColor, value: color, range: attrRange)
             }
         }
