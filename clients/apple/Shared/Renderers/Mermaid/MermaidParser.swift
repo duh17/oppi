@@ -518,6 +518,51 @@ struct MermaidParser: DocumentParser, Sendable {
             return EdgeMatch(style: .invisible, label: nil, endPos: pos + 3)
         }
 
+        // Bidirectional arrow: <-->
+        if remaining >= 4, chars[pos] == "<", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == ">" {
+            let afterArrow = pos + 4
+            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biArrow, label: label, endPos: end)
+            }
+            return EdgeMatch(style: .biArrow, label: nil, endPos: afterArrow)
+        }
+
+        // Bidirectional circle: o--o
+        if remaining >= 4, chars[pos] == "o", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == "o" {
+            let afterArrow = pos + 4
+            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biCircle, label: label, endPos: end)
+            }
+            return EdgeMatch(style: .biCircle, label: nil, endPos: afterArrow)
+        }
+
+        // Bidirectional cross: x--x
+        if remaining >= 4, chars[pos] == "x", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == "x" {
+            let afterArrow = pos + 4
+            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biCross, label: label, endPos: end)
+            }
+            return EdgeMatch(style: .biCross, label: nil, endPos: afterArrow)
+        }
+
+        // Circle edge: --o
+        if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == "o" {
+            let afterArrow = pos + 3
+            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .circle, label: label, endPos: end)
+            }
+            return EdgeMatch(style: .circle, label: nil, endPos: afterArrow)
+        }
+
+        // Cross edge: --x
+        if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == "x" {
+            let afterArrow = pos + 3
+            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .cross, label: label, endPos: end)
+            }
+            return EdgeMatch(style: .cross, label: nil, endPos: afterArrow)
+        }
+
         // Arrow with pipe label: -->|text|
         if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == ">" {
             let afterArrow = pos + 3
@@ -666,7 +711,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
         switch c {
         case "[":
-            // Could be: [text], [(text)], [[text]]
+            // Could be: [text], [(text)], [[text]], [/text/], [/text\], [\text\], [\text/]
             if pos + 1 < chars.count {
                 if chars[pos + 1] == "(" {
                     // Cylindrical: [(text)]
@@ -681,6 +726,30 @@ struct MermaidParser: DocumentParser, Sendable {
                     if let end = findDoubleClosing(chars, pos + 2, close: "]") {
                         let label = normalize(String(chars[(pos + 2) ..< end]))
                         return ShapeMatch(label: label, shape: .subroutine, endPos: end + 2)
+                    }
+                } else if chars[pos + 1] == "/" {
+                    // Parallelogram [/text/] or Trapezoid [/text\]
+                    if let end = findClosing(chars, pos + 2, open: nil, close: "]") {
+                        let inner = chars[(pos + 2) ..< end]
+                        if inner.last == "/" {
+                            let label = normalize(String(inner.dropLast()))
+                            return ShapeMatch(label: label, shape: .parallelogram, endPos: end + 1)
+                        } else if inner.last == "\\" {
+                            let label = normalize(String(inner.dropLast()))
+                            return ShapeMatch(label: label, shape: .trapezoid, endPos: end + 1)
+                        }
+                    }
+                } else if chars[pos + 1] == "\\" {
+                    // Parallelogram alt [\text\] or Trapezoid alt [\text/]
+                    if let end = findClosing(chars, pos + 2, open: nil, close: "]") {
+                        let inner = chars[(pos + 2) ..< end]
+                        if inner.last == "\\" {
+                            let label = normalize(String(inner.dropLast()))
+                            return ShapeMatch(label: label, shape: .parallelogramAlt, endPos: end + 1)
+                        } else if inner.last == "/" {
+                            let label = normalize(String(inner.dropLast()))
+                            return ShapeMatch(label: label, shape: .trapezoidAlt, endPos: end + 1)
+                        }
                     }
                 }
             }
@@ -702,7 +771,14 @@ struct MermaidParser: DocumentParser, Sendable {
                         }
                     }
                 } else if chars[pos + 1] == "(" {
-                    // Circle: ((text))
+                    // Double circle: (((text))) or Circle: ((text))
+                    if pos + 2 < chars.count, chars[pos + 2] == "(" {
+                        // Triple-paren: (((text)))
+                        if let end = findTripleClosing(chars, pos + 3, close: ")") {
+                            let label = normalize(String(chars[(pos + 3) ..< end]))
+                            return ShapeMatch(label: label, shape: .doubleCircle, endPos: end + 3)
+                        }
+                    }
                     if let end = findDoubleClosing(chars, pos + 2, close: ")") {
                         let label = normalize(String(chars[(pos + 2) ..< end]))
                         return ShapeMatch(label: label, shape: .circle, endPos: end + 2)
@@ -775,16 +851,113 @@ struct MermaidParser: DocumentParser, Sendable {
         return nil
     }
 
+    /// Find `)))`, `}}}` — three consecutive closing chars.
+    private func findTripleClosing(_ chars: [Character], _ start: Int, close: Character) -> Int? {
+        var i = start
+        while i + 2 < chars.count {
+            if chars[i] == close, chars[i + 1] == close, chars[i + 2] == close {
+                return i
+            }
+            i += 1
+        }
+        return nil
+    }
+
     // MARK: - Sequence diagram parsing (Phase 2, basic)
+
+    // Keywords that should not become participants when seen as standalone lines.
+    private static let sequenceKeywords: Set<String> = [
+        "autonumber", "activate", "deactivate",
+        "loop", "alt", "else", "opt", "par", "and",
+        "critical", "option", "break", "end",
+        "rect", "box",
+    ]
 
     private func parseSequence(lines: [String]) -> SequenceDiagram {
         var participants: [SequenceParticipant] = []
         var messages: [SequenceMessage] = []
+        var notes: [SequenceNote] = []
+        var blocks: [SequenceBlock] = []
         var knownIds: Set<String> = []
+        var autonumber = false
+
+        // Block nesting stack: (kind, label, elseBlocks)
+        var blockStack: [(kind: SequenceBlockKind, label: String, elseBlocks: [SequenceElseBlock])] = []
 
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty { continue }
+            let lower = trimmed.lowercased()
+
+            // autonumber
+            if lower == "autonumber" || lower.hasPrefix("autonumber ") {
+                autonumber = true
+                continue
+            }
+
+            // activate / deactivate keywords
+            if lower.hasPrefix("activate ") || lower.hasPrefix("deactivate ") {
+                continue
+            }
+
+            // box ... end (skip — just don't let it become a participant)
+            if lower.hasPrefix("box") {
+                blockStack.append((kind: .rect, label: "", elseBlocks: []))
+                continue
+            }
+
+            // rect rgb(...) ... end
+            if lower.hasPrefix("rect ") || lower == "rect" {
+                blockStack.append((kind: .rect, label: "", elseBlocks: []))
+                continue
+            }
+
+            // Block openers: loop, alt, opt, par, critical, break
+            if let blockInfo = parseBlockOpener(lower, raw: trimmed) {
+                blockStack.append((kind: blockInfo.kind, label: blockInfo.label, elseBlocks: []))
+                continue
+            }
+
+            // else / and / option (adds to current block)
+            if lower.hasPrefix("else") || lower.hasPrefix("and ") || lower.hasPrefix("option ") {
+                if !blockStack.isEmpty {
+                    let label: String
+                    if lower.hasPrefix("else") {
+                        label = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                    } else if lower.hasPrefix("and ") {
+                        label = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                    } else {
+                        label = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+                    }
+                    blockStack[blockStack.count - 1].elseBlocks.append(SequenceElseBlock(label: label))
+                }
+                continue
+            }
+
+            // end (closes block)
+            if lower == "end" {
+                if let top = blockStack.popLast() {
+                    if top.kind != .rect {
+                        blocks.append(SequenceBlock(
+                            kind: top.kind,
+                            label: top.label,
+                            elseBlocks: top.elseBlocks.isEmpty ? nil : top.elseBlocks
+                        ))
+                    }
+                }
+                continue
+            }
+
+            // Note
+            if let note = parseSequenceNote(trimmed) {
+                // Auto-add actors from notes.
+                for actor in note.actors where !knownIds.contains(actor) {
+                    participants.append(SequenceParticipant(id: actor, label: actor, isActor: false))
+                    knownIds.insert(actor)
+                }
+                notes.append(note)
+                continue
+            }
 
             // participant / actor
             if let p = parseParticipant(trimmed) {
@@ -806,7 +979,83 @@ struct MermaidParser: DocumentParser, Sendable {
             }
         }
 
-        return SequenceDiagram(participants: participants, messages: messages, notes: [], blocks: [], autonumber: false)
+        // Close unclosed blocks (error recovery).
+        while let top = blockStack.popLast() {
+            if top.kind != .rect {
+                blocks.append(SequenceBlock(
+                    kind: top.kind,
+                    label: top.label,
+                    elseBlocks: top.elseBlocks.isEmpty ? nil : top.elseBlocks
+                ))
+            }
+        }
+
+        return SequenceDiagram(
+            participants: participants,
+            messages: messages,
+            notes: notes,
+            blocks: blocks,
+            autonumber: autonumber
+        )
+    }
+
+    /// Parse a block-opening keyword (loop, alt, opt, par, critical, break).
+    private func parseBlockOpener(_ lower: String, raw: String) -> (kind: SequenceBlockKind, label: String)? {
+        let patterns: [(String, SequenceBlockKind)] = [
+            ("loop ", .loop),
+            ("alt ", .alt),
+            ("opt ", .opt),
+            ("par ", .par),
+            ("critical ", .critical),
+            ("break ", .break),
+        ]
+        for (prefix, kind) in patterns {
+            if lower.hasPrefix(prefix) {
+                let label = String(raw.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                return (kind, label)
+            }
+        }
+        // Handle keyword without label: "loop" with no text after it.
+        let keywordOnly: [(String, SequenceBlockKind)] = [
+            ("loop", .loop), ("alt", .alt), ("opt", .opt),
+            ("par", .par), ("critical", .critical),
+        ]
+        for (keyword, kind) in keywordOnly {
+            if lower == keyword { return (kind, "") }
+        }
+        return nil
+    }
+
+    /// Parse a Note line: `Note [right of | left of | over] Actor[,Actor]: text`
+    private func parseSequenceNote(_ line: String) -> SequenceNote? {
+        let lower = line.lowercased()
+        guard lower.hasPrefix("note ") else { return nil }
+        let rest = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+        let restLower = rest.lowercased()
+
+        let position: NotePosition
+        let afterPosition: String
+
+        if restLower.hasPrefix("right of ") {
+            position = .rightOf
+            afterPosition = String(rest.dropFirst(9)).trimmingCharacters(in: .whitespaces)
+        } else if restLower.hasPrefix("left of ") {
+            position = .leftOf
+            afterPosition = String(rest.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+        } else if restLower.hasPrefix("over ") {
+            position = .over
+            afterPosition = String(rest.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+        } else {
+            return nil
+        }
+
+        // Split on `:` — actors : text
+        let parts = afterPosition.split(separator: ":", maxSplits: 1).map(String.init)
+        guard let actorPart = parts.first else { return nil }
+        let text = parts.count > 1 ? normalize(parts[1].trimmingCharacters(in: .whitespaces)) : ""
+        let actors = actorPart.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+
+        return SequenceNote(text: text, position: position, actors: actors)
     }
 
     private func parseParticipant(_ line: String) -> SequenceParticipant? {
@@ -837,9 +1086,12 @@ struct MermaidParser: DocumentParser, Sendable {
     /// Parse sequence message: `A->>B: text`, `A-->>B: text`, etc.
     private func parseSequenceMessage(_ line: String) -> SequenceMessage? {
         // Find the arrow pattern.
+        // Order matters: longer patterns first.
         let arrowPatterns: [(String, SequenceArrowStyle)] = [
             ("-->>", .dashed),
             ("->>", .solid),
+            ("--)", .dashedAsync),
+            ("-)", .solidAsync),
             ("--x", .dashedCross),
             ("-x", .solidCross),
             ("-->", .dashedOpen),
@@ -849,16 +1101,30 @@ struct MermaidParser: DocumentParser, Sendable {
         for (pattern, style) in arrowPatterns {
             if let range = line.range(of: pattern) {
                 let from = String(line[line.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces)
-                let afterArrow = String(line[range.upperBound...])
+                var remaining = String(line[range.upperBound...])
+
+                // Activation shorthand: +/- immediately after arrow.
+                var activationModifier: ActivationModifier?
+                if remaining.hasPrefix("+") {
+                    activationModifier = .activate
+                    remaining = String(remaining.dropFirst())
+                } else if remaining.hasPrefix("-") {
+                    activationModifier = .deactivate
+                    remaining = String(remaining.dropFirst())
+                }
 
                 // Split on `:` for target and message text.
-                let parts = afterArrow.split(separator: ":", maxSplits: 1).map(String.init)
+                let parts = remaining.split(separator: ":", maxSplits: 1).map(String.init)
                 guard let firstPart = parts.first else { continue }
                 let to = firstPart.trimmingCharacters(in: .whitespaces)
                 let text = parts.count > 1 ? normalize(parts[1].trimmingCharacters(in: .whitespaces)) : ""
 
                 if !from.isEmpty, !to.isEmpty {
-                    return SequenceMessage(from: from, to: to, text: text, arrowStyle: style)
+                    return SequenceMessage(
+                        from: from, to: to, text: text,
+                        arrowStyle: style,
+                        activationModifier: activationModifier
+                    )
                 }
             }
         }

@@ -10,6 +10,8 @@ enum MermaidGanttParser {
         var title: String?
         var dateFormat = "YYYY-MM-DD"
         var axisFormat: String?
+        var tickInterval: String?
+        var weekend: String?
         var excludes: [String] = []
         var sections: [GanttSection] = []
 
@@ -40,6 +42,14 @@ enum MermaidGanttParser {
                 })
                 continue
             }
+            if let value = line.strippingPrefix("tickInterval ") {
+                tickInterval = value
+                continue
+            }
+            if let value = line.strippingPrefix("weekend ") {
+                weekend = value
+                continue
+            }
 
             // Section header
             if let value = line.strippingPrefix("section ") {
@@ -68,8 +78,8 @@ enum MermaidGanttParser {
             sections: sections,
             axisFormat: axisFormat,
             excludes: excludes,
-            tickInterval: nil,
-            weekend: nil
+            tickInterval: tickInterval,
+            weekend: weekend
         )
     }
 
@@ -137,6 +147,8 @@ enum MermaidGanttParser {
                 status = .critical
             case "milestone":
                 status = .milestone
+            case "vert":
+                status = .vert
             default:
                 remaining.append(part)
             }

@@ -21,12 +21,19 @@ enum MermaidMindmapParser {
     // MARK: - Public
 
     nonisolated static func parse(lines: [String]) -> MindmapDiagram {
+        // Join multi-line markdown strings: lines containing unclosed "`...
+        // are joined with following lines until `"` is found.
+        let joined = joinMultilineStrings(lines)
+
         // Filter to non-empty lines, preserving original indentation.
-        let entries: [(indent: Int, label: String, shape: MindmapNodeShape)] = lines.compactMap { line in
+        let entries: [(indent: Int, label: String, shape: MindmapNodeShape)] = joined.compactMap { line in
             let stripped = line.drop(while: { $0 == " " || $0 == "\t" })
             guard !stripped.isEmpty else { return nil }
+            // Skip icon annotations: ::icon(...)
+            let strippedStr = String(stripped)
+            if strippedStr.hasPrefix("::icon(") { return nil }
             let indent = line.count - stripped.count
-            let (label, shape) = parseNodeText(String(stripped))
+            let (label, shape) = parseNodeText(strippedStr)
             return (indent, label, shape)
         }
 
@@ -94,6 +101,25 @@ enum MermaidMindmapParser {
     /// In Mermaid mindmap, the format is `id((label))` or `id[label]` etc.
     /// The id prefix (before the first delimiter) is optional.
     /// If no delimiters, the whole text is the label with `.default` shape.
+    /// Strip markdown string delimiters: "`text`" → text
+    private static func stripMarkdownString(_ text: String) -> String {
+        var s = text
+        // Remove outer quotes if present
+        if s.hasPrefix("\"") && s.hasSuffix("\"") && s.count >= 2 {
+            s = String(s.dropFirst().dropLast())
+        }
+        // Remove backtick delimiters
+        if s.hasPrefix("`") && s.hasSuffix("`") && s.count >= 2 {
+            s = String(s.dropFirst().dropLast())
+        }
+        return s
+    }
+
+    /// Check if a label is a markdown string (starts with "`)
+    private static func isMarkdownString(_ text: String) -> Bool {
+        text.contains("\"`") && text.contains("`\"")
+    }
+
     private static func parseNodeText(_ text: String) -> (String, MindmapNodeShape) {
         // Try to find shape delimiters after an optional id prefix.
         // Look for the first delimiter character that starts a shape.
@@ -132,8 +158,11 @@ enum MermaidMindmapParser {
 
         // `[...]` or `id[...]` — square
         if let range = text.range(of: "["), text.hasSuffix("]") {
-            let inner = normalize(String(text[range.upperBound...].dropLast(1)))
-            return (inner, .square)
+            var inner = String(text[range.upperBound...].dropLast(1))
+            if isMarkdownString(inner) {
+                inner = stripMarkdownString(inner)
+            }
+            return (normalize(inner), .square)
         }
 
         // `id(...)` — rounded (not already caught by circle)
@@ -145,6 +174,39 @@ enum MermaidMindmapParser {
 
         // Default — plain text
         return (normalize(text), .default)
+    }
+
+    /// Join lines that contain unclosed markdown strings ("`...`").
+    ///
+    /// When a line contains `"\`` but not a closing `\`"`, subsequent lines
+    /// are appended (with \n) until the closing delimiter is found.
+    private static func joinMultilineStrings(_ lines: [String]) -> [String] {
+        var result: [String] = []
+        var accumulator: String?
+
+        for line in lines {
+            if let acc = accumulator {
+                // We're in a multi-line string. Append this line.
+                let joined = acc + "\n" + line
+                if line.contains("`\"") {
+                    // Closing delimiter found.
+                    result.append(joined)
+                    accumulator = nil
+                } else {
+                    accumulator = joined
+                }
+            } else if line.contains("\"`") && !line.contains("`\"") {
+                // Opening delimiter without closing on same line.
+                accumulator = line
+            } else {
+                result.append(line)
+            }
+        }
+        // Flush unclosed accumulator.
+        if let acc = accumulator {
+            result.append(acc)
+        }
+        return result
     }
 
     private static func normalize(_ text: String) -> String {
