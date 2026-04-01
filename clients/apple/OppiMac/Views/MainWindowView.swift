@@ -58,9 +58,19 @@ struct MainWindowView: View {
         case .settings:
             SettingsView(
                 processManager: processManager,
-                checkForUpdates: checkForUpdates
+                checkForUpdates: checkForUpdates,
+                apiClient: makeAPIClient()
             )
         }
+    }
+}
+
+extension MainWindowView {
+    /// Construct an API client for the local server if a token is available.
+    private func makeAPIClient() -> MacAPIClient? {
+        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
+        guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return nil }
+        return MacAPIClient(baseURL: URL(string: "https://localhost:7749")!, token: token)
     }
 }
 
