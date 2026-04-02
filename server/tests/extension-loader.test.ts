@@ -150,6 +150,24 @@ describe("listHostExtensions", () => {
     expect(extensions.map((e) => e.name)).toContain("local-only");
   });
 
+  it("excludes test and spec files", () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const globalDir = join(root, "global");
+    mkdirSync(globalDir, { recursive: true });
+
+    writeFileSync(join(globalDir, "real-ext.ts"), "export default function() {}\n");
+    writeFileSync(join(globalDir, "real-ext.test.ts"), "test file\n");
+    writeFileSync(join(globalDir, "another.spec.ts"), "spec file\n");
+    writeFileSync(join(globalDir, "helper.test.js"), "test js\n");
+
+    const extensions = listHostExtensions({ globalDir });
+    const names = extensions.map((e) => e.name);
+    expect(names).toContain("real-ext");
+    expect(names).not.toContain("real-ext.test");
+    expect(names).not.toContain("another.spec");
+    expect(names).not.toContain("helper.test");
+  });
+
   it("prefers project-local extension names over global duplicates", () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
     const globalDir = join(root, "global");

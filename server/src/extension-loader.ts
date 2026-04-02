@@ -173,6 +173,11 @@ function discoverExtensionsInDir(dir: string): HostExtensionInfo[] {
         continue;
       }
       name = entry.slice(0, -ext.length);
+
+      // Skip test files — they are not loadable extensions.
+      if (name.endsWith(".test") || name.endsWith(".spec")) {
+        continue;
+      }
     }
 
     if (!isValidExtensionName(name) || isManagedExtensionName(name)) {
