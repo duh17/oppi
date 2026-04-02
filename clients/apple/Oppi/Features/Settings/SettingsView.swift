@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
     @State private var cacheSizeText: String?
+    @State private var telemetryEnabled = AppPreferences.Telemetry.isEnabled
     @State private var selectedCodeFont = FontPreferences.codeFont
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
 
@@ -150,6 +151,8 @@ struct SettingsView: View {
 
             securitySection
 
+            diagnosticsSection
+
             Section("Storage") {
                 if let cacheSizeText {
                     LabeledContent("Local Cache", value: cacheSizeText)
@@ -221,6 +224,30 @@ struct SettingsView: View {
             return "Keeps the screen on while voice input is active or the agent is working."
         default:
             return "Keeps the screen on while active, plus \(screenAwakePreset.label) after activity ends."
+        }
+    }
+
+    // MARK: - Diagnostics Section
+
+    @ViewBuilder
+    private var diagnosticsSection: some View {
+        // Only show in release builds — internal/debug always uploads.
+        if TelemetryMode.current == .public {
+            Section {
+                Toggle("Send Diagnostics", isOn: $telemetryEnabled)
+                    .onChange(of: telemetryEnabled) { _, newValue in
+                        AppPreferences.Telemetry.setEnabled(newValue)
+                        // Reconnect telemetry services with new preference
+                        MetricKitService.shared.refreshAfterPreferenceChange()
+                    }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text(
+                    "Send performance metrics and crash diagnostics to your oppi server. "
+                    + "Data stays on your server and is never shared externally."
+                )
+            }
         }
     }
 

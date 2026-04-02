@@ -17,16 +17,36 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         guard !configured else { return }
         configured = true
 
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
-            metricKitLog.info("MetricKit upload disabled (mode=\(TelemetrySettings.mode.label, privacy: .public))")
-            return
-        }
-
+        // Always subscribe to MetricKit — payloads are gated at upload time.
+        // This ensures we start receiving data immediately if the user opts in later.
         MXMetricManager.shared.add(self)
-        metricKitLog.info("MetricKit subscriber registered")
+        metricKitLog.info("MetricKit subscriber registered (upload=\(TelemetrySettings.allowsRemoteDiagnosticsUpload, privacy: .public))")
     }
 
+    /// Called when the user toggles the diagnostics preference in Settings.
+    /// Re-evaluates upload eligibility and flushes any queued data.
+    func refreshAfterPreferenceChange() {
+        let allowed = TelemetrySettings.allowsRemoteDiagnosticsUpload
+        metricKitLog.info("Telemetry preference changed (upload=\(allowed, privacy: .public))")
+
+        Task {
+            await ChatMetricsService.shared.setUploadClient(
+                allowed ? currentAPIClient : nil
+            )
+        }
+
+        guard allowed else { return }
+        Task {
+            await uploader.flushIfNeeded()
+        }
+    }
+
+    /// Stored reference so refreshAfterPreferenceChange can re-wire.
+    private var currentAPIClient: APIClient?
+
     func setUploadClient(_ client: APIClient?) {
+        currentAPIClient = client
+
         Task {
             await ChatMetricsService.shared.setUploadClient(client)
         }

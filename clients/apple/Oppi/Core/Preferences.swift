@@ -395,6 +395,25 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Telemetry
+
+    /// User opt-in for server-side telemetry in release builds.
+    ///
+    /// Default is OFF. When enabled, the app uploads MetricKit payloads and
+    /// chat performance metrics to the oppi server for diagnostic review.
+    /// Debug/internal builds always upload regardless of this setting.
+    enum Telemetry {
+        private static let enabledKey = "\(AppIdentifiers.subsystem).telemetry.enabled"
+
+        static var isEnabled: Bool {
+            UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+        }
+
+        static func setEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: enabledKey)
+        }
+    }
+
     // MARK: - Biometric
 
     /// Whether biometric gating is enabled for permission approvals.

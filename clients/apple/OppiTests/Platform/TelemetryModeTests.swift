@@ -80,4 +80,60 @@ struct TelemetryModeTests {
             )
         )
     }
+
+    // MARK: - User opt-in for release builds
+
+    @Test func publicModeAllowsUploadWhenUserOptsIn() {
+        #expect(
+            TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .public,
+                userOptIn: true,
+                environment: [:]
+            )
+        )
+    }
+
+    @Test func publicModeDeniesUploadWhenUserDoesNotOptIn() {
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .public,
+                userOptIn: false,
+                environment: [:]
+            )
+        )
+    }
+
+    @Test func internalModeAlwaysAllowsRegardlessOfOptIn() {
+        #expect(
+            TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                userOptIn: false,
+                environment: [:]
+            )
+        )
+        #expect(
+            TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                userOptIn: true,
+                environment: [:]
+            )
+        )
+    }
+
+    @Test func automatedTestsBlockEvenWithOptIn() {
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .public,
+                userOptIn: true,
+                environment: ["XCTestConfigurationFilePath": "/tmp/test.xctestconfiguration"]
+            )
+        )
+        #expect(
+            !TelemetrySettings.allowsRemoteDiagnosticsUpload(
+                mode: .internalDiagnostics,
+                userOptIn: true,
+                environment: ["XCTestBundlePath": "/tmp/OppiTests.xctest"]
+            )
+        )
+    }
 }

@@ -78,6 +78,7 @@ enum TelemetrySettings {
     static var allowsRemoteDiagnosticsUpload: Bool {
         allowsRemoteDiagnosticsUpload(
             mode: mode,
+            userOptIn: AppPreferences.Telemetry.isEnabled,
             environment: ProcessInfo.processInfo.environment
         )
     }
@@ -88,12 +89,20 @@ enum TelemetrySettings {
 
     static func allowsRemoteDiagnosticsUpload(
         mode: TelemetryMode,
+        userOptIn: Bool = false,
         environment: [String: String]
     ) -> Bool {
-        guard mode.allowsRemoteDiagnosticsUpload else {
+        if isRunningAutomatedTests(environment: environment) {
             return false
         }
-        return !isRunningAutomatedTests(environment: environment)
+
+        // Internal/debug builds always upload.
+        if mode.allowsRemoteDiagnosticsUpload {
+            return true
+        }
+
+        // Release builds require explicit user opt-in.
+        return userOptIn
     }
 
     private static func isRunningAutomatedTests(environment: [String: String]) -> Bool {
