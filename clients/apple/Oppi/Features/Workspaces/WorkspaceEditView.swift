@@ -80,20 +80,16 @@ struct WorkspaceEditView: View {
         return scoped
     }
 
-    private var discoveredExtensions: Set<String> {
-        Set(availableExtensions.map(\.name))
-    }
-
-    private var selectedExtensionNames: [String] {
-        parseUniqueNames(extensionNames)
-    }
-
     private var selectedExtensionSet: Set<String> {
-        Set(selectedExtensionNames)
+        Set(parseUniqueNames(extensionNames))
     }
 
-    private var manualExtensionNames: [String] {
-        selectedExtensionNames.filter { !discoveredExtensions.contains($0) }
+    private var oppiExtensions: [ExtensionInfo] {
+        availableExtensions.filter(\.isOppi)
+    }
+
+    private var piExtensions: [ExtensionInfo] {
+        availableExtensions.filter { !$0.isOppi }
     }
 
     private var systemPromptEditorSummary: String {
@@ -166,6 +162,8 @@ struct WorkspaceEditView: View {
                     .textInputAutocapitalization(.never)
             }
 
+            extensionsSection
+
             if skills.isEmpty {
                 Section("Skills") {
                     Text("Loading skills…")
@@ -214,60 +212,6 @@ struct WorkspaceEditView: View {
                 Text("Shows branch, dirty files, and change stats in chat view")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
-            }
-
-            Section("Extensions") {
-                Text("Named pi extensions. Includes project-local .pi/extensions when Host Working Directory is set.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-
-                if isLoadingExtensions && availableExtensions.isEmpty {
-                    Text("Loading available extensions…")
-                        .foregroundStyle(.themeComment)
-                } else if availableExtensions.isEmpty {
-                    Text("No discoverable extensions found.")
-                        .foregroundStyle(.themeComment)
-                } else {
-                    ForEach(availableExtensions) { ext in
-                        Button {
-                            toggleExtension(ext.name)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(ext.name)
-                                        .font(.body)
-                                    Text(ext.subtitle)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.themeComment)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
-                                    .imageScale(.large)
-                            }
-                        }
-                        .foregroundStyle(.themeFg)
-                    }
-                }
-
-                if !manualExtensionNames.isEmpty {
-                    Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                }
-
-                TextField("Selected names (comma separated)", text: $extensionNames)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .font(.system(.body, design: .monospaced))
-
-                if let extensionsError {
-                    Text("Extensions API: \(extensionsError)")
-                        .font(.caption2)
-                        .foregroundStyle(.themeOrange)
-                }
             }
 
             if runtime == .sandbox {
@@ -353,6 +297,69 @@ struct WorkspaceEditView: View {
     }
 
     @ViewBuilder
+    private var extensionsSection: some View {
+        if isLoadingExtensions && availableExtensions.isEmpty {
+            Section("Extensions") {
+                Text("Loading extensions\u{2026}")
+                    .foregroundStyle(.themeComment)
+            }
+        } else {
+            if !oppiExtensions.isEmpty {
+                Section("Oppi Extensions") {
+                    ForEach(oppiExtensions) { ext in
+                        extensionRow(ext)
+                    }
+                }
+            }
+
+            Section {
+                if piExtensions.isEmpty {
+                    Text("No pi extensions found.")
+                        .foregroundStyle(.themeComment)
+                } else {
+                    ForEach(piExtensions) { ext in
+                        extensionRow(ext)
+                    }
+                }
+
+                if let extensionsError {
+                    Text(extensionsError)
+                        .font(.caption2)
+                        .foregroundStyle(.themeOrange)
+                }
+            } header: {
+                Text("Pi Extensions")
+            } footer: {
+                Text("From ~/.pi/agent/extensions\(hostMount.isEmpty ? "" : " and project .pi/extensions")")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func extensionRow(_ ext: ExtensionInfo) -> some View {
+        Button {
+            toggleExtension(ext.name)
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ext.name)
+                        .font(.body)
+                    Text(ext.subtitle)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.themeComment)
+                }
+
+                Spacer()
+
+                Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
+                    .imageScale(.large)
+            }
+        }
+        .foregroundStyle(.themeFg)
+    }
+
+    @ViewBuilder
     private func skillRow(_ skill: SkillInfo) -> some View {
         SkillToggleRow(
             skill: skill,
@@ -392,7 +399,7 @@ struct WorkspaceEditView: View {
     }
 
     private func toggleExtension(_ name: String) {
-        var names = selectedExtensionNames
+        var names = parseUniqueNames(extensionNames)
         if let idx = names.firstIndex(of: name) {
             names.remove(at: idx)
         } else {
@@ -474,7 +481,7 @@ struct WorkspaceEditView: View {
             systemPromptMode: systemPromptMode,
             hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
-            extensions: selectedExtensionNames,
+            extensions: parseUniqueNames(extensionNames),
             defaultModel: nullableJSONString(defaultModel),
             sandboxConfig: sandboxConfigValue
         )

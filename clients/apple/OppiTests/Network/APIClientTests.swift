@@ -706,7 +706,7 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/extensions")
             return self.mockResponse(json: """
-            {"extensions":[{"name":"memory","path":"/Users/me/.pi/agent/extensions/memory.ts","kind":"file"}]}
+            {"extensions":[{"name":"memory","path":"/Users/me/.pi/agent/extensions/memory.ts","kind":"file","source":"pi"}]}
             """)
         }
 
@@ -714,6 +714,7 @@ struct APIClientTests {
         #expect(extensions.count == 1)
         #expect(extensions[0].name == "memory")
         #expect(extensions[0].kind == "file")
+        #expect(extensions[0].source == "pi")
     }
 
     @Test func listExtensionsWithCwdAddsQueryParam() async throws {

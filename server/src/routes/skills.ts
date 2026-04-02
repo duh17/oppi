@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 
 import { discoverProjects, scanDirectories } from "../host.js";
 import { listHostExtensions } from "../extension-loader.js";
+import { FIRST_PARTY_EXTENSION_NAMES } from "../../extensions/first-party.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -16,7 +17,17 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
   function handleListExtensions(url: URL, res: ServerResponse): void {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    helpers.json(res, { extensions: listHostExtensions({ cwd }) });
+    const piExtensions = listHostExtensions({ cwd }).map((ext) => ({
+      ...ext,
+      source: "pi" as const,
+    }));
+    const oppiExtensions = FIRST_PARTY_EXTENSION_NAMES.map((name) => ({
+      name,
+      path: "oppi-server",
+      kind: "built-in" as const,
+      source: "oppi" as const,
+    }));
+    helpers.json(res, { extensions: [...oppiExtensions, ...piExtensions] });
   }
 
   function handleGetSkillDetail(name: string, res: ServerResponse): void {

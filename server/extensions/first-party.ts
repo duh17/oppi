@@ -5,6 +5,12 @@ export const MANAGED_EXTENSION_NAMES = ["permission-gate", "ask", "spawn_agent"]
 export type ManagedExtensionName = (typeof MANAGED_EXTENSION_NAMES)[number];
 export type FirstPartyExtensionName = Exclude<ManagedExtensionName, "permission-gate">;
 
+/** First-party extension names exposed to the workspace UI. */
+export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = [
+  "ask",
+  "spawn_agent",
+];
+
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
 
 /**

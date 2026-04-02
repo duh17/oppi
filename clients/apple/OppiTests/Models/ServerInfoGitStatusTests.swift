@@ -144,16 +144,32 @@ struct GitStatusTests {
     }
 
     @Test func extensionInfoIdUsesName() {
-        let ext = ExtensionInfo(name: "search", path: "~/.pi/agent/extensions/search", kind: "directory")
+        let ext = ExtensionInfo(name: "search", path: "~/.pi/agent/extensions/search", kind: "directory", source: "pi")
         #expect(ext.id == "search")
     }
 
     @Test func extensionInfoSubtitleShowsLocation() {
-        let global = ExtensionInfo(name: "search", path: "/Users/me/.pi/agent/extensions/search", kind: "directory")
-        let project = ExtensionInfo(name: "local", path: "/Users/me/workspace/oppi/.pi/extensions/local.ts", kind: "file")
+        let global = ExtensionInfo(name: "search", path: "/Users/me/.pi/agent/extensions/search", kind: "directory", source: "pi")
+        let project = ExtensionInfo(name: "local", path: "/Users/me/workspace/oppi/.pi/extensions/local.ts", kind: "file", source: "pi")
 
         #expect(global.locationLabel == "~/.pi/agent/extensions")
         #expect(project.locationLabel == ".pi/extensions")
         #expect(project.subtitle == ".pi/extensions · file")
+    }
+
+    @Test func extensionInfoOppiSource() {
+        let oppi = ExtensionInfo(name: "ask", path: "oppi-server", kind: "built-in", source: "oppi")
+        #expect(oppi.isOppi)
+        #expect(oppi.locationLabel == "oppi")
+        #expect(oppi.subtitle == "built-in")
+
+        let pi = ExtensionInfo(name: "memory", path: "~/.pi/agent/extensions/memory.ts", kind: "file", source: "pi")
+        #expect(!pi.isOppi)
+    }
+
+    @Test func extensionInfoNilSourceTreatedAsPi() {
+        let ext = ExtensionInfo(name: "legacy", path: "~/.pi/agent/extensions/legacy.ts", kind: "file", source: nil)
+        #expect(!ext.isOppi)
+        #expect(ext.locationLabel == "~/.pi/agent/extensions")
     }
 }
