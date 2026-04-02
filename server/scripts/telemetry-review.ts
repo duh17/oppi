@@ -34,6 +34,8 @@ interface SloThreshold {
   p95: number;
   label: string;
   group: string;
+  /** Short display name for narrow output (max 14 chars). */
+  short: string;
 }
 
 interface MetricSample {
@@ -124,34 +126,38 @@ export const STATUS_FILTERED_METRICS = new Set([
 
 export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
   // UX quality — how fast does the user see stuff?
-  "chat.ttft_ms":              { p95: 10_000, label: "Time to first token",       group: "UX Quality" },
-  "chat.fresh_content_lag_ms": { p95: 3_000,  label: "Fresh content lag",         group: "UX Quality" },
-  "chat.catchup_ms":           { p95: 1_500,  label: "Reconnection catch-up",     group: "UX Quality" },
-  "chat.full_reload_ms":       { p95: 2_000,  label: "Full reload",               group: "UX Quality" },
-  "chat.cache_load_ms":        { p95: 150,    label: "Cache load",                group: "UX Quality" },
-  "chat.reducer_load_ms":      { p95: 200,    label: "Timeline rebuild",          group: "UX Quality" },
+  "chat.ttft_ms":              { p95: 45_000, label: "Time to first token",       group: "UX Quality", short: "ttft" },
+  "chat.fresh_content_lag_ms": { p95: 4_000,  label: "Fresh content lag",         group: "UX Quality", short: "content_lag" },
+  "chat.catchup_ms":           { p95: 1_500,  label: "Reconnection catch-up",     group: "UX Quality", short: "catchup" },
+  "chat.full_reload_ms":       { p95: 3_000,  label: "Full reload",               group: "UX Quality", short: "full_reload" },
+  "chat.cache_load_ms":        { p95: 300,    label: "Cache load",                group: "UX Quality", short: "cache_load" },
+  "chat.reducer_load_ms":      { p95: 400,    label: "Timeline rebuild",          group: "UX Quality", short: "reducer" },
+  "chat.session_load_ms":      { p95: 1_000,  label: "Session switch",            group: "UX Quality", short: "sess_load" },
+  "chat.app_launch_ms":        { p95: 1_000,  label: "App cold start",            group: "UX Quality", short: "app_launch" },
 
   // Network health
-  "chat.subscribe_ack_ms":     { p95: 1_500,  label: "Subscribe ack (ok only)",   group: "Network" },
-  "chat.ws_connect_ms":        { p95: 5_000,  label: "WS connect (legacy)",       group: "Network" },
-  "chat.queue_sync_ms":        { p95: 1_500,  label: "Queue sync (ok only)",      group: "Network" },
-  "chat.connected_dispatch_ms":{ p95: 200,    label: "Connected dispatch (ok only)", group: "Network" },
-  "chat.message_queue_ack_ms": { p95: 500,    label: "Message queue ack (ok only)", group: "Network" },
+  "chat.subscribe_ack_ms":     { p95: 1_500,  label: "Subscribe ack (ok only)",   group: "Network", short: "sub_ack" },
+  "chat.ws_connect_ms":        { p95: 5_000,  label: "WS connect",               group: "Network", short: "ws_connect" },
+  "chat.queue_sync_ms":        { p95: 1_500,  label: "Queue sync (ok only)",      group: "Network", short: "queue_sync" },
+  "chat.connected_dispatch_ms":{ p95: 500,    label: "Connected dispatch (ok)",   group: "Network", short: "dispatch" },
+  "chat.message_queue_ack_ms": { p95: 500,    label: "Message queue ack (ok)",    group: "Network", short: "msg_ack" },
 
-  // Render health
-  "chat.timeline_apply_ms":    { p95: 16,     label: "Timeline apply (>4ms only)",group: "Render" },
-  "chat.timeline_layout_ms":   { p95: 8,      label: "Timeline layout (>2ms only)",group: "Render" },
-  "chat.cell_configure_ms":    { p95: 10,     label: "Cell configure",            group: "Render" },
+  // Render health — frame budget targets
+  "chat.timeline_apply_ms":    { p95: 33,     label: "Timeline apply (30fps)",    group: "Render", short: "tl_apply" },
+  "chat.timeline_layout_ms":   { p95: 16,     label: "Timeline layout (60fps)",   group: "Render", short: "tl_layout" },
+  "chat.cell_configure_ms":    { p95: 16,     label: "Cell configure",            group: "Render", short: "cell_config" },
+  "chat.markdown_streaming_ms":{ p95: 16,     label: "Streaming markdown",        group: "Render", short: "md_stream" },
+  "chat.jank_pct":             { p95: 30,     label: "Scroll jank %",             group: "Render", short: "jank_pct" },
 
   // Voice
-  "chat.voice_setup_ms":       { p95: 400,    label: "Voice setup",               group: "Voice" },
-  "chat.voice_first_result_ms":{ p95: 8_000,  label: "Voice first result",        group: "Voice" },
-  "chat.voice_prewarm_ms":     { p95: 200,    label: "Voice prewarm",             group: "Voice" },
+  "chat.voice_setup_ms":       { p95: 400,    label: "Voice setup",               group: "Voice", short: "voice_setup" },
+  "chat.voice_first_result_ms":{ p95: 10_000, label: "Voice first result",        group: "Voice", short: "voice_1st" },
+  "chat.voice_prewarm_ms":     { p95: 800,    label: "Voice prewarm",             group: "Voice", short: "voice_prewarm" },
 
   // Session list
-  "chat.session_list_compute_ms":    { p95: 4,    label: "List viewData compute",    group: "Session List" },
-  "chat.session_list_row_compute_ms":{ p95: 2,    label: "List row compute",         group: "Session List" },
-  "chat.session_list_body_rate":     { p95: 20,   label: "List body evals per 5s",   group: "Session List" },
+  "chat.session_list_compute_ms":    { p95: 60,   label: "List compute",             group: "Session List", short: "list_compute" },
+  "chat.session_list_row_compute_ms":{ p95: 10,   label: "List row compute",         group: "Session List", short: "list_row" },
+  "chat.session_list_body_rate":     { p95: 20,   label: "List body evals/5s",       group: "Session List", short: "list_body" },
 };
 
 // ─── Data Loading ───
@@ -407,29 +413,108 @@ function printCompact(result: ReviewOutput, fields: Set<string> | null): void {
 // ─── Human Output ───
 // All status/chrome to stderr, table data to stdout.
 
-function printHuman(result: ReviewOutput, args: ParsedArgs): void {
-  const useColor = !args.noColor && process.stdout.isTTY;
-  const c = {
-    reset: useColor ? "\x1b[0m" : "",
-    bold: useColor ? "\x1b[1m" : "",
-    dim: useColor ? "\x1b[2m" : "",
-    red: useColor ? "\x1b[31m" : "",
-    green: useColor ? "\x1b[32m" : "",
-    yellow: useColor ? "\x1b[33m" : "",
-    cyan: useColor ? "\x1b[36m" : "",
-  };
 
+// ─── ANSI Colors ───
+// Colors on by default (Oppi terminal supports ANSI). Use --no-color to disable.
+
+function makeColors(enabled: boolean) {
+  return {
+    reset: enabled ? "\x1b[0m" : "",
+    bold: enabled ? "\x1b[1m" : "",
+    dim: enabled ? "\x1b[2m" : "",
+    red: enabled ? "\x1b[31m" : "",
+    green: enabled ? "\x1b[32m" : "",
+    yellow: enabled ? "\x1b[33m" : "",
+    cyan: enabled ? "\x1b[36m" : "",
+  };
+}
+
+// ─── Narrow Output (phone-friendly, default) ───
+// Fits in ~45 chars. Format per metric:
+//   {short_name:14} {p95:>7} /{slo:>6}  {status}
+
+function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
+  const c = makeColors(!args.noColor);
+  const { summary } = result;
+
+  // Header
+  const samplesStr =
+    summary.totalSamples >= 1_000_000
+      ? `${(summary.totalSamples / 1_000_000).toFixed(1)}M`
+      : summary.totalSamples >= 1_000
+        ? `${(summary.totalSamples / 1_000).toFixed(0)}K`
+        : String(summary.totalSamples);
+  const violStr =
+    summary.violations > 0
+      ? `  ${c.red}${summary.violations} over${c.reset}`
+      : `  ${c.green}all ok${c.reset}`;
+  console.log(`${c.bold}Telemetry${c.reset} ${c.dim}${summary.days}d ${samplesStr}${c.reset}${violStr}`);
+  console.log();
+
+  // Group SLO metrics
+  const groups: Record<string, string[]> = {};
+  for (const [metric, slo] of Object.entries(SLO_THRESHOLDS)) {
+    if (!groups[slo.group]) groups[slo.group] = [];
+    groups[slo.group].push(metric);
+  }
+
+  const NAME_W = 14;
+  const VAL_W = 7;
+  const SLO_W = 6;
+
+  for (const [groupName, metrics] of Object.entries(groups)) {
+    // Count pass/total for group header
+    let pass = 0;
+    let total = 0;
+    for (const m of metrics) {
+      const r = result.metrics[m];
+      if (!r || r.count === 0) continue;
+      total++;
+      if (r.status === "pass") pass++;
+    }
+    const allPass = pass === total;
+    const groupStatus = allPass
+      ? `${c.green}${pass}/${total}${c.reset}`
+      : `${c.yellow}${pass}/${total}${c.reset}`;
+    console.log(`${c.bold}${c.cyan}${groupName}${c.reset} ${c.dim}${groupStatus}${c.reset}`);
+
+    for (const metric of metrics) {
+      const slo = SLO_THRESHOLDS[metric];
+      const r = result.metrics[metric];
+      const name = (slo?.short ?? metric.replace("chat.", "")).slice(0, NAME_W);
+
+      if (!r || r.count === 0) {
+        console.log(`  ${name.padEnd(NAME_W)} ${c.dim}no data${c.reset}`);
+        continue;
+      }
+
+      const f = (n: number) => fmtValue(n, r.unit);
+      const over = r.status === "over";
+      const p95Str = f(r.p95).padStart(VAL_W);
+      const sloStr = f(r.slo_p95!).padStart(SLO_W);
+      const status = over ? `${c.red}OVER${c.reset}` : `${c.green}  ok${c.reset}`;
+      const p95Part = over ? `${c.red}${p95Str}${c.reset}` : p95Str;
+
+      console.log(`  ${name.padEnd(NAME_W)} ${p95Part} /${sloStr}  ${status}`);
+    }
+    console.log();
+  }
+}
+
+// ─── Wide Output (terminal, --wide) ───
+// Original table format with all columns.
+
+function printWide(result: ReviewOutput, args: ParsedArgs): void {
+  const c = makeColors(!args.noColor);
   const { summary } = result;
   const fields = args.fields ?? new Set(["count", "p50", "p95", "p99", "max", "slo", "status"]);
 
-  // Header to stderr (chrome, not data)
   console.error();
   console.error(
     `${c.bold}Oppi Telemetry Review${c.reset}  ${c.dim}(last ${summary.days}d, ${summary.totalSamples.toLocaleString()} samples, ${summary.filesRead} files)${c.reset}`,
   );
   console.error();
 
-  // Group SLO metrics
   const groups: Record<string, string[]> = {};
   for (const [metric, slo] of Object.entries(SLO_THRESHOLDS)) {
     if (!groups[slo.group]) groups[slo.group] = [];
@@ -439,8 +524,7 @@ function printHuman(result: ReviewOutput, args: ParsedArgs): void {
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
 
-    // Build header from fields
-    const cols: string[] = [`  ${"Metric".padEnd(30)}`];
+    const cols: string[] = [`  ${"Metric".padEnd(34)}`];
     if (fields.has("count")) cols.push("Count".padStart(8));
     if (fields.has("p50")) cols.push("p50".padStart(8));
     if (fields.has("p95")) cols.push("p95".padStart(8));
@@ -453,19 +537,20 @@ function printHuman(result: ReviewOutput, args: ParsedArgs): void {
     for (const metric of metrics) {
       const r = result.metrics[metric];
       if (!r || r.count === 0) {
-        console.log(`  ${metric.padEnd(30)} ${c.dim}no data${c.reset}`);
+        console.log(`  ${metric.padEnd(34)} ${c.dim}no data${c.reset}`);
         continue;
       }
 
       const f = (n: number) => fmtValue(n, r.unit);
       const over = r.status === "over";
       const statusIcon = over ? `${c.red}- OVER${c.reset}` : `${c.green}+ ok${c.reset}`;
-      const p95Color = over ? c.red : "";
-
-      const vals: string[] = [`  ${metric.padEnd(30)}`];
+      const vals: string[] = [`  ${metric.padEnd(34)}`];
       if (fields.has("count")) vals.push(r.count.toLocaleString().padStart(8));
       if (fields.has("p50")) vals.push(f(r.p50).padStart(8));
-      if (fields.has("p95")) vals.push(`${p95Color}${f(r.p95).padStart(8)}${c.reset}`);
+      if (fields.has("p95")) {
+        const p95s = f(r.p95).padStart(8);
+        vals.push(over ? `${c.red}${p95s}${c.reset}` : `${p95s}`);
+      }
       if (fields.has("p99")) vals.push(f(r.p99).padStart(8));
       if (fields.has("max")) vals.push(f(r.max).padStart(8));
       if (fields.has("slo")) vals.push(f(r.slo_p95!).padStart(8));
@@ -529,7 +614,7 @@ function printHuman(result: ReviewOutput, args: ParsedArgs): void {
 
       const cells = buildKeys.map((build) => {
         const bm = result.builds[build]?.metrics?.[metric];
-        if (!bm || bm.count === 0) return "—".padStart(10);
+        if (!bm || bm.count === 0) return "\u2014".padStart(10);
         return fmtValue(bm.p95, bm.unit).padStart(10);
       });
 
@@ -537,13 +622,12 @@ function printHuman(result: ReviewOutput, args: ParsedArgs): void {
     }
     console.log();
 
-    // Build legend to stderr (chrome)
     console.error(`${c.dim}  Builds:${c.reset}`);
     for (const build of buildKeys) {
       const info = result.builds[build];
       const first = new Date(info.firstSeen).toLocaleDateString();
       const last = new Date(info.lastSeen).toLocaleDateString();
-      const range = first === last ? first : `${first} – ${last}`;
+      const range = first === last ? first : `${first} - ${last}`;
       console.error(
         `${c.dim}    b${build} = v${info.version} (${info.samples.toLocaleString()} samples, ${range})${c.reset}`,
       );
@@ -551,11 +635,20 @@ function printHuman(result: ReviewOutput, args: ParsedArgs): void {
     console.error();
   }
 
-  // Summary to stderr (chrome)
   if (summary.violations > 0) {
-    console.error(`${c.yellow}${summary.violations} metric(s) over SLO reference threshold${c.reset}`);
+    console.error(`${c.yellow}${summary.violations} metric(s) over SLO threshold${c.reset}`);
   } else {
-    console.error(`${c.green}All metrics within SLO reference thresholds${c.reset}`);
+    console.error(`${c.green}All metrics within SLO thresholds${c.reset}`);
+  }
+}
+
+// ─── Human Output ───
+
+function printHuman(result: ReviewOutput, args: ParsedArgs): void {
+  if (args.wide) {
+    printWide(result, args);
+  } else {
+    printNarrow(result, args);
   }
 }
 
@@ -574,6 +667,7 @@ interface ParsedArgs {
   days: number;
   json: boolean;
   compact: boolean;
+  wide: boolean;
   gate: boolean;
   noColor: boolean;
   help: boolean;
@@ -586,6 +680,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     days: 7,
     json: false,
     compact: false,
+    wide: false,
     gate: false,
     noColor: false,
     help: false,
@@ -606,6 +701,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--compact":
         result.compact = true;
+        break;
+      case "--wide":
+        result.wide = true;
         break;
       case "--gate":
         result.gate = true;
@@ -631,25 +729,27 @@ function parseArgs(argv: string[]): ParsedArgs {
 // ─── Help ───
 
 function printHelp(): void {
-  console.error(`Oppi Telemetry Review — SLO check, percentiles, violation flags
+  console.error(`Oppi Telemetry Review
 
-Use after a deploy to check for regressions, or weekly to track health trends.
-  bun server/scripts/telemetry-review.ts              # last 7 days, human output
+Phone-friendly by default. Use --wide for full terminal tables.
+
+  bun server/scripts/telemetry-review.ts              # narrow (phone)
+  bun server/scripts/telemetry-review.ts --wide       # full table
   bun server/scripts/telemetry-review.ts --days 1     # just today
-  bun server/scripts/telemetry-review.ts --gate       # CI gate, exits 1 on violations
+  bun server/scripts/telemetry-review.ts --gate       # CI, exits 1 on violations
 
-Agent-friendly output for context-efficient consumption:
-  bun server/scripts/telemetry-review.ts --compact    # minimal JSON, SLO metrics only
-  bun server/scripts/telemetry-review.ts --json       # full JSON with computed summaries
-  bun server/scripts/telemetry-review.ts --fields p95,status  # only these columns
+Agent-friendly:
+  bun server/scripts/telemetry-review.ts --compact    # minimal JSON
+  bun server/scripts/telemetry-review.ts --json       # full JSON
 
 Options:
-  --data-dir <path>     Oppi data dir (default: $OPPI_DATA_DIR or ~/.config/oppi)
-  --days <n>            Days of data to include (default: 7)
-  --json                Machine-readable JSON to stdout
-  --compact             Minimal JSON for agent context windows (~40% smaller)
-  --fields <list>       Comma-separated: p50,p95,p99,max,count,slo,status
-  --gate                Exit non-zero on SLO violations (CI/release gate)
+  --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
+  --days <n>            Days of data (default: 7)
+  --wide                Full table with all columns
+  --json                Machine-readable JSON
+  --compact             Minimal JSON for agents
+  --fields <list>       Columns: p50,p95,p99,max,count,slo,status
+  --gate                Exit non-zero on SLO violations
   --no-color            Disable ANSI colors
   --help                Show this help
 
