@@ -35,6 +35,14 @@ import {
 import type { ServerConfig } from "./types.js";
 import { generateInvite } from "./invite.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
+import {
+  getServiceStatus,
+  installService,
+  readInstalledPlist,
+  restartService,
+  stopService,
+  uninstallService,
+} from "./launchd.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -619,6 +627,45 @@ function cmdDoctor(storage: Storage): void {
     checks.push({ level: "warn", message: `runtime dir not found (${runtimeDir})` });
   }
 
+  // ── LaunchAgent checks ──
+
+  const svcStatus = getServiceStatus();
+  if (svcStatus.installed) {
+    checks.push({ level: "pass", message: "LaunchAgent installed" });
+    if (svcStatus.running) {
+      checks.push({
+        level: "pass",
+        message: `LaunchAgent running (PID ${svcStatus.pid})`,
+      });
+    } else {
+      checks.push({
+        level: "warn",
+        message: "LaunchAgent installed but not running (oppi server restart)",
+      });
+    }
+
+    const paths = readInstalledPlist();
+    if (paths) {
+      if (!existsSync(paths.runtimePath)) {
+        checks.push({
+          level: "fail",
+          message: `LaunchAgent runtime missing: ${paths.runtimePath} (oppi server install to fix)`,
+        });
+      }
+      if (!existsSync(paths.cliPath)) {
+        checks.push({
+          level: "fail",
+          message: `LaunchAgent CLI missing: ${paths.cliPath} (oppi server install to fix)`,
+        });
+      }
+    }
+  } else {
+    checks.push({
+      level: "warn",
+      message: "LaunchAgent not installed (oppi server install for background service)",
+    });
+  }
+
   let criticalFailures = 0;
   for (const check of checks) {
     if (check.level === "pass") {
@@ -950,6 +997,103 @@ function cmdConfig(
   process.exit(1);
 }
 
+function cmdServer(action: string | undefined, flags: Record<string, string>): void {
+  printHeader();
+
+  const mode = action || "status";
+
+  if (mode === "install") {
+    const dataDir = flags["data-dir"] || undefined;
+    console.log(c.bold("  Installing LaunchAgent..."));
+    console.log("");
+
+    const result = installService(dataDir);
+    if (result.ok) {
+      console.log(c.green(`  \u2713 ${result.message}`));
+      if (result.runtimePath) {
+        console.log(c.dim(`    Runtime: ${result.runtimePath}`));
+      }
+      if (result.cliPath) {
+        console.log(c.dim(`    CLI:     ${result.cliPath}`));
+      }
+      console.log("");
+      console.log(c.dim("  The server will start automatically on login."));
+      console.log(c.dim("  It will restart if it crashes."));
+      console.log(c.dim("  The Mac app will detect and attach to it."));
+    } else {
+      console.log(c.red(`  \u2717 ${result.message}`));
+    }
+    console.log("");
+    return;
+  }
+
+  if (mode === "uninstall") {
+    const result = uninstallService();
+    if (result.ok) {
+      console.log(c.green(`  \u2713 ${result.message}`));
+    } else {
+      console.log(c.red(`  \u2717 ${result.message}`));
+    }
+    console.log("");
+    return;
+  }
+
+  if (mode === "restart") {
+    const result = restartService();
+    if (result.ok) {
+      console.log(c.green(`  \u2713 ${result.message}`));
+    } else {
+      console.log(c.red(`  \u2717 ${result.message}`));
+    }
+    console.log("");
+    return;
+  }
+
+  if (mode === "stop") {
+    const result = stopService();
+    if (result.ok) {
+      console.log(c.green(`  \u2713 ${result.message}`));
+    } else {
+      console.log(c.red(`  \u2717 ${result.message}`));
+    }
+    console.log("");
+    return;
+  }
+
+  if (mode === "status") {
+    const status = getServiceStatus();
+    console.log("  " + c.bold("LaunchAgent Service"));
+    console.log("");
+
+    console.log(`  Label:     ${c.dim(status.label)}`);
+    console.log(`  Plist:     ${c.dim(status.plistPath)}`);
+    console.log(`  Installed: ${status.installed ? c.green("yes") : c.dim("no")}`);
+    console.log(
+      `  Running:   ${status.running ? c.green(`yes (PID ${status.pid})`) : c.dim("no")}`,
+    );
+
+    if (status.installed) {
+      const paths = readInstalledPlist();
+      if (paths) {
+        console.log("");
+        console.log(`  Runtime:   ${c.dim(paths.runtimePath)}`);
+        console.log(`  CLI:       ${c.dim(paths.cliPath)}`);
+        console.log(`  Data dir:  ${c.dim(paths.dataDir)}`);
+      }
+    } else {
+      console.log("");
+      console.log(c.dim("  Run 'oppi server install' to set up the LaunchAgent."));
+    }
+    console.log("");
+    return;
+  }
+
+  console.log(c.red(`  Unknown server action: ${mode}`));
+  console.log(c.dim("  Usage: oppi server [install|uninstall|status|restart|stop]"));
+  console.log("");
+  process.exit(1);
+}
+
 async function cmdUpdate(flags: Record<string, string>): Promise<void> {
   printHeader();
 
@@ -1051,6 +1195,17 @@ function cmdHelp(): void {
   console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
   console.log("");
 
+  console.log("  " + c.bold("Background Service:"));
+  console.log("");
+  console.log(
+    `    ${c.cyan("server install")}             Install LaunchAgent (auto-start on login)`,
+  );
+  console.log(`    ${c.cyan("server uninstall")}           Remove LaunchAgent`);
+  console.log(`    ${c.cyan("server status")}              Check LaunchAgent status`);
+  console.log(`    ${c.cyan("server restart")}             Restart the background server`);
+  console.log(`    ${c.cyan("server stop")}                Stop the background server`);
+  console.log("");
+
   console.log("  " + c.bold("Configuration:"));
   console.log("");
   console.log(`    ${c.cyan("config show")}                Show current config`);
@@ -1104,6 +1259,10 @@ async function main(): Promise<void> {
   }
   if (command === "update") {
     await cmdUpdate(flags);
+    return;
+  }
+  if (command === "server") {
+    cmdServer(positional[0], flags);
     return;
   }
   if (command === "help" || command === "--help" || command === "-h") {

@@ -136,8 +136,23 @@ enum MermaidMindmapRenderer {
         let isRoot = true // caller doesn't know yet, but we add root extra pad at position time
         _ = isRoot
 
-        let nodeWidth = textSize.width + constants.hPadding * 2
-        let nodeHeight = textSize.height + constants.vPadding * 2
+        var nodeWidth = textSize.width + constants.hPadding * 2
+        var nodeHeight = textSize.height + constants.vPadding * 2
+
+        // Circle shape uses max(w,h) as diameter at draw time — allocate that here
+        // so the layout engine spaces siblings correctly.
+        if node.shape == .circle {
+            let diameter = max(nodeWidth, nodeHeight)
+            nodeWidth = diameter
+            nodeHeight = diameter
+        }
+
+        // Cloud (bang) shape has bumps that protrude beyond the rect — expand to fit.
+        if node.shape == .bang {
+            let bumpOverflow = min(nodeHeight * 0.22, 10.0) + 4
+            nodeWidth += bumpOverflow * 2
+            nodeHeight += bumpOverflow * 2
+        }
 
         let nodeSize = CGSize(width: nodeWidth, height: nodeHeight)
 
@@ -354,50 +369,50 @@ enum MermaidMindmapRenderer {
         ctx.restoreGState()
     }
 
-    /// Cloud/bang shape — wavy rounded outline.
+    /// Cloud/bang shape — rounded bumpy outline resembling a thought bubble.
     private static func cloudPath(_ rect: CGRect) -> CGPath {
         let path = CGMutablePath()
-        let inset: CGFloat = 4
-        let r = rect.insetBy(dx: inset, dy: inset)
-        let bump: CGFloat = min(r.height * 0.15, 6)
+        let r = rect.insetBy(dx: 2, dy: 2)
+        let bump: CGFloat = min(r.height * 0.22, 10)
 
-        // Approximate cloud with arcs along the rectangle edges.
-        let segments = 6
-        let topY = r.minY
-        let bottomY = r.maxY
-        let leftX = r.minX
-        let rightX = r.maxX
+        // 4 bumps on top/bottom, curved sides — larger arcs for a rounder look.
+        let topSegments = 4
+        let bottomSegments = 4
+        let topStep = r.width / CGFloat(topSegments)
+        let bottomStep = r.width / CGFloat(bottomSegments)
 
-        path.move(to: CGPoint(x: leftX, y: r.midY))
+        // Start at top-left
+        path.move(to: CGPoint(x: r.minX, y: r.minY + bump))
 
-        // Top edge — bumps going left to right
-        let topStep = r.width / CGFloat(segments)
-        for i in 0 ..< segments {
-            let x1 = leftX + topStep * CGFloat(i)
-            let x2 = leftX + topStep * CGFloat(i + 1)
-            let midX = (x1 + x2) / 2
-            path.addQuadCurve(to: CGPoint(x: x2, y: topY), control: CGPoint(x: midX, y: topY - bump))
-        }
-
-        // Right side
+        // Left side — single outward curve
         path.addQuadCurve(
-            to: CGPoint(x: rightX, y: bottomY),
-            control: CGPoint(x: rightX + bump, y: r.midY)
+            to: CGPoint(x: r.minX, y: r.maxY - bump),
+            control: CGPoint(x: r.minX - bump, y: r.midY)
         )
 
-        // Bottom edge — bumps going right to left
-        for i in (0 ..< segments).reversed() {
-            let x1 = leftX + topStep * CGFloat(i + 1)
-            let x2 = leftX + topStep * CGFloat(i)
+        // Bottom edge — bumps going left to right
+        path.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        for i in 0 ..< bottomSegments {
+            let x1 = r.minX + bottomStep * CGFloat(i)
+            let x2 = r.minX + bottomStep * CGFloat(i + 1)
             let midX = (x1 + x2) / 2
-            path.addQuadCurve(to: CGPoint(x: x2, y: bottomY), control: CGPoint(x: midX, y: bottomY + bump))
+            path.addQuadCurve(to: CGPoint(x: x2, y: r.maxY), control: CGPoint(x: midX, y: r.maxY + bump))
         }
 
-        // Left side
+        // Right side — single outward curve
         path.addQuadCurve(
-            to: CGPoint(x: leftX, y: topY),
-            control: CGPoint(x: leftX - bump, y: r.midY)
+            to: CGPoint(x: r.maxX, y: r.minY + bump),
+            control: CGPoint(x: r.maxX + bump, y: r.midY)
         )
+
+        // Top edge — bumps going right to left
+        path.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        for i in (0 ..< topSegments).reversed() {
+            let x1 = r.minX + topStep * CGFloat(i + 1)
+            let x2 = r.minX + topStep * CGFloat(i)
+            let midX = (x1 + x2) / 2
+            path.addQuadCurve(to: CGPoint(x: x2, y: r.minY), control: CGPoint(x: midX, y: r.minY - bump))
+        }
 
         path.closeSubpath()
         return path
