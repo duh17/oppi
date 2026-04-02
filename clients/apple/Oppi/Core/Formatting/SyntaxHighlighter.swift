@@ -294,31 +294,42 @@ enum SyntaxHighlighter {
         return dict[.foregroundColor] as? UIColor
     }
 
+    // MARK: - Unified Dispatch
+
+    /// Single dispatch point for tree-sitter vs hand-written scanner.
+    ///
+    /// All public scanning/highlighting methods call this. Tree-sitter
+    /// is used for registered languages; the hand-written scanner handles
+    /// everything else.
+    private static func resolveTokenRanges(
+        _ code: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        // Tree-sitter: query-based highlighting from highlights.scm
+        if let tsRanges = TreeSitterHighlighter.scanTokenRanges(code, language: language) {
+            return tsRanges
+        }
+        // Fallback: hand-written scanner
+        return scanTokenRangesInternal(Array(truncatedCode(code)), language: language)
+    }
+
     /// Scan source code and return token ranges for non-default tokens.
     ///
     /// Each range's `location` is the character offset within `code`.
     /// Used by `makeCodeAttributedText` to apply syntax colors with gutter
     /// offset mapping in a single-pass build.
-    ///
-    /// Uses tree-sitter for languages with grammar support (currently bash),
-    /// falling back to the hand-written scanner for others.
     static func scanTokenRanges(
         _ code: String,
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        // Tree-sitter fast path: full AST-based highlighting
-        if let tsRanges = TreeSitterHighlighter.scanTokenRanges(code, language: language) {
-            return tsRanges
-        }
-        return scanTokenRangesInternal(Array(truncatedCode(code)), language: language)
+        resolveTokenRanges(code, language: language)
     }
 
     /// ASCII-optimized scanner using raw UTF-8 bytes.
     ///
-    /// For ASCII text (which covers >99% of source code), byte offsets equal
-    /// character/UTF-16 offsets, so we can skip the expensive `[Character]`
-    /// array conversion entirely. Falls back to the character-based scanner
-    /// for non-ASCII input.
+    /// For text where tree-sitter handles the language, this delegates
+    /// to the unified dispatch. For other languages, uses the UTF-8
+    /// fast path when the input is all-ASCII.
     ///
     /// Used by `DiffAttributedStringBuilder` for batch syntax scanning.
     static func scanTokenRangesUTF8(
@@ -327,9 +338,9 @@ enum SyntaxHighlighter {
     ) -> [TokenRange] {
         guard language != .unknown else { return [] }
 
-        // Tree-sitter fast path for supported languages.
-        if let tsRanges = TreeSitterHighlighter.scanTokenRanges(text, language: language) {
-            return tsRanges
+        // Tree-sitter handles supported languages.
+        if TreeSitterHighlighter.supports(language) {
+            return resolveTokenRanges(text, language: language)
         }
 
         // JSON is already fast with the hand-written scanner.
@@ -360,14 +371,8 @@ enum SyntaxHighlighter {
         // Build the full attributed string with default variable color.
         let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
 
-        // Scan for token ranges. Tree-sitter for supported languages,
-        // hand-written scanner as fallback.
-        let tokenRanges: [TokenRange]
-        if let tsRanges = TreeSitterHighlighter.scanTokenRanges(truncated, language: language) {
-            tokenRanges = tsRanges
-        } else {
-            tokenRanges = scanTokenRangesInternal(Array(truncated), language: language)
-        }
+        // Scan for token ranges via unified dispatch (tree-sitter or fallback).
+        let tokenRanges = resolveTokenRanges(truncated, language: language)
 
         // Pre-extract UIColors to avoid dictionary lookup + cast per token.
         let commentColor = attrs.comment[.foregroundColor] as? UIColor
