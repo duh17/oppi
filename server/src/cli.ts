@@ -68,7 +68,7 @@ function printHeader(): void {
   console.log("");
   console.log(c.boldMagenta("  ╭─────────────────────────────────────╮"));
   console.log(
-    c.boldMagenta("  │") + c.bold("              π  oppi                   ") + c.boldMagenta("│"),
+    c.boldMagenta("  │") + c.bold("               π  oppi               ") + c.boldMagenta("│"),
   );
   console.log(c.boldMagenta("  ╰─────────────────────────────────────╯"));
   console.log("");
