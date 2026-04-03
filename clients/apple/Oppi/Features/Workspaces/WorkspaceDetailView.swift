@@ -366,6 +366,7 @@ struct WorkspaceDetailView: View {
                 childSummary: { session in
                     childSummary(for: session.id, using: data.childIndex)
                 },
+                searchSnippet: { searchStore.snippetsBySessionId[$0] },
                 onResumeSession: { session in
                     Task { await resumeSession(session) }
                 },

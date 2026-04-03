@@ -7,6 +7,7 @@ struct WorkspaceStoppedSessionsSection: View {
     let isImportingLocal: Bool
     let lineageHint: (Session) -> String?
     let childSummary: (Session) -> SessionRow.ChildSummary?
+    let searchSnippet: (String) -> AttributedString?
     let onResumeSession: (Session) -> Void
     let onDeleteSession: (Session) -> Void
     let onImportLocal: (LocalSession) -> Void
@@ -139,7 +140,8 @@ struct WorkspaceStoppedSessionsSection: View {
                                     session: session,
                                     pendingCount: 0,
                                     lineageHint: lineageHint(session),
-                                    children: childSummary(session)
+                                    children: childSummary(session),
+                                    searchSnippet: searchSnippet(session.id)
                                 )
                             }
                             .listRowBackground(Color.themeBg)
