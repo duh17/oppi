@@ -104,6 +104,7 @@ struct WorkspaceHomeView: View {
                     Text(isUnreachable ? "Offline — cached workspaces unavailable" : "No workspaces")
                         .font(.subheadline)
                         .foregroundStyle(.themeComment)
+                        .listRowBackground(Color.themeBg)
                 } else {
                     ForEach(workspaces) { workspace in
                         NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
@@ -117,6 +118,8 @@ struct WorkspaceHomeView: View {
                                 badgeColor: server.resolvedBadgeColor
                             )
                         }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.themeBg)
                         // Never disable read-only navigation — cached data
                         // should always be browsable even when the server
                         // is unreachable (e.g. phone on cellular after a run).
