@@ -106,6 +106,7 @@ final class SessionSearchStore {
                     let boldText = remaining[remaining.startIndex..<boldEnd.lowerBound]
                     var bold = AttributedString(String(boldText))
                     bold.inlinePresentationIntent = .stronglyEmphasized
+                    bold.foregroundColor = .themeYellow
                     result.append(bold)
                     remaining = remaining[boldEnd.upperBound...]
                 } else {
