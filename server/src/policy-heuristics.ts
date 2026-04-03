@@ -220,45 +220,102 @@ function isSecretFileRead(parsed: ParsedCommand): boolean {
 }
 
 /**
+ * Check whether every URL-like argument in a curl/wget command
+ * points to a loopback address (localhost, 127.0.0.1, [::1], 0.0.0.0).
+ * Returns true only when at least one URL is found and all are local.
+ */
+function allUrlsAreLocal(parsed: ParsedCommand): boolean {
+  const urls: string[] = [];
+  for (let i = 0; i < parsed.args.length; i++) {
+    const arg = parsed.args[i];
+    // --url <value> form
+    if (arg === "--url" && i + 1 < parsed.args.length) {
+      urls.push(parsed.args[i + 1]);
+      i++;
+      continue;
+    }
+    // --url=<value> form
+    if (arg.startsWith("--url=")) {
+      urls.push(arg.slice(6));
+      continue;
+    }
+    // Positional URL (not a flag)
+    if (!arg.startsWith("-") && /^https?:\/\//i.test(arg)) {
+      urls.push(arg);
+    }
+  }
+  if (urls.length === 0) return false;
+  return urls.every((u) => {
+    try {
+      const host = new URL(u).hostname.toLowerCase();
+      return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
  * Detect if a parsed command sends data to an external service.
  *
  * Checks for curl/wget with data-sending flags or explicit write methods.
  * Does NOT flag simple GET requests (curl https://example.com) — those
  * are reads, not external actions on the user's behalf.
+ * Does NOT flag requests to localhost/loopback — those are local service calls.
  */
 export function isDataEgress(parsed: ParsedCommand): boolean {
   if (parsed.executable === "curl") {
+    let hasDataFlag = false;
     for (let i = 0; i < parsed.args.length; i++) {
       const arg = parsed.args[i];
 
       // Exact flag match: -d, --data, -F, --json, etc.
-      if (CURL_DATA_FLAGS.has(arg)) return true;
+      if (CURL_DATA_FLAGS.has(arg)) {
+        hasDataFlag = true;
+        continue;
+      }
 
       // Long flag with = : --data=value, --json=value
       const eqIdx = arg.indexOf("=");
-      if (eqIdx > 0 && CURL_DATA_FLAGS.has(arg.slice(0, eqIdx))) return true;
+      if (eqIdx > 0 && CURL_DATA_FLAGS.has(arg.slice(0, eqIdx))) {
+        hasDataFlag = true;
+        continue;
+      }
 
       // Explicit write method: -X POST, --request PUT, -XPOST (no space)
       if (arg === "-X" || arg === "--request") {
         const next = parsed.args[i + 1]?.toUpperCase();
-        if (next && CURL_WRITE_METHODS.has(next)) return true;
+        if (next && CURL_WRITE_METHODS.has(next)) {
+          hasDataFlag = true;
+          continue;
+        }
       }
       // Compact form: -XPOST, -XPUT, etc.
       if (arg.startsWith("-X") && arg.length > 2) {
         const method = arg.slice(2).toUpperCase();
-        if (CURL_WRITE_METHODS.has(method)) return true;
+        if (CURL_WRITE_METHODS.has(method)) {
+          hasDataFlag = true;
+          continue;
+        }
       }
     }
-    return false;
+    return hasDataFlag && !allUrlsAreLocal(parsed);
   }
 
   if (parsed.executable === "wget") {
+    let hasDataFlag = false;
     for (const arg of parsed.args) {
-      if (WGET_DATA_FLAGS.has(arg)) return true;
+      if (WGET_DATA_FLAGS.has(arg)) {
+        hasDataFlag = true;
+        continue;
+      }
       const eqIdx = arg.indexOf("=");
-      if (eqIdx > 0 && WGET_DATA_FLAGS.has(arg.slice(0, eqIdx))) return true;
+      if (eqIdx > 0 && WGET_DATA_FLAGS.has(arg.slice(0, eqIdx))) {
+        hasDataFlag = true;
+        continue;
+      }
     }
-    return false;
+    return hasDataFlag && !allUrlsAreLocal(parsed);
   }
 
   return false;

