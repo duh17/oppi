@@ -26,6 +26,85 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
+    @Test func stateUpdateCarriesPreviousContextAndReleasesRecoveredActivity() {
+        let (conn, _) = makeTestConnection()
+        var idleTimerUpdates: [Bool] = []
+        conn.screenAwakeController = ScreenAwakeController(
+            timeoutProvider: { nil },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            sleepFunction: { _ in }
+        )
+
+        var previous = makeTestSession(id: "s1", status: .busy)
+        previous.workspaceId = "w1"
+        conn.sessionStore.upsert(previous)
+
+        _ = conn.applySharedStoreUpdate(
+            for: .toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil),
+            sessionId: "s1"
+        )
+        _ = conn.applySharedStoreUpdate(for: .agentStart, sessionId: "s1")
+
+        #expect(conn.activityStore.lastActivity(for: "s1") != nil)
+        #expect(conn.screenAwakeController.isPreventingSleep)
+
+        var current = previous
+        current.workspaceId = "w2"
+        current.status = .ready
+
+        let result = conn.applySharedStoreUpdate(for: .state(session: current), sessionId: "s1")
+
+        #expect(result.previousWorkspaceId == "w1")
+        #expect(result.previousStatus == .busy)
+        #expect(result.didTransitionOutOfRunning)
+        #expect(conn.activityStore.lastActivity(for: "s1") == nil)
+        #expect(!conn.screenAwakeController.isPreventingSleep)
+        #expect(idleTimerUpdates.last == false)
+    }
+
+    @Test func applyFetchedSessionStateUsesTerminalRecoverySideEffects() {
+        let (conn, pipe) = makeTestConnection()
+        var idleTimerUpdates: [Bool] = []
+        conn.screenAwakeController = ScreenAwakeController(
+            timeoutProvider: { nil },
+            idleTimerSetter: { idleTimerUpdates.append($0) },
+            sleepFunction: { _ in }
+        )
+
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
+        _ = conn.applySharedStoreUpdate(
+            for: .toolStart(tool: "bash", args: ["command": "pwd"], toolCallId: "tc-1", callSegments: nil),
+            sessionId: "s1"
+        )
+        pipe.handle(.agentStart, sessionId: "s1")
+        conn.handleActiveSessionUI(
+            .extensionUIRequest(ExtensionUIRequest(
+                id: "ask-1",
+                sessionId: "s1",
+                method: "ask",
+                askQuestions: [AskQuestion(id: "q1", question: "Q?", options: [], multiSelect: false)],
+                allowCustom: true
+            )),
+            sessionId: "s1"
+        )
+
+        #expect(conn.activityStore.lastActivity(for: "s1") != nil)
+        #expect(conn.activeAskRequest?.id == "ask-1")
+        #expect(conn.silenceWatchdog.lastEventTime == nil)
+
+        conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
+        #expect(conn.silenceWatchdog.lastEventTime != nil)
+
+        conn.applyFetchedSessionState(makeTestSession(id: "s1", workspaceId: "w1", status: .ready))
+
+        #expect(conn.activityStore.lastActivity(for: "s1") == nil)
+        #expect(conn.activeAskRequest == nil)
+        #expect(conn.silenceWatchdog.lastEventTime == nil)
+        #expect(!conn.screenAwakeController.isPreventingSleep)
+        #expect(conn.sessionStore.turnEndedDate(for: "s1") != nil)
+        #expect(idleTimerUpdates.last == false)
+    }
+
     @Test func routeQueueStateUpdatesQueueStore() {
         let (conn, pipe) = makeTestConnection()
         let state = MessageQueueState(
@@ -599,18 +678,15 @@ struct ServerConnectionRoutingTests {
 final class EventFlowServerConnectionScenario {
     let connection: ServerConnection
     let activeSessionId: String
-    let reducer = TimelineReducer()
-    let coalescer = DeltaCoalescer()
-    let toolCallCorrelator = ToolCallCorrelator()
+    private let pipe: TestEventPipeline
+
+    var reducer: TimelineReducer { pipe.reducer }
 
     init(sessionId: String = "s1") {
-        self.connection = makeTestConnection(sessionId: sessionId).conn
+        let testConnection = makeTestConnection(sessionId: sessionId)
+        self.connection = testConnection.conn
+        self.pipe = testConnection.pipe
         self.activeSessionId = sessionId
-
-        coalescer.onFlush = { [weak self] events in
-            self?.reducer.processBatch(events)
-        }
-        coalescer.sessionId = sessionId
     }
 
     @discardableResult
@@ -638,18 +714,20 @@ final class EventFlowServerConnectionScenario {
         flushAfter: Bool = false
     ) -> Self {
         let sid = sessionId ?? activeSessionId
-        let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sid)
-        routeToTimeline(message, sessionId: sid, storeResult: storeResult)
-        connection.handleActiveSessionUI(message, sessionId: sid)
+        if sid == activeSessionId {
+            pipe.handle(message, sessionId: sid)
+        } else {
+            _ = connection.applySharedStoreUpdate(for: message, sessionId: sid)
+        }
         if flushAfter {
-            coalescer.flushNow()
+            pipe.flushNow()
         }
         return self
     }
 
     @discardableResult
     func whenFlush() -> Self {
-        coalescer.flushNow()
+        pipe.flushNow()
         return self
     }
 
@@ -675,45 +753,6 @@ final class EventFlowServerConnectionScenario {
         }.count
     }
 
-    private func routeToTimeline(_ message: ServerMessage, sessionId: String, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
-        switch message {
-        case .agentStart: coalescer.receive(.agentStart(sessionId: sessionId))
-        case .agentEnd: coalescer.receive(.agentEnd(sessionId: sessionId))
-        case .textDelta(let d): coalescer.receive(.textDelta(sessionId: sessionId, delta: d))
-        case .thinkingDelta(let d): coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: d))
-        case .toolStart(let t, let a, let id, let s): coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: t, args: a, toolCallId: id, callSegments: s))
-        case .toolOutput(let o, let e, let id, let m, let tr, let tb): coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: o, isError: e, toolCallId: id, mode: m, truncated: tr, totalBytes: tb))
-        case .toolEnd(_, let id, let d, let e, let s): coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: id, details: d, isError: e, resultSegments: s))
-        case .messageEnd(let r, let c):
-            if r == "assistant" { coalescer.receive(.messageEnd(sessionId: sessionId, content: c)) }
-            else if r == "user", !c.isEmpty, !reducer.hasUserMessage(matching: c) { reducer.appendUserMessage(c) }
-        case .error(let msg, _, let fatal):
-            coalescer.receive(.error(sessionId: sessionId, message: msg))
-            if fatal { connection.fatalSetupError = true }
-        case .sessionEnded(let r): coalescer.receive(.sessionEnded(sessionId: sessionId, reason: r))
-        case .compactionStart(let r): coalescer.receive(.compactionStart(sessionId: sessionId, reason: r))
-        case .compactionEnd(let a, let w, let s, let t): coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: a, willRetry: w, summary: s, tokensBefore: t))
-        case .retryStart(let a, let m, let d, let e): coalescer.receive(.retryStart(sessionId: sessionId, attempt: a, maxAttempts: m, delayMs: d, errorMessage: e))
-        case .retryEnd(let s, let a, let f): coalescer.receive(.retryEnd(sessionId: sessionId, success: s, attempt: a, finalError: f))
-        case .commandResult(let cmd, let rid, let ok, let data, let err):
-            let consumed = connection.handleCommandResult(command: cmd, requestId: rid, success: ok, data: data, error: err, sessionId: sessionId)
-            if !consumed { coalescer.receive(.commandResult(sessionId: sessionId, command: cmd, requestId: rid, success: ok, data: data, error: err)) }
-        case .permissionExpired(let id, _):
-            if let req = storeResult.takenPermission { reducer.resolvePermission(id: id, outcome: .expired, tool: req.tool, summary: req.displaySummary) }
-            coalescer.receive(.permissionExpired(id: id))
-        case .permissionCancelled(let id):
-            if let req = storeResult.takenPermission { reducer.resolvePermission(id: id, outcome: .cancelled, tool: req.tool, summary: req.displaySummary) }
-        case .permissionRequest(let p): coalescer.receive(.permissionRequest(p))
-        case .queueItemStarted(_, let item, _): reducer.appendUserMessage(item.message, images: item.images ?? [])
-        case .stopRequested(_, let r): reducer.appendSystemEvent(r ?? "Stopping…")
-        case .stopConfirmed(_, let r): coalescer.receive(.agentEnd(sessionId: sessionId)); reducer.appendSystemEvent(r ?? "Stop confirmed")
-        case .stopFailed(_, let r): reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(r)"))
-        case .state(let session):
-            let prev = connection.sessionStore.sessions.first(where: { $0.id == session.id })?.status
-            if let prev, prev == .busy || prev == .stopping, session.status == .ready || session.status == .stopped || session.status == .error { coalescer.receive(.agentEnd(sessionId: session.id)) }
-        default: break
-        }
-    }
 }
 
 enum EventFlowTimelineItemKind {

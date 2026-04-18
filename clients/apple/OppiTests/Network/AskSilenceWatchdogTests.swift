@@ -126,6 +126,23 @@ struct AskSilenceWatchdogTests {
         #expect(conn.pendingAskRequests["s1"] != nil,
                 "Ask should be stashed in pendingAskRequests during foreground recovery")
         #expect(conn.pendingAskRequests["s1"]?.id == "ask-stash")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-stash")
+    }
+
+    @Test func terminalStateClearsAskAndStopsWatchdog() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
+
+        // Set up running state with ask
+        conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
+        conn.handleActiveSessionUI(makeAskMessage(), sessionId: "s1")
+        #expect(conn.activeAskRequest != nil)
+
+        conn.applyFetchedSessionState(makeTestSession(id: "s1", status: .ready))
+
+        #expect(conn.activeAskRequest == nil)
+        #expect(conn.silenceWatchdog.lastEventTime == nil)
     }
 
     @Test func stopConfirmedClearsAskAndStopsWatchdog() {

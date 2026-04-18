@@ -5,20 +5,16 @@ import Foundation
 final class ServerConnectionScenario {
     let connection: ServerConnection
     let activeSessionId: String
+    private let pipe: TestEventPipeline
 
     /// Per-session pipeline for tests — mirrors ChatSessionManager ownership.
-    let reducer = TimelineReducer()
-    let coalescer = DeltaCoalescer()
-    let toolCallCorrelator = ToolCallCorrelator()
+    var reducer: TimelineReducer { pipe.reducer }
 
     init(sessionId: String = "s1") {
-        self.connection = makeTestConnection(sessionId: sessionId).conn
+        let testConnection = makeTestConnection(sessionId: sessionId)
+        self.connection = testConnection.conn
+        self.pipe = testConnection.pipe
         self.activeSessionId = sessionId
-
-        coalescer.onFlush = { [weak self] events in
-            self?.reducer.processBatch(events)
-        }
-        coalescer.sessionId = sessionId
     }
 
     @discardableResult
@@ -46,21 +42,20 @@ final class ServerConnectionScenario {
         flushAfter: Bool = false
     ) -> Self {
         let sid = sessionId ?? activeSessionId
-        let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sid)
-        // Only route to per-session pipeline for the active session
         if sid == activeSessionId {
-            routeToTimeline(message, sessionId: sid, storeResult: storeResult)
-            connection.handleActiveSessionUI(message, sessionId: sid)
+            pipe.handle(message, sessionId: sid)
+        } else {
+            _ = connection.applySharedStoreUpdate(for: message, sessionId: sid)
         }
         if flushAfter {
-            coalescer.flushNow()
+            pipe.flushNow()
         }
         return self
     }
 
     @discardableResult
     func whenFlush() -> Self {
-        coalescer.flushNow()
+        pipe.flushNow()
         return self
     }
 
@@ -86,95 +81,6 @@ final class ServerConnectionScenario {
         }.count
     }
 
-    /// Route message to per-scenario timeline pipeline (mirrors ChatSessionManager.routeToTimeline).
-    private func routeToTimeline(_ message: ServerMessage, sessionId: String, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
-        switch message {
-        case .agentStart:
-            coalescer.receive(.agentStart(sessionId: sessionId))
-        case .agentEnd:
-            coalescer.receive(.agentEnd(sessionId: sessionId))
-        case .textDelta(let delta):
-            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
-        case .thinkingDelta(let delta):
-            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
-        case .toolStart(let tool, let args, let toolCallId, let callSegments):
-            coalescer.receive(toolCallCorrelator.start(
-                sessionId: sessionId, tool: tool, args: args,
-                toolCallId: toolCallId, callSegments: callSegments
-            ))
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
-            coalescer.receive(toolCallCorrelator.output(
-                sessionId: sessionId, output: output, isError: isError,
-                toolCallId: toolCallId, mode: mode,
-                truncated: truncated, totalBytes: totalBytes
-            ))
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
-            coalescer.receive(toolCallCorrelator.end(
-                sessionId: sessionId, toolCallId: toolCallId,
-                details: details, isError: isError,
-                resultSegments: resultSegments
-            ))
-        case .messageEnd(let role, let content):
-            if role == "assistant" {
-                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
-            } else if role == "user", !content.isEmpty {
-                if !reducer.hasUserMessage(matching: content) {
-                    reducer.appendUserMessage(content)
-                }
-            }
-        case .error(let msg, _, let fatal):
-            coalescer.receive(.error(sessionId: sessionId, message: msg))
-            if fatal { connection.fatalSetupError = true }
-        case .sessionEnded(let reason):
-            coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
-        case .compactionStart(let reason):
-            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
-        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
-            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore))
-        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
-            coalescer.receive(.retryStart(sessionId: sessionId, attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage))
-        case .retryEnd(let success, let attempt, let finalError):
-            coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
-        case .commandResult(let command, let requestId, let success, let data, let error):
-            let consumed = connection.handleCommandResult(
-                command: command, requestId: requestId,
-                success: success, data: data, error: error,
-                sessionId: sessionId
-            )
-            if !consumed {
-                coalescer.receive(.commandResult(sessionId: sessionId, command: command, requestId: requestId, success: success, data: data, error: error))
-            }
-        case .permissionExpired(let id, _):
-            if let request = storeResult.takenPermission {
-                reducer.resolvePermission(id: id, outcome: .expired, tool: request.tool, summary: request.displaySummary)
-            }
-            coalescer.receive(.permissionExpired(id: id))
-        case .permissionCancelled(let id):
-            if let request = storeResult.takenPermission {
-                reducer.resolvePermission(id: id, outcome: .cancelled, tool: request.tool, summary: request.displaySummary)
-            }
-        case .permissionRequest(let perm):
-            coalescer.receive(.permissionRequest(perm))
-        case .queueItemStarted(_, let item, _):
-            reducer.appendUserMessage(item.message, images: item.images ?? [])
-        case .stopRequested(_, let reason):
-            reducer.appendSystemEvent(reason ?? "Stopping…")
-        case .stopConfirmed(_, let reason):
-            coalescer.receive(.agentEnd(sessionId: sessionId))
-            reducer.appendSystemEvent(reason ?? "Stop confirmed")
-        case .stopFailed(_, let reason):
-            reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
-        case .state(let session):
-            let previousStatus = connection.sessionStore.sessions.first(where: { $0.id == session.id })?.status
-            if let previousStatus,
-               previousStatus == .busy || previousStatus == .stopping,
-               session.status == .ready || session.status == .stopped || session.status == .error {
-                coalescer.receive(.agentEnd(sessionId: session.id))
-            }
-        default:
-            break
-        }
-    }
 }
 
 enum ScenarioTimelineItemKind {

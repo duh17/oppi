@@ -45,8 +45,8 @@ final class TestEventPipeline {
         guard sessionId == conn.activeSessionId else { return }
 
         if conn.isStopLifecycleMessage(message) {
-            conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            conn.handleActiveSessionUI(message, sessionId: sessionId)
+            let storeResult = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
+            conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
             switch message {
             case .stopRequested(_, let reason):
                 reducer.appendSystemEvent(reason ?? "Stopping…")
@@ -136,19 +136,14 @@ final class TestEventPipeline {
             conn.messageQueueStore.applyQueueItemStarted(for: sessionId, kind: kind, item: item, queueVersion: queueVersion)
             reducer.appendUserMessage(item.message, images: item.images ?? [])
         case .state(let session):
-            let previousStatus = conn.sessionStore.sessions.first(where: { $0.id == session.id })?.status
-            let prevWsId = conn.sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
-            conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            conn.handleState(session, previousWorkspaceId: prevWsId)
-            if let previousStatus, previousStatus == .busy || previousStatus == .stopping,
-               session.status == .ready || session.status == .stopped || session.status == .error {
-                conn.screenAwakeController.setSessionActivity(false, sessionId: session.id)
+            let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
+            conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)
+            if result.didTransitionOutOfRunning {
                 coalescer.receive(.agentEnd(sessionId: session.id))
-                conn.silenceWatchdog.stop()
             }
         default:
-            conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
-            conn.handleActiveSessionUI(message, sessionId: sessionId)
+            let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
+            conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)
         }
     }
 }

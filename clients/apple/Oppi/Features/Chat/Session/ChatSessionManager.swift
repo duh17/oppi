@@ -572,7 +572,7 @@ final class ChatSessionManager {
         let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sessionId)
         routeToTimeline(message, connection: connection, storeResult: storeResult)
         if connection.activeSessionId == sessionId {
-            connection.handleActiveSessionUI(message, sessionId: sessionId)
+            connection.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
         }
     }
 
@@ -653,7 +653,7 @@ final class ChatSessionManager {
 
             do {
                 let (session, _) = try await api.getSession(workspaceId: workspaceId, id: sessionId)
-                sessionStore.upsert(session)
+                connection.applyFetchedSessionState(session)
             } catch {
                 log.warning("Reconcile failed: \(error.localizedDescription)")
             }
@@ -869,10 +869,7 @@ final class ChatSessionManager {
         case .state(let session):
             // Recovery hardening: if server state says the session is no longer
             // running but we never observed agentEnd/messageEnd, finalize artifacts.
-            let previousStatus = connection.sessionStore.sessions.first(where: { $0.id == session.id })?.status
-            if let previousStatus,
-               previousStatus == .busy || previousStatus == .stopping,
-               session.status == .ready || session.status == .stopped || session.status == .error {
+            if storeResult.didTransitionOutOfRunning {
                 coalescer.receive(.agentEnd(sessionId: session.id))
             }
 
@@ -959,7 +956,6 @@ final class ChatSessionManager {
                 return .fullReloadScheduled
             }
 
-            sessionStore.upsert(response.session)
             markSyncSucceeded()
 
             if !response.catchUpComplete {
@@ -993,10 +989,12 @@ final class ChatSessionManager {
                 let eventStoreResult = connection.applySharedStoreUpdate(for: event.message, sessionId: sessionId)
                 routeToTimeline(event.message, connection: connection, storeResult: eventStoreResult)
                 if connection.activeSessionId == sessionId {
-                    connection.handleActiveSessionUI(event.message, sessionId: sessionId)
+                    connection.handleActiveSessionUI(event.message, sessionId: sessionId, storeResult: eventStoreResult)
                 }
                 appliedCatchUp = true
             }
+
+            sessionStore.upsert(response.session)
 
             let trackedAfterEvents = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
             if response.currentSeq > trackedAfterEvents {

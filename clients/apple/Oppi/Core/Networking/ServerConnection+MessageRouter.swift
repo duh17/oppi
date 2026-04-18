@@ -15,33 +15,26 @@ extension ServerConnection {
     ///
     /// Timeline mutations (coalescer/reducer) are handled by the per-session
     /// ChatSessionManager.routeToTimeline() instead.
-    func handleActiveSessionUI(_ message: ServerMessage, sessionId: String) {
-        // Stash ask requests for non-active sessions so they're available on entry.
-        if sessionId != activeSessionId {
-            if case .extensionUIRequest(let request) = message,
-               request.method == "ask",
-               let questions = request.askQuestions,
-               !questions.isEmpty {
-                let ask = AskRequest(
-                    id: request.id,
-                    sessionId: request.sessionId,
-                    questions: questions,
-                    allowCustom: request.allowCustom ?? true,
-                    timeout: request.timeout
-                )
-                pendingAskRequests[sessionId] = ask
-                askRequestStore.set(ask, for: sessionId)
-            }
-            return
-        }
+    func handleActiveSessionUI(
+        _ message: ServerMessage,
+        sessionId: String,
+        storeResult: StoreUpdateResult = .notHandled
+    ) {
+        guard sessionId == activeSessionId else { return }
 
         switch message {
         case .connected(let session):
             handleConnected(session)
 
         case .state(let session):
-            let prevWsId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
-            handleState(session, previousWorkspaceId: prevWsId)
+            handleState(session, previousWorkspaceId: storeResult.previousWorkspaceId)
+            let isTerminalState = session.status == .ready
+                || session.status == .stopped
+                || session.status == .error
+            if isTerminalState {
+                silenceWatchdog.stop()
+                clearAskState(for: sessionId)
+            }
 
         case .queueState(let queue):
             messageQueueStore.apply(queue, for: sessionId)
@@ -55,22 +48,8 @@ extension ServerConnection {
             )
 
         case .extensionUIRequest(let request):
-            if request.method == "ask", let questions = request.askQuestions, !questions.isEmpty {
-                // Route to inline ask card
-                let ask = AskRequest(
-                    id: request.id,
-                    sessionId: request.sessionId,
-                    questions: questions,
-                    allowCustom: request.allowCustom ?? true,
-                    timeout: request.timeout
-                )
-                activeAskRequest = ask
-                askRequestStore.set(ask, for: sessionId)
-                // Stop the silence watchdog — the agent is blocked waiting
-                // for user input, so silence is expected. Without this, the
-                // watchdog triggers a reconnect after 45s which clears the
-                // ask card (subscribe dedup skips re-sending the pending ask).
-                silenceWatchdog.stop()
+            if let ask = askRequest(from: request) {
+                presentAskRequest(ask, for: sessionId)
             } else {
                 // Existing generic dialog path
                 extensionTimeoutTask?.cancel()
@@ -103,8 +82,7 @@ extension ServerConnection {
 
         case .sessionEnded:
             silenceWatchdog.stop()
-            activeAskRequest = nil
-            askRequestStore.remove(for: sessionId)
+            clearAskState(for: sessionId)
             messageQueueStore.clear(sessionId: sessionId)
 
         case .sessionDeleted(let deletedId):
@@ -112,8 +90,41 @@ extension ServerConnection {
 
         case .stopConfirmed:
             silenceWatchdog.stop()
-            activeAskRequest = nil
-            askRequestStore.remove(for: sessionId)
+            clearAskState(for: sessionId)
+
+        default:
+            break
+        }
+    }
+
+    /// Handle connection-level UI concerns for non-focused sessions.
+    ///
+    /// Keeps ask state coherent for sessions that still receive messages via
+    /// notification-level subscription or a non-active per-session continuation.
+    func handleInactiveSessionUI(
+        _ message: ServerMessage,
+        sessionId: String,
+        storeResult: StoreUpdateResult = .notHandled
+    ) {
+        switch message {
+        case .extensionUIRequest(let request):
+            if let ask = askRequest(from: request) {
+                stashPendingAskRequest(ask, for: sessionId)
+            }
+
+        case .state(let session):
+            let isTerminalState = session.status == .ready
+                || session.status == .stopped
+                || session.status == .error
+            if isTerminalState {
+                clearAskState(for: sessionId)
+            }
+
+        case .sessionEnded, .stopConfirmed:
+            clearAskState(for: sessionId)
+
+        case .sessionDeleted(let deletedId):
+            clearAskState(for: deletedId)
 
         default:
             break
@@ -133,9 +144,8 @@ extension ServerConnection {
 
     /// Handle active-session UI state updates from `.state` messages.
     ///
-    /// **Important:** `previousWorkspaceId` must be captured BEFORE
-    /// `applySharedStoreUpdate` upserts the session into the store.
-    /// The caller passes it in to ensure correct ordering.
+    /// `previousWorkspaceId` must come from pre-update session context captured
+    /// before `applySharedStoreUpdate` upserts the session into the store.
     func handleState(_ session: Session, previousWorkspaceId: String? = nil) {
         // Active-session-only: thinking level, slash commands.
         // Skip for child sessions whose state arrives via the parent's broadcast key —

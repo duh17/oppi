@@ -310,6 +310,16 @@ final class ChatActionHandler {
         sessionManager: ChatSessionManager,
         sessionId: String
     ) {
+        guard connection.activeSessionId == sessionId else {
+            reducer.process(
+                .error(
+                    sessionId: sessionId,
+                    message: "Failed to stop: \(WebSocketError.notConnected.localizedDescription)"
+                )
+            )
+            return
+        }
+
         isStopping = true
         showForceStop = false
 

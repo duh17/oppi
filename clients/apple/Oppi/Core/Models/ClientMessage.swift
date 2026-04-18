@@ -85,7 +85,8 @@ enum ClientMessage: Sendable {
 
 /// Subscription level for the `/stream` multiplexed WebSocket.
 enum StreamSubscriptionLevel: String, Codable, Sendable {
-    /// Full event streaming (text deltas, tool output, etc.). One session per connection.
+    /// Full event streaming (text deltas, tool output, etc.). Multiple sessions can be
+    /// subscribed at this level concurrently on the same `/stream` connection.
     case full
     /// Notification-level events only (permissions, state, agent start/end).
     case notifications
@@ -351,8 +352,8 @@ extension ClientMessage: Encodable {
 
 /// Wraps a `ClientMessage` with a `sessionId` for the `/stream` multiplexed protocol.
 ///
-/// On the per-session WebSocket, the session is implicit in the URL.
-/// On `/stream`, session-scoped commands must include `sessionId` at the top level.
+/// Oppi now uses only the shared `/stream` WebSocket. Session-scoped commands
+/// include `sessionId` at the top level so one connection can target many sessions.
 struct SessionScopedMessage: Encodable, Sendable {
     let sessionId: String
     let message: ClientMessage

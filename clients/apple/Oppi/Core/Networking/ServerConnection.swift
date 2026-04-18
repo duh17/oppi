@@ -549,6 +549,7 @@ final class ServerConnection {
     /// directly (cross-session events bypass the coalescer).
     private func handleCrossSessionMessage(_ message: ServerMessage, sessionId: String) {
         let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
+        handleInactiveSessionUI(message, sessionId: sessionId, storeResult: result)
 
         if result.handled {
             recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)
@@ -651,6 +652,16 @@ final class ServerConnection {
     /// or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
+        let previousSessionId = activeSessionId
+        if previousSessionId != sessionId {
+            // Hand off session-scoped control-plane state before switching the
+            // focused command target. Without this, an ask from the previous
+            // session can be lost and its watchdog can keep running against
+            // the newly focused session.
+            stashActiveAskIfNeeded()
+            silenceWatchdog.stop()
+        }
+
         activeSessionId = sessionId
         sender.activeSessionId = sessionId
         // Reset per-connection UI state for the new focused session
@@ -659,12 +670,8 @@ final class ServerConnection {
         extensionTimeoutTask = nil
         chatState.resetSessionState()
 
-        // Restore pending ask request if one was stashed for this session
-        if let pending = pendingAskRequests.removeValue(forKey: sessionId) {
-            activeAskRequest = pending
-        } else {
-            activeAskRequest = nil
-        }
+        // Restore pending ask request if one was stashed for this session.
+        restorePendingAskRequestIfNeeded(for: sessionId)
     }
 
     /// Disconnect from the current session stream.
@@ -683,10 +690,7 @@ final class ServerConnection {
         // Stash pending ask request before clearing activeSessionId so it can
         // be restored on focusSession(). Without this, navigating away loses
         // the ask card permanently.
-        if let activeSessionId, let ask = activeAskRequest {
-            pendingAskRequests[activeSessionId] = ask
-        }
-        activeAskRequest = nil
+        stashActiveAskIfNeeded()
 
         activeSessionId = nil
         sender.activeSessionId = nil
@@ -782,10 +786,7 @@ final class ServerConnection {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled), sessionId: activeSessionId)
         activeExtensionDialog = nil
-        if let activeSessionId {
-            askRequestStore.remove(for: activeSessionId)
-        }
-        activeAskRequest = nil
+        clearAskState(for: activeSessionId)
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
     }

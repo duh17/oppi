@@ -6,6 +6,19 @@ import Testing
 @MainActor
 struct ChatSessionManagerTests {
 
+    private func makeImmediateReleaseScreenAwakeController() -> (
+        controller: ScreenAwakeController,
+        updates: () -> [Bool]
+    ) {
+        var captured: [Bool] = []
+        let controller = ScreenAwakeController(
+            timeoutProvider: { nil },
+            idleTimerSetter: { captured.append($0) },
+            sleepFunction: { _ in }
+        )
+        return (controller, { captured })
+    }
+
     @Test func initialState() {
         let manager = ChatSessionManager(sessionId: "test-123")
         #expect(manager.sessionId == "test-123")
@@ -550,6 +563,149 @@ struct ChatSessionManagerTests {
         #expect(snapshot.calls[0].cachedLastEventId == nil)
         #expect(snapshot.calls[1].cachedEventCount == 200)
         #expect(snapshot.calls[1].cachedLastEventId == "evt-200")
+    }
+
+    @Test func liveStateReadyRecoveryStopsWatchdogReleasesScreenAwakeAndFinalizesThinking() async {
+        let sessionId = "live-state-recovery-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let (screenAwakeController, updates) = makeImmediateReleaseScreenAwakeController()
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        connection.screenAwakeController = screenAwakeController
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .thinkingDelta(delta: "thinking..."))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                screenAwakeController.isPreventingSleep && connection.silenceWatchdog.lastEventTime != nil
+            }
+        })
+
+        streams.yield(index: 0, message: .state(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                !screenAwakeController.isPreventingSleep && connection.silenceWatchdog.lastEventTime == nil
+            }
+        })
+
+        manager.coalescer.flushNow()
+
+        let thinkingStates = manager.reducer.items.compactMap { item -> Bool? in
+            guard case .thinking(_, _, _, let isDone) = item else { return nil }
+            return isDone
+        }
+
+        #expect(thinkingStates.count == 1)
+        #expect(thinkingStates[0] == true)
+        #expect(updates().last == false)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @Test func reconnectCatchUpStateReadyRecoveryStopsWatchdogReleasesScreenAwakeAndFinalizesThinking() async {
+        let sessionId = "catchup-state-recovery-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 0),
+            nil,
+            nil,
+            .init(seq: nil, currentSeq: 2),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        manager._loadCatchUpForTesting = { _, _ in
+            APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 2, message: .state(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))),
+                ],
+                currentSeq: 2,
+                session: makeTestSession(id: sessionId, workspaceId: "w1", status: .ready),
+                catchUpComplete: true
+            )
+        }
+
+        let (screenAwakeController, updates) = makeImmediateReleaseScreenAwakeController()
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        connection.screenAwakeController = screenAwakeController
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)))
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .thinkingDelta(delta: "thinking..."))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                screenAwakeController.isPreventingSleep && connection.silenceWatchdog.lastEventTime != nil
+            }
+        })
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                !screenAwakeController.isPreventingSleep
+                    && connection.silenceWatchdog.lastEventTime == nil
+                    && sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .ready
+            }
+        })
+
+        manager.coalescer.flushNow()
+
+        let thinkingStates = manager.reducer.items.compactMap { item -> Bool? in
+            guard case .thinking(_, _, _, let isDone) = item else { return nil }
+            return isDone
+        }
+
+        #expect(thinkingStates.count == 1)
+        #expect(thinkingStates[0] == true)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 2)
+        #expect(updates().last == false)
+
+        streams.finish(index: 0)
+        await connectTask.value
     }
 
     @Test func reconnectWithSequencedCatchUpSkipsFullHistoryReload() async {

@@ -270,6 +270,176 @@ struct AskRequestTests {
         #expect(conn.activeAskRequest == nil)
     }
 
+    @Test @MainActor func disconnectStashesAskForRestore() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        let ask = AskRequest(
+            id: "ask-stash",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        conn.activeAskRequest = ask
+        conn.askRequestStore.set(ask, for: "s1")
+
+        conn.disconnectSession()
+
+        #expect(conn.activeAskRequest == nil)
+        #expect(conn.pendingAskRequests["s1"]?.id == "ask-stash")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-stash")
+    }
+
+    @Test @MainActor func focusSessionRestoresPendingAsk() {
+        let conn = ServerConnection()
+        let ask = AskRequest(
+            id: "ask-pending",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        conn.pendingAskRequests["s1"] = ask
+
+        conn.focusSession("s1")
+
+        #expect(conn.activeAskRequest?.id == "ask-pending")
+        #expect(conn.pendingAskRequests["s1"] == nil)
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-pending")
+    }
+
+    @Test @MainActor func focusSessionStashesPreviousAskAndStopsWatchdogOnHandoff() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        let firstAsk = AskRequest(
+            id: "ask-s1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Q1", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let secondAsk = AskRequest(
+            id: "ask-s2",
+            sessionId: "s2",
+            questions: [AskQuestion(id: "q2", question: "Q2", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        conn.activeAskRequest = firstAsk
+        conn.askRequestStore.set(firstAsk, for: "s1")
+        conn.pendingAskRequests["s2"] = secondAsk
+        conn.handleActiveSessionUI(.agentStart, sessionId: "s1")
+
+        #expect(conn.silenceWatchdog.lastEventTime != nil)
+
+        conn.focusSession("s2")
+
+        #expect(conn.pendingAskRequests["s1"]?.id == "ask-s1")
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "ask-s1")
+        #expect(conn.activeAskRequest?.id == "ask-s2")
+        #expect(conn.pendingAskRequests["s2"] == nil)
+        #expect(conn.silenceWatchdog.lastEventTime == nil)
+    }
+
+    @Test @MainActor func routeStreamMessageStashesAskForInactiveSession() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("active")
+
+        let (_, continuation) = AsyncStream<ServerMessage>.makeStream()
+        conn.sessionContinuations["s2"] = continuation
+
+        let request = ExtensionUIRequest(
+            id: "ask-other",
+            sessionId: "s2",
+            method: "ask",
+            askQuestions: [AskQuestion(id: "q1", question: "Other?", options: [
+                AskOption(value: "a", label: "A"),
+            ], multiSelect: false)],
+            allowCustom: true
+        )
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s2",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .extensionUIRequest(request)
+        ))
+
+        #expect(conn.activeAskRequest == nil)
+        #expect(conn.pendingAskRequests["s2"]?.id == "ask-other")
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-other")
+    }
+
+    @Test @MainActor func inactiveTerminalMessagesClearStashedAsk() {
+        let terminalMessages: [ServerMessage] = [
+            .stopConfirmed(source: .user, reason: nil),
+            .sessionEnded(reason: "done"),
+        ]
+
+        for message in terminalMessages {
+            let conn = ServerConnection()
+            conn._setActiveSessionIdForTesting("active")
+
+            let ask = AskRequest(
+                id: "ask-stale",
+                sessionId: "s2",
+                questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
+                allowCustom: true,
+                timeout: nil
+            )
+            conn.pendingAskRequests["s2"] = ask
+            conn.askRequestStore.set(ask, for: "s2")
+
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: "s2",
+                streamSeq: 1,
+                seq: nil,
+                currentSeq: nil,
+                message: message
+            ))
+
+            #expect(conn.pendingAskRequests["s2"] == nil)
+            #expect(conn.askRequestStore.pending(for: "s2") == nil)
+
+            conn.focusSession("s2")
+            #expect(conn.activeAskRequest == nil)
+        }
+    }
+
+    @Test @MainActor func inactiveTerminalStateClearsStashedAsk() {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("active")
+        conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
+
+        let ask = AskRequest(
+            id: "ask-state",
+            sessionId: "s2",
+            questions: [AskQuestion(id: "q1", question: "Q", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        conn.pendingAskRequests["s2"] = ask
+        conn.askRequestStore.set(ask, for: "s2")
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s2",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .state(session: makeTestSession(id: "s2", status: .ready))
+        ))
+
+        #expect(conn.pendingAskRequests["s2"] == nil)
+        #expect(conn.askRequestStore.pending(for: "s2") == nil)
+
+        conn.focusSession("s2")
+        #expect(conn.activeAskRequest == nil)
+    }
+
     @Test @MainActor func secondAskReplacesFirst() {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")

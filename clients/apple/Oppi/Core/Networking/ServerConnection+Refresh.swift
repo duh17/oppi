@@ -287,28 +287,20 @@ extension ServerConnection {
             // Stash the pending ask so focusSession() can restore it after
             // the reconnect. Without this, the ask card is permanently lost
             // because the subscribe dedup on the server skips re-sending it.
-            if let activeSessionId, let ask = activeAskRequest {
-                pendingAskRequests[activeSessionId] = ask
-            }
-            if let activeSessionId {
-                askRequestStore.remove(for: activeSessionId)
-            }
-            activeAskRequest = nil
+            stashActiveAskIfNeeded()
             extensionTimeoutTask?.cancel()
             extensionTimeoutTask = nil
 
             do {
                 let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
-                sessionStore.upsert(session)
-                syncLiveActivityPermissions()
+                applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
             }
         } else {
             do {
                 let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
-                sessionStore.upsert(session)
-                syncLiveActivityPermissions()
+                applyFetchedSessionState(session)
             } catch {
                 logger.error("Failed to refresh session metadata: \(error)")
             }

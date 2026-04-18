@@ -5,12 +5,45 @@ import Foundation
 extension ServerConnection {
 
     /// Context returned by `applySharedStoreUpdate` for callers that need
-    /// details about permission removals (e.g. to resolve timeline items).
+    /// details about pre-update session state or permission removals.
     struct StoreUpdateResult {
+        struct SessionStateContext {
+            let previousSession: Session?
+            let currentSession: Session
+
+            var previousStatus: SessionStatus? { previousSession?.status }
+            var previousWorkspaceId: String? { previousSession?.workspaceId }
+
+            var didTransitionOutOfRunning: Bool {
+                guard let previousStatus else { return false }
+                let wasRunning = previousStatus == .busy || previousStatus == .stopping
+                let isTerminal = currentSession.status == .ready
+                    || currentSession.status == .stopped
+                    || currentSession.status == .error
+                return wasRunning && isTerminal
+            }
+        }
+
         /// Permission request removed from the store (expired/cancelled).
         var takenPermission: PermissionRequest?
+        /// Pre-update context for `.state(session:)` messages.
+        var stateContext: SessionStateContext?
         /// Whether this message type was handled by the shared helper.
         var handled: Bool
+
+        init(
+            takenPermission: PermissionRequest? = nil,
+            stateContext: SessionStateContext? = nil,
+            handled: Bool
+        ) {
+            self.takenPermission = takenPermission
+            self.stateContext = stateContext
+            self.handled = handled
+        }
+
+        var previousStatus: SessionStatus? { stateContext?.previousStatus }
+        var previousWorkspaceId: String? { stateContext?.previousWorkspaceId }
+        var didTransitionOutOfRunning: Bool { stateContext?.didTransitionOutOfRunning ?? false }
 
         static let notHandled = Self(handled: false)
     }
@@ -108,10 +141,23 @@ extension ServerConnection {
         // MARK: Session state
 
         case .state(let session):
+            let previousSession = sessionStore.sessions.first(where: { $0.id == session.id })
+            let stateContext = StoreUpdateResult.SessionStateContext(
+                previousSession: previousSession,
+                currentSession: session
+            )
+
             sessionStore.upsert(session)
             emitSessionUsageMetricsIfNeeded(session)
+
+            if stateContext.didTransitionOutOfRunning {
+                sessionStore.recordTurnEnded(sessionId: session.id)
+                activityStore.clear(sessionId: session.id)
+                screenAwakeController.setSessionActivity(false, sessionId: session.id)
+            }
+
             syncLiveActivityPermissions()
-            return StoreUpdateResult(handled: true)
+            return StoreUpdateResult(stateContext: stateContext, handled: true)
 
         case .sessionEnded:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
@@ -135,6 +181,21 @@ extension ServerConnection {
 
         default:
             return .notHandled
+        }
+    }
+
+    /// Apply a session snapshot fetched outside the live WS stream.
+    ///
+    /// Reuses the normal `.state` transition path so REST refreshes and stop
+    /// reconciliation get the same terminal side effects as streamed state.
+    func applyFetchedSessionState(_ session: Session) {
+        let message = ServerMessage.state(session: session)
+        let result = applySharedStoreUpdate(for: message, sessionId: session.id)
+
+        if session.id == activeSessionId {
+            handleActiveSessionUI(message, sessionId: session.id, storeResult: result)
+        } else {
+            handleInactiveSessionUI(message, sessionId: session.id, storeResult: result)
         }
     }
 

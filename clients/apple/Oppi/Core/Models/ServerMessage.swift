@@ -404,8 +404,8 @@ extension ServerMessage: Decodable {
 
 /// Wraps a `ServerMessage` with the `sessionId` from the multiplexed `/stream` endpoint.
 ///
-/// On the per-session WebSocket, `sessionId` is implicit (the URL determines it).
-/// On `/stream`, every message includes `sessionId` at the top level.
+/// Oppi now uses only the shared `/stream` WebSocket, so every session-scoped
+/// inbound message carries `sessionId` at the top level.
 struct StreamMessage: Sendable, Equatable {
     let sessionId: String?
     let streamSeq: Int?
