@@ -33,6 +33,9 @@ final class MessageSender {
     static let turnSendMaxAttempts = 2
     static let turnSendRequiredStage: TurnAckStage = .dispatched
     static let commandRequestTimeoutDefault: Duration = .seconds(8)
+    static let stopRetryDelay: Duration = .milliseconds(250)
+    static let stopMaxAttempts = 3
+    static let stopCommandTimeout: Duration = .seconds(1)
 
     // MARK: - Test Hooks
 
@@ -333,8 +336,28 @@ final class MessageSender {
     }
 
     func sendStop() async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stop(), sessionId: activeSessionId)
+        var lastError: Error?
+
+        for attempt in 1...Self.stopMaxAttempts {
+            do {
+                _ = try await sendCommandAwaitingResult(
+                    command: "stop",
+                    timeout: Self.stopCommandTimeout
+                ) { requestId in
+                    .stop(requestId: requestId)
+                }
+                return
+            } catch {
+                lastError = error
+                guard attempt < Self.stopMaxAttempts,
+                      Self.isRetryableStopError(error) else {
+                    throw error
+                }
+                try? await Task.sleep(for: Self.stopRetryDelay)
+            }
+        }
+
+        throw lastError ?? WebSocketError.notConnected
     }
 
     func sendStopSession() async throws {
@@ -398,6 +421,22 @@ final class MessageSender {
                 text: object["text"]?.stringValue ?? object["content"]?.stringValue ?? ""
             )
         }
+    }
+
+    // MARK: - Retry Classification
+
+    static func isRetryableStopError(_ error: Error) -> Bool {
+        if let cmdError = error as? CommandRequestError {
+            switch cmdError {
+            case .timeout(let command):
+                return command == "stop"
+            case .rejected(let command, let reason):
+                guard command == "stop" else { return false }
+                return reason?.contains("not subscribed at level=full") == true
+            }
+        }
+
+        return CommandTracker.isReconnectableSendError(error)
     }
 
     // MARK: - Telemetry Helpers
