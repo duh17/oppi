@@ -68,6 +68,7 @@ struct AskCard: View {
     let request: AskRequest
     let onSubmit: ([String: AskAnswer]) -> Void
     let onIgnoreAll: () -> Void
+    var voiceInputManager: VoiceInputManager? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -156,6 +157,7 @@ struct AskCard: View {
                 currentPage: $currentPage,
                 answers: $answers,
                 isExpanded: $isExpanded,
+                voiceInputManager: voiceInputManager,
                 onSubmit: onSubmit,
                 onIgnoreAll: onIgnoreAll
             )

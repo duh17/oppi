@@ -16,12 +16,22 @@ struct AskCardExpanded: View {
     @Binding var currentPage: Int
     @Binding var answers: [String: AskAnswer]
     @Binding var isExpanded: Bool
+    var voiceInputManager: VoiceInputManager? = nil
     let onSubmit: ([String: AskAnswer]) -> Void
     let onIgnoreAll: () -> Void
 
     @State private var customTexts: [String: String] = [:]
     @FocusState private var focusedQuestionId: String?
     @State private var navigatingForward: Bool = true
+
+    /// Question currently receiving custom dictation text.
+    @State private var dictationQuestionId: String?
+
+    /// Custom text value before dictation started.
+    @State private var dictationBaseText: String = ""
+
+    /// Prefix used while streaming transcript updates (base + separator).
+    @State private var dictationPrefixText: String = ""
 
     private let optionCornerRadius: CGFloat = 12
 
@@ -78,6 +88,13 @@ struct AskCardExpanded: View {
         .onAppear {
             loadCustomTextsFromAnswers()
         }
+        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
+            guard let questionId = dictationQuestionId else { return }
+            applyDictationTranscript(newTranscript ?? "", for: questionId)
+        }
+        .onDisappear {
+            cancelDictationIfNeeded()
+        }
     }
 
     // MARK: - Navigation Header
@@ -118,7 +135,12 @@ struct AskCardExpanded: View {
             Spacer()
 
             Button {
-                isExpanded = false
+                Task {
+                    await finalizeDictationIfNeeded()
+                    commitCustomTextIfNeeded()
+                    focusedQuestionId = nil
+                    isExpanded = false
+                }
             } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
                     .font(.body)
@@ -172,6 +194,7 @@ struct AskCardExpanded: View {
         let isSelected = AskCardShared.isOptionSelected(option, in: question, answers: answers)
 
         return Button {
+            cancelDictationIfNeeded(for: question.id)
             customTexts[question.id] = ""
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
@@ -234,22 +257,62 @@ struct AskCardExpanded: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeComment)
 
-            TextField("Type your answer...", text: customTextBinding(for: question.id), axis: .vertical)
-                .font(.body)
-                .foregroundStyle(.themeFg)
-                .padding(12)
-                .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
-                .focused($focusedQuestionId, equals: question.id)
-                .lineLimit(1...5)
-                .submitLabel(isSingleQuestionSingleSelect ? .send : .done)
-                .onSubmit {
-                    commitCustomText(for: question)
-                    focusedQuestionId = nil
-                    if isSingleQuestionSingleSelect {
-                        isExpanded = false
-                        onSubmit(answers)
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Type your answer...", text: customTextBinding(for: question.id), axis: .vertical)
+                    .font(.body)
+                    .foregroundStyle(.themeFg)
+                    .padding(12)
+                    .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
+                    .focused($focusedQuestionId, equals: question.id)
+                    .lineLimit(1...5)
+                    .submitLabel(isSingleQuestionSingleSelect ? .send : .done)
+                    .onSubmit {
+                        Task {
+                            await finalizeDictationIfNeeded()
+                            commitCustomText(for: question)
+                            focusedQuestionId = nil
+                            if isSingleQuestionSingleSelect {
+                                isExpanded = false
+                                onSubmit(answers)
+                            }
+                        }
                     }
+
+                dictationButton(for: question)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dictationButton(for question: AskQuestion) -> some View {
+        if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+            let ownsActiveDictation = dictationQuestionId == question.id
+            let isRecording = manager.isRecording && ownsActiveDictation
+            let isPreparing = manager.isPreparing && ownsActiveDictation
+            let isProcessing = manager.isProcessing && ownsActiveDictation
+            let isBlockedByOtherInput = (manager.isRecording || manager.isPreparing) && !ownsActiveDictation
+            let engineBadge = ComposerShared.micEngineBadge(for: manager)
+
+            Button {
+                Task {
+                    await handleDictationTap(for: question, manager: manager)
                 }
+            } label: {
+                MicButtonLabel(
+                    isRecording: isRecording,
+                    isProcessing: isPreparing || isProcessing,
+                    audioLevel: manager.audioLevel,
+                    languageLabel: manager.activeLanguageLabel,
+                    accentColor: .themeBlue,
+                    engineBadge: engineBadge,
+                    diameter: 32
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(manager.isProcessing || isBlockedByOtherInput)
+            .accessibilityIdentifier("ask.voiceInput")
+            .accessibilityLabel(ComposerShared.accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
+            .accessibilityValue(ComposerShared.voiceRouteAccessibilityValue(for: manager))
         }
     }
 
@@ -309,6 +372,7 @@ struct AskCardExpanded: View {
                 if isSubmitPage {
                     Button {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        cancelDictationIfNeeded()
                         isExpanded = false
                         onIgnoreAll()
                     } label: {
@@ -337,8 +401,11 @@ struct AskCardExpanded: View {
 
                 if isSubmitPage {
                     Button {
-                        isExpanded = false
-                        onSubmit(answers)
+                        Task {
+                            await finalizeDictationIfNeeded()
+                            isExpanded = false
+                            onSubmit(answers)
+                        }
                     } label: {
                         Text("Submit")
                             .font(.body.weight(.semibold))
@@ -352,9 +419,12 @@ struct AskCardExpanded: View {
                     // Single-question single-select: show Send when custom text is entered
                     if hasCustomTextForCurrentQuestion {
                         Button {
-                            commitCustomTextIfNeeded()
-                            isExpanded = false
-                            onSubmit(answers)
+                            Task {
+                                await finalizeDictationIfNeeded()
+                                commitCustomTextIfNeeded()
+                                isExpanded = false
+                                onSubmit(answers)
+                            }
                         } label: {
                             Text("Send")
                                 .font(.body.weight(.semibold))
@@ -389,6 +459,28 @@ struct AskCardExpanded: View {
     // MARK: - Navigation
 
     private func navigateForward() {
+        if dictationQuestionId != nil {
+            Task {
+                await finalizeDictationIfNeeded()
+                navigateForwardWithoutDictation()
+            }
+        } else {
+            navigateForwardWithoutDictation()
+        }
+    }
+
+    private func navigateBack() {
+        if dictationQuestionId != nil {
+            Task {
+                await finalizeDictationIfNeeded()
+                navigateBackWithoutDictation()
+            }
+        } else {
+            navigateBackWithoutDictation()
+        }
+    }
+
+    private func navigateForwardWithoutDictation() {
         focusedQuestionId = nil
         commitCustomTextIfNeeded()
         navigatingForward = true
@@ -399,7 +491,7 @@ struct AskCardExpanded: View {
         }
     }
 
-    private func navigateBack() {
+    private func navigateBackWithoutDictation() {
         focusedQuestionId = nil
         navigatingForward = false
         withAnimation(.easeInOut(duration: 0.25)) {
@@ -419,6 +511,7 @@ struct AskCardExpanded: View {
     private func handleIgnore() {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         if let question = currentQuestion {
+            cancelDictationIfNeeded(for: question.id)
             answers[question.id] = nil
             customTexts[question.id] = ""
         }
@@ -466,6 +559,89 @@ struct AskCardExpanded: View {
         }
     }
 
+    // MARK: - Dictation
+
+    private func handleDictationTap(for question: AskQuestion, manager: VoiceInputManager) async {
+        switch manager.state {
+        case .recording:
+            guard dictationQuestionId == question.id else { return }
+            await finalizeDictationIfNeeded()
+        case .preparingModel:
+            guard dictationQuestionId == question.id else { return }
+            await finalizeDictationIfNeeded()
+        case .idle:
+            await startDictation(for: question, manager: manager)
+        case .processing, .error:
+            break
+        }
+    }
+
+    private func startDictation(for question: AskQuestion, manager: VoiceInputManager) async {
+        let base = customTexts[question.id] ?? ""
+        dictationQuestionId = question.id
+        dictationBaseText = base
+
+        dictationPrefixText = Self.dictationPrefix(for: base)
+
+        focusedQuestionId = question.id
+
+        do {
+            try await manager.startRecording(source: "ask_card_mic_tap")
+        } catch {
+            clearDictationState()
+        }
+    }
+
+    private func applyDictationTranscript(_ transcript: String, for questionId: String) {
+        guard dictationQuestionId == questionId else { return }
+
+        let combinedText = Self.combinedDictationText(
+            base: dictationBaseText,
+            prefix: dictationPrefixText,
+            transcript: transcript
+        )
+        customTexts[questionId] = combinedText
+
+        let trimmed = combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            answers[questionId] = .custom(trimmed)
+        }
+    }
+
+    private func finalizeDictationIfNeeded() async {
+        guard let manager = voiceInputManager, let questionId = dictationQuestionId else { return }
+        defer { clearDictationState() }
+
+        if manager.isRecording {
+            let transcript = await manager.stopRecording()
+            applyDictationTranscript(transcript, for: questionId)
+        } else if manager.isPreparing {
+            await manager.cancelRecording()
+        }
+    }
+
+    private func cancelDictationIfNeeded(for questionId: String? = nil) {
+        guard let manager = voiceInputManager, let activeQuestionId = dictationQuestionId else { return }
+
+        if let questionId, activeQuestionId != questionId {
+            return
+        }
+
+        clearDictationState()
+
+        Task {
+            if manager.isRecording || manager.isPreparing {
+                await manager.cancelRecording()
+            }
+        }
+    }
+
+    private func clearDictationState() {
+        dictationQuestionId = nil
+        dictationBaseText = ""
+        dictationPrefixText = ""
+    }
+
     private func loadCustomTextsFromAnswers() {
         for (key, answer) in answers {
             if case .custom(let text) = answer {
@@ -474,4 +650,18 @@ struct AskCardExpanded: View {
         }
     }
 
+}
+
+extension AskCardExpanded {
+    static func dictationPrefix(for base: String) -> String {
+        if base.isEmpty || base.last?.isWhitespace == true {
+            return base
+        }
+        return base + " "
+    }
+
+    static func combinedDictationText(base: String, prefix: String, transcript: String) -> String {
+        guard !transcript.isEmpty else { return base }
+        return prefix + transcript
+    }
 }

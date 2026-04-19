@@ -254,7 +254,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     request: askRequest,
                     onSubmit: { answers in onAskSubmit?(answers) },
                     onIgnoreAll: { onAskIgnoreAll?() },
-
+                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
                 )
                 .id(askRequest.id)
                 .padding(.horizontal, composerHorizontalPadding)

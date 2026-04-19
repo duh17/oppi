@@ -253,4 +253,39 @@ struct AskCardExpandedTests {
         // Page position preserved
         #expect(currentPage == 2)
     }
+
+    // MARK: - Dictation Text Merge
+
+    @Test("Dictation prefix appends space when base text has no trailing whitespace")
+    func dictationPrefixAddsSpaceWhenNeeded() {
+        let prefix = AskCardExpanded.dictationPrefix(for: "hello")
+        #expect(prefix == "hello ")
+    }
+
+    @Test("Dictation prefix keeps trailing whitespace unchanged")
+    func dictationPrefixKeepsExistingWhitespace() {
+        #expect(AskCardExpanded.dictationPrefix(for: "hello ") == "hello ")
+        #expect(AskCardExpanded.dictationPrefix(for: "hello\n") == "hello\n")
+        #expect(AskCardExpanded.dictationPrefix(for: "") == "")
+    }
+
+    @Test("Combined dictation text returns base when transcript is empty")
+    func combinedDictationTextEmptyTranscript() {
+        let combined = AskCardExpanded.combinedDictationText(
+            base: "existing",
+            prefix: "existing ",
+            transcript: ""
+        )
+        #expect(combined == "existing")
+    }
+
+    @Test("Combined dictation text appends transcript to prefix")
+    func combinedDictationTextAppendsTranscript() {
+        let combined = AskCardExpanded.combinedDictationText(
+            base: "existing",
+            prefix: "existing ",
+            transcript: "new words"
+        )
+        #expect(combined == "existing new words")
+    }
 }
