@@ -25,7 +25,12 @@ All commands run from `server/`.
 
 5. Oppi opens **Workspaces**.
 
-6. If the server has no workspaces, Oppi opens **Create Workspace**.
+6. If the server has no workspaces, Oppi opens guided **Create Workspace** setup.
+
+Notes:
+
+- Oppi does not auto-create starter workspaces for you.
+- The guided create flow lets you pick a project, enter a path manually, or start with a blank workspace.
 
 If your phone is not on the same LAN (for example Tailscale or VPS), generate an invite with an explicit host:
 
@@ -34,7 +39,7 @@ cd server
 node dist/src/cli.js pair --host <hostname-or-ip>
 ```
 
-Notes:
+Host override notes:
 
 - `--host` must be host/IP only (no `https://`, no `:port`).
 - Invite port comes from server config:
