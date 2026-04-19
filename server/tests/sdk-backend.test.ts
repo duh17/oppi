@@ -163,3 +163,69 @@ describe("Oppi queue delivery defaults", () => {
     expect(piSession.setFollowUpMode).toHaveBeenCalledWith("one-at-a-time");
   });
 });
+
+describe("SdkBackend.dispose", () => {
+  function makeDisposeHarness() {
+    const backend = Object.create(SdkBackend.prototype) as SdkBackend;
+
+    let resolveRuntimeDispose: (() => void) | null = null;
+    const runtimeDisposePromise = new Promise<void>((resolve) => {
+      resolveRuntimeDispose = resolve;
+    });
+
+    const runtime = {
+      dispose: vi.fn(() => runtimeDisposePromise),
+      session: {
+        sessionId: "pi-session-1",
+      },
+    };
+
+    const mutableBackend = backend as unknown as {
+      disposed: boolean;
+      pendingExtensionResponses: Map<string, { cancel: () => void }>;
+      unsub: (() => void) | null;
+      runtime: typeof runtime;
+      shutdownCleanupPromise: Promise<void> | null;
+      shutdownCleanupCompleted: boolean;
+      shutdownCleanupListeners: Set<() => void>;
+    };
+
+    const pendingCancel = vi.fn();
+
+    mutableBackend.disposed = false;
+    mutableBackend.pendingExtensionResponses = new Map([
+      ["req-1", { cancel: pendingCancel }],
+    ]);
+    mutableBackend.unsub = vi.fn();
+    mutableBackend.runtime = runtime;
+    mutableBackend.shutdownCleanupPromise = null;
+    mutableBackend.shutdownCleanupCompleted = false;
+    mutableBackend.shutdownCleanupListeners = new Set();
+
+    return {
+      backend,
+      runtime,
+      pendingCancel,
+      resolveRuntimeDispose: () => resolveRuntimeDispose?.(),
+    };
+  }
+
+  it("waits for runtime teardown before resolving dispose", async () => {
+    const { backend, runtime, pendingCancel, resolveRuntimeDispose } = makeDisposeHarness();
+
+    let resolved = false;
+    const disposePromise = backend.dispose().then(() => {
+      resolved = true;
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(runtime.dispose).toHaveBeenCalledTimes(1);
+    expect(pendingCancel).toHaveBeenCalledTimes(1);
+    expect(resolved).toBe(false);
+
+    resolveRuntimeDispose();
+    await disposePromise;
+    expect(resolved).toBe(true);
+  });
+});

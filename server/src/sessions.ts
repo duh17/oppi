@@ -660,20 +660,22 @@ export class SessionManager extends EventEmitter {
           type: "set_thinking_level",
           level: params.thinking,
         });
-        session.thinkingLevel = params.thinking;
       }
 
       await this.sendPrompt(session.id, params.prompt);
-      session.firstMessage = params.prompt.slice(0, 200);
-      this.storage.saveSession(session);
+
+      const freshSession = this.storage.getSession(session.id) ?? session;
+      if (params.thinking) {
+        freshSession.thinkingLevel = params.thinking;
+      }
+      freshSession.firstMessage = params.prompt.slice(0, 200);
+      this.storage.saveSession(freshSession);
 
       // Broadcast child session state to the parent's subscribers so the iOS
       // client learns about the new child immediately (enables SubagentStatusBar
       // to appear without waiting for a session list REST poll).
-      // Re-read from storage to get the latest state (SDK may have updated
-      // status/messageCount since sendPrompt).
-      const freshSession = this.storage.getSession(session.id) ?? session;
       this.broadcast(this.sessionKey(parentSessionId), { type: "state", session: freshSession });
+      return freshSession;
     } catch (err: unknown) {
       // Session created but failed to start or prompt — mark as error.
       // Stop the session to release the SDK process and workspace slot.
@@ -682,14 +684,13 @@ export class SessionManager extends EventEmitter {
       } catch {
         // Best-effort cleanup — don't mask the original error.
       }
-      session.status = "error";
+      const failedSession = this.storage.getSession(session.id) ?? session;
+      failedSession.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
-      session.warnings = [...(session.warnings ?? []), `Spawn failed: ${msg}`];
-      this.storage.saveSession(session);
+      failedSession.warnings = [...(failedSession.warnings ?? []), `Spawn failed: ${msg}`];
+      this.storage.saveSession(failedSession);
       throw err;
     }
-
-    return session;
   }
 
   /**
@@ -731,26 +732,30 @@ export class SessionManager extends EventEmitter {
           type: "set_thinking_level",
           level: params.thinking,
         });
-        session.thinkingLevel = params.thinking;
       }
 
       await this.sendPrompt(session.id, params.prompt);
-      session.firstMessage = params.prompt.slice(0, 200);
-      this.storage.saveSession(session);
+
+      const freshSession = this.storage.getSession(session.id) ?? session;
+      if (params.thinking) {
+        freshSession.thinkingLevel = params.thinking;
+      }
+      freshSession.firstMessage = params.prompt.slice(0, 200);
+      this.storage.saveSession(freshSession);
+      return freshSession;
     } catch (err: unknown) {
       try {
         await this.stopSession(session.id);
       } catch {
         // Best-effort cleanup
       }
-      session.status = "error";
+      const failedSession = this.storage.getSession(session.id) ?? session;
+      failedSession.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
-      session.warnings = [...(session.warnings ?? []), `Detached spawn failed: ${msg}`];
-      this.storage.saveSession(session);
+      failedSession.warnings = [...(failedSession.warnings ?? []), `Detached spawn failed: ${msg}`];
+      this.storage.saveSession(failedSession);
       throw err;
     }
-
-    return session;
   }
 
   /**

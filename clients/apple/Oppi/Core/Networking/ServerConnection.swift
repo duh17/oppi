@@ -428,6 +428,7 @@ final class ServerConnection {
         notificationSessionIds.removeAll()
         pendingNotificationSubscriptionIds.removeAll()
         sessionUsageMetricSnapshots.removeAll()
+        asrAvailable = false
         wsClient?.disconnect()
 
         if ReleaseFeatures.liveActivitiesEnabled {

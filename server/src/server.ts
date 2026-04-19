@@ -522,9 +522,6 @@ export class Server {
       },
     });
     this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
-    if (this.searchIndex) {
-      this.sessions.searchIndex = this.searchIndex;
-    }
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
       this.liveActivity.handleSessionEvent(payload);
@@ -543,6 +540,7 @@ export class Server {
     // Initialize search index (SQLite FTS5)
     try {
       this.searchIndex = new SearchIndex(config.dataDir, (id) => this.storage.getSession(id));
+      this.sessions.searchIndex = this.searchIndex;
     } catch (err) {
       console.error("[server] Failed to initialize search index:", (err as Error).message);
     }

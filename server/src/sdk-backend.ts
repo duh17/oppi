@@ -880,7 +880,10 @@ export class SdkBackend {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed) {
+      await this.startShutdownCleanup();
+      return;
+    }
     this.disposed = true;
 
     for (const pending of this.pendingExtensionResponses.values()) {
@@ -891,8 +894,7 @@ export class SdkBackend {
     this.unsub?.();
     this.unsub = null;
 
-    const shutdownCleanup = this.startShutdownCleanup();
-    void shutdownCleanup;
+    await this.startShutdownCleanup();
   }
 }
 

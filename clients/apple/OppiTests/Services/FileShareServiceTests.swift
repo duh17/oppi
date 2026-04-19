@@ -183,6 +183,24 @@ struct FileShareServiceTests {
         #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
+    @Test func sourceExportsUseIsolatedTempDirectories() async {
+        defer { FileShareService.cleanupTempFiles() }
+
+        let first = await FileShareService.render(.plainText("first export"), as: .source)
+        let second = await FileShareService.render(.plainText("second export"), as: .source)
+
+        guard case .file(let firstURL) = first,
+              case .file(let secondURL) = second else {
+            Issue.record("Expected file URLs for plain text source export")
+            return
+        }
+
+        #expect(
+            firstURL.deletingLastPathComponent() != secondURL.deletingLastPathComponent(),
+            "Source exports should be isolated per-share to avoid cleanup races across overlapping sheets"
+        )
+    }
+
     // MARK: - Render Default
 
     @Test func renderDefaultProducesPDFForMarkdown() async {

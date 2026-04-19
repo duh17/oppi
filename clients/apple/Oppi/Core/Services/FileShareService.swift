@@ -1074,19 +1074,27 @@ enum FileShareService {
 
     private static let tempDirectoryName = "oppi-share"
 
-    private static func writeTempFile(content: String, filename: String) -> URL {
-        let dir = FileManager.default.temporaryDirectory
+    private static var tempRootDirectoryURL: URL {
+        FileManager.default.temporaryDirectory
             .appendingPathComponent(tempDirectoryName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    private static func makeExportTempDirectory() -> URL {
+        let root = tempRootDirectoryURL
+        let exportDir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        return exportDir
+    }
+
+    private static func writeTempFile(content: String, filename: String) -> URL {
+        let dir = makeExportTempDirectory()
         let url = dir.appendingPathComponent(filename)
         try? content.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
     private static func writeTempData(data: Data, filename: String) -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(tempDirectoryName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = makeExportTempDirectory()
         let url = dir.appendingPathComponent(filename)
         try? data.write(to: url)
         return url
@@ -1095,9 +1103,7 @@ enum FileShareService {
     /// Remove all temp files created for sharing. Call from
     /// UIActivityViewController.completionWithItemsHandler.
     static func cleanupTempFiles() {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(tempDirectoryName, isDirectory: true)
-        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.removeItem(at: tempRootDirectoryURL)
     }
 
     // MARK: - Helpers

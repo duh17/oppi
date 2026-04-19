@@ -460,12 +460,9 @@ export class SearchIndex {
     const batch = [...this.pendingReindex];
     this.pendingReindex.clear();
 
-    const txn = this.db.transaction(() => {
-      for (const id of batch) {
-        this.indexSession(id);
-      }
-    });
-    txn();
+    for (const id of batch) {
+      this.indexSession(id);
+    }
 
     if (batch.length > 0) {
       console.log("[search-index] re-indexed", { count: batch.length });

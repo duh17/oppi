@@ -1423,6 +1423,16 @@ struct StreamLifecycleTests {
                 "Should clear all session continuations")
     }
 
+    @Test func disconnectStreamResetsAsrAvailability() {
+        let (conn, _) = makeTestConnection()
+        conn.setAsrAvailableForTesting(true)
+
+        conn.disconnectStream()
+
+        #expect(conn.asrAvailable == false,
+                "disconnectStream should clear stale asrAvailable state")
+    }
+
     // MARK: - handleStreamReconnected re-subscribes
 
     @Test func streamConnectedMessageTriggersResubscribe() {
