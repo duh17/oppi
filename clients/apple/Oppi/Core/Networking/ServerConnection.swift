@@ -549,7 +549,7 @@ final class ServerConnection {
     /// directly (cross-session events bypass the coalescer).
     private func handleCrossSessionMessage(_ message: ServerMessage, sessionId: String) {
         let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
-        handleInactiveSessionUI(message, sessionId: sessionId, storeResult: result)
+        handleInactiveSessionUI(message, sessionId: sessionId)
 
         if result.handled {
             recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)

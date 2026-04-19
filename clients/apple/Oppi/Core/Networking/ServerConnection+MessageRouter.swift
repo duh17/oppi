@@ -28,10 +28,7 @@ extension ServerConnection {
 
         case .state(let session):
             handleState(session, previousWorkspaceId: storeResult.previousWorkspaceId)
-            let isTerminalState = session.status == .ready
-                || session.status == .stopped
-                || session.status == .error
-            if isTerminalState {
+            if session.status.isTerminal {
                 silenceWatchdog.stop()
                 clearAskState(for: sessionId)
             }
@@ -103,8 +100,7 @@ extension ServerConnection {
     /// notification-level subscription or a non-active per-session continuation.
     func handleInactiveSessionUI(
         _ message: ServerMessage,
-        sessionId: String,
-        storeResult: StoreUpdateResult = .notHandled
+        sessionId: String
     ) {
         switch message {
         case .extensionUIRequest(let request):
@@ -113,10 +109,7 @@ extension ServerConnection {
             }
 
         case .state(let session):
-            let isTerminalState = session.status == .ready
-                || session.status == .stopped
-                || session.status == .error
-            if isTerminalState {
+            if session.status.isTerminal {
                 clearAskState(for: sessionId)
             }
 

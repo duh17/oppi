@@ -8,6 +8,14 @@ enum SessionStatus: String, Codable, Sendable {
     case stopping
     case stopped
     case error
+
+    var isRunning: Bool {
+        self == .busy || self == .stopping
+    }
+
+    var isTerminal: Bool {
+        self == .ready || self == .stopped || self == .error
+    }
 }
 
 /// Session model matching server's `Session` type.

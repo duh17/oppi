@@ -16,11 +16,7 @@ extension ServerConnection {
 
             var didTransitionOutOfRunning: Bool {
                 guard let previousStatus else { return false }
-                let wasRunning = previousStatus == .busy || previousStatus == .stopping
-                let isTerminal = currentSession.status == .ready
-                    || currentSession.status == .stopped
-                    || currentSession.status == .error
-                return wasRunning && isTerminal
+                return previousStatus.isRunning && currentSession.status.isTerminal
             }
         }
 
@@ -108,7 +104,7 @@ extension ServerConnection {
 
         case .agentEnd:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
-               current.status == .busy || current.status == .stopping {
+               current.status.isRunning {
                 current.status = .ready
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
@@ -195,7 +191,7 @@ extension ServerConnection {
         if session.id == activeSessionId {
             handleActiveSessionUI(message, sessionId: session.id, storeResult: result)
         } else {
-            handleInactiveSessionUI(message, sessionId: session.id, storeResult: result)
+            handleInactiveSessionUI(message, sessionId: session.id)
         }
     }
 

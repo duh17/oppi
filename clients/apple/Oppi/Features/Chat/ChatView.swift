@@ -496,9 +496,7 @@ struct ChatView: View {
                             do {
                                 try await connection.respondToExtensionUI(id: askId, value: value)
                             } catch {
-                                // Send failed (likely WS drop). Restore the ask card so the
-                                // user can retry — the server will re-broadcast on reconnect.
-                                connection.activeAskRequest = connection.activeAskRequest
+                                // Keep the ask card visible so the user can retry.
                             }
                         }
                     },
@@ -508,8 +506,7 @@ struct ChatView: View {
                             do {
                                 try await connection.respondToExtensionUI(id: askId, cancelled: true)
                             } catch {
-                                // Same as above — restore ask state on failure.
-                                connection.activeAskRequest = connection.activeAskRequest
+                                // Keep the ask card visible so the user can retry.
                             }
                         }
                     },
