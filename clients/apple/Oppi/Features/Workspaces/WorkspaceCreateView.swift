@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum WorkspaceCreatePresentation: Equatable, Sendable {
+    case standard
+    case guidedFirstWorkspace
+}
+
 /// Create a new workspace on a specific server.
 ///
 /// Two-step flow:
@@ -8,6 +13,18 @@ import SwiftUI
 struct WorkspaceCreateView: View {
     /// The server to create the workspace on.
     let server: PairedServer
+    let presentation: WorkspaceCreatePresentation
+    let onCreate: ((Workspace) -> Void)?
+
+    init(
+        server: PairedServer,
+        presentation: WorkspaceCreatePresentation = .standard,
+        onCreate: ((Workspace) -> Void)? = nil
+    ) {
+        self.server = server
+        self.presentation = presentation
+        self.onCreate = onCreate
+    }
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(WorkspaceStore.self) private var workspaceStore
@@ -29,10 +46,32 @@ struct WorkspaceCreateView: View {
     @State private var sandboxMode = false
     @State private var isCreating = false
     @State private var error: String?
+    @State private var selectAllSkillsWhenLoaded = false
 
     private enum CreateStep {
         case pickProject
         case configure
+    }
+
+    private var isGuidedFirstWorkspace: Bool {
+        presentation == .guidedFirstWorkspace
+    }
+
+    private var navigationTitle: String {
+        switch (presentation, step) {
+        case (.guidedFirstWorkspace, .pickProject):
+            return "Set Up Workspace"
+        case (.guidedFirstWorkspace, .configure):
+            return "Review Workspace"
+        case (_, .pickProject):
+            return "Pick a Project"
+        case (_, .configure):
+            return "New Workspace"
+        }
+    }
+
+    private var cancelButtonTitle: String {
+        isGuidedFirstWorkspace ? "Not Now" : "Cancel"
     }
 
     /// Skills from the target server.
@@ -58,11 +97,11 @@ struct WorkspaceCreateView: View {
                 }
             }
             .themedListSurface()
-            .navigationTitle(step == .pickProject ? "Pick a Project" : "New Workspace")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(cancelButtonTitle) { dismiss() }
                 }
             }
             .task { await loadDirectories() }
@@ -74,6 +113,19 @@ struct WorkspaceCreateView: View {
 
     private var projectPickerView: some View {
         List {
+            if isGuidedFirstWorkspace {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Create your first workspace")
+                            .font(.headline)
+                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter a path manually, or start blank if you just want to explore the app.")
+                            .font(.subheadline)
+                            .foregroundStyle(.themeComment)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
             Section {
                 Toggle("Sandbox", isOn: $sandboxMode)
                 if sandboxMode {
@@ -95,8 +147,18 @@ struct WorkspaceCreateView: View {
                 Section {
                     Label(directoriesError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.themeOrange)
+                    if isGuidedFirstWorkspace {
+                        Text("You can still enter a path manually or create a blank workspace to keep going.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
                     Button("Enter path manually") {
                         selectManual()
+                    }
+                    if !sandboxMode {
+                        Button("Create blank workspace") {
+                            selectBlank()
+                        }
                     }
                 }
             } else if directories.isEmpty {
@@ -106,8 +168,18 @@ struct WorkspaceCreateView: View {
                     Text("Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer")
                         .font(.caption)
                         .foregroundStyle(.themeComment)
+                    if isGuidedFirstWorkspace {
+                        Text("That’s okay. Enter a path manually or create a blank workspace to see how Oppi works.")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
                     Button("Enter path manually") {
                         selectManual()
+                    }
+                    if !sandboxMode {
+                        Button("Create blank workspace") {
+                            selectBlank()
+                        }
                     }
                 }
             } else {
@@ -142,6 +214,19 @@ struct WorkspaceCreateView: View {
 
     private var configureView: some View {
         Form {
+            if isGuidedFirstWorkspace {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Almost there")
+                            .font(.headline)
+                        Text("Review the workspace settings, then create it. Oppi will open the workspace next so you can start your first session.")
+                            .font(.subheadline)
+                            .foregroundStyle(.themeComment)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
             // Sandbox toggle — first thing in the form
             Section {
                 Toggle("Sandbox", isOn: $sandboxMode)
@@ -274,22 +359,13 @@ struct WorkspaceCreateView: View {
         name = dir.name
         hostMount = dir.path
         gitStatusEnabled = dir.isGitRepo
-
-        // Pre-select all skills by default
-        if selectedSkills.isEmpty {
-            selectedSkills = Set(skills.map(\.name))
-        }
-
+        requestDefaultSkillSelectionIfNeeded()
         withAnimation { step = .configure }
     }
 
     private func selectManual() {
         hostMount = ""
-
-        if selectedSkills.isEmpty {
-            selectedSkills = Set(skills.map(\.name))
-        }
-
+        requestDefaultSkillSelectionIfNeeded()
         withAnimation { step = .configure }
     }
 
@@ -297,12 +373,20 @@ struct WorkspaceCreateView: View {
         name = ""
         hostMount = ""
         gitStatusEnabled = false
+        requestDefaultSkillSelectionIfNeeded()
+        withAnimation { step = .configure }
+    }
 
-        if selectedSkills.isEmpty {
-            selectedSkills = Set(skills.map(\.name))
+    private func requestDefaultSkillSelectionIfNeeded() {
+        guard selectedSkills.isEmpty else { return }
+
+        if skills.isEmpty {
+            selectAllSkillsWhenLoaded = true
+            return
         }
 
-        withAnimation { step = .configure }
+        selectedSkills = Set(skills.map(\.name))
+        selectAllSkillsWhenLoaded = false
     }
 
     private func toggleSkill(_ skillName: String) {
@@ -311,6 +395,7 @@ struct WorkspaceCreateView: View {
         } else {
             selectedSkills.insert(skillName)
         }
+        selectAllSkillsWhenLoaded = false
     }
 
     // MARK: - Data Loading
@@ -335,8 +420,13 @@ struct WorkspaceCreateView: View {
         if (workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
             guard let api = coordinator.apiClient(for: server.id) else { return }
             do {
-                let skills = try await api.listSkills()
-                workspaceStore.skillsByServer[server.id] = skills
+                let loadedSkills = try await api.listSkills()
+                workspaceStore.skillsByServer[server.id] = loadedSkills
+
+                if selectAllSkillsWhenLoaded && selectedSkills.isEmpty {
+                    selectedSkills = Set(loadedSkills.map(\.name))
+                    selectAllSkillsWhenLoaded = false
+                }
             } catch {
                 // Keep empty state; refresh will retry.
             }
@@ -360,7 +450,7 @@ struct WorkspaceCreateView: View {
             name: name,
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
-            skills: Array(selectedSkills),
+            skills: Array(selectedSkills).sorted(),
             hostMount: hostMount.isEmpty ? nil : hostMount,
             gitStatusEnabled: gitStatusEnabled,
             runtime: sandboxMode ? .sandbox : nil,
@@ -370,6 +460,7 @@ struct WorkspaceCreateView: View {
         do {
             let workspace = try await api.createWorkspace(request)
             workspaceStore.upsert(workspace, serverId: server.id)
+            onCreate?(workspace)
             dismiss()
         } catch {
             self.error = error.localizedDescription
@@ -383,12 +474,29 @@ struct WorkspaceCreateView: View {
 private struct ProjectRow: View {
     let directory: HostDirectory
 
+    private var accessibilityLabel: String {
+        var parts = [directory.name]
+
+        if let language = directory.language {
+            parts.append(language)
+        }
+        if directory.isGitRepo {
+            parts.append("Git repository")
+        }
+        if directory.hasAgentsMd {
+            parts.append("Has agent configuration")
+        }
+
+        parts.append(directory.path)
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: directory.projectTypeIcon)
                 .font(.title3)
                 .foregroundStyle(.themeBlue)
-                .frame(width: 28)
+                .frame(minWidth: 28)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -424,5 +532,8 @@ private struct ProjectRow: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Select project")
     }
 }

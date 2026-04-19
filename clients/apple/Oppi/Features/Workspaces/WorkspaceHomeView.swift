@@ -6,6 +6,20 @@ struct WorkspaceNavTarget: Hashable {
     let workspace: Workspace
 }
 
+private struct WorkspaceCreateSheetContext: Identifiable {
+    let server: PairedServer
+    let presentation: WorkspaceCreatePresentation
+    let openWorkspaceAfterCreate: Bool
+
+    var id: String {
+        [
+            server.id,
+            presentation == .guidedFirstWorkspace ? "guided" : "standard",
+            openWorkspaceAfterCreate ? "open" : "stay"
+        ].joined(separator: "|")
+    }
+}
+
 /// Tracks whether app launch metric has been recorded this process.
 /// Only fires once — on the first appearance of WorkspaceHomeView.
 nonisolated(unsafe) private var appLaunchMetricRecorded = false
@@ -20,7 +34,8 @@ struct WorkspaceHomeView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
 
-    @State private var createOnServer: PairedServer?
+    @State private var createSheetContext: WorkspaceCreateSheetContext?
+    @State private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
     @State private var collapsedServerIds: Set<String> = []
     /// Guards against re-presenting the guided create after the user dismisses it.
     @State private var guidedCreateConsumed = false
@@ -48,8 +63,18 @@ struct WorkspaceHomeView: View {
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
         }
-        .sheet(item: $createOnServer) { server in
-            WorkspaceCreateView(server: server)
+        .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
+            WorkspaceCreateView(
+                server: context.server,
+                presentation: context.presentation,
+                onCreate: { workspace in
+                    guard context.openWorkspaceAfterCreate else { return }
+                    pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
+                        serverId: context.server.id,
+                        workspace: workspace
+                    )
+                }
+            )
         }
         .refreshable {
             await refresh(force: true)
@@ -152,7 +177,7 @@ struct WorkspaceHomeView: View {
                 .accessibilityLabel("Server settings for \(server.name)")
 
                 Button {
-                    createOnServer = server
+                    presentCreateWorkspace(on: server)
                 } label: {
                     Image(systemName: "plus")
                         .font(.appButton)
@@ -263,6 +288,26 @@ struct WorkspaceHomeView: View {
 
     // MARK: - Guided Workspace Creation
 
+    private func presentCreateWorkspace(
+        on server: PairedServer,
+        presentation: WorkspaceCreatePresentation = .standard,
+        openWorkspaceAfterCreate: Bool = false
+    ) {
+        createSheetContext = WorkspaceCreateSheetContext(
+            server: server,
+            presentation: presentation,
+            openWorkspaceAfterCreate: openWorkspaceAfterCreate
+        )
+    }
+
+    private func handleCreateSheetDismissed() {
+        guard let target = pendingCreatedWorkspaceTarget else { return }
+        pendingCreatedWorkspaceTarget = nil
+        navigation.selectedTab = .workspaces
+        navigation.workspacePath = NavigationPath()
+        navigation.workspacePath.append(target)
+    }
+
     /// After a fresh pairing, auto-present WorkspaceCreateView if the server has no workspaces.
     private func triggerGuidedCreateIfNeeded() {
         guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
@@ -275,7 +320,11 @@ struct WorkspaceHomeView: View {
 
         guidedCreateConsumed = true
         navigation.shouldGuideWorkspaceCreation = false
-        createOnServer = server
+        presentCreateWorkspace(
+            on: server,
+            presentation: .guidedFirstWorkspace,
+            openWorkspaceAfterCreate: true
+        )
     }
 
     /// Empty state shown when servers exist but all workspaces are empty.
@@ -283,11 +332,11 @@ struct WorkspaceHomeView: View {
         ContentUnavailableView {
             Label("No Workspaces", systemImage: "square.grid.2x2")
         } description: {
-            Text("Create a workspace to start coding with your agent.")
+            Text("A workspace tells Oppi which folder to work in. Create your first one from a project folder, a manual path, or a blank setup.")
         } actions: {
             if let server = servers.first {
-                Button("Create Workspace") {
-                    createOnServer = server
+                Button("Create First Workspace") {
+                    presentCreateWorkspace(on: server)
                 }
                 .buttonStyle(.borderedProminent)
             }
