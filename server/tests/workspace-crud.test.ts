@@ -5,7 +5,7 @@
  * and the HTTP handler layer (route matching, validation, error responses).
  *
  * Coverage:
- * - Storage: create, get, list, update, delete, ensureDefaultWorkspaces
+ * - Storage: create, get, list, update, delete
  * - HTTP: GET/POST /workspaces, GET/PUT/DELETE /workspaces/:id
  * - Validation: name, skills
  * - Edge cases: corrupt files, nonexistent workspaces, empty updates
@@ -438,56 +438,9 @@ describe("Storage.deleteWorkspace", () => {
   });
 });
 
-// ─── Storage: ensureDefaultWorkspaces ───
-
-describe("Storage.ensureDefaultWorkspaces", () => {
-  it("seeds default workspaces for new user", () => {
-    storage.ensureDefaultWorkspaces();
-    const list = storage.listWorkspaces();
-
-    expect(list.length).toBeGreaterThanOrEqual(2);
-    const names = list.map((w) => w.name);
-    expect(names).toContain("general");
-    expect(names).toContain("research");
-  });
-
-  it("does not seed when user already has workspaces", () => {
-    storage.createWorkspace(createReq({ name: "custom" }));
-    storage.ensureDefaultWorkspaces();
-
-    const list = storage.listWorkspaces();
-    expect(list).toHaveLength(1);
-    expect(list[0].name).toBe("custom");
-  });
-
-  it("is idempotent — second call does nothing", () => {
-    storage.ensureDefaultWorkspaces();
-    const count1 = storage.listWorkspaces().length;
-
-    storage.ensureDefaultWorkspaces();
-    const count2 = storage.listWorkspaces().length;
-
-    expect(count2).toBe(count1);
-  });
-
-  it("default workspaces have correct structure", () => {
-    storage.ensureDefaultWorkspaces();
-    const list = storage.listWorkspaces();
-
-    for (const ws of list) {
-      expect(ws.id.length).toBe(8);
-      expect(ws.skills).toBeInstanceOf(Array);
-      expect(ws.runtime).toBeUndefined();
-      expect(ws.createdAt).toBeGreaterThan(0);
-    }
-  });
-
-  it("default general workspace has memory enabled", () => {
-    storage.ensureDefaultWorkspaces();
-    const general = storage.listWorkspaces().find((w) => w.name === "general");
-
-    expect(general).toBeDefined();
-    expect(general!.name).toBe("general");
+describe("Storage.listWorkspaces", () => {
+  it("starts empty for a new install", () => {
+    expect(storage.listWorkspaces()).toEqual([]);
   });
 });
 

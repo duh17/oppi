@@ -232,24 +232,4 @@ export class WorkspaceStore {
     rmSync(path);
     return true;
   }
-
-  ensureDefaultWorkspaces(): void {
-    if (this.listWorkspaces().length > 0) {
-      return;
-    }
-
-    this.createWorkspace({
-      name: "general",
-      description: "General-purpose agent with web search and browsing",
-      icon: "terminal",
-      skills: ["search", "web-fetch", "web-browser"],
-    });
-
-    this.createWorkspace({
-      name: "research",
-      description: "Deep research with search, web, and transcription",
-      icon: "magnifyingglass",
-      skills: ["search", "web-fetch", "web-browser", "deep-research", "youtube-transcript"],
-    });
-  }
 }

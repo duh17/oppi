@@ -394,7 +394,6 @@ describe("routes modules", () => {
     it("handles GET /workspaces in isolation", async () => {
       const ctx = {
         storage: {
-          ensureDefaultWorkspaces: vi.fn(),
           listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default", skills: [] }]),
         },
       } as unknown as RouteContext;

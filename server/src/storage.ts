@@ -204,10 +204,6 @@ export class Storage {
     return this.workspaceStore.deleteWorkspace(workspaceId);
   }
 
-  ensureDefaultWorkspaces(): void {
-    this.workspaceStore.ensureDefaultWorkspaces();
-  }
-
   // ─── Helpers ───
 
   getDataDir(): string {

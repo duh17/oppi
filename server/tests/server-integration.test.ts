@@ -213,11 +213,11 @@ describe("skills API", () => {
 // ── Workspaces ──
 
 describe("workspaces API", () => {
-  it("GET /workspaces returns list", async () => {
+  it("GET /workspaces returns an empty list for a new install", async () => {
     const res = await get("/workspaces");
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.workspaces).toBeInstanceOf(Array);
+    expect(body.workspaces).toEqual([]);
   });
 
   it("POST /workspaces creates a workspace", async () => {

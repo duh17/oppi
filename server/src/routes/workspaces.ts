@@ -152,7 +152,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   function handleListWorkspaces(res: ServerResponse): void {
-    ctx.storage.ensureDefaultWorkspaces();
     const workspaces = ctx.storage.listWorkspaces().map(removeUnknownSkills);
     helpers.json(res, { workspaces });
   }
