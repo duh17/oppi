@@ -13,19 +13,19 @@ private struct AggregatedModel: Identifiable {
     let sessions: Int
     let cost: Double
     let tokens: Int
+    let inputTokens: Int
     let cacheRead: Int
     let cacheWrite: Int
     var share: Double
 
     var id: String { displayName }
 
-    /// Cache hit rate: cacheRead / (input + cacheRead + cacheWrite).
-    /// Input tokens = tokens - output - cacheRead - cacheWrite, but we don't have
-    /// output separately. Use cacheRead / (tokens) as approximation since tokens
-    /// now includes all four fields.
+    /// Cache read hit rate: cacheRead / (cacheRead + uncachedInput).
+    /// Excludes output and cache-write tokens to better reflect prompt-cache effectiveness.
     var cacheHitRate: Double? {
-        guard cacheRead > 0, tokens > 0 else { return nil }
-        return Double(cacheRead) / Double(tokens)
+        let denominator = cacheRead + inputTokens
+        guard cacheRead > 0, denominator > 0 else { return nil }
+        return Double(cacheRead) / Double(denominator)
     }
 }
 
@@ -45,6 +45,10 @@ struct ModelBreakdownSection: View {
 
         for item in breakdown {
             let name = displayModelName(item.model)
+            let cacheRead = item.cacheRead ?? 0
+            let cacheWrite = item.cacheWrite ?? 0
+            let inputTokens = item.inputTokens
+
             if var existing = byName[name] {
                 existing = AggregatedModel(
                     displayName: name,
@@ -52,8 +56,9 @@ struct ModelBreakdownSection: View {
                     sessions: existing.sessions + item.sessions,
                     cost: existing.cost + item.cost,
                     tokens: existing.tokens + item.tokens,
-                    cacheRead: existing.cacheRead + (item.cacheRead ?? 0),
-                    cacheWrite: existing.cacheWrite + (item.cacheWrite ?? 0),
+                    inputTokens: existing.inputTokens + inputTokens,
+                    cacheRead: existing.cacheRead + cacheRead,
+                    cacheWrite: existing.cacheWrite + cacheWrite,
                     share: existing.share + item.share
                 )
                 byName[name] = existing
@@ -64,8 +69,9 @@ struct ModelBreakdownSection: View {
                     sessions: item.sessions,
                     cost: item.cost,
                     tokens: item.tokens,
-                    cacheRead: item.cacheRead ?? 0,
-                    cacheWrite: item.cacheWrite ?? 0,
+                    inputTokens: inputTokens,
+                    cacheRead: cacheRead,
+                    cacheWrite: cacheWrite,
                     share: item.share
                 )
             }

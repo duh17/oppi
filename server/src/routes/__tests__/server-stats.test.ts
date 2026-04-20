@@ -302,6 +302,7 @@ describe("aggregateStats", () => {
       sessions: 1,
       cost: 7,
       tokens: 7000,
+      inputTokens: 5000,
       cacheRead: 0,
       cacheWrite: 0,
       share: 0.7,
@@ -311,6 +312,7 @@ describe("aggregateStats", () => {
       sessions: 1,
       cost: 3,
       tokens: 2000,
+      inputTokens: 1000,
       cacheRead: 0,
       cacheWrite: 0,
       share: 0.3,
@@ -332,6 +334,7 @@ describe("aggregateStats", () => {
     expect(result.modelBreakdown).toHaveLength(1);
     expect(result.modelBreakdown[0]).toMatchObject({
       model: "openai-codex/gpt-5.4",
+      inputTokens: 1200,
       cacheRead: 5000,
       // OpenAI Responses-style fallback: write-equivalent = uncached input
       cacheWrite: 1200,

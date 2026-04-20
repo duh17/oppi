@@ -50,6 +50,7 @@ export interface StatsModelBreakdown {
   sessions: number;
   cost: number;
   tokens: number;
+  inputTokens: number;
   cacheRead: number;
   cacheWrite: number;
   share: number; // 0–1 fraction of total cost
@@ -251,7 +252,14 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
   // ─── Model ───
   const modelMap = new Map<
     string,
-    { sessions: number; cost: number; tokens: number; cacheRead: number; cacheWrite: number }
+    {
+      sessions: number;
+      cost: number;
+      tokens: number;
+      inputTokens: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }
   >();
 
   // ─── Workspace ───
@@ -294,12 +302,13 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
     // Model
     let m = modelMap.get(model);
     if (!m) {
-      m = { sessions: 0, cost: 0, tokens: 0, cacheRead: 0, cacheWrite: 0 };
+      m = { sessions: 0, cost: 0, tokens: 0, inputTokens: 0, cacheRead: 0, cacheWrite: 0 };
       modelMap.set(model, m);
     }
     m.sessions++;
     m.cost += cost;
     m.tokens += tokens;
+    m.inputTokens += s.tokens?.input ?? 0;
     m.cacheRead += s.tokens?.cacheRead ?? 0;
     m.cacheWrite += resolveCacheWriteForModelBreakdown(s.model, s.tokens).value;
 
@@ -338,6 +347,7 @@ export function aggregateStats(input: AggregateInput): AggregateResult {
       sessions: m.sessions,
       cost: round2(m.cost),
       tokens: m.tokens,
+      inputTokens: m.inputTokens,
       cacheRead: m.cacheRead,
       cacheWrite: m.cacheWrite,
       share: totalCost > 0 ? round2(m.cost / totalCost) : 0,

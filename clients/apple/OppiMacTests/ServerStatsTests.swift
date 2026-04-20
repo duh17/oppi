@@ -162,6 +162,7 @@ struct ServerStatsCodableTests {
                     "sessions": 10,
                     "cost": 3.50,
                     "tokens": 100000,
+                    "inputTokens": 30000,
                     "cacheRead": 50000,
                     "cacheWrite": 20000,
                     "share": 0.85
@@ -212,6 +213,7 @@ struct ServerStatsCodableTests {
 
         // Model breakdown
         #expect(stats.modelBreakdown.count == 1)
+        #expect(stats.modelBreakdown[0].inputTokens == 30000)
         #expect(stats.modelBreakdown[0].cacheRead == 50000)
         #expect(stats.modelBreakdown[0].share == 0.85)
 

@@ -66,6 +66,7 @@ struct ServerStatsTests {
               "sessions": 11,
               "cost": 2.90,
               "tokens": 110000,
+              "inputTokens": 30000,
               "cacheRead": 45000,
               "cacheWrite": 12000,
               "share": 0.87
@@ -75,6 +76,7 @@ struct ServerStatsTests {
               "sessions": 2,
               "cost": 0.43,
               "tokens": 20000,
+              "inputTokens": 7000,
               "cacheRead": 5000,
               "cacheWrite": 1000,
               "share": 0.13
@@ -124,6 +126,7 @@ struct ServerStatsTests {
         // Model breakdown
         #expect(stats.modelBreakdown.count == 2)
         #expect(stats.modelBreakdown[0].model == "claude-sonnet-4-20250514")
+        #expect(stats.modelBreakdown[0].inputTokens == 30000)
         #expect(stats.modelBreakdown[0].cacheRead == 45000)
         #expect(stats.modelBreakdown[0].cacheWrite == 12000)
         #expect(stats.modelBreakdown[0].share == 0.87)
@@ -223,6 +226,7 @@ struct ServerStatsTests {
           "sessions": 5,
           "cost": 1.20,
           "tokens": 50000,
+          "inputTokens": 20000,
           "cacheRead": null,
           "cacheWrite": null,
           "share": 0.50
@@ -242,6 +246,7 @@ struct ServerStatsTests {
           "sessions": 5,
           "cost": 1.20,
           "tokens": 50000,
+          "inputTokens": 20000,
           "share": 0.50
         }
         """
@@ -249,6 +254,24 @@ struct ServerStatsTests {
 
         #expect(breakdown.cacheRead == nil)
         #expect(breakdown.cacheWrite == nil)
+    }
+
+    @Test func failsModelBreakdownWithoutInputTokens() {
+        let json = """
+        {
+          "model": "gpt-4o",
+          "sessions": 5,
+          "cost": 1.20,
+          "tokens": 50000,
+          "cacheRead": 10000,
+          "cacheWrite": 5000,
+          "share": 0.50
+        }
+        """
+
+        #expect(throws: DecodingError.self) {
+            _ = try decode(json, as: StatsModelBreakdown.self)
+        }
     }
 
     // MARK: - Empty Arrays
@@ -286,6 +309,7 @@ struct ServerStatsTests {
           "sessions": 0,
           "cost": 0.01,
           "tokens": 0,
+          "inputTokens": 0,
           "cacheRead": 0,
           "cacheWrite": 0,
           "share": 0
@@ -676,6 +700,7 @@ struct ServerStatsTests {
           "sessions": 20,
           "cost": 5.0,
           "tokens": 200000,
+          "inputTokens": 60000,
           "cacheRead": 80000,
           "cacheWrite": 25000,
           "share": 0.75
@@ -683,6 +708,7 @@ struct ServerStatsTests {
         """
         let breakdown = try decode(json, as: StatsModelBreakdown.self)
 
+        #expect(breakdown.inputTokens == 60000)
         #expect(breakdown.cacheRead == 80000)
         #expect(breakdown.cacheWrite == 25000)
         // Cache tokens are a significant fraction of total
@@ -697,6 +723,7 @@ struct ServerStatsTests {
           "sessions": 3,
           "cost": 0,
           "tokens": 5000,
+          "inputTokens": 2000,
           "cacheRead": 0,
           "cacheWrite": 0,
           "share": 0
@@ -704,6 +731,7 @@ struct ServerStatsTests {
         """
         let breakdown = try decode(json, as: StatsModelBreakdown.self)
 
+        #expect(breakdown.inputTokens == 2000)
         #expect(breakdown.cacheRead == 0)
         #expect(breakdown.cacheWrite == 0)
     }
