@@ -32,6 +32,12 @@ struct ANSIParserTests {
         #expect(ANSIParser.strip(input) == "beforeafterend")
     }
 
+    @Test("strip drops standalone escape bytes")
+    func stripStandaloneEscapeByte() {
+        let input = "hello\u{1B}world"
+        #expect(ANSIParser.strip(input) == "helloworld")
+    }
+
     // MARK: - Attributed String
 
     @Test("attributedString preserves plain text")
@@ -45,6 +51,13 @@ struct ANSIParserTests {
         let input = "\u{1B}[1mBold\u{1B}[0m Normal"
         let result = ANSIParser.attributedString(from: input)
         #expect(result.string == "Bold Normal")
+    }
+
+    @Test("attributedString drops standalone escape bytes")
+    func attrStandaloneEscapeByte() {
+        let input = "A\u{1B}B"
+        let result = ANSIParser.attributedString(from: input)
+        #expect(result.string == "AB")
     }
 
     @Test("attributedString applies foreground colors as UIColor")
@@ -153,6 +166,13 @@ struct ANSIParserTests {
     @Test("stripPrefix handles empty input")
     func stripPrefixEmpty() {
         #expect(ANSIParser.stripPrefix("", maxInputBytes: 100) == "")
+    }
+
+    @Test("stripPrefix drops trailing standalone escape byte")
+    func stripPrefixTrailingEscapeByte() {
+        let input = "hello\u{1B}"
+        let result = ANSIParser.stripPrefix(input, maxInputBytes: 100)
+        #expect(result == "hello")
     }
 
     // MARK: - Background colors
@@ -286,6 +306,21 @@ struct ANSIParserTests {
         #expect(d2 == "colored")
     }
 
+    @Test("incremental stripper handles lone ESC at chunk boundary")
+    func incrementalLoneEscapeBoundary() {
+        var stripper = ANSIParser.IncrementalStripper()
+
+        // First chunk ends with just ESC (before '[' arrives).
+        let partial = "text\u{1B}"
+        let d1 = stripper.delta(partial)
+        #expect(d1 == "text")
+
+        // Next chunk completes the CSI escape and adds text.
+        let full = "text\u{1B}[32mcolored"
+        let d2 = stripper.delta(full)
+        #expect(d2 == "colored")
+    }
+
     @Test("incremental stripper tracks UTF-16 length")
     func incrementalUTF16Length() {
         var stripper = ANSIParser.IncrementalStripper()
@@ -348,5 +383,33 @@ struct ANSIParserTests {
         }
         let bg = result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? UIColor
         #expect(bg != nil, "Expected .backgroundColor for RGB bg code")
+    }
+
+    // MARK: - Performance
+
+    @Test("benchmark: strip handles ~32KB mixed ANSI log quickly")
+    func stripBenchmark32KB() {
+        var input = ""
+        input.reserveCapacity(40_000)
+
+        for i in 0..<700 {
+            // Include a standalone ESC periodically to cover the
+            // boundary-recovery branch in the hot path.
+            let strayEscape = (i % 37 == 0) ? "\u{1B}" : ""
+            input += "\u{1B}[32m\u{2713}\u{1B}[0m step_\(i) \(strayEscape)done in \u{1B}[2m\(i % 13)ms\u{1B}[22m\n"
+        }
+
+        #expect(input.utf8.count >= 32 * 1024)
+
+        let ns = RendererTestSupport.medianNs(iterations: 9, warmup: 2) {
+            RendererTestSupport.consume(ANSIParser.strip(input))
+        }
+        let us = RendererTestSupport.nsToUs(ns)
+        print("METRIC ansi_strip_32kb_us=\(String(format: "%.1f", us))")
+
+        // Generous budget to avoid CI flakes while still catching major
+        // regressions and accidental quadratic behavior.
+        #expect(us < 40_000,
+            "ansi_strip_32kb_us exceeded budget: \(String(format: "%.1f", us))us > 40000us")
     }
 }

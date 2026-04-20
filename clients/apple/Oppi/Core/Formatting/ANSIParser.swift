@@ -91,39 +91,53 @@ enum ANSIParser {
 
             var i = scanStart
             while i < count {
-                if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
-                    // Start of CSI sequence.
-                    let escStart = i
-                    var j = i + 2
-                    var foundTerminator = false
-                    while j < count {
-                        let b = buf[j]
-                        if b >= 0x40 && b <= 0x7E {
-                            j += 1
-                            foundTerminator = true
-                            break
-                        }
-                        j += 1
-                    }
-                    if !foundTerminator {
-                        // Incomplete escape — save position for re-scan.
-                        pendingEscapeStart = escStart
-                        processedInputBytes = escStart
+                if buf[i] == 0x1B {
+                    // Incomplete escape introducer at chunk boundary.
+                    if i + 1 >= count {
+                        pendingEscapeStart = i
+                        processedInputBytes = i
                         break
                     }
-                    i = j
-                } else {
-                    // Scan forward through non-ESC bytes.
-                    let start = i
-                    while i < count && buf[i] != 0x1B {
-                        i += 1
-                    }
-                    // Only emit bytes past the boundary.
-                    let emitStart = max(start, emitBoundary)
-                    if emitStart < i {
-                        for idx in emitStart..<i {
-                            out.append(buf[idx])
+
+                    if buf[i + 1] == 0x5B {
+                        // Start of CSI sequence.
+                        let escStart = i
+                        var j = i + 2
+                        var foundTerminator = false
+                        while j < count {
+                            let b = buf[j]
+                            if b >= 0x40 && b <= 0x7E {
+                                j += 1
+                                foundTerminator = true
+                                break
+                            }
+                            j += 1
                         }
+                        if !foundTerminator {
+                            // Incomplete escape — save position for re-scan.
+                            pendingEscapeStart = escStart
+                            processedInputBytes = escStart
+                            break
+                        }
+                        i = j
+                        continue
+                    }
+
+                    // Unsupported / standalone ESC byte. Drop it and keep scanning.
+                    i += 1
+                    continue
+                }
+
+                // Scan forward through non-ESC bytes.
+                let start = i
+                while i < count && buf[i] != 0x1B {
+                    i += 1
+                }
+                // Only emit bytes past the boundary.
+                let emitStart = max(start, emitBoundary)
+                if emitStart < i {
+                    for idx in emitStart..<i {
+                        out.append(buf[idx])
                     }
                 }
             }
@@ -166,23 +180,29 @@ enum ANSIParser {
             out.reserveCapacity(limit)
             var i = 0
             while i < limit {
-                if buffer[i] == 0x1B, i + 1 < limit, buffer[i + 1] == 0x5B {
-                    var j = i + 2
-                    while j < limit {
-                        let b = buffer[j]
-                        if b >= 0x40 && b <= 0x7E {
+                if buffer[i] == 0x1B {
+                    if i + 1 < limit, buffer[i + 1] == 0x5B {
+                        var j = i + 2
+                        while j < limit {
+                            let b = buffer[j]
+                            if b >= 0x40 && b <= 0x7E {
+                                j += 1
+                                break
+                            }
                             j += 1
-                            break
                         }
-                        j += 1
+                        i = j
+                    } else {
+                        // Drop unsupported / standalone ESC byte.
+                        i += 1
                     }
-                    i = j
-                } else {
-                    let start = i
-                    while i < limit && buffer[i] != 0x1B { i += 1 }
-                    for idx in start..<i {
-                        out.append(buffer[idx])
-                    }
+                    continue
+                }
+
+                let start = i
+                while i < limit && buffer[i] != 0x1B { i += 1 }
+                for idx in start..<i {
+                    out.append(buffer[idx])
                 }
             }
             result = String(decoding: out, as: UTF8.self)
@@ -202,25 +222,31 @@ enum ANSIParser {
 
         var i = 0
         while i < count {
-            if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
-                var j = i + 2
-                while j < count {
-                    let b = buf[j]
-                    if b >= 0x40 && b <= 0x7E {
+            if buf[i] == 0x1B {
+                if i + 1 < count, buf[i + 1] == 0x5B {
+                    var j = i + 2
+                    while j < count {
+                        let b = buf[j]
+                        if b >= 0x40 && b <= 0x7E {
+                            j += 1
+                            break
+                        }
                         j += 1
-                        break
                     }
-                    j += 1
-                }
-                i = j
-            } else {
-                // Scan forward through non-ESC bytes in bulk.
-                let start = i
-                while i < count && buf[i] != 0x1B {
+                    i = j
+                } else {
+                    // Drop unsupported / standalone ESC byte.
                     i += 1
                 }
-                result.append(contentsOf: buf[start..<i])
+                continue
             }
+
+            // Scan forward through non-ESC bytes in bulk.
+            let start = i
+            while i < count && buf[i] != 0x1B {
+                i += 1
+            }
+            result.append(contentsOf: buf[start..<i])
         }
 
         return String(decoding: result, as: UTF8.self)
@@ -272,69 +298,75 @@ enum ANSIParser {
         var i = 0
 
         while i < count {
-            if buf[i] == 0x1B, i + 1 < count, buf[i + 1] == 0x5B {
-                var j = i + 2
-                while j < count {
-                    let b = buf[j]
-                    if b >= 0x40 && b <= 0x7E { break }
-                    j += 1
-                }
-
-                if j < count && buf[j] == 0x6D { // 'm' -> SGR
-                    let runLen16 = utf16Pos - runStart16
-                    if hasSGR && runLen16 > 0 {
-                        runs.append(AttrRun(
-                            utf16Start: runStart16,
-                            utf16Length: runLen16,
-                            font: fontCache.font(bold: state.bold, italic: state.italic),
-                            fg: state.foregroundUIColor,
-                            bg: state.backgroundUIColor,
-                            underline: state.underline
-                        ))
+            if buf[i] == 0x1B {
+                if i + 1 < count, buf[i + 1] == 0x5B {
+                    var j = i + 2
+                    while j < count {
+                        let b = buf[j]
+                        if b >= 0x40 && b <= 0x7E { break }
+                        j += 1
                     }
 
-                    state.applyFromBuffer(buf, from: i + 2, to: j)
-                    hasSGR = true
-                    runStart16 = utf16Pos
-                }
+                    if j < count && buf[j] == 0x6D { // 'm' -> SGR
+                        let runLen16 = utf16Pos - runStart16
+                        if hasSGR && runLen16 > 0 {
+                            runs.append(AttrRun(
+                                utf16Start: runStart16,
+                                utf16Length: runLen16,
+                                font: fontCache.font(bold: state.bold, italic: state.italic),
+                                fg: state.foregroundUIColor,
+                                bg: state.backgroundUIColor,
+                                underline: state.underline
+                            ))
+                        }
 
-                i = j + 1
-            } else {
-                // Fast inner loop: scan forward through ASCII bytes (< 0x80, != 0x1B)
-                // without per-byte branching. This covers the vast majority of
-                // terminal output (English text, numbers, punctuation).
-                let textStart = i
-                while i < count {
-                    let b = buf[i]
-                    if b == 0x1B || b >= 0x80 { break }
+                        state.applyFromBuffer(buf, from: i + 2, to: j)
+                        hasSGR = true
+                        runStart16 = utf16Pos
+                    }
+
+                    i = j + 1
+                } else {
+                    // Drop unsupported / standalone ESC byte.
                     i += 1
                 }
+                continue
+            }
 
-                if i > textStart {
-                    // Batch-append the ASCII chunk.
-                    let asciiLen = i - textStart
-                    plainBytes.append(contentsOf: buf[textStart..<i])
-                    utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
-                }
+            // Fast inner loop: scan forward through ASCII bytes (< 0x80, != 0x1B)
+            // without per-byte branching. This covers the vast majority of
+            // terminal output (English text, numbers, punctuation).
+            let textStart = i
+            while i < count {
+                let b = buf[i]
+                if b == 0x1B || b >= 0x80 { break }
+                i += 1
+            }
 
-                // Handle non-ASCII byte (if that's what stopped us).
-                if i < count && buf[i] >= 0x80 {
-                    let b = buf[i]
-                    plainBytes.append(b)
-                    if b < 0xC0 { utf16Pos += 1; i += 1 }
-                    else if b < 0xE0 {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        utf16Pos += 1; i += 2
-                    } else if b < 0xF0 {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                        utf16Pos += 1; i += 3
-                    } else {
-                        if i + 1 < count { plainBytes.append(buf[i + 1]) }
-                        if i + 2 < count { plainBytes.append(buf[i + 2]) }
-                        if i + 3 < count { plainBytes.append(buf[i + 3]) }
-                        utf16Pos += 2; i += 4
-                    }
+            if i > textStart {
+                // Batch-append the ASCII chunk.
+                let asciiLen = i - textStart
+                plainBytes.append(contentsOf: buf[textStart..<i])
+                utf16Pos += asciiLen // ASCII: 1 byte = 1 UTF-16 unit
+            }
+
+            // Handle non-ASCII byte (if that's what stopped us).
+            if i < count && buf[i] >= 0x80 {
+                let b = buf[i]
+                plainBytes.append(b)
+                if b < 0xC0 { utf16Pos += 1; i += 1 }
+                else if b < 0xE0 {
+                    if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                    utf16Pos += 1; i += 2
+                } else if b < 0xF0 {
+                    if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                    if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                    utf16Pos += 1; i += 3
+                } else {
+                    if i + 1 < count { plainBytes.append(buf[i + 1]) }
+                    if i + 2 < count { plainBytes.append(buf[i + 2]) }
+                    if i + 3 < count { plainBytes.append(buf[i + 3]) }
+                    utf16Pos += 2; i += 4
                 }
             }
         }

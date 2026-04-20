@@ -263,6 +263,33 @@ struct BashToolRowViewTests {
             "Incremental streaming should produce identical output to full strip")
     }
 
+    @Test("streaming path handles lone ESC at chunk boundary")
+    func streamingPathLoneEscapeBoundary() {
+        let view = BashToolRowView()
+        let outputColor = UIColor.white
+
+        let partial = BashRenderInput(
+            command: nil,
+            output: "line\u{1B}",
+            unwrapped: false,
+            isError: false,
+            isStreaming: true
+        )
+        _ = view.apply(input: partial, outputColor: outputColor, wasOutputVisible: false)
+
+        let full = BashRenderInput(
+            command: nil,
+            output: "line\u{1B}[32mok",
+            unwrapped: false,
+            isError: false,
+            isStreaming: true
+        )
+        _ = view.apply(input: full, outputColor: outputColor, wasOutputVisible: true)
+
+        let displayed = view.outputLabel.text ?? view.outputLabel.attributedText?.string ?? ""
+        #expect(displayed == "lineok")
+    }
+
     // MARK: - Signature dedup
 
     @Test("same input twice does not re-render command")
