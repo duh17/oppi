@@ -64,6 +64,63 @@ struct FlatSegmentBuildTests {
         }
     }
 
+    @Test func displayMathParagraphWithBracketDelimitersPromotesToLatexSegment() {
+        let markdown = #"""
+        \[
+        \text{hit_rate} = \frac{\text{cacheRead}}{\text{cacheRead} + \text{uncachedInput}}
+        \]
+        """#
+
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+
+        #expect(segments.count == 1)
+        if case .latexBlock(let code) = segments[0] {
+            #expect(code.contains(#"\frac"#))
+            #expect(!code.contains(#"\["#))
+            #expect(!code.contains(#"\]"#))
+        } else {
+            Issue.record("Expected .latexBlock segment, got \(segments[0])")
+        }
+    }
+
+    @Test func displayMathParagraphWithDollarDelimitersPromotesToLatexSegment() {
+        let markdown = #"""
+        $$
+        x = \frac{1}{2}
+        $$
+        """#
+
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+
+        #expect(segments.count == 1)
+        if case .latexBlock(let code) = segments[0] {
+            #expect(code == #"x = \frac{1}{2}"#)
+        } else {
+            Issue.record("Expected .latexBlock segment, got \(segments[0])")
+        }
+    }
+
+    @Test func bracketDelimitedPlainTextParagraphStaysText() {
+        let markdown = """
+        [
+        this is not latex
+        ]
+        """
+
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+
+        #expect(segments.count == 1)
+        if case .text(let attr) = segments[0] {
+            let text = String(attr.characters)
+            #expect(text.contains("this is not latex"))
+        } else {
+            Issue.record("Expected .text segment, got \(segments[0])")
+        }
+    }
+
     @Test func tableProducesTableSegment() {
         let blocks: [MarkdownBlock] = [.table(headers: [[.text("A")]], rows: [[[.text("1")]]])]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)

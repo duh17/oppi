@@ -351,9 +351,15 @@ enum FlatSegment: Sendable {
                 result.append(.thematicBreak)
 
             case .paragraph(let inlines):
+                // Promote standalone display-math paragraphs to `.latexBlock`
+                // so assistant responses using `\[ ... \]` or `$$ ... $$`
+                // render as formulas in the timeline.
                 // Promote image-only paragraphs to a standalone `.image` segment
                 // when the source is a resolvable URL (absolute or workspace-relative).
-                if let imageURL = resolveStandaloneImage(
+                if let latexSource = resolveStandaloneLatex(inlines: inlines) {
+                    flushPendingText()
+                    result.append(.latexBlock(code: latexSource))
+                } else if let imageURL = resolveStandaloneImage(
                     inlines: inlines,
                     workspaceID: workspaceID,
                     serverBaseURL: serverBaseURL,
@@ -410,6 +416,124 @@ enum FlatSegment: Sendable {
 
         flushPendingText()
         return result
+    }
+
+    // MARK: - Display Math Paragraph Detection
+
+    /// Detect standalone display-math paragraphs and extract the inner TeX.
+    ///
+    /// Supported wrappers:
+    /// - `$$ ... $$`
+    /// - `\[ ... \]` (after CommonMark parsing this often appears as `[ ... ]`)
+    ///
+    /// We intentionally require the inner content to look math-like to avoid
+    /// treating plain bracketed prose as LaTeX.
+    private static func resolveStandaloneLatex(inlines: [MarkdownInline]) -> String? {
+        let source = inlineSourcePreservingBreaks(inlines)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
+
+        if let inner = unwrapDisplayMathByDollars(source) {
+            return inner
+        }
+
+        if let inner = unwrapDisplayMathByBrackets(source) {
+            return inner
+        }
+
+        return nil
+    }
+
+    /// Flatten inline nodes to plain text while preserving line breaks.
+    ///
+    /// Used only for structural detection (not display), so formatting marks
+    /// are collapsed to their text content.
+    private static func inlineSourcePreservingBreaks(_ inlines: [MarkdownInline]) -> String {
+        var result = ""
+        result.reserveCapacity(128)
+
+        for inline in inlines {
+            switch inline {
+            case .text(let string):
+                result.append(string)
+            case .emphasis(let children),
+                 .strong(let children),
+                 .strikethrough(let children):
+                result.append(inlineSourcePreservingBreaks(children))
+            case .code(let code):
+                result.append(code)
+            case .link(let children, _):
+                result.append(inlineSourcePreservingBreaks(children))
+            case .image(let alt, _):
+                result.append(alt)
+            case .softBreak, .hardBreak:
+                result.append("\n")
+            case .html(let raw):
+                result.append(raw)
+            }
+        }
+
+        return result
+    }
+
+    private static func unwrapDisplayMathByDollars(_ source: String) -> String? {
+        guard let inner = stripWrapping(source, open: "$$", close: "$$") else { return nil }
+        guard isLikelyLatexMath(inner) else { return nil }
+        return inner
+    }
+
+    private static func unwrapDisplayMathByBrackets(_ source: String) -> String? {
+        // Multiline display math commonly arrives as:
+        // [
+        //   \\frac{...}{...}
+        // ]
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let firstNonEmpty = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+              let lastNonEmpty = lines.lastIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+              firstNonEmpty < lastNonEmpty else {
+            return nil
+        }
+
+        let opening = String(lines[firstNonEmpty]).trimmingCharacters(in: .whitespaces)
+        let closing = String(lines[lastNonEmpty]).trimmingCharacters(in: .whitespaces)
+        guard (opening == "[" || opening == "\\["),
+              (closing == "]" || closing == "\\]") else {
+            return nil
+        }
+
+        let inner = lines[(firstNonEmpty + 1) ..< lastNonEmpty]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLikelyLatexMath(inner) else { return nil }
+        return inner
+    }
+
+    private static func stripWrapping(_ source: String, open: String, close: String) -> String? {
+        guard source.hasPrefix(open), source.hasSuffix(close) else { return nil }
+
+        let start = source.index(source.startIndex, offsetBy: open.count)
+        let end = source.index(source.endIndex, offsetBy: -close.count)
+        guard start <= end else { return nil }
+
+        let inner = source[start ..< end].trimmingCharacters(in: .whitespacesAndNewlines)
+        return inner.isEmpty ? nil : inner
+    }
+
+    private static func isLikelyLatexMath(_ source: String) -> Bool {
+        guard !source.isEmpty else { return false }
+
+        // Strong signals for TeX math, without aggressively rewriting prose.
+        if source.contains("\\") {
+            return true
+        }
+        if source.contains("^") || source.contains("_") {
+            return true
+        }
+        if source.contains("{") && source.contains("}") {
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Image URL Resolution
