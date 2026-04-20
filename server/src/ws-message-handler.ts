@@ -201,6 +201,7 @@ export class WsMessageHandler {
       case "get_fork_messages":
       case "get_session_stats":
       case "get_commands":
+      case "share_session":
       case "set_model":
       case "cycle_model":
       case "get_available_models":

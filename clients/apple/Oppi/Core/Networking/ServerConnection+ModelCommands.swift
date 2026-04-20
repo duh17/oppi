@@ -1,5 +1,11 @@
 import Foundation
 
+struct SharedSessionLink: Sendable, Equatable {
+    let shareURL: String
+    let gistURL: String
+    let gistID: String
+}
+
 // MARK: - Model, Thinking, and Slash Commands
 
 extension ServerConnection {
@@ -86,6 +92,13 @@ extension ServerConnection {
         try await send(.compact(customInstructions: instructions))
     }
 
+    func shareSession() async throws -> SharedSessionLink? {
+        let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
+            .shareSession(requestId: requestId)
+        }
+        return Self.parseSharedSessionLink(from: data)
+    }
+
     func getSessionStats() async throws -> SessionStatsSnapshot? {
         let data = try await sendCommandAwaitingResult(command: "get_session_stats") { requestId in
             .getSessionStats(requestId: requestId)
@@ -115,6 +128,24 @@ extension ServerConnection {
         } catch {
             chatState.slashCommandsRequestId = nil
         }
+    }
+
+    static func parseSharedSessionLink(from data: JSONValue?) -> SharedSessionLink? {
+        guard let object = data?.objectValue,
+              let shareURLRaw = object["shareUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !shareURLRaw.isEmpty,
+              let gistURLRaw = object["gistUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !gistURLRaw.isEmpty,
+              let gistIDRaw = object["gistId"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !gistIDRaw.isEmpty else {
+            return nil
+        }
+
+        return SharedSessionLink(
+            shareURL: shareURLRaw,
+            gistURL: gistURLRaw,
+            gistID: gistIDRaw
+        )
     }
 
     static func parseSessionStats(from data: JSONValue?) -> SessionStatsSnapshot? {

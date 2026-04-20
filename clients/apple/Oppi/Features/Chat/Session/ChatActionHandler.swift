@@ -252,6 +252,51 @@ final class ChatActionHandler {
         return ""
     }
 
+    func shareSession(
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionId: String,
+        onDispatchStarted: (() -> Void)? = nil,
+        onAsyncFailure: (() -> Void)? = nil,
+        onNeedsReconnect: (() -> Void)? = nil
+    ) {
+        guard !isSending else { return }
+        isSending = true
+
+        launchTask { @MainActor in
+            self.beginSendTracking()
+            defer { self.isSending = false }
+            onDispatchStarted?()
+
+            do {
+                guard let link = try await connection.shareSession() else {
+                    throw CommandRequestError.rejected(
+                        command: "share_session",
+                        reason: "server returned an empty response"
+                    )
+                }
+
+                connection.extensionToast = "Share URL: \(link.shareURL)\nGist: \(link.gistURL)"
+                self.scheduleSendStageClear()
+            } catch {
+                self.clearSendStageNow()
+                log.error("SHARE session FAILED: \(error.localizedDescription, privacy: .public)")
+                ClientLog.error(
+                    "Action",
+                    "SHARE session FAILED",
+                    metadata: ["sessionId": sessionId, "error": error.localizedDescription]
+                )
+                if Self.isReconnectableSendError(error) {
+                    onNeedsReconnect?()
+                }
+                onAsyncFailure?()
+                reducer.process(
+                    .error(sessionId: sessionId, message: "Share failed: \(error.localizedDescription)")
+                )
+            }
+        }
+    }
+
     // MARK: - Bash
 
     // MARK: - Resume

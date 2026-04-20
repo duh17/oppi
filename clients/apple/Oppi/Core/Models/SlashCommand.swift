@@ -4,20 +4,23 @@ import SwiftUI
 /// Slash command metadata returned by pi RPC `get_commands`.
 struct SlashCommand: Identifiable, Sendable, Equatable {
     enum Source: String, Sendable, Equatable {
+        case builtin
         case `extension`
         case prompt
         case skill
 
         var sortRank: Int {
             switch self {
-            case .extension: return 0
-            case .prompt: return 1
-            case .skill: return 2
+            case .builtin: return 0
+            case .extension: return 1
+            case .prompt: return 2
+            case .skill: return 3
             }
         }
 
         var label: String {
             switch self {
+            case .builtin: return "Built-in"
             case .extension: return "Extension"
             case .prompt: return "Prompt"
             case .skill: return "Skill"
@@ -26,6 +29,7 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
 
         var iconName: String {
             switch self {
+            case .builtin: return "bolt.circle"
             case .extension: return "puzzlepiece.extension"
             case .prompt: return "text.quote"
             case .skill: return "star"
@@ -34,6 +38,7 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
 
         var iconColor: Color {
             switch self {
+            case .builtin: return .themeBlue
             case .extension: return .themePurple
             case .prompt: return .themeGreen
             case .skill: return .themeYellow

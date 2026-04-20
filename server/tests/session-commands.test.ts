@@ -27,7 +27,12 @@ describe("SessionCommandCoordinator", () => {
           {
             name: "remember",
             description: "Save note",
-            sourceInfo: { path: "/ext/memory.js", source: "user", scope: "user", origin: "top-level" },
+            sourceInfo: {
+              path: "/ext/memory.js",
+              source: "user",
+              scope: "user",
+              origin: "top-level",
+            },
           },
         ],
       },
@@ -35,7 +40,12 @@ describe("SessionCommandCoordinator", () => {
         {
           name: "plan",
           description: "Plan prompt",
-          sourceInfo: { source: "project", path: "/repo/prompts/plan.md", scope: "project", origin: "top-level" },
+          sourceInfo: {
+            source: "project",
+            path: "/repo/prompts/plan.md",
+            scope: "project",
+            origin: "top-level",
+          },
           filePath: "/repo/prompts/plan.md",
         },
       ],
@@ -45,7 +55,12 @@ describe("SessionCommandCoordinator", () => {
             {
               name: "tmux",
               description: "Control tmux",
-              sourceInfo: { source: "user", path: "/Users/me/.pi/agent/skills/tmux/SKILL.md", scope: "user", origin: "top-level" },
+              sourceInfo: {
+                source: "user",
+                path: "/Users/me/.pi/agent/skills/tmux/SKILL.md",
+                scope: "user",
+                origin: "top-level",
+              },
               filePath: "/Users/me/.pi/agent/skills/tmux/SKILL.md",
             },
           ],
@@ -74,11 +89,17 @@ describe("SessionCommandCoordinator", () => {
     });
 
     expect(coordinator.isAllowedCommand("get_commands")).toBe(true);
+    expect(coordinator.isAllowedCommand("share_session")).toBe(true);
 
     const result = await coordinator.sendCommandAsync("s1", { type: "get_commands" });
 
     expect(result).toEqual({
       commands: [
+        {
+          name: "share",
+          description: "Share session as a secret GitHub gist",
+          source: "builtin",
+        },
         {
           name: "remember",
           description: "Save note",

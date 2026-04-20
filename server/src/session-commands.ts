@@ -3,6 +3,7 @@ import { formatSkillsForPrompt, type AgentSession } from "@mariozechner/pi-codin
 import { ts } from "./log-utils.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { normalizeCommandError } from "./session-protocol.js";
+import { shareSession } from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
@@ -34,7 +35,7 @@ function toCommandLocation(value: string | undefined): "user" | "project" | "pat
 interface SessionCommandDescriptor {
   name: string;
   description?: string;
-  source: "extension" | "prompt" | "skill";
+  source: "builtin" | "extension" | "prompt" | "skill";
   location?: "user" | "project" | "path";
   path?: string;
 }
@@ -95,8 +96,16 @@ function collectSessionContextComposition(
   };
 }
 
+const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
+  {
+    name: "share",
+    description: "Share session as a secret GitHub gist",
+    source: "builtin",
+  },
+];
+
 function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
-  const commands: SessionCommandDescriptor[] = [];
+  const commands: SessionCommandDescriptor[] = [...BUILTIN_SLASH_COMMANDS];
 
   for (const command of session.extensionRunner?.getRegisteredCommands() ?? []) {
     commands.push({
@@ -234,6 +243,7 @@ export class SessionCommandCoordinator {
     ],
     ["get_available_models", () => []],
     ["get_commands", (session) => collectSessionCommands(session)],
+    ["share_session", (session) => shareSession(session)],
 
     ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
 

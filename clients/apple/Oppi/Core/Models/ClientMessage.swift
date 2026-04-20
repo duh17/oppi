@@ -57,6 +57,7 @@ enum ClientMessage: Sendable {
 
     // ── Commands ──
     case getCommands(requestId: String? = nil)
+    case shareSession(requestId: String? = nil)
 
     // ── File suggestions ──
     case getFileSuggestions(query: String, requestId: String? = nil)
@@ -291,6 +292,10 @@ extension ClientMessage: Encodable {
             try c.encode("get_commands", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        case .shareSession(let reqId):
+            try c.encode("share_session", forKey: .type)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── File suggestions ──
         case .getFileSuggestions(let query, let reqId):
             try c.encode("get_file_suggestions", forKey: .type)
@@ -418,6 +423,7 @@ extension ClientMessage {
         case .abortRetry: return "abort_retry"
         case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
+        case .shareSession: return "share_session"
         case .getFileSuggestions: return "get_file_suggestions"
         case .permissionResponse: return "permission_response"
         case .extensionUIResponse: return "extension_ui_response"

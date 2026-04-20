@@ -60,8 +60,25 @@ struct ServerConnectionModelCommandsTests {
         try await connection.setSessionName("rename me")
         try await connection.compact(instructions: "keep important stuff")
 
+        async let shareTask = connection.shareSession()
+        #expect(await waitForMainActorCondition { !connection.commands.pendingCommandsByRequestId.isEmpty })
+
+        let requestId = try #require(connection.commands.pendingCommandsByRequestId.keys.first)
+        _ = connection.commands.resolveCommandResult(
+            command: "share_session",
+            requestId: requestId,
+            success: true,
+            data: [
+                "shareUrl": "https://pi.dev/session/#abc123",
+                "gistUrl": "https://gist.github.com/demo-user/abc123",
+                "gistId": "abc123",
+            ],
+            error: nil
+        )
+        _ = try await shareTask
+
         let messages = await sink.messages
-        #expect(messages.count == 3)
+        #expect(messages.count == 4)
 
         guard case .newSession = messages[0] else {
             Issue.record("Expected newSession client message")
@@ -77,6 +94,11 @@ struct ServerConnectionModelCommandsTests {
             return
         }
         #expect(instructions == "keep important stuff")
+
+        guard case .shareSession = messages[3] else {
+            Issue.record("Expected shareSession client message")
+            return
+        }
     }
 
     @Test func syncThinkingLevelUpdatesOnlyForValidChangedValues() {
@@ -187,7 +209,7 @@ struct ServerConnectionModelCommandsTests {
             sessionId: session.id
         )
 
-        #expect(connection.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
+        #expect(connection.chatState.slashCommands.map(\.name) == ["compact", "share", "skill:lint"])
         #expect(connection.chatState.slashCommandsCacheKey == connection.slashCommandCacheKey(for: session))
         #expect(connection.chatState.slashCommandsRequestId == nil)
     }
@@ -223,6 +245,20 @@ struct ServerConnectionModelCommandsTests {
         #expect(commands.map(\.name) == ["compact", "explain", "Skill:Lint"])
         #expect(commands.last?.source == .skill)
         #expect(commands.last?.description == "later duplicate")
+    }
+
+    @Test func parseSharedSessionLinkParsesPayload() {
+        let link = ServerConnection.parseSharedSessionLink(from: [
+            "shareUrl": "https://pi.dev/session/#abc123",
+            "gistUrl": "https://gist.github.com/user/abc123",
+            "gistId": "abc123",
+        ])
+
+        #expect(link == SharedSessionLink(
+            shareURL: "https://pi.dev/session/#abc123",
+            gistURL: "https://gist.github.com/user/abc123",
+            gistID: "abc123"
+        ))
     }
 
     @Test func parseSessionStatsParsesStringsAndFallsBackTotal() {
@@ -315,6 +351,7 @@ private func makeSlashCommandsPayload() -> JSONValue {
     [
         "commands": [
             ["name": "compact", "description": "Compact context", "source": "prompt"],
+            ["name": "share", "description": "Share session", "source": "builtin"],
             ["name": "skill:lint", "description": "Run linter", "source": "skill"],
         ]
     ]

@@ -347,6 +347,25 @@ describe("WsMessageHandler", () => {
     );
   });
 
+  it("forwards share_session requests", async () => {
+    const harness = makeHarness();
+
+    await dispatch(harness, {
+      type: "share_session",
+      requestId: "req-share-1",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledWith(
+      "s1",
+      {
+        type: "share_session",
+        requestId: "req-share-1",
+      },
+      "req-share-1",
+    );
+  });
+
   it("forwards get_fork_messages requests", async () => {
     const harness = makeHarness();
 
@@ -369,10 +388,10 @@ describe("WsMessageHandler", () => {
   it("returns command_result error for unsupported command types", async () => {
     const harness = makeHarness();
 
-    await dispatch(
-      harness,
-      { type: "future_command_v99", requestId: "req-unknown" } as unknown as ClientMessage,
-    );
+    await dispatch(harness, {
+      type: "future_command_v99",
+      requestId: "req-unknown",
+    } as unknown as ClientMessage);
 
     expect(harness.sent).toEqual([
       {

@@ -1058,6 +1058,7 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "abort_bash"; requestId?: string }
     // ── Commands ──
     | { type: "get_commands"; requestId?: string }
+    | { type: "share_session"; requestId?: string }
     // ── File suggestions ──
     | { type: "get_file_suggestions"; query: string; requestId?: string }
     // ── Permission gate ──

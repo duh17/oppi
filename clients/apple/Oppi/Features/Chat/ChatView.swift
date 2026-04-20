@@ -88,6 +88,12 @@ struct ChatView: View {
         SessionTreeHelper.sortedChildSessions(of: sessionId, in: sessionStore.sessions)
     }
 
+    private var hasShareSlashCommand: Bool {
+        chatState.slashCommands.contains { command in
+            command.name.caseInsensitiveCompare("share") == .orderedSame
+        }
+    }
+
     /// Parent session (when this is a spawned child).
     private var parentSession: Session? {
         guard let parentId = session?.parentSessionId else { return nil }
@@ -563,13 +569,15 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Rename session")
-#if DEBUG
         .contextMenu {
             Button("Copy Session ID", systemImage: "doc.on.doc") {
                 copySessionID()
             }
+            Button("Share Session", systemImage: "square.and.arrow.up") {
+                shareSessionFromTitleMenu()
+            }
+            .disabled(!hasShareSlashCommand)
         }
-#endif
     }
 
     @ViewBuilder
@@ -713,6 +721,12 @@ struct ChatView: View {
     }
 
     private func sendPrompt() {
+        let rawTrimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawTrimmedInput.caseInsensitiveCompare("/share") == .orderedSame {
+            sendShareSlashCommand(clearComposer: true, restoreInputOnFailure: inputText)
+            return
+        }
+
         // Inject pending file references as @path prefixes
         var text = inputText
         if !pendingFiles.isEmpty {
@@ -792,6 +806,40 @@ struct ChatView: View {
         }
     }
 
+    private func shareSessionFromTitleMenu() {
+        sendShareSlashCommand(clearComposer: false, restoreInputOnFailure: nil)
+    }
+
+    private func sendShareSlashCommand(clearComposer: Bool, restoreInputOnFailure: String?) {
+        guard hasShareSlashCommand else {
+            reducer.process(
+                .error(sessionId: sessionId, message: "Share command is not enabled for this workspace.")
+            )
+            return
+        }
+
+        let sessionManagerRef = sessionManager
+
+        actionHandler.shareSession(
+            connection: connection,
+            reducer: reducer,
+            sessionId: sessionId,
+            onDispatchStarted: {
+                guard clearComposer else { return }
+                inputText = ""
+                pendingImages = []
+                pendingFiles = []
+            },
+            onAsyncFailure: {
+                if let restoreInputOnFailure {
+                    inputText = restoreInputOnFailure
+                }
+            },
+            onNeedsReconnect: {
+                sessionManagerRef.reconnect()
+            }
+        )
+    }
 
 
     // MARK: - Sheets & Alerts
