@@ -12,9 +12,20 @@ struct SessionOutlineView: View {
     let items: [ChatItem]
     let sessionId: String
     let workspaceId: String?
+    struct TreeNavigationRequest: Sendable, Equatable {
+        let targetId: String
+        let summarize: Bool
+        let customInstructions: String?
+        let replaceInstructions: Bool?
+        let label: String?
+    }
+
     let changedFiles: [String]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
+    var onNavigateTreeNode: ((TreeNavigationRequest) async throws -> Void)? = nil
+    var initialTreeSnapshot: SessionTreeSnapshot? = nil
+    var loadTree: (() async throws -> SessionTreeSnapshot)? = nil
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
@@ -28,6 +39,20 @@ struct SessionOutlineView: View {
     @State private var allEntries: [OutlineEntry] = []
     @State private var displayedEntries: [OutlineEntry] = []
 
+    // Session tree (for /tree-style navigation surface)
+    @State private var treeSnapshot: SessionTreeSnapshot?
+    @State private var treeFilteredNodes: [SessionTreeNodeSnapshot] = []
+    @State private var displayedTreeNodes: [SessionTreeNodeSnapshot] = []
+    @State private var collapsedTreeNodeIds: Set<String> = []
+    @State private var isLoadingTree = false
+    @State private var treeLoadErrorMessage: String?
+    @State private var treeNavigateErrorMessage: String?
+    @State private var navigatingTreeNodeId: String?
+    @State private var pendingTreeNavigationTargetId: String?
+    @State private var showTreeNavigationOptions = false
+    @State private var showCustomSummaryInstructionsSheet = false
+    @State private var customSummaryInstructions = ""
+
     private static let initialRenderWindow = 200
     private static let renderWindowStep = 200
     @State private var renderWindow = Self.initialRenderWindow
@@ -36,6 +61,7 @@ struct SessionOutlineView: View {
 
     enum OutlineTab: String, CaseIterable {
         case timeline = "Timeline"
+        case tree = "Tree"
         case files = "Files"
     }
 
@@ -49,31 +75,55 @@ struct SessionOutlineView: View {
         !changedFiles.isEmpty
     }
 
+    private var hasTree: Bool {
+        initialTreeSnapshot != nil || loadTree != nil || treeSnapshot != nil
+    }
+
+    private var searchPrompt: String {
+        switch outlineTab {
+        case .timeline:
+            return "Search session timeline…"
+        case .tree:
+            return "Search session tree…"
+        case .files:
+            return "Search files…"
+        }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Tab picker (only when session has files)
-                if hasFiles {
+                // Tab picker (shown when alternate views are available)
+                if hasFiles || hasTree {
                     outlineTabPicker
                 }
 
                 // Content
-                if outlineTab == .files && hasFiles {
-                    SessionFilesListView(
-                        sessionId: sessionId,
-                        workspaceId: workspaceId,
-                        changedFiles: changedFiles,
-                        searchText: debouncedSearchText
-                    )
-                } else {
+                switch outlineTab {
+                case .timeline:
                     outlinePane
+                case .tree:
+                    treePane
+                case .files:
+                    if hasFiles {
+                        SessionFilesListView(
+                            sessionId: sessionId,
+                            workspaceId: workspaceId,
+                            changedFiles: changedFiles,
+                            searchText: debouncedSearchText
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "No Files",
+                            systemImage: "doc.text",
+                            description: Text("This session hasn't created or edited any files yet.")
+                        )
+                        .background(Color.themeBgDark)
+                    }
                 }
             }
             .background(Color.themeBg)
-            .searchable(
-                text: $searchText,
-                prompt: outlineTab == .timeline ? "Search session timeline…" : "Search files…"
-            )
+            .searchable(text: $searchText, prompt: searchPrompt)
             .navigationTitle("Session Timeline")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -84,13 +134,22 @@ struct SessionOutlineView: View {
             .task {
                 buildIndex()
                 applyFilter()
+
+                if treeSnapshot == nil, let initialTreeSnapshot {
+                    treeSnapshot = initialTreeSnapshot
+                }
+
+                await loadTreeIfNeeded()
+                applyTreeFilter()
             }
             .onChange(of: searchText) { _, newValue in
                 searchDebounceTask?.cancel()
                 if newValue.isEmpty {
                     // Clear search immediately for responsiveness.
                     debouncedSearchText = ""
+                    collapsedTreeNodeIds.removeAll()
                     applyFilter()
+                    applyTreeFilter()
                 } else {
                     searchDebounceTask = Task {
                         try? await Task.sleep(for: .milliseconds(200))
@@ -100,13 +159,67 @@ struct SessionOutlineView: View {
                 }
             }
             .onChange(of: debouncedSearchText) { _, _ in
+                collapsedTreeNodeIds.removeAll()
                 applyFilter()
+                applyTreeFilter()
             }
             .onChange(of: filter) { _, _ in
                 applyFilter()
             }
+            .onChange(of: outlineTab) { _, newTab in
+                if newTab != .tree {
+                    treeNavigateErrorMessage = nil
+                }
+            }
+            .onChange(of: showTreeNavigationOptions) { _, isShown in
+                if !isShown,
+                   !showCustomSummaryInstructionsSheet,
+                   navigatingTreeNodeId == nil {
+                    pendingTreeNavigationTargetId = nil
+                }
+            }
+            .onChange(of: showCustomSummaryInstructionsSheet) { _, isShown in
+                if !isShown,
+                   !showTreeNavigationOptions,
+                   navigatingTreeNodeId == nil {
+                    pendingTreeNavigationTargetId = nil
+                }
+            }
+            .onChange(of: treeSnapshot?.nodes.count) { _, _ in
+                collapsedTreeNodeIds.removeAll()
+                applyTreeFilter()
+            }
             .onDisappear {
                 searchDebounceTask?.cancel()
+            }
+            .confirmationDialog(
+                "Navigate Session Tree",
+                isPresented: $showTreeNavigationOptions,
+                titleVisibility: .visible
+            ) {
+                Button("Switch without summary") {
+                    guard let targetId = pendingTreeNavigationTargetId else { return }
+                    beginTreeNavigationWithoutSummary(targetId: targetId)
+                }
+
+                Button("Summarize abandoned branch") {
+                    guard let targetId = pendingTreeNavigationTargetId else { return }
+                    beginTreeNavigationWithDefaultSummary(targetId: targetId)
+                }
+
+                Button("Summarize with custom instructions") {
+                    customSummaryInstructions = ""
+                    showCustomSummaryInstructionsSheet = true
+                }
+
+                Button("Cancel", role: .cancel) {
+                    clearPendingTreeNavigationSelection()
+                }
+            } message: {
+                Text("Choose how to handle the branch you leave behind.")
+            }
+            .sheet(isPresented: $showCustomSummaryInstructionsSheet) {
+                customSummaryInstructionsSheet
             }
         }
     }
@@ -117,7 +230,12 @@ struct SessionOutlineView: View {
         let fileCount = changedFiles.count
         return Picker("Tab", selection: $outlineTab) {
             Text("Timeline").tag(OutlineTab.timeline)
-            Text("Files (\(fileCount))").tag(OutlineTab.files)
+            if hasTree {
+                Text("Tree").tag(OutlineTab.tree)
+            }
+            if hasFiles {
+                Text("Files (\(fileCount))").tag(OutlineTab.files)
+            }
         }
         .pickerStyle(.segmented)
         .padding(.horizontal, 16)
@@ -224,6 +342,244 @@ struct SessionOutlineView: View {
         renderWindow = Self.initialRenderWindow
     }
 
+    private func loadTreeIfNeeded() async {
+        guard let loadTree else { return }
+
+        isLoadingTree = true
+        defer { isLoadingTree = false }
+
+        do {
+            let snapshot = try await loadTree()
+            treeSnapshot = snapshot
+            treeLoadErrorMessage = nil
+        } catch {
+            treeLoadErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyTreeFilter() {
+        guard let treeSnapshot else {
+            treeFilteredNodes = []
+            displayedTreeNodes = []
+            return
+        }
+
+        let query = debouncedSearchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if query.isEmpty {
+            treeFilteredNodes = treeSnapshot.nodes
+        } else {
+            treeFilteredNodes = treeSnapshot.nodes.filter { node in
+                let candidate = [
+                    node.textPreview,
+                    node.label,
+                    node.id,
+                    node.type,
+                    node.role,
+                ]
+                    .compactMap { $0?.lowercased() }
+                    .joined(separator: " ")
+
+                return candidate.contains(query)
+            }
+        }
+
+        displayedTreeNodes = applyCollapsedTreeNodes(treeFilteredNodes)
+    }
+
+    private func applyCollapsedTreeNodes(
+        _ nodes: [SessionTreeNodeSnapshot]
+    ) -> [SessionTreeNodeSnapshot] {
+        guard !collapsedTreeNodeIds.isEmpty else { return nodes }
+
+        var visible: [SessionTreeNodeSnapshot] = []
+        var collapsedDepthStack: [Int] = []
+
+        for node in nodes {
+            while let last = collapsedDepthStack.last, node.depth <= last {
+                _ = collapsedDepthStack.popLast()
+            }
+
+            if !collapsedDepthStack.isEmpty {
+                continue
+            }
+
+            visible.append(node)
+
+            if collapsedTreeNodeIds.contains(node.id) {
+                collapsedDepthStack.append(node.depth)
+            }
+        }
+
+        return visible
+    }
+
+    private func hasCollapsibleChildren(
+        nodeId: String,
+        within nodes: [SessionTreeNodeSnapshot]
+    ) -> Bool {
+        guard let index = nodes.firstIndex(where: { $0.id == nodeId }) else {
+            return false
+        }
+
+        guard index < nodes.count - 1 else {
+            return false
+        }
+
+        return nodes[index + 1].depth > nodes[index].depth
+    }
+
+    private func toggleTreeNodeCollapsed(_ nodeId: String) {
+        if collapsedTreeNodeIds.contains(nodeId) {
+            collapsedTreeNodeIds.remove(nodeId)
+        } else {
+            collapsedTreeNodeIds.insert(nodeId)
+        }
+
+        displayedTreeNodes = applyCollapsedTreeNodes(treeFilteredNodes)
+    }
+
+    private func makeTreeDisplayNodes(
+        from nodes: [SessionTreeNodeSnapshot]
+    ) -> [SessionTreeDisplayNode] {
+        SessionTreeDisplayLayout.displayNodes(
+            visibleNodes: nodes,
+            allNodes: treeSnapshot?.nodes ?? nodes
+        )
+    }
+
+    private func handleTreeNodeSelection(_ nodeId: String) {
+        treeNavigateErrorMessage = nil
+
+        guard onNavigateTreeNode != nil else {
+            onSelect(nodeId)
+            dismiss()
+            return
+        }
+
+        guard navigatingTreeNodeId == nil else { return }
+        pendingTreeNavigationTargetId = nodeId
+        showTreeNavigationOptions = true
+    }
+
+    private func beginTreeNavigationWithoutSummary(targetId: String) {
+        startTreeNavigation(.init(
+            targetId: targetId,
+            summarize: false,
+            customInstructions: nil,
+            replaceInstructions: nil,
+            label: nil
+        ))
+    }
+
+    private func beginTreeNavigationWithDefaultSummary(targetId: String) {
+        startTreeNavigation(.init(
+            targetId: targetId,
+            summarize: true,
+            customInstructions: nil,
+            replaceInstructions: nil,
+            label: nil
+        ))
+    }
+
+    private func beginTreeNavigationWithCustomSummary() {
+        guard let targetId = pendingTreeNavigationTargetId else { return }
+
+        let instructions = customSummaryInstructions
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !instructions.isEmpty else { return }
+
+        startTreeNavigation(.init(
+            targetId: targetId,
+            summarize: true,
+            customInstructions: instructions,
+            replaceInstructions: false,
+            label: nil
+        ))
+    }
+
+    private func startTreeNavigation(_ request: TreeNavigationRequest) {
+        treeNavigateErrorMessage = nil
+        showTreeNavigationOptions = false
+        showCustomSummaryInstructionsSheet = false
+        pendingTreeNavigationTargetId = nil
+
+        guard let onNavigateTreeNode else {
+            onSelect(request.targetId)
+            dismiss()
+            return
+        }
+
+        guard navigatingTreeNodeId == nil else { return }
+        navigatingTreeNodeId = request.targetId
+
+        Task {
+            defer { navigatingTreeNodeId = nil }
+
+            do {
+                try await onNavigateTreeNode(request)
+                guard !Task.isCancelled else { return }
+                dismiss()
+            } catch {
+                guard !Task.isCancelled else { return }
+                treeNavigateErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func clearPendingTreeNavigationSelection() {
+        pendingTreeNavigationTargetId = nil
+        showTreeNavigationOptions = false
+        showCustomSummaryInstructionsSheet = false
+        customSummaryInstructions = ""
+    }
+
+    private var hasCustomSummaryInstructions: Bool {
+        !customSummaryInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var customSummaryInstructionsSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Add extra guidance for what to preserve in the branch summary.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                TextEditor(text: $customSummaryInstructions)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("tree-summary-instructions")
+                    .frame(minHeight: 160)
+
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(Color.themeBg)
+            .navigationTitle("Summary Instructions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        clearPendingTreeNavigationSelection()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Navigate") {
+                        beginTreeNavigationWithCustomSummary()
+                    }
+                    .disabled(!hasCustomSummaryInstructions || navigatingTreeNodeId != nil)
+                    .accessibilityIdentifier("tree-summary-navigate")
+                }
+            }
+        }
+    }
+
     // MARK: - Outline Pane
 
     @ViewBuilder
@@ -297,6 +653,116 @@ struct SessionOutlineView: View {
                                     displayedEntries.count,
                                     renderWindow + Self.renderWindowStep
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Tree Pane
+
+    @ViewBuilder
+    private var treePane: some View {
+        if isLoadingTree, treeSnapshot == nil {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Loading session tree…")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.themeBgDark)
+        } else if displayedTreeNodes.isEmpty {
+            if let treeLoadErrorMessage, treeSnapshot == nil {
+                ContentUnavailableView(
+                    "Tree unavailable",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text(treeLoadErrorMessage)
+                )
+                .background(Color.themeBgDark)
+            } else if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView.search(text: debouncedSearchText)
+                    .background(Color.themeBgDark)
+            } else {
+                ContentUnavailableView(
+                    "No tree data",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text("This session has no tree entries yet.")
+                )
+                .background(Color.themeBgDark)
+            }
+        } else {
+            ScrollView {
+                if let treeNavigateErrorMessage,
+                   !treeNavigateErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.themeOrange)
+                            .font(.caption)
+
+                        Text(treeNavigateErrorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.themeOrange.opacity(0.35), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+
+                let treeDisplayNodes = makeTreeDisplayNodes(from: displayedTreeNodes)
+
+                let nodeIndexById = Dictionary(
+                    uniqueKeysWithValues: treeDisplayNodes.enumerated().map { index, displayNode in
+                        (displayNode.id, index)
+                    }
+                )
+
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(treeDisplayNodes.enumerated()), id: \.element.id) { index, displayNode in
+                        let node = displayNode.node
+                        let isCollapsible = hasCollapsibleChildren(
+                            nodeId: node.id,
+                            within: treeFilteredNodes
+                        )
+
+                        OutlineTreeRow(
+                            displayNode: displayNode,
+                            rowIndex: index,
+                            nodes: treeDisplayNodes,
+                            nodeIndexById: nodeIndexById,
+                            isLeaf: node.id == treeSnapshot?.leafId,
+                            isCollapsible: isCollapsible,
+                            isCollapsed: collapsedTreeNodeIds.contains(node.id),
+                            isDisabled: navigatingTreeNodeId != nil,
+                            isLoading: navigatingTreeNodeId == node.id,
+                            onSelect: {
+                                handleTreeNodeSelection(node.id)
+                            },
+                            onToggleCollapse: isCollapsible
+                                ? {
+                                    toggleTreeNodeCollapsed(node.id)
+                                }
+                                : nil
+                        )
+                        .contextMenu {
+                            if let onFork,
+                               node.role == "user",
+                               UUID(uuidString: node.id) == nil {
+                                Button("Fork from here", systemImage: "arrow.triangle.branch") {
+                                    onFork(node.id)
+                                    dismiss()
+                                }
                             }
                         }
                     }
@@ -583,5 +1049,385 @@ private struct OutlineRow: View {
         case .toolCall: return .themeFgDim
         default: return .themeComment
         }
+    }
+}
+
+private enum OutlineTreeLayout {
+    // Slightly wider than before for clearer hierarchy separation.
+    static let levelIndent: CGFloat = 20
+}
+
+enum SessionTreeDisplayLayout {
+    static func displayNodes(
+        visibleNodes: [SessionTreeNodeSnapshot],
+        allNodes: [SessionTreeNodeSnapshot]
+    ) -> [SessionTreeDisplayNode] {
+        guard !visibleNodes.isEmpty else { return [] }
+
+        let visibleIds = Set(visibleNodes.map(\.id))
+
+        var allNodesById: [String: SessionTreeNodeSnapshot] = [:]
+        allNodesById.reserveCapacity(max(allNodes.count, visibleNodes.count))
+
+        for node in allNodes {
+            allNodesById[node.id] = node
+        }
+
+        for node in visibleNodes where allNodesById[node.id] == nil {
+            allNodesById[node.id] = node
+        }
+
+        func nearestVisibleAncestorId(for node: SessionTreeNodeSnapshot) -> String? {
+            var currentParentId = node.parentId
+
+            while let parentId = currentParentId {
+                if visibleIds.contains(parentId) {
+                    return parentId
+                }
+                currentParentId = allNodesById[parentId]?.parentId
+            }
+
+            return nil
+        }
+
+        var visibleParentById: [String: String?] = [:]
+        visibleParentById.reserveCapacity(visibleNodes.count)
+
+        var visibleChildren: [String?: [String]] = [nil: []]
+        visibleChildren.reserveCapacity(visibleNodes.count)
+
+        for node in visibleNodes {
+            let parentId = nearestVisibleAncestorId(for: node)
+            visibleParentById[node.id] = parentId
+            visibleChildren[parentId, default: []].append(node.id)
+        }
+
+        let rootIds = visibleChildren[nil] ?? []
+        let multipleRoots = rootIds.count > 1
+
+        var displayNodes: [SessionTreeDisplayNode] = []
+        displayNodes.reserveCapacity(visibleNodes.count)
+
+        var stack: [(id: String, indent: Int, justBranched: Bool)] = []
+        for rootId in rootIds.reversed() {
+            stack.append((
+                id: rootId,
+                indent: multipleRoots ? 1 : 0,
+                justBranched: multipleRoots
+            ))
+        }
+
+        while let current = stack.popLast() {
+            guard let node = allNodesById[current.id] else { continue }
+
+            let displayDepth = multipleRoots
+                ? max(0, current.indent - 1)
+                : max(0, current.indent)
+
+            displayNodes.append(SessionTreeDisplayNode(
+                node: node,
+                displayDepth: displayDepth,
+                visibleParentId: visibleParentById[current.id] ?? nil
+            ))
+
+            let children = visibleChildren[current.id] ?? []
+            let multipleChildren = children.count > 1
+
+            let childIndent: Int
+            if multipleChildren {
+                childIndent = current.indent + 1
+            } else if current.justBranched, current.indent > 0 {
+                childIndent = current.indent + 1
+            } else {
+                childIndent = current.indent
+            }
+
+            for childId in children.reversed() {
+                stack.append((
+                    id: childId,
+                    indent: childIndent,
+                    justBranched: multipleChildren
+                ))
+            }
+        }
+
+        return displayNodes
+    }
+}
+
+struct SessionTreeDisplayNode: Identifiable, Equatable {
+    let node: SessionTreeNodeSnapshot
+    let displayDepth: Int
+    let visibleParentId: String?
+
+    var id: String { node.id }
+}
+
+private struct OutlineTreeRow: View {
+    let displayNode: SessionTreeDisplayNode
+    let rowIndex: Int
+    let nodes: [SessionTreeDisplayNode]
+    let nodeIndexById: [String: Int]
+    let isLeaf: Bool
+    let isCollapsible: Bool
+    let isCollapsed: Bool
+    let isDisabled: Bool
+    let isLoading: Bool
+    let onSelect: () -> Void
+    let onToggleCollapse: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            OutlineTreeConnectorLines(
+                depth: displayNode.displayDepth,
+                branchContinuesDown: branchContinuesDown,
+                ancestorDepthsWithContinuation: continuingAncestorDepths
+            )
+
+            if isCollapsible {
+                Button {
+                    onToggleCollapse?()
+                } label: {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .accessibilityLabel(isCollapsed ? "Expand branch" : "Collapse branch")
+                .accessibilityIdentifier("tree-toggle-\(node.id)")
+            } else {
+                Circle()
+                    .fill(roleColor.opacity(0.55))
+                    .frame(width: 4, height: 4)
+                    .frame(width: 12, height: 12)
+            }
+
+            Button(action: onSelect) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Group {
+                        if isLeaf {
+                            Text("◉")
+                                .foregroundStyle(.themeGreen)
+                        } else if node.isLeafPath {
+                            Text("•")
+                                .foregroundStyle(.themeBlue)
+                        } else {
+                            Text(" ")
+                                .foregroundStyle(.clear)
+                        }
+                    }
+                    .font(.caption2.bold())
+                    .frame(width: 8, alignment: .center)
+
+                    if let displayLabel {
+                        Text("[\(displayLabel)]")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.themeOrange)
+                            .lineLimit(1)
+                    }
+
+                    Text(rolePrefix)
+                        .font(.caption.bold())
+                        .foregroundStyle(roleColor)
+
+                    if !primaryText.isEmpty {
+                        Text(primaryText)
+                            .font(.caption)
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(.themeBlue)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private var node: SessionTreeNodeSnapshot { displayNode.node }
+
+    private var displayLabel: String? {
+        guard let label = node.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !label.isEmpty else {
+            return nil
+        }
+        return label
+    }
+
+    private var primaryText: String {
+        let preview = node.textPreview?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !preview.isEmpty {
+            return preview
+        }
+
+        if node.type == "message" {
+            return "(no content)"
+        }
+
+        return ""
+    }
+
+    private var rolePrefix: String {
+        if node.type == "message" {
+            switch node.role {
+            case "user": return "user:"
+            case "assistant": return "assistant:"
+            case "toolResult": return "tool:"
+            case "bashExecution": return "bash:"
+            case let role? where !role.isEmpty:
+                return "\(role):"
+            default:
+                return "message:"
+            }
+        }
+
+        switch node.type {
+        case "compaction":
+            return "[compaction]"
+        case "branch_summary":
+            return "[branch summary]"
+        case "model_change":
+            return "[model]"
+        case "thinking_level_change":
+            return "[thinking]"
+        default:
+            let normalized = node.type.replacingOccurrences(of: "_", with: " ")
+            return "[\(normalized)]"
+        }
+    }
+
+    private var roleColor: Color {
+        if node.type == "message" {
+            switch node.role {
+            case "user": return .themeBlue
+            case "assistant": return .themePurple
+            default: return .themeComment
+            }
+        }
+
+        switch node.type {
+        case "branch_summary": return .themeBlue
+        case "compaction": return .themeOrange
+        default: return .themeComment
+        }
+    }
+
+    private var currentNodeIsLastSibling: Bool {
+        isLastSibling(at: rowIndex)
+    }
+
+    private var hasDisplayedChildren: Bool {
+        guard rowIndex < nodes.count - 1 else { return false }
+        return nodes[rowIndex + 1].displayDepth > displayNode.displayDepth
+    }
+
+    private var branchContinuesDown: Bool {
+        hasDisplayedChildren || !currentNodeIsLastSibling
+    }
+
+    private var continuingAncestorDepths: Set<Int> {
+        var continuing: Set<Int> = []
+        var parentId = displayNode.visibleParentId
+
+        while let currentParentId = parentId,
+              let parentIndex = nodeIndexById[currentParentId] {
+            let parentNode = nodes[parentIndex]
+            if !isLastSibling(at: parentIndex), parentNode.displayDepth > 0 {
+                continuing.insert(parentNode.displayDepth - 1)
+            }
+            parentId = parentNode.visibleParentId
+        }
+
+        return continuing
+    }
+
+    private func isLastSibling(at index: Int) -> Bool {
+        guard index >= 0, index < nodes.count else { return true }
+
+        let depth = nodes[index].displayDepth
+        guard index < nodes.count - 1 else { return true }
+
+        for candidate in (index + 1)..<nodes.count {
+            let nextDepth = nodes[candidate].displayDepth
+            if nextDepth == depth {
+                return false
+            }
+            if nextDepth < depth {
+                return true
+            }
+        }
+
+        return true
+    }
+}
+
+private struct OutlineTreeConnectorLines: View {
+    let depth: Int
+    let branchContinuesDown: Bool
+    let ancestorDepthsWithContinuation: Set<Int>
+
+    private let levelWidth: CGFloat = OutlineTreeLayout.levelIndent
+
+    var body: some View {
+        GeometryReader { _ in
+            Canvas { context, size in
+                let stroke = StrokeStyle(lineWidth: 1, lineCap: .round)
+                let lineColor = Color.themeComment.opacity(0.38)
+                let centerY = size.height * 0.5
+
+                guard depth > 0 else { return }
+
+                // Draw ancestor rails that continue below this row.
+                for level in 0..<max(0, depth - 1) where ancestorDepthsWithContinuation.contains(level) {
+                    let x = xPosition(for: level)
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                    context.stroke(path, with: .color(lineColor), style: stroke)
+                }
+
+                let branchLevel = depth - 1
+                let branchX = xPosition(for: branchLevel)
+
+                var vertical = Path()
+                vertical.move(to: CGPoint(x: branchX, y: 0))
+                vertical.addLine(
+                    to: CGPoint(
+                        x: branchX,
+                        y: branchContinuesDown ? size.height : centerY
+                    )
+                )
+                context.stroke(vertical, with: .color(lineColor), style: stroke)
+
+                var elbow = Path()
+                elbow.move(to: CGPoint(x: branchX, y: centerY))
+                elbow.addLine(to: CGPoint(x: branchX + levelWidth * 0.75, y: centerY))
+                context.stroke(elbow, with: .color(lineColor), style: stroke)
+            }
+        }
+        .frame(width: connectorWidth)
+    }
+
+    private var connectorWidth: CGFloat {
+        guard depth > 0 else { return 6 }
+        return CGFloat(depth) * levelWidth + 2
+    }
+
+    private func xPosition(for depthLevel: Int) -> CGFloat {
+        CGFloat(depthLevel) * levelWidth + (levelWidth * 0.5)
     }
 }

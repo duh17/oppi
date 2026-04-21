@@ -42,6 +42,15 @@ enum ClientMessage: Sendable {
     case setAutoCompaction(enabled: Bool, requestId: String? = nil)
     case fork(entryId: String, requestId: String? = nil)
     case getForkMessages(requestId: String? = nil)
+    case getSessionTree(requestId: String? = nil)
+    case navigateTree(
+        targetId: String,
+        summarize: Bool,
+        customInstructions: String? = nil,
+        replaceInstructions: Bool? = nil,
+        label: String? = nil,
+        requestId: String? = nil
+    )
     case switchSession(sessionPath: String, requestId: String? = nil)
 
     // ── Queue modes ──
@@ -256,6 +265,26 @@ extension ClientMessage: Encodable {
             try c.encode("get_fork_messages", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        case .getSessionTree(let reqId):
+            try c.encode("get_session_tree", forKey: .type)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        case .navigateTree(
+            let targetId,
+            let summarize,
+            let customInstructions,
+            let replaceInstructions,
+            let label,
+            let reqId
+        ):
+            try c.encode("navigate_tree", forKey: .type)
+            try c.encode(targetId, forKey: .targetId)
+            try c.encode(summarize, forKey: .summarize)
+            try c.encodeIfPresent(customInstructions, forKey: .customInstructions)
+            try c.encodeIfPresent(replaceInstructions, forKey: .replaceInstructions)
+            try c.encodeIfPresent(label, forKey: .label)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         case .switchSession(let sessionPath, let reqId):
             try c.encode("switch_session", forKey: .type)
             try c.encode(sessionPath, forKey: .sessionPath)
@@ -348,6 +377,7 @@ extension ClientMessage: Encodable {
         case id, action, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command, query
+        case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
         case sessionId, sinceSeq
     }
@@ -416,6 +446,8 @@ extension ClientMessage {
         case .setAutoCompaction: return "set_auto_compaction"
         case .fork: return "fork"
         case .getForkMessages: return "get_fork_messages"
+        case .getSessionTree: return "get_session_tree"
+        case .navigateTree: return "navigate_tree"
         case .switchSession: return "switch_session"
         case .setSteeringMode: return "set_steering_mode"
         case .setFollowUpMode: return "set_follow_up_mode"

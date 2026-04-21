@@ -175,6 +175,33 @@ struct ClientMessageTests {
         #expect(json["customInstructions"] as? String == "focus on code")
     }
 
+    @Test func encodesGetSessionTree() throws {
+        let msg = ClientMessage.getSessionTree(requestId: "req-tree")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "get_session_tree")
+        #expect(json["requestId"] as? String == "req-tree")
+    }
+
+    @Test func encodesNavigateTreeWithOptions() throws {
+        let msg = ClientMessage.navigateTree(
+            targetId: "entry-12",
+            summarize: true,
+            customInstructions: "Focus on TODOs",
+            replaceInstructions: false,
+            label: "Branch summary",
+            requestId: "req-nav"
+        )
+
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "navigate_tree")
+        #expect(json["targetId"] as? String == "entry-12")
+        #expect(json["summarize"] as? Bool == true)
+        #expect(json["customInstructions"] as? String == "Focus on TODOs")
+        #expect(json["replaceInstructions"] as? Bool == false)
+        #expect(json["label"] as? String == "Branch summary")
+        #expect(json["requestId"] as? String == "req-nav")
+    }
+
     @Test func encodesRequestId() throws {
         let msg = ClientMessage.getMessages(requestId: "req-42")
         let json = try decode(msg)

@@ -1,6 +1,21 @@
 import SwiftUI
 import UIKit
 
+struct TreeNavigationComposerUpdate: Equatable {
+    let inputText: String
+    let shouldFocusComposer: Bool
+
+    static func from(editorText: String?, showComposer: Bool) -> Self {
+        let normalized = editorText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return TreeNavigationComposerUpdate(
+            inputText: normalized,
+            shouldFocusComposer: !normalized.isEmpty && !showComposer
+        )
+    }
+}
+
 struct ChatView: View {
     let sessionId: String
 
@@ -60,6 +75,26 @@ struct ChatView: View {
 
     private struct ChildSessionRoute: Identifiable, Hashable {
         let id: String
+    }
+
+    private enum TreeNavigationError: LocalizedError {
+        case sessionNotReady
+        case navigationCancelled
+        case navigationAborted
+        case historyReloadFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .sessionNotReady:
+                return "Wait for the current turn to finish before navigating the tree."
+            case .navigationCancelled:
+                return "Tree navigation was cancelled before switching branches."
+            case .navigationAborted:
+                return "Tree navigation was aborted before switching branches."
+            case .historyReloadFailed:
+                return "Switched branches, but failed to reload timeline history."
+            }
+        }
     }
 
     /// Composite key for the session connection `.task(id:)`.
@@ -122,6 +157,10 @@ struct ChatView: View {
 
     private var showsMessageQueue: Bool {
         !messageQueueState.steering.isEmpty || !messageQueueState.followUp.isEmpty
+    }
+
+    private var extensionSurfaceState: ExtensionSurfaceState? {
+        connection.extensionSurfaceBySession[sessionId]
     }
 
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
@@ -314,6 +353,13 @@ struct ChatView: View {
                     fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
                 }
             }
+            .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
+                guard let update = chatState.extensionEditorTextUpdate,
+                      update.sessionId == sessionId else {
+                    return
+                }
+                applyExtensionEditorText(update.text)
+            }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
                 contextBarCollapseToken &+= 1
@@ -438,6 +484,12 @@ struct ChatView: View {
             )
         } else {
             VStack(spacing: 8) {
+                if let surface = extensionSurfaceState,
+                   surface.hasVisibleContent {
+                    ExtensionSurfacePanel(surface: surface)
+                        .padding(.horizontal, 16)
+                }
+
                 if let reconnectFailureMessage = actionHandler.reconnectFailureMessage {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -714,6 +766,16 @@ struct ChatView: View {
         showComposer = true
     }
 
+    @MainActor
+    private func applyExtensionEditorText(_ text: String) {
+        inputText = text
+        if isStopped {
+            showComposer = true
+        } else if !showComposer {
+            composerExternalFocusRequestID &+= 1
+        }
+    }
+
     private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
         let feedback = UIImpactFeedbackGenerator(style: style)
         feedback.prepare()
@@ -854,9 +916,62 @@ struct ChatView: View {
             onSelect: { targetID in
                 scrollController.scrollTargetID = targetID
             },
-            onFork: forkFromMessage
+            onFork: forkFromMessage,
+            onNavigateTreeNode: { request in
+                try await navigateFromTree(request)
+            },
+            loadTree: {
+                try await connection.getSessionTree()
+            }
         )
         .presentationDetents([.medium, .large])
+    }
+
+    @MainActor
+    private func navigateFromTree(_ request: SessionOutlineView.TreeNavigationRequest) async throws {
+        guard session?.status == .ready else {
+            throw TreeNavigationError.sessionNotReady
+        }
+
+        let result = try await connection.navigateTree(
+            targetId: request.targetId,
+            summarize: request.summarize,
+            customInstructions: request.customInstructions,
+            replaceInstructions: request.replaceInstructions,
+            label: request.label
+        )
+
+        if result.cancelled {
+            throw TreeNavigationError.navigationCancelled
+        }
+
+        if result.aborted == true {
+            throw TreeNavigationError.navigationAborted
+        }
+
+        let historyReloaded = await sessionManager.forceHistoryReload(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        guard historyReloaded else {
+            throw TreeNavigationError.historyReloadFailed
+        }
+
+        scrollController.requestScrollToBottom()
+
+        let composerUpdate = TreeNavigationComposerUpdate.from(
+            editorText: result.editorText,
+            showComposer: showComposer
+        )
+
+        inputText = composerUpdate.inputText
+        pendingImages = []
+        pendingFiles = []
+
+        if composerUpdate.shouldFocusComposer {
+            composerExternalFocusRequestID &+= 1
+        }
     }
 
     private func forkFromMessage(_ entryId: String) {
@@ -963,5 +1078,67 @@ struct ChatView: View {
             )
         }
         Button("Cancel", role: .cancel) {}
+    }
+}
+
+private struct ExtensionSurfacePanel: View {
+    let surface: ExtensionSurfaceState
+
+    private var sortedStatuses: [(key: String, text: String)] {
+        surface.statuses
+            .map { (key: $0.key, text: $0.value) }
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+    }
+
+    private var sortedWidgets: [ExtensionWidgetState] {
+        surface.widgets
+            .values
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let title = surface.title,
+               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+            }
+
+            ForEach(sortedStatuses, id: \.key) { status in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(status.key)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                    Text(status.text)
+                        .font(.caption)
+                        .foregroundStyle(.themeFg)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            ForEach(sortedWidgets, id: \.key) { widget in
+                if !widget.lines.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if sortedWidgets.count > 1 {
+                            Text(widget.key)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.themeComment)
+                        }
+                        Text(widget.lines.joined(separator: "\n"))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.themeFg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
+        }
     }
 }

@@ -106,6 +106,7 @@ final class ServerConnection {
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
+    var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
 
     // Ask extension
     var activeAskRequest: AskRequest?

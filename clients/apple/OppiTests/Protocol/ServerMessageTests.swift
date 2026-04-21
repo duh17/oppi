@@ -531,13 +531,13 @@ struct ServerMessageTests {
         {"type":"extension_ui_notification","method":"status","message":"Building...","notifyType":"info"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .extensionUINotification(let method, let message, let notifyType, _, _) = msg else {
+        guard case .extensionUINotification(let notification) = msg else {
             Issue.record("Expected .extensionUINotification")
             return
         }
-        #expect(method == "status")
-        #expect(message == "Building...")
-        #expect(notifyType == "info")
+        #expect(notification.method == "status")
+        #expect(notification.message == "Building...")
+        #expect(notification.notifyType == "info")
     }
 
     // MARK: - Command Result

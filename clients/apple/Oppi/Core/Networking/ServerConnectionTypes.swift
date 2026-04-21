@@ -7,6 +7,36 @@ struct ForkMessage: Equatable, Sendable {
     let text: String
 }
 
+// MARK: - Session Tree Types
+
+struct SessionTreeNodeSnapshot: Equatable, Sendable {
+    let id: String
+    let parentId: String?
+    let type: String
+    let timestamp: String
+    let depth: Int
+    let isLeafPath: Bool
+    let role: String?
+    let textPreview: String?
+    let label: String?
+}
+
+struct SessionTreeSnapshot: Equatable, Sendable {
+    let leafId: String?
+    let nodes: [SessionTreeNodeSnapshot]
+}
+
+struct NavigateTreeSummaryEntrySnapshot: Equatable, Sendable {
+    let id: String
+}
+
+struct NavigateTreeResult: Equatable, Sendable {
+    let editorText: String?
+    let cancelled: Bool
+    let aborted: Bool?
+    let summaryEntry: NavigateTreeSummaryEntrySnapshot?
+}
+
 // MARK: - Session Stats Types
 
 struct SessionTokenStats: Equatable, Sendable {
@@ -37,6 +67,37 @@ struct SessionStatsSnapshot: Equatable, Sendable {
     let tokens: SessionTokenStats
     let cost: Double
     let contextComposition: SessionContextCompositionSnapshot?
+}
+
+// MARK: - Extension UI Surface
+
+struct ExtensionWidgetState: Equatable, Sendable {
+    let key: String
+    var lines: [String]
+    var placement: String?
+}
+
+struct ExtensionSurfaceState: Equatable, Sendable {
+    var title: String?
+    var statuses: [String: String]
+    var widgets: [String: ExtensionWidgetState]
+
+    init(
+        title: String? = nil,
+        statuses: [String: String] = [:],
+        widgets: [String: ExtensionWidgetState] = [:]
+    ) {
+        self.title = title
+        self.statuses = statuses
+        self.widgets = widgets
+    }
+
+    var hasVisibleContent: Bool {
+        let hasTitle = !(title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasStatuses = !statuses.isEmpty
+        let hasWidgets = widgets.values.contains { !$0.lines.isEmpty }
+        return hasTitle || hasStatuses || hasWidgets
+    }
 }
 
 // MARK: - Error Types

@@ -1178,6 +1178,53 @@ final class ChatSessionManager {
         }
     }
 
+    /// Force an immediate full trace reload from the server.
+    ///
+    /// Used after tree navigation, where the session leaf/context changes but
+    /// the session ID remains the same. Returns `true` when fresh history was
+    /// loaded and applied; `false` when the reload failed.
+    @discardableResult
+    func forceHistoryReload(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) async -> Bool {
+        cancelHistoryReload()
+
+        if let loadHook = _loadHistoryForTesting {
+            markSyncStarted()
+            guard let signature = await loadHook(nil, nil) else {
+                markSyncFailed()
+                return false
+            }
+
+            latestTraceSignature = TraceSignature(
+                eventCount: signature.eventCount,
+                lastEventId: signature.lastEventId
+            )
+            markSyncSucceeded()
+            return true
+        }
+
+        guard let api = connection.apiClient else {
+            markSyncFailed()
+            return false
+        }
+
+        markSyncStarted()
+
+        guard let freshSignature = await loadHistory(
+            api: api,
+            sessionStore: sessionStore,
+            cachedEventCount: nil,
+            cachedLastEventId: nil
+        ) else {
+            return false
+        }
+
+        latestTraceSignature = freshSignature
+        return true
+    }
+
     private func scheduleStateSync(generation: Int, connection: ServerConnection) {
         cancelStateSync()
 

@@ -59,7 +59,7 @@ enum ServerMessage: Sendable, Equatable {
 
     // Extension UI
     case extensionUIRequest(ExtensionUIRequest)
-    case extensionUINotification(method: String, message: String?, notifyType: String?, statusKey: String?, statusText: String?)
+    case extensionUINotification(ExtensionUINotification)
 
     // Git status (workspace-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, status: GitStatus)
@@ -100,6 +100,19 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     // Ask extension fields (method: "ask")
     var askQuestions: [AskQuestion]?
     var allowCustom: Bool?
+}
+
+struct ExtensionUINotification: Sendable, Equatable {
+    let method: String
+    let message: String?
+    let notifyType: String?
+    let statusKey: String?
+    let statusText: String?
+    let title: String?
+    let text: String?
+    let widgetKey: String?
+    let widgetLines: [String]?
+    let widgetPlacement: String?
 }
 
 enum TurnAckStage: String, Codable, Sendable {
@@ -150,7 +163,7 @@ extension ServerMessage: Decodable {
         // ask extension (extension_ui_request with method: "ask")
         case questions, allowCustom
         // extension_ui_notification
-        case notifyType, statusKey, statusText
+        case notifyType, statusKey, statusText, widgetKey, widgetLines, widgetPlacement
         // command_result
         case command, requestId, success, data
         // message queue
@@ -358,7 +371,25 @@ extension ServerMessage: Decodable {
             let notifyType = try c.decodeIfPresent(String.self, forKey: .notifyType)
             let statusKey = try c.decodeIfPresent(String.self, forKey: .statusKey)
             let statusText = try c.decodeIfPresent(String.self, forKey: .statusText)
-            self = .extensionUINotification(method: method, message: msg, notifyType: notifyType, statusKey: statusKey, statusText: statusText)
+            let title = try c.decodeIfPresent(String.self, forKey: .title)
+            let text = try c.decodeIfPresent(String.self, forKey: .text)
+            let widgetKey = try c.decodeIfPresent(String.self, forKey: .widgetKey)
+            let widgetLines = try c.decodeIfPresent([String].self, forKey: .widgetLines)
+            let widgetPlacement = try c.decodeIfPresent(String.self, forKey: .widgetPlacement)
+            self = .extensionUINotification(
+                ExtensionUINotification(
+                    method: method,
+                    message: msg,
+                    notifyType: notifyType,
+                    statusKey: statusKey,
+                    statusText: statusText,
+                    title: title,
+                    text: text,
+                    widgetKey: widgetKey,
+                    widgetLines: widgetLines,
+                    widgetPlacement: widgetPlacement
+                )
+            )
 
         case "git_status":
             let workspaceId = try c.decode(String.self, forKey: .workspaceId)

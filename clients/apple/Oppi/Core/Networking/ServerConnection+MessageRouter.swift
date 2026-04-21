@@ -54,8 +54,21 @@ extension ServerConnection {
                 scheduleExtensionTimeout(request)
             }
 
-        case .extensionUINotification(_, let message, _, _, _):
-            extensionToast = message
+        case .extensionUINotification(let notification):
+            applyExtensionUINotification(
+                method: notification.method,
+                message: notification.message,
+                notifyType: notification.notifyType,
+                statusKey: notification.statusKey,
+                statusText: notification.statusText,
+                title: notification.title,
+                text: notification.text,
+                widgetKey: notification.widgetKey,
+                widgetLines: notification.widgetLines,
+                widgetPlacement: notification.widgetPlacement,
+                sessionId: sessionId,
+                isActiveSession: true
+            )
 
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: MessageSender.turnSendRequiredStage)
@@ -81,9 +94,11 @@ extension ServerConnection {
             silenceWatchdog.stop()
             clearAskState(for: sessionId)
             messageQueueStore.clear(sessionId: sessionId)
+            clearExtensionSurface(for: sessionId)
 
         case .sessionDeleted(let deletedId):
             messageQueueStore.clear(sessionId: deletedId)
+            clearExtensionSurface(for: deletedId)
 
         case .stopConfirmed:
             silenceWatchdog.stop()
@@ -108,20 +123,125 @@ extension ServerConnection {
                 stashPendingAskRequest(ask, for: sessionId)
             }
 
+        case .extensionUINotification(let notification):
+            applyExtensionUINotification(
+                method: notification.method,
+                message: notification.message,
+                notifyType: notification.notifyType,
+                statusKey: notification.statusKey,
+                statusText: notification.statusText,
+                title: notification.title,
+                text: notification.text,
+                widgetKey: notification.widgetKey,
+                widgetLines: notification.widgetLines,
+                widgetPlacement: notification.widgetPlacement,
+                sessionId: sessionId,
+                isActiveSession: false
+            )
+
         case .state(let session):
             if session.status.isTerminal {
                 clearAskState(for: sessionId)
             }
 
-        case .sessionEnded, .stopConfirmed:
+        case .sessionEnded:
+            clearAskState(for: sessionId)
+            clearExtensionSurface(for: sessionId)
+
+        case .stopConfirmed:
             clearAskState(for: sessionId)
 
         case .sessionDeleted(let deletedId):
             clearAskState(for: deletedId)
+            clearExtensionSurface(for: deletedId)
 
         default:
             break
         }
+    }
+
+    // MARK: - Extension Surface
+
+    func applyExtensionUINotification(
+        method: String,
+        message: String?,
+        notifyType: String?,
+        statusKey: String?,
+        statusText: String?,
+        title: String?,
+        text: String?,
+        widgetKey: String?,
+        widgetLines: [String]?,
+        widgetPlacement: String?,
+        sessionId: String,
+        isActiveSession: Bool
+    ) {
+        switch method {
+        case "notify":
+            if isActiveSession {
+                extensionToast = message
+            }
+
+        case "setStatus":
+            guard let statusKey else { return }
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            let normalized = statusText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalized, !normalized.isEmpty {
+                surface.statuses[statusKey] = normalized
+            } else {
+                surface.statuses.removeValue(forKey: statusKey)
+            }
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setWidget":
+            guard let widgetKey else { return }
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            if let widgetLines {
+                let normalizedLines = widgetLines
+                    .map { $0.trimmingCharacters(in: .newlines) }
+                    .filter { !$0.isEmpty }
+                if normalizedLines.isEmpty {
+                    surface.widgets.removeValue(forKey: widgetKey)
+                } else {
+                    surface.widgets[widgetKey] = ExtensionWidgetState(
+                        key: widgetKey,
+                        lines: normalizedLines,
+                        placement: widgetPlacement
+                    )
+                }
+            } else {
+                surface.widgets.removeValue(forKey: widgetKey)
+            }
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "setTitle":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            let normalized = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            surface.title = (normalized?.isEmpty == false) ? normalized : nil
+            storeExtensionSurface(surface, for: sessionId)
+
+        case "set_editor_text":
+            guard isActiveSession,
+                  let text else { return }
+            chatState.stageExtensionEditorText(text: text, sessionId: sessionId)
+
+        default:
+            if isActiveSession {
+                extensionToast = message ?? notifyType
+            }
+        }
+    }
+
+    func storeExtensionSurface(_ surface: ExtensionSurfaceState, for sessionId: String) {
+        if surface.hasVisibleContent {
+            extensionSurfaceBySession[sessionId] = surface
+        } else {
+            extensionSurfaceBySession.removeValue(forKey: sessionId)
+        }
+    }
+
+    func clearExtensionSurface(for sessionId: String) {
+        extensionSurfaceBySession.removeValue(forKey: sessionId)
     }
 
     // MARK: - Connected / State

@@ -329,6 +329,263 @@ struct ServerConnectionSendAckTests {
         }
     }
 
+    // MARK: - Session Tree
+
+    @Test func getSessionTreeParsesCommandResultPayload() async throws {
+        let (conn, pipe) = makeTestConnection()
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getSessionTree(let requestId):
+                pipe.handle(
+                    .commandResult(
+                        command: "get_session_tree",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "leafId": .string("entry-2"),
+                            "nodes": .array([
+                                .object([
+                                    "id": .string("entry-1"),
+                                    "parentId": .null,
+                                    "type": .string("message"),
+                                    "timestamp": .string("2026-04-19T07:11:10.000Z"),
+                                    "depth": .number(0),
+                                    "isLeafPath": .bool(false),
+                                    "role": .string("user"),
+                                    "textPreview": .string("Plan rollout"),
+                                    "label": .null,
+                                ]),
+                                .object([
+                                    "id": .string("entry-2"),
+                                    "parentId": .string("entry-1"),
+                                    "type": .string("summary"),
+                                    "timestamp": .string("2026-04-19T07:12:10.000Z"),
+                                    "depth": .number(1),
+                                    "isLeafPath": .bool(true),
+                                    "label": .string("Branch summary"),
+                                ]),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        let tree = try await conn.getSessionTree()
+
+        #expect(tree.leafId == "entry-2")
+        #expect(tree.nodes.count == 2)
+
+        let root = tree.nodes[0]
+        #expect(root.id == "entry-1")
+        #expect(root.parentId == nil)
+        #expect(root.type == "message")
+        #expect(root.depth == 0)
+        #expect(root.isLeafPath == false)
+        #expect(root.role == "user")
+        #expect(root.textPreview == "Plan rollout")
+        #expect(root.label == nil)
+
+        let leaf = tree.nodes[1]
+        #expect(leaf.id == "entry-2")
+        #expect(leaf.parentId == "entry-1")
+        #expect(leaf.type == "summary")
+        #expect(leaf.depth == 1)
+        #expect(leaf.isLeafPath == true)
+        #expect(leaf.label == "Branch summary")
+    }
+
+    @Test func getSessionTreeRejectsMalformedPayload() async {
+        let (conn, pipe) = makeTestConnection()
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getSessionTree(let requestId):
+                pipe.handle(
+                    .commandResult(
+                        command: "get_session_tree",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "leafId": .string("entry-2"),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        do {
+            _ = try await conn.getSessionTree()
+            Issue.record("Expected get_session_tree payload rejection")
+        } catch let error as CommandRequestError {
+            switch error {
+            case .rejected(let command, let reason):
+                #expect(command == "get_session_tree")
+                #expect(reason?.contains("invalid payload") == true)
+                #expect(reason?.contains("nodes") == true)
+            case .timeout:
+                Issue.record("Expected rejected error, got timeout")
+            }
+        } catch {
+            Issue.record("Expected CommandRequestError.rejected, got \(error)")
+        }
+    }
+
+    @Test func navigateTreeParsesSuccessResult() async throws {
+        let (conn, pipe) = makeTestConnection()
+        var capturedTargetId: String?
+        var capturedSummarize: Bool?
+        var capturedInstructions: String?
+        var capturedReplaceInstructions: Bool?
+        var capturedLabel: String?
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .navigateTree(
+                let targetId,
+                let summarize,
+                let customInstructions,
+                let replaceInstructions,
+                let label,
+                let requestId
+            ):
+                capturedTargetId = targetId
+                capturedSummarize = summarize
+                capturedInstructions = customInstructions
+                capturedReplaceInstructions = replaceInstructions
+                capturedLabel = label
+
+                pipe.handle(
+                    .commandResult(
+                        command: "navigate_tree",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "editorText": .string("Continue from this branch"),
+                            "cancelled": .bool(false),
+                            "aborted": .bool(true),
+                            "summaryEntry": .object([
+                                "id": .string("summary-1"),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        let result = try await conn.navigateTree(
+            targetId: "entry-12",
+            summarize: true,
+            customInstructions: "Focus on TODOs",
+            replaceInstructions: false,
+            label: "Branch summary"
+        )
+
+        #expect(capturedTargetId == "entry-12")
+        #expect(capturedSummarize == true)
+        #expect(capturedInstructions == "Focus on TODOs")
+        #expect(capturedReplaceInstructions == false)
+        #expect(capturedLabel == "Branch summary")
+
+        #expect(result.editorText == "Continue from this branch")
+        #expect(result.cancelled == false)
+        #expect(result.aborted == true)
+        #expect(result.summaryEntry?.id == "summary-1")
+    }
+
+    @Test func navigateTreeRejectsMalformedPayload() async {
+        let (conn, pipe) = makeTestConnection()
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .navigateTree(_, _, _, _, _, let requestId):
+                pipe.handle(
+                    .commandResult(
+                        command: "navigate_tree",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "editorText": .string("Continue from this branch"),
+                            "cancelled": .string("false"),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        do {
+            _ = try await conn.navigateTree(targetId: "entry-99", summarize: false)
+            Issue.record("Expected navigate_tree payload rejection")
+        } catch let error as CommandRequestError {
+            switch error {
+            case .rejected(let command, let reason):
+                #expect(command == "navigate_tree")
+                #expect(reason?.contains("invalid payload") == true)
+                #expect(reason?.contains("cancelled") == true)
+            case .timeout:
+                Issue.record("Expected rejected error, got timeout")
+            }
+        } catch {
+            Issue.record("Expected CommandRequestError.rejected, got \(error)")
+        }
+    }
+
+    @Test func navigateTreeSurfacesCommandFailure() async {
+        let (conn, pipe) = makeTestConnection()
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .navigateTree(_, _, _, _, _, let requestId):
+                pipe.handle(
+                    .commandResult(
+                        command: "navigate_tree",
+                        requestId: requestId,
+                        success: false,
+                        data: nil,
+                        error: "navigation failed"
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        do {
+            _ = try await conn.navigateTree(targetId: "entry-99", summarize: false)
+            Issue.record("Expected navigate_tree rejection")
+        } catch let error as CommandRequestError {
+            switch error {
+            case .rejected(let command, let reason):
+                #expect(command == "navigate_tree")
+                #expect(reason == "navigation failed")
+            case .timeout:
+                Issue.record("Expected rejected error, got timeout")
+            }
+        } catch {
+            Issue.record("Expected CommandRequestError.rejected, got \(error)")
+        }
+    }
+
     // MARK: - Fork
 
     @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {

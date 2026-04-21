@@ -423,6 +423,290 @@ final class MessageSender {
         }
     }
 
+    func getSessionTree() async throws -> SessionTreeSnapshot {
+        let data = try await sendCommandAwaitingResult(command: "get_session_tree") { requestId in
+            .getSessionTree(requestId: requestId)
+        }
+
+        return try Self.parseSessionTreeSnapshot(from: data)
+    }
+
+    func navigateTree(
+        targetId: String,
+        summarize: Bool,
+        customInstructions: String? = nil,
+        replaceInstructions: Bool? = nil,
+        label: String? = nil
+    ) async throws -> NavigateTreeResult {
+        let data = try await sendCommandAwaitingResult(command: "navigate_tree") { requestId in
+            .navigateTree(
+                targetId: targetId,
+                summarize: summarize,
+                customInstructions: customInstructions,
+                replaceInstructions: replaceInstructions,
+                label: label,
+                requestId: requestId
+            )
+        }
+
+        return try Self.parseNavigateTreeResult(from: data)
+    }
+
+    private static func parseSessionTreeSnapshot(from data: JSONValue?) throws -> SessionTreeSnapshot {
+        let command = "get_session_tree"
+        let root = try requireRootObject(data, command: command)
+
+        let leafId = try readOptionalString(
+            valueForAnyKey(["leafId", "leaf_id"], in: root),
+            command: command,
+            field: "leafId"
+        )
+
+        guard let rawNodes = root["nodes"]?.arrayValue else {
+            throw invalidPayload(command: command, detail: "nodes must be an array")
+        }
+
+        let nodes = try rawNodes.enumerated().map { index, value in
+            try parseSessionTreeNode(from: value, index: index)
+        }
+
+        return SessionTreeSnapshot(leafId: leafId, nodes: nodes)
+    }
+
+    private static func parseSessionTreeNode(
+        from value: JSONValue,
+        index: Int
+    ) throws -> SessionTreeNodeSnapshot {
+        let command = "get_session_tree"
+        guard let object = value.objectValue else {
+            throw invalidPayload(command: command, detail: "nodes[\(index)] must be an object")
+        }
+
+        let fieldPrefix = "nodes[\(index)]"
+        let id = try readRequiredString(object["id"], command: command, field: "\(fieldPrefix).id")
+        let parentIdRaw = try readOptionalString(
+            valueForAnyKey(["parentId", "parent_id"], in: object),
+            command: command,
+            field: "\(fieldPrefix).parentId"
+        )
+        let type = try readRequiredString(
+            object["type"],
+            command: command,
+            field: "\(fieldPrefix).type"
+        )
+        let timestamp = try readRequiredString(
+            object["timestamp"],
+            command: command,
+            field: "\(fieldPrefix).timestamp"
+        )
+        let depth = try readRequiredInt(
+            object["depth"],
+            command: command,
+            field: "\(fieldPrefix).depth"
+        )
+        let isLeafPath = try readRequiredBool(
+            valueForAnyKey(["isLeafPath", "is_leaf_path"], in: object),
+            command: command,
+            field: "\(fieldPrefix).isLeafPath"
+        )
+        let role = try readOptionalString(
+            object["role"],
+            command: command,
+            field: "\(fieldPrefix).role"
+        )
+        let textPreview = try readOptionalString(
+            valueForAnyKey(["textPreview", "text_preview"], in: object),
+            command: command,
+            field: "\(fieldPrefix).textPreview"
+        )
+        let label = try readOptionalString(
+            object["label"],
+            command: command,
+            field: "\(fieldPrefix).label"
+        )
+
+        return SessionTreeNodeSnapshot(
+            id: id,
+            parentId: parentIdRaw?.isEmpty == false ? parentIdRaw : nil,
+            type: type,
+            timestamp: timestamp,
+            depth: depth,
+            isLeafPath: isLeafPath,
+            role: role,
+            textPreview: textPreview,
+            label: label
+        )
+    }
+
+    private static func parseNavigateTreeResult(from data: JSONValue?) throws -> NavigateTreeResult {
+        let command = "navigate_tree"
+        let root = try requireRootObject(data, command: command)
+
+        let editorText = try readOptionalString(
+            valueForAnyKey(["editorText", "editor_text"], in: root),
+            command: command,
+            field: "editorText"
+        )
+        let cancelled = try readRequiredBool(
+            root["cancelled"],
+            command: command,
+            field: "cancelled"
+        )
+        let aborted = try readOptionalBool(
+            root["aborted"],
+            command: command,
+            field: "aborted"
+        )
+        let summaryEntry = try parseNavigateTreeSummaryEntry(
+            valueForAnyKey(["summaryEntry", "summary_entry"], in: root),
+            command: command
+        )
+
+        return NavigateTreeResult(
+            editorText: editorText,
+            cancelled: cancelled,
+            aborted: aborted,
+            summaryEntry: summaryEntry
+        )
+    }
+
+    private static func parseNavigateTreeSummaryEntry(
+        _ value: JSONValue?,
+        command: String
+    ) throws -> NavigateTreeSummaryEntrySnapshot? {
+        guard let value else { return nil }
+        if case .null = value {
+            return nil
+        }
+
+        guard let object = value.objectValue else {
+            throw invalidPayload(command: command, detail: "summaryEntry must be an object")
+        }
+
+        let id = try readRequiredString(object["id"], command: command, field: "summaryEntry.id")
+        return NavigateTreeSummaryEntrySnapshot(id: id)
+    }
+
+    private static func requireRootObject(
+        _ data: JSONValue?,
+        command: String
+    ) throws -> [String: JSONValue] {
+        guard let data else {
+            throw invalidPayload(command: command, detail: "missing data")
+        }
+
+        guard let root = data.objectValue else {
+            throw invalidPayload(command: command, detail: "expected root object")
+        }
+
+        return root
+    }
+
+    private static func valueForAnyKey(
+        _ keys: [String],
+        in object: [String: JSONValue]
+    ) -> JSONValue? {
+        for key in keys {
+            if let value = object[key] {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func readRequiredString(
+        _ value: JSONValue?,
+        command: String,
+        field: String
+    ) throws -> String {
+        guard let value else {
+            throw invalidPayload(command: command, detail: "missing \(field)")
+        }
+
+        guard let text = value.stringValue else {
+            throw invalidPayload(command: command, detail: "\(field) must be a string")
+        }
+
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw invalidPayload(command: command, detail: "\(field) cannot be empty")
+        }
+
+        return text
+    }
+
+    private static func readOptionalString(
+        _ value: JSONValue?,
+        command: String,
+        field: String
+    ) throws -> String? {
+        guard let value else { return nil }
+        if case .null = value {
+            return nil
+        }
+
+        guard let text = value.stringValue else {
+            throw invalidPayload(command: command, detail: "\(field) must be a string")
+        }
+
+        return text
+    }
+
+    private static func readRequiredInt(
+        _ value: JSONValue?,
+        command: String,
+        field: String
+    ) throws -> Int {
+        guard let value else {
+            throw invalidPayload(command: command, detail: "missing \(field)")
+        }
+
+        guard let number = value.numberValue,
+              number.isFinite,
+              number.rounded() == number,
+              let int = Int(exactly: number) else {
+            throw invalidPayload(command: command, detail: "\(field) must be an integer")
+        }
+
+        return int
+    }
+
+    private static func readRequiredBool(
+        _ value: JSONValue?,
+        command: String,
+        field: String
+    ) throws -> Bool {
+        guard let value else {
+            throw invalidPayload(command: command, detail: "missing \(field)")
+        }
+
+        guard let bool = value.boolValue else {
+            throw invalidPayload(command: command, detail: "\(field) must be a boolean")
+        }
+
+        return bool
+    }
+
+    private static func readOptionalBool(
+        _ value: JSONValue?,
+        command: String,
+        field: String
+    ) throws -> Bool? {
+        guard let value else { return nil }
+        if case .null = value {
+            return nil
+        }
+
+        guard let bool = value.boolValue else {
+            throw invalidPayload(command: command, detail: "\(field) must be a boolean")
+        }
+
+        return bool
+    }
+
+    private static func invalidPayload(command: String, detail: String) -> CommandRequestError {
+        CommandRequestError.rejected(command: command, reason: "invalid payload: \(detail)")
+    }
+
     // MARK: - Retry Classification
 
     static func isRetryableStopError(_ error: Error) -> Bool {

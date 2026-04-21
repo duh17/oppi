@@ -86,6 +86,28 @@ extension ServerConnection {
         return forkedSession
     }
 
+    // MARK: - Tree Navigation
+
+    func getSessionTree() async throws -> SessionTreeSnapshot {
+        try await sender.getSessionTree()
+    }
+
+    func navigateTree(
+        targetId: String,
+        summarize: Bool,
+        customInstructions: String? = nil,
+        replaceInstructions: Bool? = nil,
+        label: String? = nil
+    ) async throws -> NavigateTreeResult {
+        try await sender.navigateTree(
+            targetId: targetId,
+            summarize: summarize,
+            customInstructions: customInstructions,
+            replaceInstructions: replaceInstructions,
+            label: label
+        )
+    }
+
     // MARK: - Fork Helpers
 
     static func resolveForkEntryId(_ requestedEntryId: String, from messages: [ForkMessage]) -> String? {

@@ -179,6 +179,27 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("timeline user row builder keeps fork disabled in row menus")
+    func timelineUserRowBuilderKeepsForkDisabledInRowMenus() {
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.onFork = { _ in
+            Issue.record("Row-level fork callback should not be wired")
+        }
+
+        let item = ChatItem.userMessage(
+            id: "entry-1",
+            text: "Investigate timeline branch behavior",
+            images: [],
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let configuration = controller.userRowConfiguration(itemID: "entry-1", item: item)
+        #expect(configuration != nil)
+        #expect(configuration?.canFork == false)
+        #expect(configuration?.onFork == nil)
+    }
+
+    @MainActor
     @Test("user row selected text edit menu prepends π submenu")
     func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
         let interactionCtx = TimelineInteractionContext()

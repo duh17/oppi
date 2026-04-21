@@ -1,5 +1,11 @@
 import Foundation
 
+struct ExtensionEditorTextUpdate: Equatable, Sendable {
+    let sessionId: String
+    let text: String
+    let revision: Int
+}
+
 /// Observable state bag for per-connection chat UI concerns.
 ///
 /// Extracted from `ServerConnection` to isolate view-model properties
@@ -15,6 +21,11 @@ final class ChatSessionState {
     // MARK: - Composer
 
     var composerDraft: String?
+
+    /// Extension-driven editor updates (`ctx.ui.setEditorText`) with revision
+    /// tokens so repeated identical payloads still trigger view updates.
+    var extensionEditorTextUpdate: ExtensionEditorTextUpdate?
+    @ObservationIgnored private var extensionEditorTextRevision = 0
 
     // MARK: - Scroll restoration (non-observed, persisted via RestorationState)
 
@@ -70,11 +81,21 @@ final class ChatSessionState {
         modelPrefetchTask = nil
     }
 
+    func stageExtensionEditorText(text: String, sessionId: String) {
+        extensionEditorTextRevision &+= 1
+        extensionEditorTextUpdate = ExtensionEditorTextUpdate(
+            sessionId: sessionId,
+            text: text,
+            revision: extensionEditorTextRevision
+        )
+    }
+
     /// Reset all cached state (called on session disconnect).
     func resetSessionState() {
         cancelTasks()
         slashCommands = []
         fileSuggestions = []
+        extensionEditorTextUpdate = nil
     }
 
     /// Reset model cache (called on server disconnect/invalidation).

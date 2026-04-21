@@ -28,18 +28,14 @@ extension ChatTimelineCollectionHost.Controller {
         )
     }
 
-    func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
+    func userRowConfiguration(itemID _: String, item: ChatItem) -> UserTimelineRowConfiguration? {
         guard case .userMessage(_, let text, let images, _) = item else { return nil }
 
-        let canFork = UUID(uuidString: itemID) == nil && onFork != nil
-        let forkAction: (() -> Void)?
-        if canFork {
-            forkAction = { [weak self] in
-                self?.onFork?(itemID)
-            }
-        } else {
-            forkAction = nil
-        }
+        // Fork/branch actions now live in Session Timeline sheet so selected-text
+        // interactions in row bubbles are never blocked by context-menu competition.
+        // Keep row-level copy + selected-text actions only.
+        let canFork = false
+        let forkAction: (() -> Void)? = nil
 
         // Unified native user row — handles both text-only and image messages.
         return UserTimelineRowConfiguration(

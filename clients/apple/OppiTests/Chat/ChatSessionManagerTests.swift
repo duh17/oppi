@@ -62,6 +62,59 @@ struct ChatSessionManagerTests {
         #expect(manager.connectionGeneration == 2)
     }
 
+    @Test func forceHistoryReloadUsesTestingHookAndMarksSyncSucceeded() async {
+        let manager = ChatSessionManager(sessionId: "force-reload-success")
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        var capturedCachedEventCount: Int?
+        var capturedCachedLastEventId: String?
+        manager._loadHistoryForTesting = { cachedEventCount, cachedLastEventId in
+            capturedCachedEventCount = cachedEventCount
+            capturedCachedLastEventId = cachedLastEventId
+            return (eventCount: 42, lastEventId: "evt-42")
+        }
+
+        let reloaded = await manager.forceHistoryReload(
+            connection: connection,
+            sessionStore: sessionStore
+        )
+
+        #expect(reloaded)
+        #expect(capturedCachedEventCount == nil)
+        #expect(capturedCachedLastEventId == nil)
+        #expect(manager.isSyncing == false)
+        #expect(manager.lastSyncFailed == false)
+        #expect(manager.lastSuccessfulSyncAt != nil)
+    }
+
+    @Test func forceHistoryReloadReturnsFalseWhenTestingHookReturnsNil() async {
+        let manager = ChatSessionManager(sessionId: "force-reload-failure")
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let reloaded = await manager.forceHistoryReload(
+            connection: ServerConnection(),
+            sessionStore: SessionStore()
+        )
+
+        #expect(reloaded == false)
+        #expect(manager.isSyncing == false)
+        #expect(manager.lastSyncFailed == true)
+    }
+
+    @Test func forceHistoryReloadFailsWithoutAPIClientWhenNoTestingHook() async {
+        let manager = ChatSessionManager(sessionId: "force-reload-no-api")
+
+        let reloaded = await manager.forceHistoryReload(
+            connection: ServerConnection(),
+            sessionStore: SessionStore()
+        )
+
+        #expect(reloaded == false)
+        #expect(manager.isSyncing == false)
+        #expect(manager.lastSyncFailed == true)
+    }
+
     @Test func unexpectedConnectedStreamExitSchedulesReconnect() async {
         let sessionId = "auto-reconnect"
         let manager = ChatSessionManager(sessionId: sessionId)

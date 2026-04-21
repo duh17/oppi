@@ -574,7 +574,20 @@ struct ServerConnectionRoutingTests {
         let (conn, pipe) = makeTestConnection()
 
         pipe.handle(
-            .extensionUINotification(method: "notify", message: "Task complete", notifyType: "info", statusKey: nil, statusText: nil),
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "notify",
+                    message: "Task complete",
+                    notifyType: "info",
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
             sessionId: "s1"
         )
 

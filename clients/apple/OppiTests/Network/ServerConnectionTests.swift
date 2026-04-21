@@ -381,11 +381,73 @@ struct ServerConnectionTests {
         let (conn, pipe) = makeTestConnection()
 
         pipe.handle(
-            .extensionUINotification(method: "notify", message: "Task complete", notifyType: "info", statusKey: nil, statusText: nil),
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "notify",
+                    message: "Task complete",
+                    notifyType: "info",
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
             sessionId: "s1"
         )
 
         #expect(conn.extensionToast == "Task complete")
+    }
+
+    @Test func routeExtensionSetStatusStoresSurfaceState() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setStatus",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: "review",
+                    statusText: "running",
+                    title: nil,
+                    text: nil,
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"] == "running")
+    }
+
+    @Test func routeExtensionSetEditorTextUpdatesComposerState() {
+        let (conn, pipe) = makeTestConnection()
+
+        pipe.handle(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "set_editor_text",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: "Act on the review findings",
+                    widgetKey: nil,
+                    widgetLines: nil,
+                    widgetPlacement: nil
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        #expect(conn.chatState.extensionEditorTextUpdate?.sessionId == "s1")
+        #expect(conn.chatState.extensionEditorTextUpdate?.text == "Act on the review findings")
     }
 
     @Test func routeUnknownIsNoOp() {
