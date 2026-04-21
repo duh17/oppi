@@ -134,18 +134,85 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
     preBuildScripts:
       - script: |
+          STAMP_FILE="$DERIVED_FILE_DIR/swiftlint.stamp"
+          WATCH_DIRS=(
+            "$SRCROOT/Oppi"
+            "$SRCROOT/Shared"
+            "$SRCROOT/OppiActivityExtension"
+            "$SRCROOT/OppiControlWidget"
+            "$SRCROOT/OppiTests"
+            "$SRCROOT/OppiPerfTests"
+            "$SRCROOT/OppiUITests"
+            "$SRCROOT/OppiE2ETests"
+            "$SRCROOT/OppiMac"
+            "$SRCROOT/OppiMacTests"
+          )
+
+          needs_lint=0
+          if [ ! -f "$STAMP_FILE" ]; then
+            needs_lint=1
+          elif [ "$SRCROOT/.swiftlint.yml" -nt "$STAMP_FILE" ]; then
+            needs_lint=1
+          else
+            for dir in "${WATCH_DIRS[@]}"; do
+              if [ -d "$dir" ] && find "$dir" -type f -name "*.swift" -newer "$STAMP_FILE" -print -quit | grep -q .; then
+                needs_lint=1
+                break
+              fi
+            done
+          fi
+
+          if [ "$needs_lint" -eq 0 ]; then
+            echo "note: SwiftLint skipped (no source/config changes since last run)"
+            exit 0
+          fi
+
           if command -v swiftlint >/dev/null 2>&1; then
             swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet
+            touch "$STAMP_FILE"
           else
             echo "warning: SwiftLint not installed — brew install swiftlint"
+            touch "$STAMP_FILE"
           fi
         name: SwiftLint
         basedOnDependencyAnalysis: false
         shell: /bin/bash
         showEnvVars: false
       - script: |
+          STAMP_FILE="$DERIVED_FILE_DIR/architecture-boundaries.stamp"
+          CHECK_SCRIPT="$SRCROOT/../../server/scripts/check-architecture-boundaries.ts"
+          ARCH_RULES="$SRCROOT/../../.internal/ARCHITECTURE.md"
+          WATCH_DIRS=(
+            "$SRCROOT/Oppi"
+            "$SRCROOT/Shared"
+            "$SRCROOT/OppiActivityExtension"
+            "$SRCROOT/OppiControlWidget"
+          )
+
+          needs_check=0
+          if [ ! -f "$STAMP_FILE" ]; then
+            needs_check=1
+          elif [ -f "$CHECK_SCRIPT" ] && [ "$CHECK_SCRIPT" -nt "$STAMP_FILE" ]; then
+            needs_check=1
+          elif [ -f "$ARCH_RULES" ] && [ "$ARCH_RULES" -nt "$STAMP_FILE" ]; then
+            needs_check=1
+          else
+            for dir in "${WATCH_DIRS[@]}"; do
+              if [ -d "$dir" ] && find "$dir" -type f -name "*.swift" -newer "$STAMP_FILE" -print -quit | grep -q .; then
+                needs_check=1
+                break
+              fi
+            done
+          fi
+
+          if [ "$needs_check" -eq 0 ]; then
+            echo "note: Architecture boundaries skipped (no source/rule changes since last run)"
+            exit 0
+          fi
+
           if command -v node >/dev/null 2>&1; then
-            bun "$SRCROOT/../../server/scripts/check-architecture-boundaries.ts" --scope ios --format xcode
+            bun "$CHECK_SCRIPT" --scope ios --format xcode
+            touch "$STAMP_FILE"
           else
             echo "error: Node.js is required for architecture boundary checks (.internal/ARCHITECTURE.md#ios-layers)"
             exit 1
@@ -156,6 +223,14 @@ targets:
         showEnvVars: false
     postBuildScripts:
       - script: |
+          if [ "$CONFIGURATION" != "Release" ]; then
+            echo "note: Sentry dSYM upload skipped (Release builds only)"
+            exit 0
+          fi
+          if [[ "$PLATFORM_NAME" == *"simulator"* ]] || [[ "$EFFECTIVE_PLATFORM_NAME" == *"simulator"* ]]; then
+            echo "note: Sentry dSYM upload skipped (device builds only)"
+            exit 0
+          fi
           if [ "$SENTRY_DSN" = "" ] || [[ "$SENTRY_DSN" == *'$('* ]]; then
             echo "note: Sentry dSYM upload skipped (no DSN configured)"
             exit 0
