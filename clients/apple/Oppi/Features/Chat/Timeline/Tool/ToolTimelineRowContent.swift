@@ -74,6 +74,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let collapsedImagePreviewHeight: CGFloat = 136
+    private static let collapsedImagePreviewLandscapeMaxHeight: CGFloat = 220
+    private static let collapsedImagePreviewSquareMaxHeight: CGFloat = 280
+    private static let collapsedImagePreviewPortraitMaxHeight: CGFloat = 380
 
     @MainActor
     enum ExpandedViewportMode {
@@ -523,7 +526,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard key != imagePreviewDecodedKey else { return }
         imagePreviewDecodedKey = key
 
-        // Fixed container height prevents secondary cell-size jumps when image decode finishes.
+        // Keep a stable placeholder height until decode completes.
         imagePreviewHeightConstraint?.constant = Self.collapsedImagePreviewHeight
 
         // Cancel previous decode task if still running.
@@ -541,9 +544,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                    image.size.height > 0 {
                     self.layoutIfNeeded()
                     let availableWidth = max(1, self.imagePreviewContainer.bounds.width - 12)
-                    let targetHeight = min(
-                        220,
-                        max(80, availableWidth * (image.size.height / image.size.width) + 12)
+                    let targetHeight = Self.collapsedPreviewHeight(
+                        for: image.size,
+                        availableWidth: availableWidth,
+                        windowHeight: self.window?.bounds.height
                     )
                     self.imagePreviewHeightConstraint?.constant = targetHeight
                     self.setNeedsLayout()
@@ -551,6 +555,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 }
             }
         }
+    }
+
+    private static func collapsedPreviewHeight(
+        for imageSize: CGSize,
+        availableWidth: CGFloat,
+        windowHeight: CGFloat?
+    ) -> CGFloat {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return collapsedImagePreviewHeight
+        }
+
+        let aspectRatio = imageSize.height / imageSize.width
+        let widthDrivenHeight = availableWidth * aspectRatio + 12
+
+        let (minHeight, maxHeight): (CGFloat, CGFloat)
+        if aspectRatio >= 1.2 {
+            minHeight = 180
+            maxHeight = collapsedImagePreviewPortraitMaxHeight
+        } else if aspectRatio >= 0.85 {
+            minHeight = 132
+            maxHeight = collapsedImagePreviewSquareMaxHeight
+        } else {
+            minHeight = 96
+            maxHeight = collapsedImagePreviewLandscapeMaxHeight
+        }
+
+        let fallbackWindowHeight = UIScreen.main.bounds.height
+        let maxFromScreen = max(minHeight, (windowHeight ?? fallbackWindowHeight) * 0.5)
+        let effectiveMax = min(maxHeight, maxFromScreen)
+        return min(effectiveMax, max(minHeight, widthDrivenHeight))
     }
 
     private func clearExpandedReadMediaView() {

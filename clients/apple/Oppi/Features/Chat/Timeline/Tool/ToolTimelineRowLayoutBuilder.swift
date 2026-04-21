@@ -118,7 +118,6 @@ enum ToolTimelineRowLayoutBuilder {
             imagePreviewImageView.topAnchor.constraint(equalTo: imagePreviewContainer.topAnchor, constant: 6),
             imagePreviewImageView.bottomAnchor.constraint(equalTo: imagePreviewContainer.bottomAnchor, constant: -6),
             imagePreviewHeight,
-            imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
         ]
 
         return Constraints(
