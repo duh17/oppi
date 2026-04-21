@@ -247,11 +247,16 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     },
     extension_ui_notification: {
       type: "extension_ui_notification",
-      method: "notify",
+      method: "setWidget",
       message: "Build completed successfully",
       notifyType: "success",
       statusKey: "build",
       statusText: "✅ Build passed",
+      title: "Build status",
+      text: "Act on the review findings",
+      widgetKey: "review",
+      widgetLines: ["Review session active", "Run /end-review when done"],
+      widgetPlacement: "above-editor",
     },
     git_status: {
       type: "git_status",

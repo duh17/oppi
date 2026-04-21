@@ -236,13 +236,32 @@ describe("SessionManager extension UI", () => {
     feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-1",
-      method: "notify",
+      method: "setWidget",
       message: "Hello from extension",
       notifyType: "info",
+      statusKey: "review",
+      statusText: "running",
+      title: "Review",
+      text: "Act on findings",
+      widgetKey: "review",
+      widgetLines: ["Review active"],
+      widgetPlacement: "above-editor",
     });
 
     const notif = events.find((e) => e.type === "extension_ui_notification");
-    expect(notif).toBeDefined();
+    expect(notif).toEqual({
+      type: "extension_ui_notification",
+      method: "setWidget",
+      message: "Hello from extension",
+      notifyType: "info",
+      statusKey: "review",
+      statusText: "running",
+      title: "Review",
+      text: "Act on findings",
+      widgetKey: "review",
+      widgetLines: ["Review active"],
+      widgetPlacement: "above-editor",
+    });
   });
 
   it("tracks dialog methods as pending UI requests", () => {

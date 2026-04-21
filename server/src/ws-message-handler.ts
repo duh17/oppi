@@ -199,6 +199,8 @@ export class WsMessageHandler {
       // ── RPC passthrough — forward to pi and return result ──
       case "get_messages":
       case "get_fork_messages":
+      case "get_session_tree":
+      case "navigate_tree":
       case "get_session_stats":
       case "get_commands":
       case "share_session":

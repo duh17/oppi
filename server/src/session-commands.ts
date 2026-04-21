@@ -139,6 +139,196 @@ function collectSessionCommands(session: AgentSession): { commands: SessionComma
   return { commands };
 }
 
+interface SessionTreeNodeSnapshot {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  depth: number;
+  isLeafPath: boolean;
+  role?: string;
+  textPreview?: string;
+  label?: string;
+}
+
+type SessionTreeNode = ReturnType<AgentSession["sessionManager"]["getTree"]>[number];
+type SessionTreeEntry = SessionTreeNode["entry"];
+
+const MAX_TEXT_PREVIEW_CHARS = 160;
+
+function compareTreeNodesByTimestamp(left: SessionTreeNode, right: SessionTreeNode): number {
+  const leftTime = Date.parse(left.entry.timestamp);
+  const rightTime = Date.parse(right.entry.timestamp);
+
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+
+  if (left.entry.timestamp !== right.entry.timestamp) {
+    return left.entry.timestamp.localeCompare(right.entry.timestamp);
+  }
+
+  return left.entry.id.localeCompare(right.entry.id);
+}
+
+function sortTreeNodes(nodes: SessionTreeNode[], leafPathIds: Set<string>): SessionTreeNode[] {
+  return [...nodes].sort((left, right) => {
+    const leftOnActivePath = leafPathIds.has(left.entry.id) ? 1 : 0;
+    const rightOnActivePath = leafPathIds.has(right.entry.id) ? 1 : 0;
+
+    if (leftOnActivePath !== rightOnActivePath) {
+      return rightOnActivePath - leftOnActivePath;
+    }
+
+    return compareTreeNodesByTimestamp(left, right);
+  });
+}
+
+function collectLeafPathIds(session: AgentSession, leafId: string | null): Set<string> {
+  const pathIds = new Set<string>();
+  let currentId = leafId;
+
+  while (currentId) {
+    if (pathIds.has(currentId)) {
+      break;
+    }
+
+    pathIds.add(currentId);
+    const entry = session.sessionManager.getEntry(currentId);
+    currentId = entry?.parentId ?? null;
+  }
+
+  return pathIds;
+}
+
+function previewText(rawText: string): string | undefined {
+  const normalized = rawText.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  if (normalized.length <= MAX_TEXT_PREVIEW_CHARS) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, MAX_TEXT_PREVIEW_CHARS - 1)}…`;
+}
+
+function extractTextFromMessageContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  for (const block of content) {
+    const record = toRecord(block);
+
+    if (
+      (record.type === "text" || record.type === "output_text") &&
+      typeof record.text === "string"
+    ) {
+      parts.push(record.text);
+      continue;
+    }
+
+    if (record.type === "thinking" && typeof record.thinking === "string") {
+      parts.push(record.thinking);
+    }
+  }
+
+  return parts.join(" ");
+}
+
+function extractMessageSnapshot(entry: SessionTreeEntry): { role?: string; textPreview?: string } {
+  if (entry.type !== "message") {
+    return {};
+  }
+
+  const message = toRecord(entry.message);
+  const role = typeof message.role === "string" ? message.role : undefined;
+  const textPreview = previewText(extractTextFromMessageContent(message.content));
+
+  return {
+    ...(role ? { role } : {}),
+    ...(textPreview ? { textPreview } : {}),
+  };
+}
+
+function serializeSessionTree(session: AgentSession): {
+  leafId: string | null;
+  nodes: SessionTreeNodeSnapshot[];
+} {
+  const tree = session.sessionManager.getTree();
+  const leafId = session.sessionManager.getLeafId();
+  const leafPathIds = collectLeafPathIds(session, leafId);
+
+  const nodes: SessionTreeNodeSnapshot[] = [];
+  const stack = sortTreeNodes(tree, leafPathIds)
+    .reverse()
+    .map((node) => ({ node, depth: 0 }));
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+
+    const snapshot: SessionTreeNodeSnapshot = {
+      id: current.node.entry.id,
+      parentId: current.node.entry.parentId,
+      type: current.node.entry.type,
+      timestamp: current.node.entry.timestamp,
+      depth: current.depth,
+      isLeafPath: leafPathIds.has(current.node.entry.id),
+      ...extractMessageSnapshot(current.node.entry),
+      ...(current.node.label
+        ? {
+            label: current.node.label,
+          }
+        : {}),
+    };
+
+    nodes.push(snapshot);
+
+    const children = sortTreeNodes(current.node.children, leafPathIds);
+    for (let i = children.length - 1; i >= 0; i -= 1) {
+      const child = children[i];
+      if (child) {
+        stack.push({
+          node: child,
+          depth: current.depth + 1,
+        });
+      }
+    }
+  }
+
+  return { leafId, nodes };
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readRequiredString(value: unknown, fieldName: string): string {
+  const parsed = readOptionalString(value);
+  if (!parsed) {
+    throw new Error(`Invalid payload: expected ${fieldName}`);
+  }
+  return parsed;
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
@@ -234,6 +424,18 @@ export class SessionCommandCoordinator {
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
     ["get_messages", (session) => session.messages],
+    ["get_fork_messages", (session) => ({ messages: session.getUserMessagesForForking() })],
+    ["get_session_tree", (session) => serializeSessionTree(session)],
+    [
+      "navigate_tree",
+      (session, cmd) =>
+        session.navigateTree(readRequiredString(cmd.targetId, "targetId"), {
+          summarize: readOptionalBoolean(cmd.summarize),
+          customInstructions: readOptionalString(cmd.customInstructions),
+          replaceInstructions: readOptionalBoolean(cmd.replaceInstructions),
+          label: readOptionalString(cmd.label),
+        }),
+    ],
     [
       "get_session_stats",
       (session) => ({
@@ -441,7 +643,12 @@ export class SessionCommandCoordinator {
 
       // Session-branching commands mutate pi session identity/file in-place.
       // Refresh state immediately so reconnect/resume uses the new branch.
-      if (cmdType === "fork" || cmdType === "new_session" || cmdType === "switch_session") {
+      if (
+        cmdType === "fork" ||
+        cmdType === "new_session" ||
+        cmdType === "switch_session" ||
+        cmdType === "navigate_tree"
+      ) {
         try {
           const refreshed = await sendCommandAsync(key, { type: "get_state" });
           const snapshot = parsePiStateSnapshot(refreshed);

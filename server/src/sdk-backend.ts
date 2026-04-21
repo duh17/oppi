@@ -141,6 +141,172 @@ interface PendingExtensionUIResponse {
   cancel: () => void;
 }
 
+interface CustomUIComponent {
+  render: (width: number) => string[];
+  handleInput?: (data: string) => void;
+  invalidate?: () => void;
+  dispose?: () => void;
+}
+
+type CustomUIControl = "up" | "down" | "enter" | "type" | "cancel";
+
+const CUSTOM_UI_COMPAT_TITLE = "Extension (TUI compatibility mode)";
+const CUSTOM_UI_COMPAT_WIDTH = 88;
+const CUSTOM_UI_COMPAT_MAX_LINES = 28;
+const CUSTOM_UI_COMPAT_MAX_MESSAGE_CHARS = 6_000;
+const CUSTOM_UI_COMPAT_MAX_STEPS = 200;
+const CUSTOM_UI_COMPAT_WIDGET_MAX_LINES = 8;
+const CUSTOM_UI_COMPAT_TYPE_PROMPT = "Type text for extension UI";
+const CUSTOM_UI_COMPAT_CONTROL_OPTIONS = [
+  "↑ Up",
+  "↓ Down",
+  "⏎ Enter",
+  "Type text…",
+  "Cancel",
+] as const;
+
+const CUSTOM_UI_COMPAT_CONTROL_INPUT: Record<
+  Exclude<CustomUIControl, "type" | "cancel">,
+  string
+> = {
+  up: "__OPPI_TUI_UP__",
+  down: "__OPPI_TUI_DOWN__",
+  enter: "__OPPI_TUI_ENTER__",
+};
+
+function decodeCustomUIControlOption(option: string | undefined): CustomUIControl | undefined {
+  switch (option) {
+    case "↑ Up":
+      return "up";
+    case "↓ Down":
+      return "down";
+    case "⏎ Enter":
+      return "enter";
+    case "Type text…":
+      return "type";
+    case "Cancel":
+      return "cancel";
+    default:
+      return undefined;
+  }
+}
+
+function stripAnsiCodes(input: string): string {
+  let output = "";
+  let skippingAnsi = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (!skippingAnsi && char === "\u001b" && input[i + 1] === "[") {
+      skippingAnsi = true;
+      i += 1;
+      continue;
+    }
+
+    if (skippingAnsi) {
+      if (char === "m") {
+        skippingAnsi = false;
+      }
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function renderCustomUIMessage(component: CustomUIComponent): string {
+  let lines: string[];
+
+  try {
+    lines = component.render(CUSTOM_UI_COMPAT_WIDTH);
+  } catch (error) {
+    const reason = safeErrorMessage(error);
+    lines = [`[render error] ${reason}`];
+  }
+
+  const safeLines = lines.map((line) => stripAnsiCodes(line));
+  const limited = safeLines.slice(0, CUSTOM_UI_COMPAT_MAX_LINES);
+  if (safeLines.length > CUSTOM_UI_COMPAT_MAX_LINES) {
+    limited.push(`… (${safeLines.length - CUSTOM_UI_COMPAT_MAX_LINES} more lines)`);
+  }
+
+  const intro = [
+    "This extension requested a keyboard-driven TUI component.",
+    "Use the controls below to navigate and submit.",
+    "",
+  ];
+
+  const combined = [...intro, ...limited].join("\n");
+  if (combined.length <= CUSTOM_UI_COMPAT_MAX_MESSAGE_CHARS) {
+    return combined;
+  }
+
+  return `${combined.slice(0, CUSTOM_UI_COMPAT_MAX_MESSAGE_CHARS)}\n…`;
+}
+
+function renderWidgetSnapshotLines(component: CustomUIComponent): string[] {
+  let lines: string[];
+
+  try {
+    lines = component.render(CUSTOM_UI_COMPAT_WIDTH);
+  } catch (error) {
+    lines = [`[render error] ${safeErrorMessage(error)}`];
+  }
+
+  const safeLines = lines
+    .map((line) => stripAnsiCodes(line).trimEnd())
+    .filter((line) => line.length > 0);
+
+  const limited = safeLines.slice(0, CUSTOM_UI_COMPAT_WIDGET_MAX_LINES);
+  if (safeLines.length > CUSTOM_UI_COMPAT_WIDGET_MAX_LINES) {
+    limited.push(`… (${safeLines.length - CUSTOM_UI_COMPAT_WIDGET_MAX_LINES} more lines)`);
+  }
+
+  return limited;
+}
+
+function createCustomUICompatTheme(): ExtensionUIContext["theme"] {
+  const passthrough = (value: string): string => value;
+
+  return {
+    fg: (_color: unknown, text: string): string => text,
+    bg: (_color: unknown, text: string): string => text,
+    bold: passthrough,
+    dim: passthrough,
+    italic: passthrough,
+    underline: passthrough,
+    inverse: passthrough,
+    gray: (_level: unknown, text: string): string => text,
+    hex: (_hex: unknown, text: string): string => text,
+    rgb: (_r: unknown, _g: unknown, _b: unknown, text: string): string => text,
+    parseInline: passthrough,
+  } as unknown as ExtensionUIContext["theme"];
+}
+
+function createCustomUICompatKeybindings(): {
+  matches: (data: string, keybinding: string) => boolean;
+} {
+  return {
+    matches: (data: string, keybinding: string) => {
+      switch (keybinding) {
+        case "tui.select.up":
+          return data === CUSTOM_UI_COMPAT_CONTROL_INPUT.up;
+        case "tui.select.down":
+          return data === CUSTOM_UI_COMPAT_CONTROL_INPUT.down;
+        case "tui.select.confirm":
+          return data === CUSTOM_UI_COMPAT_CONTROL_INPUT.enter;
+        case "tui.select.cancel":
+          return data === "\u001b";
+        default:
+          return false;
+      }
+    },
+  };
+}
+
 /**
  * Wraps a pi AgentSession for use by SessionManager.
  *
@@ -536,6 +702,109 @@ export class SdkBackend {
     });
   }
 
+  private async runCustomUICompatibility<T>(
+    factory: (
+      tui: unknown,
+      theme: ExtensionUIContext["theme"],
+      keybindings: unknown,
+      done: (result: T) => void,
+    ) => CustomUIComponent | Promise<CustomUIComponent>,
+  ): Promise<T> {
+    if (this.disposed) {
+      return undefined as T;
+    }
+
+    let resolved = false;
+    let resolvedValue: T | undefined;
+
+    const done = (value: T): void => {
+      resolved = true;
+      resolvedValue = value;
+    };
+
+    const tui = {
+      requestRender: () => {
+        // Render is polled after each control action.
+      },
+    };
+
+    const theme = createCustomUICompatTheme();
+    const keybindings = createCustomUICompatKeybindings();
+
+    const component = await factory(tui, theme, keybindings, done);
+
+    try {
+      for (let step = 0; step < CUSTOM_UI_COMPAT_MAX_STEPS; step++) {
+        if (resolved) {
+          return resolvedValue as T;
+        }
+
+        if (this.disposed) {
+          return undefined as T;
+        }
+
+        const control = await this.createDialogPromise<CustomUIControl | undefined>(
+          undefined,
+          undefined,
+          {
+            method: "select",
+            title: CUSTOM_UI_COMPAT_TITLE,
+            message: renderCustomUIMessage(component),
+            options: [...CUSTOM_UI_COMPAT_CONTROL_OPTIONS],
+          },
+          (response) => {
+            if (response.cancelled) {
+              return undefined;
+            }
+            return decodeCustomUIControlOption(response.value);
+          },
+        );
+
+        if (!control || control === "cancel") {
+          return undefined as T;
+        }
+
+        if (control === "type") {
+          const typed = await this.createDialogPromise<string | undefined>(
+            undefined,
+            undefined,
+            {
+              method: "input",
+              title: CUSTOM_UI_COMPAT_TYPE_PROMPT,
+              placeholder: "type and submit",
+            },
+            (response) => (response.cancelled ? undefined : response.value),
+          );
+
+          if (typed) {
+            for (const char of typed) {
+              component.handleInput?.(char);
+              if (resolved) {
+                return resolvedValue as T;
+              }
+            }
+          }
+
+          continue;
+        }
+
+        component.handleInput?.(CUSTOM_UI_COMPAT_CONTROL_INPUT[control]);
+      }
+
+      this.emitExtensionUIRequest({
+        id: randomUUID(),
+        method: "notify",
+        notifyType: "warning",
+        message:
+          "TUI compatibility mode hit the interaction limit before completion. Try again with a more direct extension command.",
+      });
+
+      return undefined as T;
+    } finally {
+      component.dispose?.();
+    }
+  }
+
   private createExtensionUIContext(): ExtensionUIContext {
     return {
       select: (title, options, opts) =>
@@ -594,6 +863,31 @@ export class SdkBackend {
             widgetLines: content,
             widgetPlacement: options?.placement,
           });
+          return;
+        }
+
+        try {
+          const component = content(
+            { requestRender: () => {} } as never,
+            createCustomUICompatTheme() as never,
+          ) as CustomUIComponent;
+          const lines = renderWidgetSnapshotLines(component);
+          component.dispose?.();
+
+          this.emitExtensionUIRequest({
+            id: randomUUID(),
+            method: "setWidget",
+            widgetKey: key,
+            widgetLines: lines,
+            widgetPlacement: options?.placement,
+          });
+        } catch (error) {
+          this.emitExtensionUIRequest({
+            id: randomUUID(),
+            method: "notify",
+            notifyType: "warning",
+            message: `Failed to render extension widget: ${safeErrorMessage(error)}`,
+          });
         }
       },
 
@@ -613,8 +907,25 @@ export class SdkBackend {
         });
       },
 
-      custom: async () => {
-        return undefined;
+      custom: async <T>(
+        factory: (
+          tui: unknown,
+          theme: ExtensionUIContext["theme"],
+          keybindings: unknown,
+          done: (result: T) => void,
+        ) => CustomUIComponent | Promise<CustomUIComponent>,
+      ) => {
+        try {
+          return await this.runCustomUICompatibility<T>(factory);
+        } catch (error) {
+          this.emitExtensionUIRequest({
+            id: randomUUID(),
+            method: "notify",
+            notifyType: "warning",
+            message: `Extension custom UI failed: ${safeErrorMessage(error)}`,
+          });
+          throw error;
+        }
       },
 
       pasteToEditor: (text) => {

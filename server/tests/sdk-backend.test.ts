@@ -164,6 +164,220 @@ describe("Oppi queue delivery defaults", () => {
   });
 });
 
+describe("SdkBackend custom UI compatibility", () => {
+  interface CapturedRequest {
+    id: string;
+    method: string;
+    message?: string;
+    options?: string[];
+    widgetLines?: string[];
+  }
+
+  interface HarnessResponse {
+    value?: string;
+    confirmed?: boolean;
+    cancelled?: boolean;
+  }
+
+  function isExtensionUIRequestEvent(event: unknown): event is {
+    type: "extension_ui_request";
+    id: string;
+    method: string;
+    message?: string;
+    options?: string[];
+  } {
+    if (typeof event !== "object" || event === null) {
+      return false;
+    }
+
+    const record = event as Record<string, unknown>;
+    return (
+      record.type === "extension_ui_request" &&
+      typeof record.id === "string" &&
+      typeof record.method === "string"
+    );
+  }
+
+  function makeCustomUIHarness(respond: (request: CapturedRequest) => HarnessResponse) {
+    const backend = Object.create(SdkBackend.prototype) as SdkBackend;
+
+    const mutableBackend = backend as unknown as {
+      disposed: boolean;
+      pendingExtensionResponses: Map<
+        string,
+        {
+          resolve: (response: {
+            id: string;
+            value?: string;
+            confirmed?: boolean;
+            cancelled?: boolean;
+          }) => void;
+          cancel: () => void;
+        }
+      >;
+      emitEvent: (event: unknown) => void;
+    };
+
+    mutableBackend.disposed = false;
+    mutableBackend.pendingExtensionResponses = new Map();
+
+    const requests: CapturedRequest[] = [];
+
+    mutableBackend.emitEvent = (event: unknown) => {
+      if (!isExtensionUIRequestEvent(event)) {
+        return;
+      }
+
+      const request: CapturedRequest = {
+        id: event.id,
+        method: event.method,
+        message: event.message,
+        options: event.options,
+        widgetLines:
+          Array.isArray((event as Record<string, unknown>).widgetLines) &&
+          (event as Record<string, unknown>).widgetLines.every((value) => typeof value === "string")
+            ? ((event as Record<string, unknown>).widgetLines as string[])
+            : undefined,
+      };
+      requests.push(request);
+
+      const response = respond(request);
+      queueMicrotask(() => {
+        backend.respondToExtensionUIRequest({ id: request.id, ...response });
+      });
+    };
+
+    const ui = (
+      backend as unknown as {
+        createExtensionUIContext: () => PiSdk.ExtensionUIContext;
+      }
+    ).createExtensionUIContext();
+
+    return { backend, ui, requests };
+  }
+
+  it("renders component widgets into mobile-friendly line snapshots", () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    ui.setWidget("review", (_tui, theme) => ({
+      render: () => [theme.fg("warning", "Review session active")],
+    }));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("setWidget");
+    expect(requests[0].widgetLines).toEqual(["Review session active"]);
+  });
+
+  it("routes keyboard-only custom selectors through compatibility controls", async () => {
+    const selectResponses = ["↓ Down", "⏎ Enter"];
+    const { ui, requests } = makeCustomUIHarness((request) => {
+      if (request.method === "select") {
+        return { value: selectResponses.shift() ?? "Cancel" };
+      }
+
+      return { cancelled: true };
+    });
+
+    const result = await ui.custom<string | undefined>((_tui, _theme, keybindings, done) => {
+      const options = ["alpha", "beta"];
+      let index = 0;
+
+      const kb = keybindings as { matches: (data: string, keybinding: string) => boolean };
+
+      return {
+        render: () => [`selection: ${options[index]}`],
+        handleInput: (data: string) => {
+          if (kb.matches(data, "tui.select.down")) {
+            index = Math.min(options.length - 1, index + 1);
+            return;
+          }
+
+          if (kb.matches(data, "tui.select.up")) {
+            index = Math.max(0, index - 1);
+            return;
+          }
+
+          if (kb.matches(data, "tui.select.confirm")) {
+            done(options[index]);
+          }
+        },
+      };
+    });
+
+    expect(result).toBe("beta");
+    expect(requests).toHaveLength(2);
+    expect(requests[0].message).toContain("selection: alpha");
+    expect(requests[1].message).toContain("selection: beta");
+  });
+
+  it("supports text entry in compatibility mode", async () => {
+    const selectResponses = ["Type text…", "⏎ Enter"];
+    const { ui, requests } = makeCustomUIHarness((request) => {
+      if (request.method === "select") {
+        return { value: selectResponses.shift() ?? "Cancel" };
+      }
+      if (request.method === "input") {
+        return { value: "release" };
+      }
+
+      return { cancelled: true };
+    });
+
+    const result = await ui.custom<string | undefined>((_tui, _theme, keybindings, done) => {
+      let value = "";
+      const kb = keybindings as { matches: (data: string, keybinding: string) => boolean };
+
+      return {
+        render: () => [`typed: ${value}`],
+        handleInput: (data: string) => {
+          if (kb.matches(data, "tui.select.confirm")) {
+            done(value);
+            return;
+          }
+
+          value += data;
+        },
+      };
+    });
+
+    expect(result).toBe("release");
+    expect(requests.some((request) => request.method === "input")).toBe(true);
+  });
+
+  it("returns undefined when compatibility dialog is cancelled", async () => {
+    const { ui } = makeCustomUIHarness((request) => {
+      if (request.method === "select") {
+        return { cancelled: true };
+      }
+      return { cancelled: true };
+    });
+
+    const result = await ui.custom<string | undefined>(() => ({
+      render: () => ["idle"],
+    }));
+
+    expect(result).toBeUndefined();
+  });
+
+  it("rethrows custom UI failures after emitting a warning notification", async () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    await expect(
+      ui.custom<string>(() => {
+        throw new Error("compat boom");
+      }),
+    ).rejects.toThrow("compat boom");
+
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "notify" &&
+          request.message?.includes("Extension custom UI failed: compat boom") === true,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("SdkBackend.dispose", () => {
   function makeDisposeHarness() {
     const backend = Object.create(SdkBackend.prototype) as SdkBackend;
@@ -193,9 +407,7 @@ describe("SdkBackend.dispose", () => {
     const pendingCancel = vi.fn();
 
     mutableBackend.disposed = false;
-    mutableBackend.pendingExtensionResponses = new Map([
-      ["req-1", { cancel: pendingCancel }],
-    ]);
+    mutableBackend.pendingExtensionResponses = new Map([["req-1", { cancel: pendingCancel }]]);
     mutableBackend.unsub = vi.fn();
     mutableBackend.runtime = runtime;
     mutableBackend.shutdownCleanupPromise = null;

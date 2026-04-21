@@ -1047,6 +1047,16 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "set_auto_compaction"; enabled: boolean; requestId?: string }
     | { type: "fork"; entryId: string; requestId?: string }
     | { type: "get_fork_messages"; requestId?: string }
+    | { type: "get_session_tree"; requestId?: string }
+    | {
+        type: "navigate_tree";
+        targetId: string;
+        summarize?: boolean;
+        customInstructions?: string;
+        replaceInstructions?: boolean;
+        label?: string;
+        requestId?: string;
+      }
     | { type: "switch_session"; sessionPath: string; requestId?: string }
     // ── Queue modes ──
     | { type: "set_steering_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
@@ -1234,6 +1244,11 @@ export type ServerMessage = // ── Connection ──
         notifyType?: string;
         statusKey?: string;
         statusText?: string;
+        title?: string;
+        text?: string;
+        widgetKey?: string;
+        widgetLines?: string[];
+        widgetPlacement?: string;
       }
     // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
     | {

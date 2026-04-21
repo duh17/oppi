@@ -385,6 +385,54 @@ describe("WsMessageHandler", () => {
     );
   });
 
+  it("forwards get_session_tree requests", async () => {
+    const harness = makeHarness();
+
+    await dispatch(harness, {
+      type: "get_session_tree",
+      requestId: "req-tree-1",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledWith(
+      "s1",
+      {
+        type: "get_session_tree",
+        requestId: "req-tree-1",
+      },
+      "req-tree-1",
+    );
+  });
+
+  it("forwards navigate_tree requests", async () => {
+    const harness = makeHarness();
+
+    await dispatch(harness, {
+      type: "navigate_tree",
+      targetId: "entry-42",
+      summarize: true,
+      customInstructions: "Focus on TODOs",
+      replaceInstructions: false,
+      label: "Branch summary",
+      requestId: "req-navigate-1",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledWith(
+      "s1",
+      {
+        type: "navigate_tree",
+        targetId: "entry-42",
+        summarize: true,
+        customInstructions: "Focus on TODOs",
+        replaceInstructions: false,
+        label: "Branch summary",
+        requestId: "req-navigate-1",
+      },
+      "req-navigate-1",
+    );
+  });
+
   it("returns command_result error for unsupported command types", async () => {
     const harness = makeHarness();
 

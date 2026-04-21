@@ -130,7 +130,6 @@ export class SessionEventProcessor {
     req: ExtensionUIRequest,
   ): void {
     if (FIRE_AND_FORGET_METHODS.has(req.method)) {
-      // Forward as notification (pick relevant fields)
       this.deps.broadcast(key, {
         type: "extension_ui_notification",
         method: req.method,
@@ -138,6 +137,11 @@ export class SessionEventProcessor {
         notifyType: req.notifyType,
         statusKey: req.statusKey,
         statusText: req.statusText,
+        title: req.title,
+        text: req.text,
+        widgetKey: req.widgetKey,
+        widgetLines: req.widgetLines,
+        widgetPlacement: req.widgetPlacement,
       });
       return;
     }
