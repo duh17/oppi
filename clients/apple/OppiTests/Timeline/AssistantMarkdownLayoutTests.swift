@@ -92,6 +92,90 @@ struct AssistantMarkdownLayoutTests {
         }
     }
 
+    /// Regression: mermaid renders asynchronously after the assistant row is
+    /// first measured. If the enclosing collection view layout is not
+    /// invalidated when the diagram appears, the row keeps its old height until
+    /// the next user interaction, and following rows can overlap it.
+    @Test func asyncMermaidRenderReflowsTimelineWithoutUserTouch() async throws {
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-mermaid-async-relayout",
+            useAnchoredCollectionView: true
+        )
+
+        let mermaidMessage = """
+        Mermaid async reflow regression fixture.
+
+        ```mermaid
+        flowchart TD
+            A[Capture] --> B[Normalize]
+            B --> C[Enrich]
+            C --> D[Index]
+            D --> E[Retrieve]
+            E --> F[Summarize]
+            F --> G[Share]
+            B --> H[Deduplicate]
+            H --> I[Merge]
+            I --> J[Score]
+            J --> K[Rank]
+            K --> L[Answer]
+            L --> M[Audit]
+            M --> N[Feedback]
+        ```
+
+        Tail prose under the diagram.
+        """
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: "msg-mermaid", text: mermaidMessage, timestamp: Date(timeIntervalSince1970: 0)),
+                .assistantMessage(id: "msg-after", text: "This row must move down after diagram render.", timestamp: Date(timeIntervalSince1970: 1)),
+            ],
+            isBusy: false
+        )
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let secondIP = IndexPath(item: 1, section: 0)
+
+        let initialSecondMinY = try #require(wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
+
+        let diagramRendered = await waitForTimelineCondition(timeoutMs: 2_500) {
+            await MainActor.run {
+                guard let firstCell = wh.collectionView.cellForItem(at: firstIP),
+                      let mermaidView = timelineFirstView(ofType: NativeMermaidBlockView.self, in: firstCell.contentView) else {
+                    return false
+                }
+                return timelineAllImageViews(in: mermaidView).contains { !$0.isHidden && $0.image != nil }
+            }
+        }
+
+        #expect(diagramRendered, "Mermaid fixture did not render image in time")
+
+        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                guard let firstFrame = wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                      let secondFrame = wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
+                    return false
+                }
+
+                let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
+                let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 20
+                return rowsSeparated && secondRowMovedDown
+            }
+        }
+
+        let finalFrames = await MainActor.run {
+            (
+                wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame
+            )
+        }
+
+        #expect(
+            layoutReflowedWithoutTouch,
+            "Timeline did not reflow after async mermaid render (initial second.minY=\(initialSecondMinY), final first=\(String(describing: finalFrames.0)), final second=\(String(describing: finalFrames.1)))"
+        )
+    }
+
     @Test func streamingTextGrowthInvalidatesTextViewHeight() throws {
         let markdownView = AssistantMarkdownContentView()
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 350, height: 900))

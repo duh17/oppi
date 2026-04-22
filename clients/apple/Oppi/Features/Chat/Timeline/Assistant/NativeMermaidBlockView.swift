@@ -113,6 +113,8 @@ final class NativeMermaidBlockView: UIView {
 
     /// Show as a code block (streaming / fence still open).
     func applyAsCode(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
+        let wasShowingDiagram = isShowingDiagram
+
         renderTask?.cancel()
         renderTask = nil
 
@@ -124,6 +126,10 @@ final class NativeMermaidBlockView: UIView {
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
         currentCode = code
+
+        if wasShowingDiagram {
+            invalidateTimelineLayout()
+        }
     }
 
     /// Render synchronously on the current thread. Used by export paths that
@@ -248,6 +254,7 @@ final class NativeMermaidBlockView: UIView {
         setNeedsLayout()
         superview?.setNeedsLayout()
         superview?.layoutIfNeeded()
+        invalidateTimelineLayout()
     }
 
     private func updateDiagramHeight(naturalSize: CGSize, availableWidth: CGFloat) {
@@ -261,16 +268,27 @@ final class NativeMermaidBlockView: UIView {
             diagramHeightConstraint?.constant = clampedHeight
             invalidateIntrinsicContentSize()
             superview?.setNeedsLayout()
+            invalidateTimelineLayout()
         }
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
+        let wasShowingDiagram = isShowingDiagram
+
         codeBlockView.isHidden = false
         diagramImageView.isHidden = true
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
+
+        if wasShowingDiagram {
+            invalidateTimelineLayout()
+        }
+    }
+
+    private func invalidateTimelineLayout() {
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     @objc private func handleTap() {
