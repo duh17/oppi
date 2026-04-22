@@ -85,6 +85,14 @@ export interface EventProcessorSessionState {
   turnToolCallCount?: number;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
+  /**
+   * Short-lived buffer for select dialogs that may belong to ask.
+   * Used to absorb ordering races where select() arrives slightly before
+   * tool_execution_start("ask").
+   */
+  bufferedSelectRequests?: ExtensionUIRequest[];
+  /** Flush timer for bufferedSelectRequests. */
+  bufferedSelectFlushTimer?: NodeJS.Timeout;
 }
 
 export interface SessionEventProcessorDeps {
@@ -105,6 +113,7 @@ export interface SessionEventProcessorDeps {
 export class SessionEventProcessor {
   private gitStatusTimers: Map<string, NodeJS.Timeout> = new Map();
   private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
+  private static readonly ASK_SELECT_BUFFER_MS = 120;
 
   constructor(private readonly deps: SessionEventProcessorDeps) {}
 
@@ -171,20 +180,17 @@ export class SessionEventProcessor {
       return;
     }
 
+    // Ordering race guard: ask select() can arrive slightly before
+    // tool_execution_start("ask"). Buffer select dialogs briefly so ask can
+    // capture them into its deferred queue instead of showing generic sheets.
+    if (!active.pendingAsk && req.method === "select") {
+      this.bufferSelectRequest(key, active, req);
+      return;
+    }
+
     // Normal dialog — track and forward to phone
     active.pendingUIRequests.set(req.id, req);
-    this.deps.broadcast(key, {
-      type: "extension_ui_request",
-      id: req.id,
-      sessionId: active.session.id,
-      method: req.method,
-      title: req.title,
-      options: req.options,
-      message: req.message,
-      placeholder: req.placeholder,
-      prefill: req.prefill,
-      timeout: req.timeout,
-    });
+    this.broadcastDialogRequest(key, active.session.id, req);
   }
 
   /**
@@ -395,14 +401,145 @@ export class SessionEventProcessor {
       resolvedDeferredCount: 0,
     };
 
-    // Register as pending so the iOS response is accepted
+    // Register as pending so the iOS response is accepted.
     active.pendingUIRequests.set(requestId, {
       type: "extension_ui_request",
       id: requestId,
       method: "ask",
     });
 
+    // Capture select requests that arrived just before ask start.
+    this.captureBufferedSelectRequestsForAsk(key, active);
+
     this.deps.broadcast(key, broadcastMessage);
+  }
+
+  private broadcastDialogRequest(key: string, sessionId: string, req: ExtensionUIRequest): void {
+    this.deps.broadcast(key, {
+      type: "extension_ui_request",
+      id: req.id,
+      sessionId,
+      method: req.method,
+      title: req.title,
+      options: req.options,
+      message: req.message,
+      placeholder: req.placeholder,
+      prefill: req.prefill,
+      timeout: req.timeout,
+    });
+  }
+
+  /**
+   * Buffer select dialogs briefly so ask can capture them if tool start is
+   * processed slightly later than the extension UI callback.
+   */
+  private bufferSelectRequest(
+    key: string,
+    active: EventProcessorSessionState,
+    req: ExtensionUIRequest,
+  ): void {
+    active.pendingUIRequests.set(req.id, req);
+
+    const buffered = active.bufferedSelectRequests ?? [];
+    if (!buffered.some((item) => item.id === req.id)) {
+      buffered.push(req);
+    }
+    active.bufferedSelectRequests = buffered;
+
+    if (active.bufferedSelectFlushTimer) {
+      return;
+    }
+
+    active.bufferedSelectFlushTimer = setTimeout(() => {
+      active.bufferedSelectFlushTimer = undefined;
+      this.flushBufferedSelectRequests(key, active);
+    }, SessionEventProcessor.ASK_SELECT_BUFFER_MS);
+  }
+
+  private flushBufferedSelectRequests(key: string, active: EventProcessorSessionState): void {
+    const buffered = active.bufferedSelectRequests;
+    if (!buffered || buffered.length === 0) {
+      return;
+    }
+
+    active.bufferedSelectRequests = [];
+
+    for (const req of buffered) {
+      if (!active.pendingUIRequests.has(req.id)) {
+        continue;
+      }
+      this.broadcastDialogRequest(key, active.session.id, req);
+    }
+  }
+
+  /**
+   * Move any buffered select dialogs that belong to this ask request into the
+   * deferred queue. Unmatched selects are flushed as normal dialogs.
+   */
+  private captureBufferedSelectRequestsForAsk(
+    key: string,
+    active: EventProcessorSessionState,
+  ): void {
+    const ask = active.pendingAsk;
+    const buffered = active.bufferedSelectRequests;
+    if (!ask || !buffered || buffered.length === 0) {
+      return;
+    }
+
+    const remaining: ExtensionUIRequest[] = [];
+
+    for (const req of buffered) {
+      const questionIndex = this.findAskQuestionIndex(req, ask.questions);
+      if (questionIndex === undefined) {
+        remaining.push(req);
+        continue;
+      }
+
+      ask.deferred.push({ id: req.id, req, questionIndex });
+    }
+
+    active.bufferedSelectRequests = remaining;
+
+    if (remaining.length === 0) {
+      if (active.bufferedSelectFlushTimer) {
+        clearTimeout(active.bufferedSelectFlushTimer);
+        active.bufferedSelectFlushTimer = undefined;
+      }
+    } else {
+      this.flushBufferedSelectRequests(key, active);
+    }
+
+    const response = ask.response;
+    if (response) {
+      this.resolveAskDeferred(key, active, response.answers, response.cancelled);
+    }
+  }
+
+  private findAskQuestionIndex(
+    req: ExtensionUIRequest,
+    questions: Array<{ id: string; question: string; multiSelect?: boolean }>,
+  ): number | undefined {
+    const title = this.normalizeAskText(req.title);
+    if (!title) {
+      return undefined;
+    }
+
+    const exactIndex = questions.findIndex(
+      (question) => this.normalizeAskText(question.question) === title,
+    );
+    if (exactIndex >= 0) {
+      return exactIndex;
+    }
+
+    const fuzzyMatches = questions
+      .map((question, index) => ({ index, text: this.normalizeAskText(question.question) }))
+      .filter(({ text }) => text.includes(title) || title.includes(text));
+
+    return fuzzyMatches.length === 1 ? fuzzyMatches[0].index : undefined;
+  }
+
+  private normalizeAskText(text: string | undefined): string {
+    return (text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
   }
 
   /** Resolve deferred select/input requests using iOS ask answers. */

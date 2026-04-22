@@ -17,7 +17,6 @@ const TEST_CONFIG: ServerConfig = {
   host: "127.0.0.1",
   dataDir: "/tmp/oppi-lifecycle-tests",
   defaultModel: "anthropic/claude-sonnet-4-0",
-  sessionTimeout: 600_000,
   sessionIdleTimeoutMs: 600_000,
   workspaceIdleTimeoutMs: 1_800_000,
   maxSessionsPerWorkspace: 3,
@@ -83,7 +82,7 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
   };
 
   const key = session.id;
-  ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
+  (manager as unknown as { active: Map<string, unknown> }).active.set(key, active);
 
   const events: ServerMessage[] = [];
   manager.subscribe(session.id, (msg) => {
@@ -270,9 +269,8 @@ describe("SessionManager extension UI", () => {
     feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-2",
-      method: "select",
+      method: "confirm",
       title: "Pick an option",
-      options: ["a", "b"],
     });
 
     expect(active.pendingUIRequests.has("ui-2")).toBe(true);
@@ -347,8 +345,9 @@ describe("SessionManager session end", () => {
     const { manager, events, gate } = makeManagerHarness();
 
     // Trigger handleSessionEnd (async since dispose() became awaitable)
-    await (manager as unknown as { handleSessionEnd: (key: string, reason: string) => Promise<void> })
-      .handleSessionEnd("s1", "completed");
+    await (
+      manager as unknown as { handleSessionEnd: (key: string, reason: string) => Promise<void> }
+    ).handleSessionEnd("s1", "completed");
 
     expect(events.some((e) => e.type === "session_ended")).toBe(true);
     expect(manager.isActive("s1")).toBe(false);
@@ -366,8 +365,9 @@ describe("SessionManager session end", () => {
       method: "confirm",
     });
 
-    (manager as unknown as { handleSessionEnd: (key: string, reason: string) => void })
-      .handleSessionEnd("s1", "completed");
+    (
+      manager as unknown as { handleSessionEnd: (key: string, reason: string) => void }
+    ).handleSessionEnd("s1", "completed");
 
     expect(active.pendingUIRequests.size).toBe(0);
   });
@@ -375,8 +375,9 @@ describe("SessionManager session end", () => {
   it("saves session with stopped status", () => {
     const { manager, session, storage } = makeManagerHarness();
 
-    (manager as unknown as { handleSessionEnd: (key: string, reason: string) => void })
-      .handleSessionEnd("s1", "completed");
+    (
+      manager as unknown as { handleSessionEnd: (key: string, reason: string) => void }
+    ).handleSessionEnd("s1", "completed");
 
     expect(session.status).toBe("stopped");
     expect(storage.saveSession).toHaveBeenCalled();
@@ -567,9 +568,7 @@ describe("SessionManager steer", () => {
   it("throws if session is not busy", async () => {
     const { manager } = makeManagerHarness({ status: "ready" });
 
-    await expect(manager.sendSteer("s1", "focus")).rejects.toThrow(
-      "active streaming turn",
-    );
+    await expect(manager.sendSteer("s1", "focus")).rejects.toThrow("active streaming turn");
   });
 
   it("throws for nonexistent session", async () => {
@@ -593,9 +592,7 @@ describe("SessionManager follow_up", () => {
   it("throws if session is not busy", async () => {
     const { manager } = makeManagerHarness({ status: "ready" });
 
-    await expect(manager.sendFollowUp("s1", "more")).rejects.toThrow(
-      "active streaming turn",
-    );
+    await expect(manager.sendFollowUp("s1", "more")).rejects.toThrow("active streaming turn");
   });
 });
 
@@ -718,9 +715,9 @@ describe("SessionManager RPC passthrough", () => {
   it("rejects non-allowlisted commands", async () => {
     const { manager } = makeManagerHarness();
 
-    await expect(
-      manager.forwardClientCommand("s1", { type: "evil_command" }),
-    ).rejects.toThrow("not allowed");
+    await expect(manager.forwardClientCommand("s1", { type: "evil_command" })).rejects.toThrow(
+      "not allowed",
+    );
   });
 
   it("throws for nonexistent session", async () => {
@@ -1019,9 +1016,8 @@ describe("extension UI protocol", () => {
     feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-dialog-1",
-      method: "select",
+      method: "confirm",
       title: "Pick one",
-      options: [{ label: "A" }, { label: "B" }],
     });
 
     const uiReq = events.find((e) => e.type === "extension_ui_request");

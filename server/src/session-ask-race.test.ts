@@ -184,4 +184,94 @@ describe("ask response/deferred race", () => {
     expect(active.pendingAsk).toBeUndefined();
     expect(active.pendingUIRequests.size).toBe(0);
   });
+
+  it("captures early select requests when ask tool_start arrives shortly after", () => {
+    vi.useFakeTimers();
+    try {
+      const { key, active, processor, broadcast } = createHarness();
+      active.pendingAsk = undefined;
+
+      processor.handleExtensionUIRequest(key, active, {
+        type: "extension_ui_request",
+        id: "sel-1",
+        method: "select",
+        title: "Question 1",
+        options: ["Alpha", "Other"],
+      });
+
+      // Buffered (not shown as a generic select sheet yet).
+      expect(broadcast).not.toHaveBeenCalled();
+      expect(active.pendingUIRequests.has("sel-1")).toBe(true);
+
+      processor.updateSessionFromEvent(key, active, {
+        type: "tool_execution_start",
+        toolName: "ask",
+        toolCallId: "tc-ask-1",
+        args: {
+          questions: [
+            {
+              id: "q1",
+              question: "Question 1",
+              options: [{ value: "alpha", label: "Alpha" }],
+            },
+            {
+              id: "q2",
+              question: "Question 2",
+              options: [{ value: "beta", label: "Beta" }],
+            },
+          ],
+        },
+      } as never);
+
+      const askBroadcasts = broadcast.mock.calls
+        .map((call) => call[1] as { type?: string; method?: string })
+        .filter((msg) => msg.type === "extension_ui_request" && msg.method === "ask");
+      const selectBroadcasts = broadcast.mock.calls
+        .map((call) => call[1] as { type?: string; method?: string })
+        .filter((msg) => msg.type === "extension_ui_request" && msg.method === "select");
+
+      expect(askBroadcasts).toHaveLength(1);
+      expect(selectBroadcasts).toHaveLength(0);
+      const capturedAsk = active.pendingAsk as PendingAskState | undefined;
+      expect(capturedAsk?.deferred.map((item) => item.id)).toEqual(["sel-1"]);
+
+      // Buffered select should never flush to generic dialog once captured.
+      vi.advanceTimersByTime(1000);
+      const selectAfter = broadcast.mock.calls
+        .map((call) => call[1] as { type?: string; method?: string })
+        .filter((msg) => msg.type === "extension_ui_request" && msg.method === "select");
+      expect(selectAfter).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes buffered select as a normal dialog when no ask start follows", () => {
+    vi.useFakeTimers();
+    try {
+      const { key, active, processor, broadcast } = createHarness();
+      active.pendingAsk = undefined;
+
+      processor.handleExtensionUIRequest(key, active, {
+        type: "extension_ui_request",
+        id: "sel-1",
+        method: "select",
+        title: "Pick an option",
+        options: ["A", "B"],
+      });
+
+      expect(broadcast).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1000);
+
+      const selectBroadcasts = broadcast.mock.calls
+        .map((call) => call[1] as { type?: string; id?: string; method?: string })
+        .filter((msg) => msg.type === "extension_ui_request" && msg.method === "select");
+
+      expect(selectBroadcasts).toHaveLength(1);
+      expect(selectBroadcasts[0]).toMatchObject({ id: "sel-1", method: "select" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
