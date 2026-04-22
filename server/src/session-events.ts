@@ -48,11 +48,18 @@ export interface PendingAskState {
   /** Questions from tool args (ordered). */
   questions: Array<{ id: string; question: string; multiSelect?: boolean }>;
   /** Extension select/input requests deferred until iOS responds. */
-  deferred: Array<{ id: string; req: ExtensionUIRequest }>;
+  deferred: Array<{ id: string; req: ExtensionUIRequest; questionIndex?: number }>;
   /** Full broadcast message — stored for re-sending on client reconnect. */
   broadcastMessage: ServerMessage;
   /** Timestamp when the ask flow was initiated (for round-trip timing). */
   initiatedAt: number;
+  /** iOS ask response once received (may arrive before deferred select() calls). */
+  response?: {
+    answers: Record<string, string | string[]>;
+    cancelled: boolean;
+  };
+  /** Number of deferred select/input requests already resolved. */
+  resolvedDeferredCount?: number;
 }
 
 export interface EventProcessorSessionState {
@@ -150,7 +157,17 @@ export class SessionEventProcessor {
     // AskCard is active. They'll be resolved when iOS responds to the ask.
     if (active.pendingAsk && (req.method === "select" || req.method === "input")) {
       active.pendingUIRequests.set(req.id, req);
-      active.pendingAsk.deferred.push({ id: req.id, req });
+      const questionIndex =
+        (active.pendingAsk.resolvedDeferredCount ?? 0) + active.pendingAsk.deferred.length;
+      active.pendingAsk.deferred.push({ id: req.id, req, questionIndex });
+
+      // Race fix: the ask answer can arrive before these deferred select/input
+      // requests are emitted. If we already have the answer, resolve immediately
+      // instead of leaking into normal dialog flow (which can deadlock ask).
+      const response = active.pendingAsk.response;
+      if (response) {
+        this.resolveAskDeferred(key, active, response.answers, response.cancelled);
+      }
       return;
     }
 
@@ -375,6 +392,7 @@ export class SessionEventProcessor {
       deferred: [],
       broadcastMessage,
       initiatedAt: Date.now(),
+      resolvedDeferredCount: 0,
     };
 
     // Register as pending so the iOS response is accepted
@@ -407,9 +425,11 @@ export class SessionEventProcessor {
       });
     }
 
+    const hadStoredResponse = Boolean(ask.response);
+
     for (let i = 0; i < ask.deferred.length; i++) {
-      const { id, req } = ask.deferred[i];
-      const question = ask.questions[i];
+      const { id, req, questionIndex } = ask.deferred[i];
+      const question = ask.questions[questionIndex ?? i];
 
       if (cancelled) {
         this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
@@ -457,10 +477,17 @@ export class SessionEventProcessor {
       }
     }
 
+    const resolvedNow = ask.deferred.length;
     ask.deferred = [];
-    // Clear pendingAsk so subsequent select() calls (if the extension
-    // calls them sequentially) go through the normal UI path instead of
-    // being deferred into a dead queue that nobody resolves.
+    ask.resolvedDeferredCount = (ask.resolvedDeferredCount ?? 0) + resolvedNow;
+
+    // If iOS already answered, deferred select()/input requests may arrive late.
+    // Keep ask interception alive until we've resolved one deferred request per
+    // question so late arrivals don't leak into normal dialogs and hang ask.
+    if (hadStoredResponse && ask.resolvedDeferredCount < ask.questions.length) {
+      return;
+    }
+
     active.pendingAsk = undefined;
   }
 

@@ -51,6 +51,11 @@ export class SessionUICoordinator {
         }
       }
 
+      // Store the response on pendingAsk before resolving deferred requests.
+      // This lets SessionEventProcessor keep interception active when the ask
+      // answer arrives before deferred select()/input requests are emitted.
+      active.pendingAsk.response = { answers, cancelled };
+
       this.deps.eventProcessor.resolveAskDeferred(key, active, answers, cancelled);
       return true;
     }
