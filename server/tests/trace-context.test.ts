@@ -84,6 +84,36 @@ describe("buildSessionContext", () => {
     expect(events[2].text).toBe("thanks");
   });
 
+  it("respects an explicit leaf override when rewinding to an earlier tree node", () => {
+    const entries = [
+      msg("u1", null, "user", "root"),
+      msg("a1", "u1", "assistant", "first reply"),
+      msg("u2", "a1", "user", "rewind target"),
+      msg("a2", "u2", "assistant", "newest leaf in file"),
+    ];
+
+    const events = buildSessionContext(entries, { view: "full", leafId: "u2" });
+
+    expect(events.map((event) => event.id)).toEqual(["u1", "a1", "u2"]);
+    expect(events.at(-1)?.text).toBe("rewind target");
+  });
+
+  it("returns an empty context when the live leaf is explicitly reset to null", () => {
+    const entries = [msg("u1", null, "user", "root"), msg("a1", "u1", "assistant", "first reply")];
+
+    expect(buildSessionContext(entries, { view: "full", leafId: null })).toEqual([]);
+  });
+
+  it("returns an empty context when an explicit leaf override is missing from the file", () => {
+    const entries = [
+      msg("u1", null, "user", "root"),
+      msg("a1", "u1", "assistant", "first reply"),
+      msg("u2", "a1", "user", "newest leaf in file"),
+    ];
+
+    expect(buildSessionContext(entries, { view: "full", leafId: "missing-leaf" })).toEqual([]);
+  });
+
   it("handles assistant content blocks (text + thinking + toolCall)", () => {
     const entries = [
       msg("1", null, "user", "help"),
@@ -130,7 +160,12 @@ describe("buildSessionContext", () => {
     const entries = [
       msg("1", null, "user", "create a todo"),
       msg("2", "1", "assistant", [
-        { type: "toolCall", id: "tc1", name: "todo", arguments: { action: "create", title: "test" } },
+        {
+          type: "toolCall",
+          id: "tc1",
+          name: "todo",
+          arguments: { action: "create", title: "test" },
+        },
       ]),
       msg("3", "2", "toolResult", "Todo created", {
         toolCallId: "tc1",
@@ -195,7 +230,9 @@ describe("buildSessionContext", () => {
     expect(events[0].text).toContain("Prior conversation about setup");
 
     // Old messages 1 and 2 should be hidden
-    const texts = events.filter((e) => e.type === "user" || e.type === "assistant").map((e) => e.text);
+    const texts = events
+      .filter((e) => e.type === "user" || e.type === "assistant")
+      .map((e) => e.text);
     expect(texts).not.toContain("old message 1");
     expect(texts).not.toContain("old response 1");
 
@@ -210,8 +247,10 @@ describe("buildSessionContext", () => {
   });
 
   it("returns empty when no entries have ids", () => {
-    const entries = [{ type: "session", id: "", parentId: null }];
-    expect(buildSessionContext(entries as any)).toEqual([]);
+    const entries = [{ type: "session", id: "", parentId: null }] as Parameters<
+      typeof buildSessionContext
+    >[0];
+    expect(buildSessionContext(entries)).toEqual([]);
   });
 
   it("handles model_change entries", () => {
@@ -348,10 +387,7 @@ describe("buildSessionContext", () => {
 
 describe("parseJsonl", () => {
   it("parses JSONL string into events", () => {
-    const jsonl = toJsonl([
-      msg("1", null, "user", "hello"),
-      msg("2", "1", "assistant", "world"),
-    ]);
+    const jsonl = toJsonl([msg("1", null, "user", "hello"), msg("2", "1", "assistant", "world")]);
 
     const events = parseJsonl(jsonl);
     expect(events).toHaveLength(2);
@@ -361,7 +397,10 @@ describe("parseJsonl", () => {
 
   it("skips malformed lines", () => {
     const jsonl =
-      JSON.stringify(msg("1", null, "user", "valid")) + "\n{bad json}\n" + JSON.stringify(msg("2", "1", "assistant", "also valid")) + "\n";
+      JSON.stringify(msg("1", null, "user", "valid")) +
+      "\n{bad json}\n" +
+      JSON.stringify(msg("2", "1", "assistant", "also valid")) +
+      "\n";
 
     const events = parseJsonl(jsonl);
     expect(events).toHaveLength(2);
@@ -409,10 +448,7 @@ describe("findToolOutput", () => {
   });
 
   it("returns null for nonexistent toolCallId", () => {
-    const jsonl = toJsonl([
-      msg("1", null, "user", "hi"),
-      msg("2", "1", "assistant", "hello"),
-    ]);
+    const jsonl = toJsonl([msg("1", null, "user", "hi"), msg("2", "1", "assistant", "hello")]);
 
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, jsonl);

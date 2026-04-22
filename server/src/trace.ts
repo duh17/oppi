@@ -18,12 +18,16 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "./logger.js";
 
 export type TraceViewMode = "context" | "full";
 
 export interface TraceReadOptions {
   view?: TraceViewMode;
+  leafId?: string | null;
 }
+
+const log = createLogger({ base: { component: "trace" } });
 
 // ─── Trace Event Types ───
 
@@ -100,8 +104,9 @@ interface SessionEntry {
  *
  * This produces the same view the user sees in pi TUI.
  */
-function buildEntryPath(entries: SessionEntry[]): SessionEntry[] {
+function buildEntryPath(entries: SessionEntry[], leafId?: string | null): SessionEntry[] {
   if (entries.length === 0) return [];
+  if (leafId === null) return [];
 
   const byId = new Map<string, SessionEntry>();
   for (const entry of entries) {
@@ -111,11 +116,18 @@ function buildEntryPath(entries: SessionEntry[]): SessionEntry[] {
   }
 
   let leaf: SessionEntry | undefined;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.type !== "session" && entry.id) {
-      leaf = entry;
-      break;
+  if (leafId !== undefined) {
+    leaf = byId.get(leafId);
+    if (!leaf) {
+      return [];
+    }
+  } else {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.type !== "session" && entry.id) {
+        leaf = entry;
+        break;
+      }
     }
   }
 
@@ -162,7 +174,7 @@ export function buildSessionContext(
   if (entries.length === 0) return [];
 
   const view = options.view ?? "context";
-  const path = buildEntryPath(entries);
+  const path = buildEntryPath(entries, options.leafId);
 
   if (path.length === 0) return [];
 
@@ -334,20 +346,21 @@ function emitMessageEvents(entry: SessionEntry, timestamp: string, events: Trace
             timestamp,
             thinking: b.thinking as string,
           });
-        } else if (b.type === "toolCall" || b.type === "tool_call") {
+        } else if (b.type === "toolCall") {
           events.push({
             id: (b.id as string) || `${entry.id}-tool-${subIdx++}`,
             type: "toolCall",
             timestamp,
-            tool: (b.name as string) || (b.tool_name as string) || "unknown",
+            tool: (b.name as string) || "unknown",
             args: (b.arguments as Record<string, unknown>) || tryParseJson(b.partialJson),
           });
         } else if (b.type && !KNOWN_BLOCK_TYPES.has(b.type as string)) {
           // Unknown content block type — log so new API formats don't
           // silently vanish from the timeline.
-          console.warn(
-            `[trace] Unknown assistant content block type "${b.type as string}" in entry ${entry.id}`,
-          );
+          log.warn("trace.unknown_assistant_block_type", {
+            entryId: entry.id,
+            blockType: b.type as string,
+          });
         }
       }
     } else if (typeof content === "string" && content) {
@@ -630,7 +643,6 @@ const KNOWN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   ...TEXT_BLOCK_TYPES,
   "thinking",
   "toolCall",
-  "tool_call",
   "image",
   "audio",
   "output_audio",
