@@ -418,7 +418,9 @@ export class SdkBackend {
         extensionFactories,
         systemPrompt: workspaceSystemPromptMode === "replace" ? workspace?.systemPrompt : undefined,
         appendSystemPrompt:
-          workspaceSystemPromptMode === "append" ? workspace?.systemPrompt : undefined,
+          workspaceSystemPromptMode === "append" && workspace?.systemPrompt
+            ? [workspace.systemPrompt]
+            : undefined,
         extensionsOverride: (base) => {
           // 1. Filter out extensions managed directly by oppi-server.
           //    ask and spawn_agent are injected as first-party factory extensions,
@@ -855,6 +857,10 @@ export class SdkBackend {
 
       setWorkingMessage: (_message) => {
         // Working message requires TUI access; unsupported in Oppi sessions.
+      },
+
+      setWorkingIndicator: (_options) => {
+        // Working indicator customization requires TUI access; unsupported in Oppi sessions.
       },
 
       setWidget: (key, content, options) => {

@@ -69,6 +69,9 @@ function sdkSkillToInfo(skill: Skill): SkillInfo {
 // ─── Skill Registry ───
 
 const log = createLogger({ base: { component: "skills" } });
+const HOST_AGENT_DIR = join(homedir(), ".pi", "agent");
+const HOST_SKILLS_DIR = join(HOST_AGENT_DIR, "skills");
+const SKILLS_SDK_CWD = process.cwd();
 
 /** Emitted when the skill catalog changes after a re-scan. */
 export interface SkillsChangedEvent {
@@ -89,7 +92,7 @@ export class SkillRegistry extends EventEmitter {
 
   constructor(extraDirs?: string[], opts?: { debounceMs?: number }) {
     super();
-    this.scanDirs = [join(homedir(), ".pi", "agent", "skills"), ...(extraDirs || [])];
+    this.scanDirs = [HOST_SKILLS_DIR, ...(extraDirs || [])];
     this.debounceMs = opts?.debounceMs ?? 500;
   }
 
@@ -108,11 +111,10 @@ export class SkillRegistry extends EventEmitter {
     this.packageSkillsResolved = true;
 
     try {
-      const agentDir = join(homedir(), ".pi", "agent");
-      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+      const settingsManager = SettingsManager.create(SKILLS_SDK_CWD, HOST_AGENT_DIR);
       const packageManager = new DefaultPackageManager({
-        cwd: process.cwd(),
-        agentDir,
+        cwd: SKILLS_SDK_CWD,
+        agentDir: HOST_AGENT_DIR,
         settingsManager,
       });
 
@@ -160,6 +162,8 @@ export class SkillRegistry extends EventEmitter {
 
       try {
         const result = loadSkills({
+          cwd: SKILLS_SDK_CWD,
+          agentDir: HOST_AGENT_DIR,
           skillPaths: [dir],
           includeDefaults: false,
         });
@@ -185,6 +189,8 @@ export class SkillRegistry extends EventEmitter {
     if (this.packageSkillPaths.length > 0) {
       try {
         const result = loadSkills({
+          cwd: SKILLS_SDK_CWD,
+          agentDir: HOST_AGENT_DIR,
           skillPaths: this.packageSkillPaths,
           includeDefaults: false,
         });
@@ -308,6 +314,8 @@ export class SkillRegistry extends EventEmitter {
 
       try {
         const result = loadSkills({
+          cwd: SKILLS_SDK_CWD,
+          agentDir: HOST_AGENT_DIR,
           skillPaths: [us.path],
           includeDefaults: false,
         });

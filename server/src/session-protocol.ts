@@ -348,21 +348,27 @@ function computeToolDelta(lastText: string, fullText: string): string {
 }
 
 /**
- * Extract toolCallId from a pi event, falling back to the event's `id` field.
+ * Extract toolCallId from a pi event.
  * Hoisted to a module-level helper to avoid re-creating a closure per call.
  */
 function resolveToolCallId(event: AgentSessionEvent): string | undefined {
-  if (
-    "toolCallId" in event &&
-    typeof event.toolCallId === "string" &&
-    event.toolCallId.length > 0
-  ) {
-    return event.toolCallId;
+  // If toolCallId is explicitly present, trust it. An empty string is treated
+  // as intentionally missing and we do not backfill from other fields.
+  if ("toolCallId" in event) {
+    if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+      return event.toolCallId;
+    }
+    return undefined;
   }
 
-  // Some pi tool events omit toolCallId but still include a stable event id.
-  // Use it so stream-time IDs match trace lookup IDs.
-  if ("id" in event && typeof event.id === "string" && event.id.length > 0) {
+  // Compatibility fallback: some older payloads on start/end carry the call id
+  // as `id` instead of `toolCallId`.
+  if (
+    (event.type === "tool_execution_start" || event.type === "tool_execution_end") &&
+    "id" in event &&
+    typeof event.id === "string" &&
+    event.id.length > 0
+  ) {
     return event.id;
   }
 
@@ -837,7 +843,7 @@ function extractChangedFilePath(rawArgs: unknown): string | null {
   }
 
   const args = rawArgs as Record<string, unknown>;
-  const candidate = args.path ?? args.file_path;
+  const candidate = args.path;
   if (typeof candidate !== "string") {
     return null;
   }
