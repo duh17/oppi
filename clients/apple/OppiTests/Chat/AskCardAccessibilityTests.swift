@@ -58,14 +58,14 @@ struct AskCardAccessibilityTests {
         #expect(text == "Question 2 of 2: Pick a size")
     }
 
-    @Test func pageAnnouncementSubmitPage() {
+    @Test func pageAnnouncementOutOfRangeClampsToLastQuestion() {
         let questions = sampleQuestions()
         let text = AskCard.pageAnnouncementText(
             page: 2,
             questions: questions,
             isSingleQuestionSingleSelect: false
         )
-        #expect(text == "Review and submit answers")
+        #expect(text == "Question 2 of 2: Pick a size")
     }
 
     @Test func pageAnnouncementSingleQuestion() {

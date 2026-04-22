@@ -133,18 +133,16 @@ struct AskCardTests {
         #expect(AskCard.pageCount(for: request) == 1)
     }
 
-    @Test("Multi-question has questions + 1 submit page")
+    @Test("Multi-question has one page per question")
     func multiQuestionPageCount() {
         let request = Self.multiQuestionRequest()
-        // 2 questions + 1 submit = 3
-        #expect(AskCard.pageCount(for: request) == 3)
+        #expect(AskCard.pageCount(for: request) == 2)
     }
 
-    @Test("Single question multi-select gets pager with submit page")
+    @Test("Single question multi-select stays on one page")
     func singleMultiSelectPageCount() {
         let request = Self.multiSelectOnlyRequest()
-        // 1 question + 1 submit = 2
-        #expect(AskCard.pageCount(for: request) == 2)
+        #expect(AskCard.pageCount(for: request) == 1)
     }
 
     // MARK: - Answer Map

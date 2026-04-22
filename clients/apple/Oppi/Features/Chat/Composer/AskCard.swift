@@ -59,7 +59,7 @@ enum AskResponseEncoder {
 /// Inline question card rendered inside the ChatInputBar capsule.
 ///
 /// Supports single-question direct mode (tap option → send immediately)
-/// and multi-question pager with a submit page at the end.
+/// and multi-question pager without an extra submit/review page.
 ///
 /// No text is truncated — question text, option labels, and descriptions
 /// all size to content. If inline height exceeds ~40% of screen, an expand
@@ -91,14 +91,9 @@ struct AskCard: View {
         request.questions.count == 1 && !request.questions[0].multiSelect
     }
 
-    /// Total pages: one per question + submit page (multi-question only).
+    /// Total pages: one per question.
     private var totalPages: Int {
-        isSingleQuestionSingleSelect ? 1 : request.questions.count + 1
-    }
-
-    /// Whether the current page is the submit/review page.
-    private var isSubmitPage: Bool {
-        !isSingleQuestionSingleSelect && currentPage == request.questions.count
+        AskCard.pageCount(for: request)
     }
 
     private var currentQuestion: AskQuestion? {
@@ -106,11 +101,13 @@ struct AskCard: View {
         return request.questions[currentPage]
     }
 
+    private var isLastQuestionPage: Bool {
+        !isSingleQuestionSingleSelect && currentPage == request.questions.count - 1
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if isSubmitPage {
-                submitPageContent
-            } else if let question = currentQuestion {
+            if let question = currentQuestion {
                 questionPageContent(question)
             }
 
@@ -181,7 +178,10 @@ struct AskCard: View {
             optionStrip(for: question)
 
             // Multi-select done button
-            if question.multiSelect, let selected = AskCardShared.multiSelectCount(for: question, answers: answers), selected > 0 {
+            if question.multiSelect,
+               let selected = AskCardShared.multiSelectCount(for: question, answers: answers),
+               selected > 0,
+               !isLastQuestionPage {
                 Button {
                     confirmMultiSelect(for: question)
                 } label: {
@@ -219,7 +219,7 @@ struct AskCard: View {
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
                     onSubmit(answers)
-                } else {
+                } else if !isLastQuestionPage {
                     Task {
                         try? await Task.sleep(for: autoAdvanceDelay)
                         withAnimation(.easeInOut(duration: 0.25)) {
@@ -290,7 +290,7 @@ struct AskCard: View {
             Button {
                 handleIgnore(question: question)
             } label: {
-                Text("Ignore")
+                Text(isLastQuestionPage ? "Ignore & Send" : "Ignore")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                 + Text(" \u{2192}")
@@ -298,69 +298,22 @@ struct AskCard: View {
                     .foregroundStyle(.themeComment.opacity(0.6))
             }
             .buttonStyle(.plain)
+
+            if isLastQuestionPage {
+                Button {
+                    onSubmit(answers)
+                } label: {
+                    Text("Send")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.themeBlue, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 12)
-    }
-
-    // MARK: - Submit Page
-
-    private var submitPageContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            let entries = AskResponseEncoder.answerMap(answers: answers, questions: request.questions)
-
-            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
-                HStack(alignment: .top, spacing: 8) {
-                    if entry.answer != nil {
-                        Image(systemName: "checkmark")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeBlue)
-                            .frame(width: 14)
-                    } else {
-                        Text("\u{2014}")
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
-                            .frame(width: 14)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.question.id)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.themeFg)
-
-                        Text(AskCardShared.answerDisplayText(entry.answer))
-                            .font(.caption2)
-                            .foregroundStyle(entry.answer != nil ? .themeFg : .themeComment)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-
-            // Submit button
-            Button {
-                onSubmit(answers)
-            } label: {
-                Text("Submit Answers")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12)
-
-            // Ignore all link
-            Button {
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                onIgnoreAll()
-            } label: {
-                Text("Ignore All \u{2192}")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     // MARK: - Page Indicator
@@ -406,6 +359,9 @@ struct AskCard: View {
         if isSingleQuestionSingleSelect {
             // Single question ignored = ignore all
             onIgnoreAll()
+        } else if isLastQuestionPage {
+            // Last question ignored — submit immediately with this answer omitted.
+            onSubmit(answers)
         } else {
             withAnimation(.easeInOut(duration: 0.25)) {
                 advanceToNextPage()
@@ -425,11 +381,9 @@ struct AskCard: View {
 
 extension AskCard {
     /// Compute total page count for a given request.
-    /// Single question + single-select: 1 page (no submit page).
-    /// Otherwise: questions.count + 1 (submit page).
+    /// Ask cards now use one page per question (no extra review page).
     static func pageCount(for request: AskRequest) -> Int {
-        let isSingleSingle = request.questions.count == 1 && !request.questions[0].multiSelect
-        return isSingleSingle ? 1 : request.questions.count + 1
+        max(1, request.questions.count)
     }
 
     /// Option card width scaled for Dynamic Type accessibility sizes.
@@ -452,10 +406,10 @@ extension AskCard {
         isSingleQuestionSingleSelect: Bool
     ) -> String {
         guard !isSingleQuestionSingleSelect else { return questions[0].question }
-        if page < questions.count {
-            return "Question \(page + 1) of \(questions.count): \(questions[page].question)"
-        } else {
-            return "Review and submit answers"
+        if questions.isEmpty {
+            return ""
         }
+        let clampedPage = min(max(page, 0), questions.count - 1)
+        return "Question \(clampedPage + 1) of \(questions.count): \(questions[clampedPage].question)"
     }
 }

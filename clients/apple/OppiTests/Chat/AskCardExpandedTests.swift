@@ -96,18 +96,16 @@ struct AskCardExpandedTests {
         #expect(AskCard.pageCount(for: request) == 1)
     }
 
-    @Test("Multi-question: pages = questions + 1 submit page")
+    @Test("Multi-question: pages = questions")
     func multiQuestionPageCount() {
         let request = Self.multiQuestionRequest()
-        // 3 questions + 1 submit = 4
-        #expect(AskCard.pageCount(for: request) == 4)
+        #expect(AskCard.pageCount(for: request) == 3)
     }
 
-    @Test("Single multi-select question still gets submit page")
+    @Test("Single multi-select question stays on one page")
     func singleMultiSelectPageCount() {
         let request = Self.multiSelectOnlyRequest()
-        // 1 question + 1 submit = 2
-        #expect(AskCard.pageCount(for: request) == 2)
+        #expect(AskCard.pageCount(for: request) == 1)
     }
 
     // MARK: - Answer State
@@ -204,8 +202,8 @@ struct AskCardExpandedTests {
         }
         #expect(page == totalPages - 1)
 
-        // Submit page is at questions.count
-        #expect(page == request.questions.count)
+        // Last question page is at questions.count - 1
+        #expect(page == request.questions.count - 1)
 
         // Back to first
         for _ in 0..<(totalPages - 1) {

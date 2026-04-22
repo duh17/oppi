@@ -7,7 +7,7 @@ import UIKit
 ///
 /// Presents a vertical option list with full question text, descriptions,
 /// and optional custom text input. Multi-question requests use page
-/// navigation with a submit/review page at the end.
+/// navigation across questions only (no extra submit/review page).
 ///
 /// All state is shared with the inline `AskCard` via bindings — collapsing
 /// preserves answers and current page position.
@@ -43,13 +43,13 @@ struct AskCardExpanded: View {
         AskCard.pageCount(for: request)
     }
 
-    private var isSubmitPage: Bool {
-        !isSingleQuestionSingleSelect && currentPage == request.questions.count
-    }
-
     private var currentQuestion: AskQuestion? {
         guard currentPage < request.questions.count else { return nil }
         return request.questions[currentPage]
+    }
+
+    private var isLastQuestionPage: Bool {
+        !isSingleQuestionSingleSelect && currentPage == request.questions.count - 1
     }
 
     var body: some View {
@@ -62,9 +62,7 @@ struct AskCardExpanded: View {
             ZStack {
                 ScrollView {
                     Group {
-                        if isSubmitPage {
-                            submitPageContent
-                        } else if let question = currentQuestion {
+                        if let question = currentQuestion {
                             questionPageContent(question)
                         }
                     }
@@ -121,15 +119,9 @@ struct AskCardExpanded: View {
             Spacer()
 
             if !isSingleQuestionSingleSelect {
-                if isSubmitPage {
-                    Text("Review")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.themeComment)
-                } else {
-                    Text("Question \(currentPage + 1) of \(request.questions.count)")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.themeComment)
-                }
+                Text("Question \(currentPage + 1) of \(request.questions.count)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.themeComment)
             }
 
             Spacer()
@@ -169,7 +161,10 @@ struct AskCardExpanded: View {
                 }
             }
 
-            if question.multiSelect, let count = AskCardShared.multiSelectCount(for: question, answers: answers), count > 0 {
+            if question.multiSelect,
+               let count = AskCardShared.multiSelectCount(for: question, answers: answers),
+               count > 0,
+               !isLastQuestionPage {
                 Button {
                     confirmMultiSelect()
                 } label: {
@@ -257,12 +252,13 @@ struct AskCardExpanded: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeComment)
 
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                dictationButton(for: question)
+                    .fixedSize()
+
                 TextField("Type your answer...", text: customTextBinding(for: question.id), axis: .vertical)
                     .font(.body)
                     .foregroundStyle(.themeFg)
-                    .padding(12)
-                    .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
                     .focused($focusedQuestionId, equals: question.id)
                     .lineLimit(1...5)
                     .submitLabel(isSingleQuestionSingleSelect ? .send : .done)
@@ -277,9 +273,15 @@ struct AskCardExpanded: View {
                             }
                         }
                     }
-
-                dictationButton(for: question)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(minHeight: 46)
+            .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: optionCornerRadius)
+                    .stroke(Color.themeComment.opacity(0.12), lineWidth: 1)
+            )
         }
     }
 
@@ -316,51 +318,6 @@ struct AskCardExpanded: View {
         }
     }
 
-    // MARK: - Submit Page
-
-    private var submitPageContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Review Answers")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.themeFg)
-
-            let entries = AskResponseEncoder.answerMap(answers: answers, questions: request.questions)
-
-            ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top, spacing: 10) {
-                        if entry.answer != nil {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.body)
-                                .foregroundStyle(.themeBlue)
-                        } else {
-                            Image(systemName: "minus.circle")
-                                .font(.body)
-                                .foregroundStyle(.themeComment)
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.question.question)
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.themeFg)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Text(AskCardShared.answerDisplayText(entry.answer))
-                                .font(.subheadline)
-                                .foregroundStyle(entry.answer != nil ? .themeFg : .themeComment)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    if index < entries.count - 1 {
-                        Divider()
-                            .overlay(Color.themeComment.opacity(0.1))
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Footer
 
     private var footerBar: some View {
@@ -369,53 +326,23 @@ struct AskCardExpanded: View {
                 .overlay(Color.themeComment.opacity(0.15))
 
             HStack {
-                if isSubmitPage {
-                    Button {
-                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                        cancelDictationIfNeeded()
-                        isExpanded = false
-                        onIgnoreAll()
-                    } label: {
-                        Text("Ignore All")
+                Button {
+                    handleIgnore()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isLastQuestionPage ? "Ignore & Send" : "Ignore")
                             .font(.body)
                             .foregroundStyle(.themeComment)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment.opacity(0.6))
                     }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        handleIgnore()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Ignore")
-                                .font(.body)
-                                .foregroundStyle(.themeComment)
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment.opacity(0.6))
-                        }
-                    }
-                    .buttonStyle(.plain)
                 }
+                .buttonStyle(.plain)
 
                 Spacer()
 
-                if isSubmitPage {
-                    Button {
-                        Task {
-                            await finalizeDictationIfNeeded()
-                            isExpanded = false
-                            onSubmit(answers)
-                        }
-                    } label: {
-                        Text("Submit")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 10)
-                            .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
-                    }
-                    .buttonStyle(.plain)
-                } else if isSingleQuestionSingleSelect {
+                if isSingleQuestionSingleSelect {
                     // Single-question single-select: show Send when custom text is entered
                     if hasCustomTextForCurrentQuestion {
                         Button {
@@ -435,12 +362,29 @@ struct AskCardExpanded: View {
                         }
                         .buttonStyle(.plain)
                     }
+                } else if isLastQuestionPage {
+                    Button {
+                        Task {
+                            await finalizeDictationIfNeeded()
+                            commitCustomTextIfNeeded()
+                            isExpanded = false
+                            onSubmit(answers)
+                        }
+                    } label: {
+                        Text("Send")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 10)
+                            .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
                 } else {
                     Button {
                         navigateForward()
                     } label: {
                         HStack(spacing: 4) {
-                            Text(currentPage == request.questions.count - 1 ? "Review" : "Next")
+                            Text("Next")
                                 .font(.body.weight(.medium))
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.medium))
@@ -505,7 +449,9 @@ struct AskCardExpanded: View {
 
     private func confirmMultiSelect() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        navigateForward()
+        if !isLastQuestionPage {
+            navigateForward()
+        }
     }
 
     private func handleIgnore() {
@@ -519,6 +465,13 @@ struct AskCardExpanded: View {
         if isSingleQuestionSingleSelect {
             isExpanded = false
             onIgnoreAll()
+        } else if isLastQuestionPage {
+            Task {
+                await finalizeDictationIfNeeded()
+                commitCustomTextIfNeeded()
+                isExpanded = false
+                onSubmit(answers)
+            }
         } else {
             navigateForward()
         }
