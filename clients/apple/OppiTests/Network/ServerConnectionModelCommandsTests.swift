@@ -261,6 +261,210 @@ struct ServerConnectionModelCommandsTests {
         ))
     }
 
+    @Test func parseShareErrorEnvelopeExtractsCodeAndMessage() {
+        let parsed = ServerConnection.parseShareErrorEnvelope(
+            "[share:gh_not_authenticated] GitHub CLI is not logged in."
+        )
+
+        #expect(parsed.code == "gh_not_authenticated")
+        #expect(parsed.message == "GitHub CLI is not logged in.")
+    }
+
+    @Test func parseSharedSessionLinkParsesStructuredPayload() {
+        let link = ServerConnection.parseSharedSessionLink(from: [
+            "phase": "published",
+            "share": [
+                "url": "https://pi.dev/session/#abc123",
+                "providerRef": [
+                    "gistUrl": "https://gist.github.com/user/abc123",
+                    "gistId": "abc123",
+                ],
+            ],
+        ])
+
+        #expect(link == SharedSessionLink(
+            shareURL: "https://pi.dev/session/#abc123",
+            gistURL: "https://gist.github.com/user/abc123",
+            gistID: "abc123"
+        ))
+    }
+
+    @Test func parseShareSessionRedactionReportParsesPayload() {
+        let report = ServerConnection.parseShareSessionRedactionReport(from: [
+            "redaction": [
+                "policy": [
+                    "secrets": true,
+                    "emails": true,
+                    "phones": false,
+                    "userPaths": true,
+                    "ipAddresses": true,
+                    "jwtAndBearer": true,
+                    "namesHeuristic": false,
+                ],
+                "totalReplacements": 3,
+                "findings": [
+                    [
+                        "kind": "openai_api_key",
+                        "count": 1,
+                        "replacement": "[REDACTED_OPENAI_API_KEY]",
+                        "samples": ["sk-A…ZZZZ"],
+                    ],
+                    [
+                        "kind": "email_address",
+                        "count": 2,
+                        "replacement": "[REDACTED_EMAIL]",
+                        "samples": ["a***@example.com"],
+                    ],
+                ],
+            ],
+        ])
+
+        #expect(report == ShareSessionRedactionReport(
+            policy: ShareSessionRedactionPolicy(
+                secrets: true,
+                emails: true,
+                phones: false,
+                userPaths: true,
+                ipAddresses: true,
+                jwtAndBearer: true,
+                namesHeuristic: false
+            ),
+            totalReplacements: 3,
+            findings: [
+                ShareSessionRedactionFinding(
+                    kind: "openai_api_key",
+                    count: 1,
+                    replacement: "[REDACTED_OPENAI_API_KEY]",
+                    samples: ["sk-A…ZZZZ"]
+                ),
+                ShareSessionRedactionFinding(
+                    kind: "email_address",
+                    count: 2,
+                    replacement: "[REDACTED_EMAIL]",
+                    samples: ["a***@example.com"]
+                ),
+            ]
+        ))
+    }
+
+    @Test func parseShareSessionPublishResultParsesLinkAndRedaction() {
+        let result = ServerConnection.parseShareSessionPublishResult(from: [
+            "phase": "published",
+            "share": [
+                "url": "https://pi.dev/session/#abc123",
+                "providerRef": [
+                    "gistUrl": "https://gist.github.com/user/abc123",
+                    "gistId": "abc123",
+                ],
+            ],
+            "redaction": [
+                "totalReplacements": 1,
+                "findings": [
+                    [
+                        "kind": "email_address",
+                        "count": 1,
+                        "replacement": "[REDACTED_EMAIL]",
+                        "samples": ["a***@example.com"],
+                    ],
+                ],
+            ],
+        ])
+
+        #expect(result == SharedSessionPublishResult(
+            link: SharedSessionLink(
+                shareURL: "https://pi.dev/session/#abc123",
+                gistURL: "https://gist.github.com/user/abc123",
+                gistID: "abc123"
+            ),
+            redaction: ShareSessionRedactionReport(
+                policy: nil,
+                totalReplacements: 1,
+                findings: [
+                    ShareSessionRedactionFinding(
+                        kind: "email_address",
+                        count: 1,
+                        replacement: "[REDACTED_EMAIL]",
+                        samples: ["a***@example.com"]
+                    ),
+                ]
+            )
+        ))
+    }
+
+    @Test func parseShareSessionPrepareResultParsesPayload() {
+        let prepared = ServerConnection.parseShareSessionPrepareResult(from: [
+            "phase": "prepared",
+            "canPublish": false,
+            "artifact": ["bytes": 1234],
+            "scan": [
+                "blocked": true,
+                "findings": [
+                    ["kind": "openai_api_key", "count": 2],
+                ],
+            ],
+            "redaction": [
+                "totalReplacements": 2,
+                "findings": [
+                    [
+                        "kind": "phone_number",
+                        "count": 2,
+                        "replacement": "[REDACTED_PHONE]",
+                        "samples": ["+1…0199"],
+                    ],
+                ],
+            ],
+        ])
+
+        #expect(prepared == ShareSessionPrepareResult(
+            canPublish: false,
+            blocked: true,
+            findings: [ShareSessionScanFinding(kind: "openai_api_key", count: 2)],
+            artifactBytes: 1234,
+            redaction: ShareSessionRedactionReport(
+                policy: nil,
+                totalReplacements: 2,
+                findings: [
+                    ShareSessionRedactionFinding(
+                        kind: "phone_number",
+                        count: 2,
+                        replacement: "[REDACTED_PHONE]",
+                        samples: ["+1…0199"]
+                    ),
+                ]
+            )
+        ))
+    }
+
+    @Test func normalizeShareSessionErrorMapsStructuredCodes() {
+        let normalized = ServerConnection.normalizeShareSessionError(
+            .rejected(
+                command: "share_session",
+                reason: "[share:gh_not_installed] GitHub CLI (gh) is missing"
+            )
+        )
+
+        switch normalized {
+        case .failed(let message):
+            #expect(message.contains("GitHub CLI"))
+            #expect(!message.contains("[share:"))
+        case .timedOut:
+            Issue.record("Expected mapped .failed share error")
+        }
+    }
+
+    @Test func normalizeShareSessionErrorMapsTimeouts() {
+        let normalized = ServerConnection.normalizeShareSessionError(
+            .timeout(command: "share_session")
+        )
+
+        switch normalized {
+        case .timedOut:
+            #expect(true)
+        case .failed:
+            Issue.record("Expected .timedOut share error")
+        }
+    }
+
     @Test func parseSessionStatsParsesStringsAndFallsBackTotal() {
         let stats = ServerConnection.parseSessionStats(from: [
             "tokens": [

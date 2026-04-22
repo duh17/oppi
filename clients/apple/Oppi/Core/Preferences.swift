@@ -347,6 +347,27 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Share
+
+    enum Share {
+        private static let redactionPolicyKey = "\(AppIdentifiers.subsystem).share.redactionPolicy.v1"
+
+        static var redactionPolicy: ShareSessionRedactionPolicy {
+            guard let data = UserDefaults.standard.data(forKey: redactionPolicyKey),
+                  let decoded = try? JSONDecoder().decode(ShareSessionRedactionPolicy.self, from: data)
+            else {
+                return ShareSessionRedactionPolicy.recommended
+            }
+
+            return decoded.normalized
+        }
+
+        static func setRedactionPolicy(_ policy: ShareSessionRedactionPolicy) {
+            guard let data = try? JSONEncoder().encode(policy.normalized) else { return }
+            UserDefaults.standard.set(data, forKey: redactionPolicyKey)
+        }
+    }
+
     // MARK: - Telemetry
 
     /// User opt-in for server-side telemetry in release builds.

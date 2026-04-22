@@ -3,7 +3,11 @@ import { formatSkillsForPrompt, type AgentSession } from "@mariozechner/pi-codin
 import { ts } from "./log-utils.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { normalizeCommandError } from "./session-protocol.js";
-import { shareSession } from "./session-share.js";
+import {
+  shareSession,
+  type ShareSessionAction,
+  type ShareSessionRedactionPolicyInput,
+} from "./session-share.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
@@ -329,6 +333,29 @@ function readOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function readShareSessionAction(command: Record<string, unknown>): ShareSessionAction {
+  return command.action === "prepare" ? "prepare" : "publish";
+}
+
+function readShareSessionRedactionPolicy(
+  command: Record<string, unknown>,
+): ShareSessionRedactionPolicyInput | undefined {
+  const raw = toRecord(command.redactionPolicy);
+  if (Object.keys(raw).length === 0) {
+    return undefined;
+  }
+
+  return {
+    secrets: readOptionalBoolean(raw.secrets),
+    emails: readOptionalBoolean(raw.emails),
+    phones: readOptionalBoolean(raw.phones),
+    userPaths: readOptionalBoolean(raw.userPaths),
+    ipAddresses: readOptionalBoolean(raw.ipAddresses),
+    jwtAndBearer: readOptionalBoolean(raw.jwtAndBearer),
+    namesHeuristic: readOptionalBoolean(raw.namesHeuristic),
+  };
+}
+
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
@@ -445,7 +472,14 @@ export class SessionCommandCoordinator {
     ],
     ["get_available_models", () => []],
     ["get_commands", (session) => collectSessionCommands(session)],
-    ["share_session", (session) => shareSession(session)],
+    [
+      "share_session",
+      (session, cmd) =>
+        shareSession(session, {}, {
+          action: readShareSessionAction(cmd),
+          redactionPolicy: readShareSessionRedactionPolicy(cmd),
+        }),
+    ],
 
     ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
 

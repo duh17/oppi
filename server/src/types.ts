@@ -966,6 +966,16 @@ export interface MessageQueueDraftItem {
   createdAt?: number;
 }
 
+export interface ShareSessionRedactionPolicy {
+  secrets?: boolean;
+  emails?: boolean;
+  phones?: boolean;
+  userPaths?: boolean;
+  ipAddresses?: boolean;
+  jwtAndBearer?: boolean;
+  namesHeuristic?: boolean;
+}
+
 export type TurnCommand = "prompt" | "steer" | "follow_up";
 export type TurnAckStage = "accepted" | "dispatched" | "started";
 
@@ -1068,7 +1078,12 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "abort_bash"; requestId?: string }
     // ── Commands ──
     | { type: "get_commands"; requestId?: string }
-    | { type: "share_session"; requestId?: string }
+    | {
+        type: "share_session";
+        action?: "prepare" | "publish";
+        redactionPolicy?: ShareSessionRedactionPolicy;
+        requestId?: string;
+      }
     // ── File suggestions ──
     | { type: "get_file_suggestions"; query: string; requestId?: string }
     // ── Permission gate ──

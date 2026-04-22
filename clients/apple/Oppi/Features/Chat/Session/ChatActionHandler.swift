@@ -256,6 +256,7 @@ final class ChatActionHandler {
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionId: String,
+        redactionPolicy: ShareSessionRedactionPolicy = .recommended,
         onDispatchStarted: (() -> Void)? = nil,
         onAsyncFailure: (() -> Void)? = nil,
         onNeedsReconnect: (() -> Void)? = nil
@@ -269,14 +270,19 @@ final class ChatActionHandler {
             onDispatchStarted?()
 
             do {
-                guard let link = try await connection.shareSession() else {
+                guard let published = try await connection.shareSession(
+                    redactionPolicy: redactionPolicy.normalized
+                ) else {
                     throw CommandRequestError.rejected(
                         command: "share_session",
                         reason: "server returned an empty response"
                     )
                 }
 
-                connection.extensionToast = "Share URL: \(link.shareURL)\nGist: \(link.gistURL)"
+                connection.extensionToast = Self.shareSessionToastMessage(
+                    link: published.link,
+                    redaction: published.redaction
+                )
                 self.scheduleSendStageClear()
             } catch {
                 self.clearSendStageNow()
@@ -295,6 +301,36 @@ final class ChatActionHandler {
                 )
             }
         }
+    }
+
+    private static func shareSessionToastMessage(
+        link: SharedSessionLink,
+        redaction: ShareSessionRedactionReport?
+    ) -> String {
+        var lines = [
+            "Share URL: \(link.shareURL)",
+            "Gist: \(link.gistURL)",
+        ]
+
+        guard let redaction, redaction.totalReplacements > 0 else {
+            lines.append("Redaction: none")
+            return lines.joined(separator: "\n")
+        }
+
+        lines.append("Redaction: \(redaction.totalReplacements) replacements")
+        for finding in redaction.findings.prefix(5) {
+            var detail = "• \(finding.kind)×\(finding.count) → \(finding.replacement)"
+            if let sample = finding.samples.first, !sample.isEmpty {
+                detail += " (\(sample))"
+            }
+            lines.append(detail)
+        }
+
+        if redaction.findings.count > 5 {
+            lines.append("• … \(redaction.findings.count - 5) more")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Bash

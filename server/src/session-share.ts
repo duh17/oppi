@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -7,6 +15,61 @@ import { spawn, spawnSync } from "node:child_process";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+const SHARE_ERROR_PREFIX = "[share:";
+
+export type ShareSessionErrorCode =
+  | "session_not_persisted"
+  | "gh_not_installed"
+  | "gh_not_authenticated"
+  | "share_timeout"
+  | "gist_create_failed"
+  | "gist_parse_failed"
+  | "share_secret_detected"
+  | "share_export_failed"
+  | "share_unknown";
+
+export interface ShareSecretFinding {
+  kind: string;
+  count: number;
+}
+
+export interface ShareRedactionFinding extends ShareSecretFinding {
+  replacement: string;
+  samples: string[];
+}
+
+export interface ShareSessionRedactionPolicyInput {
+  secrets?: boolean;
+  emails?: boolean;
+  phones?: boolean;
+  userPaths?: boolean;
+  ipAddresses?: boolean;
+  jwtAndBearer?: boolean;
+  namesHeuristic?: boolean;
+}
+
+export interface ShareSessionRedactionPolicy {
+  secrets: true;
+  emails: boolean;
+  phones: boolean;
+  userPaths: boolean;
+  ipAddresses: boolean;
+  jwtAndBearer: boolean;
+  namesHeuristic: boolean;
+}
+
+export interface ShareSessionRedactionSummary {
+  enabled: boolean;
+  policy: ShareSessionRedactionPolicy;
+  totalReplacements: number;
+  findings: ShareRedactionFinding[];
+}
+
+interface ShareHtmlRedactionResult {
+  html: string;
+  findings: ShareRedactionFinding[];
+  totalReplacements: number;
+}
 
 interface GhCommandResult {
   stdout: string;
@@ -14,10 +77,53 @@ interface GhCommandResult {
   code: number;
 }
 
+export type ShareSessionAction = "prepare" | "publish";
+
+export interface ShareSessionArtifactSummary {
+  format: "html";
+  bytes: number;
+}
+
+export interface ShareSessionScanSummary {
+  enabled: boolean;
+  blocked: boolean;
+  findings: ShareSecretFinding[];
+  residualFindings: ShareSecretFinding[];
+}
+
 export interface ShareSessionResult {
   shareUrl: string;
   gistUrl: string;
   gistId: string;
+  phase: "published";
+  share: {
+    id: string;
+    url: string;
+    provider: "github_gist";
+    providerRef: {
+      gistId: string;
+      gistUrl: string;
+    };
+  };
+  artifact: ShareSessionArtifactSummary;
+  scan: ShareSessionScanSummary;
+  redaction: ShareSessionRedactionSummary;
+  warnings: string[];
+}
+
+export interface ShareSessionPrepareResult {
+  phase: "prepared";
+  canPublish: boolean;
+  artifact: ShareSessionArtifactSummary;
+  scan: ShareSessionScanSummary;
+  redaction: ShareSessionRedactionSummary;
+}
+
+export type ShareSessionCommandResult = ShareSessionResult | ShareSessionPrepareResult;
+
+export interface ShareSessionOptions {
+  action?: ShareSessionAction;
+  redactionPolicy?: ShareSessionRedactionPolicyInput;
 }
 
 interface ShareSessionDeps {
@@ -26,6 +132,609 @@ interface ShareSessionDeps {
   createSecretGist?: (htmlPath: string) => Promise<GhCommandResult>;
   makeShareViewerUrl?: (gistId: string) => string;
   makeTempPath?: () => string;
+  scanHtmlForSecrets?: (html: string) => ShareSecretFinding[];
+  redactHtml?: (html: string, policy: ShareSessionRedactionPolicy) => ShareHtmlRedactionResult;
+  isSecretScanEnabled?: () => boolean;
+  isAutoRedactionEnabled?: () => boolean;
+  shouldBlockOnSecrets?: () => boolean;
+}
+
+export class ShareSessionError extends Error {
+  constructor(
+    public readonly code: ShareSessionErrorCode,
+    message: string,
+    public readonly findings: ShareSecretFinding[] = [],
+  ) {
+    super(formatShareErrorMessage(code, message));
+    this.name = "ShareSessionError";
+  }
+}
+
+interface ShareSecretPattern {
+  kind: string;
+  regex: RegExp;
+  replacement: string;
+}
+
+type ShareRedactionCategory =
+  | "secrets"
+  | "emails"
+  | "phones"
+  | "userPaths"
+  | "ipAddresses"
+  | "jwtAndBearer"
+  | "namesHeuristic";
+
+type ShareSampleKind = "secret" | "email" | "path" | "name" | "generic";
+
+interface ShareRedactionPattern {
+  kind: string;
+  category: ShareRedactionCategory;
+  regex: RegExp;
+  replacementLabel: string;
+  replaceWith: string | ((match: string, ...captures: string[]) => string | null | undefined);
+  sampleKind: ShareSampleKind;
+}
+
+const SENSITIVE_ENV_KEY_HINTS = [
+  "KEY",
+  "TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "COOKIE",
+  "AUTH",
+  "CREDENTIAL",
+];
+
+const ENV_KEY_EXCLUDE_HINTS = [
+  "PATH",
+  "DIR",
+  "HOME",
+  "PWD",
+  "SHELL",
+  "LANG",
+  "TERM",
+  "USER",
+  "USERNAME",
+  "HOST",
+  "PORT",
+  "EDITOR",
+  "DISPLAY",
+];
+
+const SECRET_PATTERNS: ReadonlyArray<ShareSecretPattern> = [
+  {
+    kind: "openai_api_key",
+    regex: /\bsk-[A-Za-z0-9]{20,}\b/g,
+    replacement: "[REDACTED_OPENAI_API_KEY]",
+  },
+  {
+    kind: "anthropic_api_key",
+    regex: /\bsk-ant-[A-Za-z0-9-]{20,}\b/g,
+    replacement: "[REDACTED_ANTHROPIC_API_KEY]",
+  },
+  {
+    kind: "github_pat",
+    regex: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g,
+    replacement: "[REDACTED_GITHUB_TOKEN]",
+  },
+  {
+    kind: "aws_access_key",
+    regex: /\bAKIA[0-9A-Z]{16}\b/g,
+    replacement: "[REDACTED_AWS_ACCESS_KEY]",
+  },
+  {
+    kind: "private_key_header",
+    regex: /-----BEGIN (?:RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----/g,
+    replacement: "[REDACTED_PRIVATE_KEY_HEADER]",
+  },
+  {
+    kind: "bearer_token",
+    regex: /\bBearer\s+[A-Za-z0-9_.-]{20,}\b/gi,
+    replacement: "Bearer [REDACTED_BEARER_TOKEN]",
+  },
+  {
+    kind: "slack_token",
+    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+    replacement: "[REDACTED_SLACK_TOKEN]",
+  },
+  {
+    kind: "stripe_live_key",
+    regex: /\b[spr]k_live_[A-Za-z0-9]{20,}\b/g,
+    replacement: "[REDACTED_STRIPE_KEY]",
+  },
+];
+
+const EMAIL_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "email_address",
+    category: "emails",
+    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    replacementLabel: "[REDACTED_EMAIL]",
+    replaceWith: "[REDACTED_EMAIL]",
+    sampleKind: "email",
+  },
+];
+
+const PHONE_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "phone_number",
+    category: "phones",
+    regex: /\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)|\d{2,4})[\s.-]?\d{3}[\s.-]?\d{4}\b/g,
+    replacementLabel: "[REDACTED_PHONE]",
+    replaceWith: "[REDACTED_PHONE]",
+    sampleKind: "generic",
+  },
+];
+
+const USER_PATH_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "unix_user_path",
+    category: "userPaths",
+    regex: /(\/Users\/|\/home\/)[A-Za-z0-9._-]+/g,
+    replacementLabel: "<path>/[REDACTED_USER]",
+    replaceWith: (_match, prefix) => `${prefix}[REDACTED_USER]`,
+    sampleKind: "path",
+  },
+  {
+    kind: "windows_user_path",
+    category: "userPaths",
+    regex: /(\\\\Users\\\\)[^\\/\s]+/g,
+    replacementLabel: "\\\\Users\\\\[REDACTED_USER]",
+    replaceWith: (_match, prefix) => `${prefix}[REDACTED_USER]`,
+    sampleKind: "path",
+  },
+];
+
+const IP_ADDRESS_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "ipv4_address",
+    category: "ipAddresses",
+    regex: /\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
+    replacementLabel: "[REDACTED_IPV4]",
+    replaceWith: "[REDACTED_IPV4]",
+    sampleKind: "generic",
+  },
+  {
+    kind: "ipv6_address",
+    category: "ipAddresses",
+    regex: /\b(?:[A-Fa-f0-9]{1,4}:){2,7}[A-Fa-f0-9]{1,4}\b/g,
+    replacementLabel: "[REDACTED_IPV6]",
+    replaceWith: "[REDACTED_IPV6]",
+    sampleKind: "generic",
+  },
+];
+
+const JWT_BEARER_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "jwt_token",
+    category: "jwtAndBearer",
+    regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    replacementLabel: "[REDACTED_JWT]",
+    replaceWith: "[REDACTED_JWT]",
+    sampleKind: "secret",
+  },
+];
+
+const NAME_HEURISTIC_STOP_WORDS = new Set([
+  "Agent",
+  "Anthropic",
+  "Apple",
+  "AppStore",
+  "App",
+  "Assistant",
+  "Chat",
+  "Client",
+  "Code",
+  "GitHub",
+  "OpenAI",
+  "Oppi",
+  "Project",
+  "Prompt",
+  "Quick",
+  "Server",
+  "Session",
+  "Share",
+  "Skill",
+  "SwiftUI",
+  "Timeline",
+  "Tool",
+  "User",
+  "Workspace",
+  "Xcode",
+]);
+
+function looksLikeHeuristicPersonName(match: string): boolean {
+  const words = match.trim().split(/\s+/).filter((word) => word.length > 0);
+  if (words.length < 2 || words.length > 3) {
+    return false;
+  }
+
+  for (const word of words) {
+    if (!/^[A-Z][a-z'-]{1,24}$/.test(word)) {
+      return false;
+    }
+
+    if (NAME_HEURISTIC_STOP_WORDS.has(word)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+const NAME_HEURISTIC_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
+  {
+    kind: "person_name_heuristic",
+    category: "namesHeuristic",
+    regex: /\b(?:[A-Z][a-z'-]{1,24}\s+){1,2}[A-Z][a-z'-]{1,24}\b/g,
+    replacementLabel: "[REDACTED_PERSON]",
+    replaceWith: (match) => (looksLikeHeuristicPersonName(match) ? "[REDACTED_PERSON]" : match),
+    sampleKind: "name",
+  },
+];
+
+const SECRET_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = SECRET_PATTERNS.map((pattern) => ({
+  kind: pattern.kind,
+  category: "secrets",
+  regex: pattern.regex,
+  replacementLabel: pattern.replacement,
+  replaceWith: pattern.replacement,
+  sampleKind: "secret",
+}));
+
+const DEFAULT_SHARE_REDACTION_POLICY: ShareSessionRedactionPolicy = {
+  secrets: true,
+  emails: true,
+  phones: true,
+  userPaths: true,
+  ipAddresses: true,
+  jwtAndBearer: true,
+  namesHeuristic: false,
+};
+
+function parseBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return !/^(0|false|off|no)$/i.test(raw.trim());
+}
+
+function secretScanEnabled(): boolean {
+  return parseBoolEnv("OPPI_SHARE_SECRET_SCAN", true);
+}
+
+function autoRedactionEnabled(): boolean {
+  return parseBoolEnv("OPPI_SHARE_AUTO_REDACT", true);
+}
+
+function blockOnSecretFindings(): boolean {
+  return parseBoolEnv("OPPI_SHARE_BLOCK_ON_SECRETS", false);
+}
+
+function defaultRedactionPolicyFromEnv(): ShareSessionRedactionPolicy {
+  return {
+    secrets: true,
+    emails: parseBoolEnv("OPPI_SHARE_REDACT_EMAILS", DEFAULT_SHARE_REDACTION_POLICY.emails),
+    phones: parseBoolEnv("OPPI_SHARE_REDACT_PHONES", DEFAULT_SHARE_REDACTION_POLICY.phones),
+    userPaths: parseBoolEnv("OPPI_SHARE_REDACT_USER_PATHS", DEFAULT_SHARE_REDACTION_POLICY.userPaths),
+    ipAddresses: parseBoolEnv(
+      "OPPI_SHARE_REDACT_IP_ADDRESSES",
+      DEFAULT_SHARE_REDACTION_POLICY.ipAddresses,
+    ),
+    jwtAndBearer: parseBoolEnv(
+      "OPPI_SHARE_REDACT_JWT_AND_BEARER",
+      DEFAULT_SHARE_REDACTION_POLICY.jwtAndBearer,
+    ),
+    namesHeuristic: parseBoolEnv(
+      "OPPI_SHARE_REDACT_NAMES_HEURISTIC",
+      DEFAULT_SHARE_REDACTION_POLICY.namesHeuristic,
+    ),
+  };
+}
+
+function normalizeRedactionPolicy(
+  input: ShareSessionRedactionPolicyInput | undefined,
+): ShareSessionRedactionPolicy {
+  const fallback = defaultRedactionPolicyFromEnv();
+
+  return {
+    secrets: true,
+    emails: typeof input?.emails === "boolean" ? input.emails : fallback.emails,
+    phones: typeof input?.phones === "boolean" ? input.phones : fallback.phones,
+    userPaths: typeof input?.userPaths === "boolean" ? input.userPaths : fallback.userPaths,
+    ipAddresses: typeof input?.ipAddresses === "boolean" ? input.ipAddresses : fallback.ipAddresses,
+    jwtAndBearer:
+      typeof input?.jwtAndBearer === "boolean" ? input.jwtAndBearer : fallback.jwtAndBearer,
+    namesHeuristic:
+      typeof input?.namesHeuristic === "boolean" ? input.namesHeuristic : fallback.namesHeuristic,
+  };
+}
+
+function formatShareErrorMessage(code: ShareSessionErrorCode, message: string): string {
+  const cleaned = message.replace(/\s+/g, " ").trim();
+  return `${SHARE_ERROR_PREFIX}${code}] ${cleaned}`;
+}
+
+function shareError(code: ShareSessionErrorCode, message: string): ShareSessionError {
+  return new ShareSessionError(code, message);
+}
+
+function summarizeFindings(findings: ShareSecretFinding[]): string {
+  return findings.map((finding) => `${finding.kind}×${finding.count}`).join(", ");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeEnvReplacementName(name: string): string {
+  const sanitized = name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!sanitized) {
+    return "SECRET";
+  }
+  return sanitized.slice(0, 40);
+}
+
+function looksSensitiveEnvKey(name: string): boolean {
+  const upper = name.toUpperCase();
+  if (!SENSITIVE_ENV_KEY_HINTS.some((hint) => upper.includes(hint))) {
+    return false;
+  }
+  if (ENV_KEY_EXCLUDE_HINTS.some((hint) => upper.includes(hint))) {
+    return false;
+  }
+  return true;
+}
+
+function shouldTreatEnvValueAsSecret(value: string): boolean {
+  if (value.length < 8 || value.length > 4096) {
+    return false;
+  }
+
+  if (/\s/.test(value)) {
+    return false;
+  }
+
+  // Avoid replacing obvious path-like values.
+  if ((value.includes("/") || value.includes("\\")) && !/[A-Za-z0-9]{12,}/.test(value)) {
+    return false;
+  }
+
+  return true;
+}
+
+function envLiteralRedactionPatterns(): ShareRedactionPattern[] {
+  const byValue = new Map<string, { key: string; replacementName: string }>();
+
+  for (const [name, rawValue] of Object.entries(process.env)) {
+    if (!looksSensitiveEnvKey(name)) continue;
+    if (typeof rawValue !== "string") continue;
+    const value = rawValue.trim();
+    if (!shouldTreatEnvValueAsSecret(value)) continue;
+    if (byValue.has(value)) continue;
+
+    const replacementName = normalizeEnvReplacementName(name);
+    byValue.set(value, { key: name, replacementName });
+  }
+
+  const entries = [...byValue.entries()].sort((lhs, rhs) => rhs[0].length - lhs[0].length);
+
+  return entries.map(([value, meta]) => ({
+    kind: `literal_secret_${meta.replacementName.toLowerCase()}`,
+    category: "secrets" as const,
+    regex: new RegExp(escapeRegex(value), "g"),
+    replacementLabel: `[REDACTED_${meta.replacementName}]`,
+    replaceWith: `[REDACTED_${meta.replacementName}]`,
+    sampleKind: "secret",
+  }));
+}
+
+function maskShareSample(kind: ShareSampleKind, match: string): string {
+  if (match.length === 0) {
+    return match;
+  }
+
+  if (kind === "email") {
+    const atIndex = match.indexOf("@");
+    if (atIndex > 0) {
+      return `${match[0]}***${match.slice(atIndex)}`;
+    }
+  }
+
+  if (kind === "path") {
+    return match
+      .replace(/(\/Users\/|\/home\/)[^/]+/g, "$1…")
+      .replace(/(\\\\Users\\\\)[^\\]+/g, "$1…");
+  }
+
+  if (kind === "secret") {
+    if (match.length <= 6) {
+      return "***";
+    }
+    if (match.length <= 12) {
+      return `${match.slice(0, 2)}…${match.slice(-2)}`;
+    }
+    return `${match.slice(0, 4)}…${match.slice(-4)}`;
+  }
+
+  if (kind === "name") {
+    const parts = match.trim().split(/\s+/).filter((part) => part.length > 0);
+    const masked = parts.map((part) => `${part[0] ?? ""}***`).join(" ");
+    return masked.length > 0 ? masked : "[name]";
+  }
+
+  if (match.length <= 20) {
+    return match;
+  }
+  return `${match.slice(0, 8)}…${match.slice(-4)}`;
+}
+
+function applyRedactionPattern(
+  html: string,
+  pattern: ShareRedactionPattern,
+): { html: string; finding?: ShareRedactionFinding } {
+  let count = 0;
+  const samples = new Set<string>();
+
+  const redactedHtml = html.replace(pattern.regex, (match: string, ...rest: unknown[]) => {
+    let replacement: string;
+
+    if (typeof pattern.replaceWith === "function") {
+      const captureCount = Math.max(0, rest.length - 2);
+      const captures = rest.slice(0, captureCount).map((value) =>
+        typeof value === "string" ? value : ""
+      );
+      const candidate = pattern.replaceWith(match, ...captures);
+      if (typeof candidate !== "string" || candidate === match) {
+        return match;
+      }
+      replacement = candidate;
+    } else {
+      replacement = pattern.replaceWith;
+      if (replacement === match) {
+        return match;
+      }
+    }
+
+    count += 1;
+    if (samples.size < 3) {
+      samples.add(maskShareSample(pattern.sampleKind, match));
+    }
+
+    return replacement;
+  });
+
+  if (count <= 0) {
+    return { html };
+  }
+
+  return {
+    html: redactedHtml,
+    finding: {
+      kind: pattern.kind,
+      count,
+      replacement: pattern.replacementLabel,
+      samples: [...samples],
+    },
+  };
+}
+
+function mergeRedactionFinding(
+  aggregate: Map<string, ShareRedactionFinding>,
+  finding: ShareRedactionFinding,
+): void {
+  const existing = aggregate.get(finding.kind);
+  if (!existing) {
+    aggregate.set(finding.kind, {
+      kind: finding.kind,
+      count: finding.count,
+      replacement: finding.replacement,
+      samples: finding.samples.slice(0, 3),
+    });
+    return;
+  }
+
+  existing.count += finding.count;
+  for (const sample of finding.samples) {
+    if (existing.samples.includes(sample)) continue;
+    if (existing.samples.length >= 3) break;
+    existing.samples.push(sample);
+  }
+}
+
+function defaultScanHtmlForSecrets(html: string): ShareSecretFinding[] {
+  const findings: ShareSecretFinding[] = [];
+
+  for (const pattern of SECRET_PATTERNS) {
+    const matches = html.match(pattern.regex);
+    const count = matches?.length ?? 0;
+    if (count <= 0) continue;
+    findings.push({ kind: pattern.kind, count });
+  }
+
+  return findings;
+}
+
+function redactionPatternsForPolicy(policy: ShareSessionRedactionPolicy): ShareRedactionPattern[] {
+  const patterns: ShareRedactionPattern[] = [
+    ...SECRET_REDACTION_PATTERNS,
+    ...envLiteralRedactionPatterns(),
+  ];
+
+  if (policy.emails) {
+    patterns.push(...EMAIL_REDACTION_PATTERNS);
+  }
+
+  if (policy.phones) {
+    patterns.push(...PHONE_REDACTION_PATTERNS);
+  }
+
+  if (policy.userPaths) {
+    patterns.push(...USER_PATH_REDACTION_PATTERNS);
+  }
+
+  if (policy.ipAddresses) {
+    patterns.push(...IP_ADDRESS_REDACTION_PATTERNS);
+  }
+
+  if (policy.jwtAndBearer) {
+    patterns.push(...JWT_BEARER_REDACTION_PATTERNS);
+  }
+
+  if (policy.namesHeuristic) {
+    patterns.push(...NAME_HEURISTIC_PATTERNS);
+  }
+
+  return patterns;
+}
+
+function defaultRedactHtmlForShare(
+  html: string,
+  policy: ShareSessionRedactionPolicy = normalizeRedactionPolicy(undefined),
+): ShareHtmlRedactionResult {
+  let redactedHtml = html;
+  const findingsByKind = new Map<string, ShareRedactionFinding>();
+
+  for (const pattern of redactionPatternsForPolicy(policy)) {
+    const result = applyRedactionPattern(redactedHtml, pattern);
+    redactedHtml = result.html;
+    if (!result.finding) continue;
+    mergeRedactionFinding(findingsByKind, result.finding);
+  }
+
+  const findings = [...findingsByKind.values()].sort((lhs, rhs) => rhs.count - lhs.count);
+  const totalReplacements = findings.reduce((sum, finding) => sum + finding.count, 0);
+
+  return {
+    html: redactedHtml,
+    findings,
+    totalReplacements,
+  };
+}
+
+function normalizeShareError(error: unknown): ShareSessionError {
+  if (error instanceof ShareSessionError) {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (/(ENOENT|spawn\s+gh|not found)/i.test(message)) {
+    return shareError(
+      "gh_not_installed",
+      "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/",
+    );
+  }
+
+  if (/timed out/i.test(message)) {
+    return shareError("share_timeout", "Share request timed out. Please try again.");
+  }
+
+  return shareError("share_unknown", message || "Share failed.");
 }
 
 function defaultEnsureGhAuthenticated(): void {
@@ -34,7 +743,8 @@ function defaultEnsureGhAuthenticated(): void {
     if (auth.error) {
       const code = (auth.error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        throw new Error(
+        throw shareError(
+          "gh_not_installed",
           "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/",
         );
       }
@@ -42,13 +752,19 @@ function defaultEnsureGhAuthenticated(): void {
     }
 
     if (auth.status !== 0) {
-      throw new Error("GitHub CLI is not logged in. Run 'gh auth login' first.");
+      throw shareError(
+        "gh_not_authenticated",
+        "GitHub CLI is not logged in. Run 'gh auth login' first.",
+      );
     }
   } catch (error) {
-    if (error instanceof Error) {
+    if (error instanceof ShareSessionError) {
       throw error;
     }
-    throw new Error(String(error));
+    if (error instanceof Error) {
+      throw normalizeShareError(error);
+    }
+    throw shareError("share_unknown", String(error));
   }
 }
 
@@ -73,7 +789,9 @@ async function runGhCommand(args: string[], timeoutMs: number): Promise<GhComman
 
     const timer = setTimeout(() => {
       proc.kill();
-      settle(() => reject(new Error(`gh ${args.join(" ")} timed out after ${timeoutMs}ms`)));
+      settle(() =>
+        reject(shareError("share_timeout", `gh ${args.join(" ")} timed out after ${timeoutMs}ms`)),
+      );
     }, timeoutMs);
 
     proc.stdout?.setEncoding("utf-8");
@@ -107,7 +825,7 @@ async function defaultCreateSecretGist(htmlPath: string): Promise<GhCommandResul
 
   if (result.code !== 0) {
     const reason = result.stderr.trim() || result.stdout.trim() || "Unknown error";
-    throw new Error(`Failed to create gist: ${reason}`);
+    throw shareError("gist_create_failed", `Failed to create gist: ${reason}`);
   }
 
   return result;
@@ -166,35 +884,141 @@ function parseGistId(gistUrl: string): string | undefined {
 export async function shareSession(
   session: AgentSession,
   deps: ShareSessionDeps = {},
-): Promise<ShareSessionResult> {
+  options: ShareSessionOptions = {},
+): Promise<ShareSessionCommandResult> {
+  const action: ShareSessionAction = options.action === "prepare" ? "prepare" : "publish";
   const ensureGhAuthenticated = deps.ensureGhAuthenticated ?? defaultEnsureGhAuthenticated;
   const exportSessionToHtml = deps.exportSessionToHtml ?? defaultExportSessionToHtml;
   const createSecretGist = deps.createSecretGist ?? defaultCreateSecretGist;
   const makeShareViewerUrl = deps.makeShareViewerUrl ?? defaultMakeShareViewerUrl;
-  const makeTempPath =
-    deps.makeTempPath ?? (() => join(tmpdir(), `oppi-share-${randomUUID()}.html`));
-
-  ensureGhAuthenticated();
+  const scanHtmlForSecrets = deps.scanHtmlForSecrets ?? defaultScanHtmlForSecrets;
+  const redactHtml = deps.redactHtml ?? defaultRedactHtmlForShare;
+  const isSecretScanEnabled = deps.isSecretScanEnabled ?? secretScanEnabled;
+  const isAutoRedactionEnabled = deps.isAutoRedactionEnabled ?? autoRedactionEnabled;
+  const shouldBlockOnSecrets = deps.shouldBlockOnSecrets ?? blockOnSecretFindings;
+  const redactionPolicy = normalizeRedactionPolicy(options.redactionPolicy);
 
   const sessionFile = session.getSessionStats().sessionFile;
   if (!sessionFile) {
-    throw new Error("Cannot share this session because it has no persisted session file.");
+    throw shareError(
+      "session_not_persisted",
+      "Cannot share this session because it has no persisted session file.",
+    );
   }
 
-  const tempHtmlPath = makeTempPath();
+  const tempDir = typeof deps.makeTempPath === "function"
+    ? null
+    : mkdtempSync(join(tmpdir(), "oppi-share-"));
+  const tempHtmlPath =
+    typeof deps.makeTempPath === "function"
+      ? deps.makeTempPath()
+      : join(tempDir ?? tmpdir(), `session-${randomUUID()}.html`);
 
   try {
     await exportSessionToHtml(session, tempHtmlPath);
+
+    if (existsSync(tempHtmlPath)) {
+      try {
+        chmodSync(tempHtmlPath, 0o600);
+      } catch {
+        // Best-effort hardening on POSIX systems.
+      }
+    }
+
+    let html = "";
+    try {
+      html = readFileSync(tempHtmlPath, "utf-8");
+    } catch (error) {
+      throw shareError(
+        "share_export_failed",
+        `Failed to read temporary share export: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const scanEnabled = isSecretScanEnabled();
+    const preRedactionFindings = scanEnabled ? scanHtmlForSecrets(html) : [];
+
+    const redactionEnabled = isAutoRedactionEnabled();
+    const redactionResult = redactionEnabled
+      ? redactHtml(html, redactionPolicy)
+      : {
+        html,
+        findings: [] as ShareRedactionFinding[],
+        totalReplacements: 0,
+      };
+
+    if (redactionEnabled && redactionResult.html !== html) {
+      html = redactionResult.html;
+      try {
+        writeFileSync(tempHtmlPath, html, "utf-8");
+      } catch (error) {
+        throw shareError(
+          "share_export_failed",
+          `Failed to write redacted share export: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    const residualFindings = scanEnabled ? scanHtmlForSecrets(html) : [];
+    const blocked = residualFindings.length > 0 && shouldBlockOnSecrets();
+
+    const artifact: ShareSessionArtifactSummary = {
+      format: "html",
+      bytes: Buffer.byteLength(html, "utf-8"),
+    };
+
+    const scan: ShareSessionScanSummary = {
+      enabled: scanEnabled,
+      blocked,
+      findings: preRedactionFindings,
+      residualFindings,
+    };
+
+    const redaction: ShareSessionRedactionSummary = {
+      enabled: redactionEnabled,
+      policy: redactionPolicy,
+      totalReplacements: redactionResult.totalReplacements,
+      findings: redactionResult.findings,
+    };
+
+    if (action === "prepare") {
+      return {
+        phase: "prepared",
+        canPublish: !blocked,
+        artifact,
+        scan,
+        redaction,
+      };
+    }
+
+    if (blocked) {
+      throw new ShareSessionError(
+        "share_secret_detected",
+        `Potential secrets remained after redaction (${summarizeFindings(residualFindings)}). Sharing blocked.`,
+        residualFindings,
+      );
+    }
+
+    ensureGhAuthenticated();
+
     const gist = await createSecretGist(tempHtmlPath);
 
     const gistUrl = parseGistUrl(gist.stdout) ?? parseGistUrl(gist.stderr);
     if (!gistUrl) {
-      throw new Error("Failed to parse gist URL from gh output");
+      throw shareError("gist_parse_failed", "Failed to parse gist URL from gh output");
     }
 
     const gistId = parseGistId(gistUrl);
     if (!gistId) {
-      throw new Error("Failed to parse gist ID from gist URL");
+      throw shareError("gist_parse_failed", "Failed to parse gist ID from gist URL");
+    }
+
+    const warnings: string[] = [];
+    if (redaction.totalReplacements > 0) {
+      warnings.push(`auto_redaction_applied:${redaction.totalReplacements}`);
+    }
+    if (scan.residualFindings.length > 0) {
+      warnings.push(`residual_secret_findings:${summarizeFindings(scan.residualFindings)}`);
     }
 
     const shareUrl = makeShareViewerUrl(gistId);
@@ -202,15 +1026,31 @@ export async function shareSession(
       shareUrl,
       gistUrl,
       gistId,
+      phase: "published",
+      share: {
+        id: `share:${gistId}`,
+        url: shareUrl,
+        provider: "github_gist",
+        providerRef: {
+          gistId,
+          gistUrl,
+        },
+      },
+      artifact,
+      scan,
+      redaction,
+      warnings,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/(ENOENT|spawn\s+gh|not found)/i.test(message)) {
-      throw new Error("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
-    }
-    throw error;
+    throw normalizeShareError(error);
   } finally {
-    if (existsSync(tempHtmlPath)) {
+    if (tempDir) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+    } else if (existsSync(tempHtmlPath)) {
       try {
         unlinkSync(tempHtmlPath);
       } catch {
@@ -224,4 +1064,8 @@ export const __shareSessionTestUtils = {
   parseGistUrl,
   parseGistId,
   defaultMakeShareViewerUrl,
+  formatShareErrorMessage,
+  defaultScanHtmlForSecrets,
+  defaultRedactHtmlForShare,
+  normalizeRedactionPolicy,
 };

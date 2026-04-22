@@ -180,6 +180,15 @@ struct ClientMessageTests {
         let json = try decode(msg)
         #expect(json["type"] as? String == "get_session_tree")
         #expect(json["requestId"] as? String == "req-tree")
+        #expect(json["filterMode"] == nil)
+    }
+
+    @Test func encodesGetSessionTreeWithFilterMode() throws {
+        let msg = ClientMessage.getSessionTree(filterMode: .noTools, requestId: "req-tree")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "get_session_tree")
+        #expect(json["filterMode"] as? String == "no-tools")
+        #expect(json["requestId"] as? String == "req-tree")
     }
 
     @Test func encodesNavigateTreeWithOptions() throws {
@@ -243,6 +252,32 @@ struct ClientMessageTests {
         let json = try decode(msg)
         #expect(json["type"] as? String == "get_file_suggestions")
         #expect((json["query"] as? String)?.isEmpty == true)
+    }
+
+    @Test func encodesShareSessionWithRedactionPolicy() throws {
+        let policy = ShareSessionRedactionPolicy(
+            secrets: false,
+            emails: true,
+            phones: false,
+            userPaths: true,
+            ipAddresses: true,
+            jwtAndBearer: true,
+            namesHeuristic: true
+        )
+
+        let json = try decode(
+            ClientMessage.shareSession(action: .publish, redactionPolicy: policy, requestId: "req-share")
+        )
+
+        #expect(json["type"] as? String == "share_session")
+        #expect(json["action"] as? String == "publish")
+        #expect(json["requestId"] as? String == "req-share")
+
+        let payload = json["redactionPolicy"] as? [String: Any]
+        #expect(payload?["secrets"] as? Bool == true)
+        #expect(payload?["emails"] as? Bool == true)
+        #expect(payload?["phones"] as? Bool == false)
+        #expect(payload?["namesHeuristic"] as? Bool == true)
     }
 
     // MARK: - Helpers

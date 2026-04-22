@@ -6,6 +6,51 @@ struct SharedSessionLink: Sendable, Equatable {
     let gistID: String
 }
 
+struct ShareSessionRedactionFinding: Sendable, Equatable {
+    let kind: String
+    let count: Int
+    let replacement: String
+    let samples: [String]
+}
+
+struct ShareSessionRedactionReport: Sendable, Equatable {
+    let policy: ShareSessionRedactionPolicy?
+    let totalReplacements: Int
+    let findings: [ShareSessionRedactionFinding]
+}
+
+struct SharedSessionPublishResult: Sendable, Equatable {
+    let link: SharedSessionLink
+    let redaction: ShareSessionRedactionReport?
+}
+
+struct ShareSessionScanFinding: Sendable, Equatable {
+    let kind: String
+    let count: Int
+}
+
+struct ShareSessionPrepareResult: Sendable, Equatable {
+    let canPublish: Bool
+    let blocked: Bool
+    let findings: [ShareSessionScanFinding]
+    let artifactBytes: Int?
+    let redaction: ShareSessionRedactionReport?
+}
+
+enum ShareSessionRequestError: LocalizedError {
+    case timedOut
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut:
+            return "Share request timed out. Please try again."
+        case .failed(let message):
+            return message
+        }
+    }
+}
+
 // MARK: - Model, Thinking, and Slash Commands
 
 extension ServerConnection {
@@ -92,11 +137,44 @@ extension ServerConnection {
         try await send(.compact(customInstructions: instructions))
     }
 
-    func shareSession() async throws -> SharedSessionLink? {
-        let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
-            .shareSession(requestId: requestId)
+    func prepareShareSession(
+        redactionPolicy: ShareSessionRedactionPolicy? = nil
+    ) async throws -> ShareSessionPrepareResult? {
+        do {
+            let data = try await sendCommandAwaitingResult(
+                command: "share_session",
+                timeout: .seconds(45)
+            ) { requestId in
+                .shareSession(
+                    action: .prepare,
+                    redactionPolicy: redactionPolicy?.normalized,
+                    requestId: requestId
+                )
+            }
+            return Self.parseShareSessionPrepareResult(from: data)
+        } catch let commandError as CommandRequestError {
+            throw Self.normalizeShareSessionError(commandError)
         }
-        return Self.parseSharedSessionLink(from: data)
+    }
+
+    func shareSession(
+        redactionPolicy: ShareSessionRedactionPolicy? = nil
+    ) async throws -> SharedSessionPublishResult? {
+        do {
+            let data = try await sendCommandAwaitingResult(
+                command: "share_session",
+                timeout: .seconds(90)
+            ) { requestId in
+                .shareSession(
+                    action: .publish,
+                    redactionPolicy: redactionPolicy?.normalized,
+                    requestId: requestId
+                )
+            }
+            return Self.parseShareSessionPublishResult(from: data)
+        } catch let commandError as CommandRequestError {
+            throw Self.normalizeShareSessionError(commandError)
+        }
     }
 
     func getSessionStats() async throws -> SessionStatsSnapshot? {
@@ -130,14 +208,171 @@ extension ServerConnection {
         }
     }
 
-    static func parseSharedSessionLink(from data: JSONValue?) -> SharedSessionLink? {
+    static func normalizeShareSessionError(_ error: CommandRequestError) -> ShareSessionRequestError {
+        switch error {
+        case .timeout:
+            return .timedOut
+        case .rejected(_, let reason):
+            let envelope = parseShareErrorEnvelope(reason)
+            return .failed(shareErrorMessage(code: envelope.code, fallback: envelope.message))
+        }
+    }
+
+    static func parseShareErrorEnvelope(_ reason: String?) -> (code: String?, message: String?) {
+        guard let reason else { return (nil, nil) }
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[share:"),
+              let closeBracket = trimmed.firstIndex(of: "]") else {
+            return (nil, trimmed.isEmpty ? nil : trimmed)
+        }
+
+        let codeStart = trimmed.index(trimmed.startIndex, offsetBy: "[share:".count)
+        let rawCode = String(trimmed[codeStart..<closeBracket]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let messageStart = trimmed.index(after: closeBracket)
+        let rawMessage = String(trimmed[messageStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (
+            rawCode.isEmpty ? nil : rawCode,
+            rawMessage.isEmpty ? nil : rawMessage
+        )
+    }
+
+    static func shareErrorMessage(code: String?, fallback: String?) -> String {
+        switch code {
+        case "gh_not_installed":
+            return "Server is missing GitHub CLI (gh). Install it and try again."
+        case "gh_not_authenticated":
+            return "GitHub CLI is not logged in on the server. Run 'gh auth login' and retry."
+        case "share_timeout":
+            return "Share request timed out. Please try again."
+        case "share_secret_detected":
+            return fallback ?? "Share blocked because potential secrets were detected."
+        case "session_not_persisted":
+            return "This session cannot be shared yet because it has no persisted session file."
+        case "gist_create_failed":
+            return fallback ?? "Failed to create GitHub gist. Check server auth and network."
+        case "gist_parse_failed":
+            return fallback ?? "Share upload completed but the server could not parse gist metadata."
+        default:
+            return fallback ?? "Share failed."
+        }
+    }
+
+    static func parseShareSessionPrepareResult(from data: JSONValue?) -> ShareSessionPrepareResult? {
         guard let object = data?.objectValue,
-              let shareURLRaw = object["shareUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !shareURLRaw.isEmpty,
-              let gistURLRaw = object["gistUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !gistURLRaw.isEmpty,
-              let gistIDRaw = object["gistId"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !gistIDRaw.isEmpty else {
+              object["phase"]?.stringValue == "prepared" else {
+            return nil
+        }
+
+        let canPublish = object["canPublish"]?.boolValue ?? false
+        let scan = object["scan"]?.objectValue
+        let blocked = scan?["blocked"]?.boolValue ?? false
+        let findings = scan?["findings"]?.arrayValue?.compactMap { value -> ShareSessionScanFinding? in
+            guard let finding = value.objectValue,
+                  let kind = finding["kind"]?.stringValue,
+                  !kind.isEmpty else {
+                return nil
+            }
+            let count = parseInt(finding["count"]) ?? 0
+            return ShareSessionScanFinding(kind: kind, count: count)
+        } ?? []
+
+        let artifactBytes = parseInt(object["artifact"]?.objectValue?["bytes"])
+
+        return ShareSessionPrepareResult(
+            canPublish: canPublish,
+            blocked: blocked,
+            findings: findings,
+            artifactBytes: artifactBytes,
+            redaction: parseShareSessionRedactionReport(from: data)
+        )
+    }
+
+    static func parseShareSessionRedactionPolicy(from value: JSONValue?) -> ShareSessionRedactionPolicy? {
+        guard let object = value?.objectValue else { return nil }
+
+        func bool(_ key: String, fallback: Bool) -> Bool {
+            object[key]?.boolValue ?? fallback
+        }
+
+        return ShareSessionRedactionPolicy(
+            secrets: true,
+            emails: bool("emails", fallback: ShareSessionRedactionPolicy.recommended.emails),
+            phones: bool("phones", fallback: ShareSessionRedactionPolicy.recommended.phones),
+            userPaths: bool("userPaths", fallback: ShareSessionRedactionPolicy.recommended.userPaths),
+            ipAddresses: bool("ipAddresses", fallback: ShareSessionRedactionPolicy.recommended.ipAddresses),
+            jwtAndBearer: bool("jwtAndBearer", fallback: ShareSessionRedactionPolicy.recommended.jwtAndBearer),
+            namesHeuristic: bool("namesHeuristic", fallback: ShareSessionRedactionPolicy.recommended.namesHeuristic)
+        )
+    }
+
+    static func parseShareSessionRedactionReport(from data: JSONValue?) -> ShareSessionRedactionReport? {
+        guard let object = data?.objectValue,
+              let redactionObject = object["redaction"]?.objectValue else {
+            return nil
+        }
+
+        let totalReplacements = parseInt(redactionObject["totalReplacements"]) ?? 0
+        let findings = redactionObject["findings"]?.arrayValue?.compactMap { value -> ShareSessionRedactionFinding? in
+            guard let finding = value.objectValue,
+                  let kind = finding["kind"]?.stringValue,
+                  !kind.isEmpty else {
+                return nil
+            }
+
+            let count = parseInt(finding["count"]) ?? 0
+            let replacement = finding["replacement"]?.stringValue ?? "[REDACTED]"
+            let samples = finding["samples"]?.arrayValue?.compactMap { sample in
+                sample.stringValue
+            } ?? []
+
+            return ShareSessionRedactionFinding(
+                kind: kind,
+                count: count,
+                replacement: replacement,
+                samples: samples
+            )
+        } ?? []
+
+        return ShareSessionRedactionReport(
+            policy: parseShareSessionRedactionPolicy(from: redactionObject["policy"]),
+            totalReplacements: totalReplacements,
+            findings: findings
+        )
+    }
+
+    static func parseShareSessionPublishResult(from data: JSONValue?) -> SharedSessionPublishResult? {
+        guard let link = parseSharedSessionLink(from: data) else {
+            return nil
+        }
+
+        return SharedSessionPublishResult(
+            link: link,
+            redaction: parseShareSessionRedactionReport(from: data)
+        )
+    }
+
+    static func parseSharedSessionLink(from data: JSONValue?) -> SharedSessionLink? {
+        guard let object = data?.objectValue else {
+            return nil
+        }
+
+        let shareObject = object["share"]?.objectValue
+        let providerRef = shareObject?["providerRef"]?.objectValue
+
+        let shareURLRaw = object["shareUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? shareObject?["url"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let gistURLRaw = object["gistUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? providerRef?["gistUrl"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let gistIDRaw = object["gistId"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? providerRef?["gistId"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let shareURLRaw, !shareURLRaw.isEmpty,
+              let gistURLRaw, !gistURLRaw.isEmpty,
+              let gistIDRaw, !gistIDRaw.isEmpty else {
             return nil
         }
 

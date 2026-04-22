@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -23,32 +23,156 @@ describe("shareSession", () => {
       shareSession(makeSession(undefined), {
         ensureGhAuthenticated: () => {},
       }),
-    ).rejects.toThrow("Cannot share this session because it has no persisted session file.");
+    ).rejects.toThrow("[share:session_not_persisted]");
   });
 
-  it("creates gist and returns share URLs", async () => {
+  it("auto-redacts sensitive content before gist upload", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
     const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
-      writeFileSync(outputPath, "<html><body>ok</body></html>", "utf-8");
+      const openAiKey = `sk-${"A".repeat(24)}`;
+      const html = `<html><body>${openAiKey} alice@example.com /Users/alice/workspace/oppi</body></html>`;
+      writeFileSync(outputPath, html, "utf-8");
     });
 
+    let uploadedHtml = "";
     const result = await shareSession(makeSession("/tmp/session.jsonl"), {
       ensureGhAuthenticated: () => {},
       exportSessionToHtml,
-      createSecretGist: async () => ({
-        stdout: "https://gist.github.com/demo-user/abc123\n",
-        stderr: "",
-        code: 0,
-      }),
+      createSecretGist: async (htmlPath) => {
+        uploadedHtml = readFileSync(htmlPath, "utf-8");
+        return {
+          stdout: "https://gist.github.com/demo-user/abc123\n",
+          stderr: "",
+          code: 0,
+        };
+      },
       makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
       makeTempPath: () => tempHtmlPath,
     });
 
-    expect(result).toEqual({
-      shareUrl: "https://pi.dev/session/#abc123",
-      gistUrl: "https://gist.github.com/demo-user/abc123",
-      gistId: "abc123",
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    expect(uploadedHtml).toContain("[REDACTED_OPENAI_API_KEY]");
+    expect(uploadedHtml).toContain("[REDACTED_EMAIL]");
+    expect(uploadedHtml).toContain("/Users/[REDACTED_USER]/workspace/oppi");
+    expect(uploadedHtml).not.toContain("alice@example.com");
+    expect(uploadedHtml).not.toContain("/Users/alice/workspace/oppi");
+
+    expect(result.redaction.totalReplacements).toBeGreaterThanOrEqual(3);
+    expect(result.redaction.findings.some((finding) => finding.kind === "openai_api_key")).toBe(true);
+    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(true);
+    expect(result.redaction.findings.some((finding) => finding.kind === "unix_user_path")).toBe(true);
+
+    expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("can block publish when secrets remain after redaction and blocking is enabled", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      writeFileSync(outputPath, "<html><body>contains key</body></html>", "utf-8");
     });
+
+    await expect(
+      shareSession(makeSession("/tmp/session.jsonl"), {
+        ensureGhAuthenticated: () => {},
+        exportSessionToHtml,
+        makeTempPath: () => tempHtmlPath,
+        redactHtml: (html, _policy) => ({ html, findings: [], totalReplacements: 0 }),
+        scanHtmlForSecrets: () => [{ kind: "openai_api_key", count: 1 }],
+        shouldBlockOnSecrets: () => true,
+      }),
+    ).rejects.toThrow("[share:share_secret_detected]");
+
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("respects configured deterministic redaction toggles and keeps secrets always-on", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      const openAiKey = `sk-${"A".repeat(24)}`;
+      const html = `<html><body>${openAiKey} alice@example.com +1 (415) 555-0199 John Appleseed</body></html>`;
+      writeFileSync(outputPath, html, "utf-8");
+    });
+
+    let uploadedHtml = "";
+    const result = await shareSession(
+      makeSession("/tmp/session.jsonl"),
+      {
+        ensureGhAuthenticated: () => {},
+        exportSessionToHtml,
+        createSecretGist: async (htmlPath) => {
+          uploadedHtml = readFileSync(htmlPath, "utf-8");
+          return {
+            stdout: "https://gist.github.com/demo-user/abc123\n",
+            stderr: "",
+            code: 0,
+          };
+        },
+        makeTempPath: () => tempHtmlPath,
+      },
+      {
+        action: "publish",
+        redactionPolicy: {
+          secrets: false,
+          emails: false,
+          phones: true,
+          userPaths: false,
+          ipAddresses: false,
+          jwtAndBearer: false,
+          namesHeuristic: true,
+        },
+      },
+    );
+
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    expect(uploadedHtml).toContain("[REDACTED_OPENAI_API_KEY]");
+    expect(uploadedHtml).toContain("[REDACTED_PHONE]");
+    expect(uploadedHtml).toContain("[REDACTED_PERSON]");
+    expect(uploadedHtml).toContain("alice@example.com");
+
+    expect(result.redaction.policy.secrets).toBe(true);
+    expect(result.redaction.policy.emails).toBe(false);
+    expect(result.redaction.policy.phones).toBe(true);
+    expect(result.redaction.policy.namesHeuristic).toBe(true);
+
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("supports prepare mode without GitHub authentication and includes redaction summary", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      writeFileSync(outputPath, "<html><body>alice@example.com</body></html>", "utf-8");
+    });
+
+    const result = await shareSession(
+      makeSession("/tmp/session.jsonl"),
+      {
+        ensureGhAuthenticated: () => {
+          throw new Error("should not authenticate for prepare mode");
+        },
+        exportSessionToHtml,
+        makeTempPath: () => tempHtmlPath,
+      },
+      { action: "prepare" },
+    );
+
+    expect(result.phase).toBe("prepared");
+    if (result.phase !== "prepared") {
+      throw new Error("Expected prepared result");
+    }
+
+    expect(result.canPublish).toBe(true);
+    expect(result.redaction.totalReplacements).toBeGreaterThanOrEqual(1);
+    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(true);
+
     expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
     expect(existsSync(tempHtmlPath)).toBe(false);
   });
@@ -65,5 +189,148 @@ describe("shareSession helper parsing", () => {
     expect(__shareSessionTestUtils.parseGistId("https://gist.github.com/user/123abc.git")).toBe(
       "123abc",
     );
+  });
+
+  it("formats share errors with a stable code prefix", () => {
+    expect(__shareSessionTestUtils.formatShareErrorMessage("gh_not_installed", "Install gh")).toBe(
+      "[share:gh_not_installed] Install gh",
+    );
+  });
+
+  it("detects known secret patterns in exported HTML", () => {
+    const dynamicToken = `sk-${"A".repeat(24)}`;
+    const findings = __shareSessionTestUtils.defaultScanHtmlForSecrets(
+      `<html><body>${dynamicToken}</body></html>`,
+    );
+    expect(findings.some((finding) => finding.kind === "openai_api_key")).toBe(true);
+  });
+
+  it("redacts personal identifiers and returns examples", () => {
+    const result = __shareSessionTestUtils.defaultRedactHtmlForShare(
+      "alice@example.com /Users/alice/workspace/oppi",
+      __shareSessionTestUtils.normalizeRedactionPolicy(undefined),
+    );
+
+    expect(result.html).toContain("[REDACTED_EMAIL]");
+    expect(result.html).toContain("/Users/[REDACTED_USER]/workspace/oppi");
+    expect(result.totalReplacements).toBeGreaterThanOrEqual(2);
+    expect(result.findings.some((finding) => finding.samples.length > 0)).toBe(true);
+  });
+
+  it("heuristically redacts person names when enabled", () => {
+    const policy = __shareSessionTestUtils.normalizeRedactionPolicy({ namesHeuristic: true });
+    const result = __shareSessionTestUtils.defaultRedactHtmlForShare(
+      "Pair with John Appleseed on this patch.",
+      policy,
+    );
+
+    expect(result.html).toContain("[REDACTED_PERSON]");
+  });
+
+  it("uses deterministic literal env secret redaction (pi-share-hf style)", () => {
+    const envKey = "OPPI_SHARE_TEST_API_TOKEN";
+    const previous = process.env[envKey];
+    const secret = `tok_${"X".repeat(24)}`;
+    process.env[envKey] = secret;
+
+    try {
+      const policy = __shareSessionTestUtils.normalizeRedactionPolicy(undefined);
+      const payload = `tokenA=${secret} tokenB=${secret}`;
+      const result = __shareSessionTestUtils.defaultRedactHtmlForShare(payload, policy);
+
+      expect(result.html).not.toContain(secret);
+      expect(result.html).toContain("[REDACTED_OPPI_SHARE_TEST_API_TOKEN]");
+
+      const finding = result.findings.find(
+        (item) => item.kind === "literal_secret_oppi_share_test_api_token",
+      );
+      expect(finding?.count).toBe(2);
+    } finally {
+      if (previous === undefined) {
+        delete process.env[envKey];
+      } else {
+        process.env[envKey] = previous;
+      }
+    }
+  });
+
+  it("fuzzes mixed PII payload variants for deterministic reliability", () => {
+    const policy = __shareSessionTestUtils.normalizeRedactionPolicy({
+      emails: true,
+      phones: true,
+      userPaths: true,
+      ipAddresses: true,
+      jwtAndBearer: true,
+      namesHeuristic: true,
+    });
+
+    for (let i = 0; i < 16; i += 1) {
+      const openAiKey = `sk-${"A".repeat(20)}${i.toString(16).padStart(4, "0")}`;
+      const email = `person${i}@example.com`;
+      const phone = `+1 (415) 555-${String(1000 + i).padStart(4, "0")}`;
+      const userPath = `/Users/user${i}/workspace/oppi`;
+      const ipv4 = `10.12.${i}.${(i * 7) % 255}`;
+      const jwt = `eyJ${"a".repeat(12)}.${"b".repeat(12)}.${"c".repeat(12)}`;
+      const lastNames = [
+        "Baker",
+        "Carter",
+        "Davis",
+        "Evans",
+        "Foster",
+        "Garcia",
+        "Harris",
+        "Iverson",
+        "Johnson",
+        "Keller",
+      ];
+      const name = `Jane ${lastNames[i % lastNames.length]}`;
+
+      const payload = [openAiKey, email, phone, userPath, ipv4, jwt, name].join(" | ");
+      const result = __shareSessionTestUtils.defaultRedactHtmlForShare(payload, policy);
+
+      expect(result.html).toContain("[REDACTED_OPENAI_API_KEY]");
+      expect(result.html).toContain("[REDACTED_EMAIL]");
+      expect(result.html).toContain("[REDACTED_PHONE]");
+      expect(result.html).toContain("/Users/[REDACTED_USER]/workspace/oppi");
+      expect(result.html).toContain("[REDACTED_IPV4]");
+      expect(result.html).toContain("[REDACTED_JWT]");
+      expect(result.html).toContain("[REDACTED_PERSON]");
+
+      expect(result.html).not.toContain(openAiKey);
+      expect(result.html).not.toContain(email);
+      expect(result.html).not.toContain(phone);
+      expect(result.html).not.toContain(userPath);
+      expect(result.html).not.toContain(ipv4);
+      expect(result.html).not.toContain(jwt);
+      expect(result.totalReplacements).toBeGreaterThanOrEqual(7);
+    }
+  });
+
+  it("name heuristic avoids common product phrases to reduce false positives", () => {
+    const policy = __shareSessionTestUtils.normalizeRedactionPolicy({ namesHeuristic: true });
+    const payload = "Session Timeline keeps Workspace Context visible.";
+    const result = __shareSessionTestUtils.defaultRedactHtmlForShare(payload, policy);
+
+    expect(result.html).toContain("Session Timeline");
+    expect(result.html).toContain("Workspace Context");
+    expect(result.html).not.toContain("[REDACTED_PERSON]");
+  });
+
+  it("is idempotent when run repeatedly on already-redacted output", () => {
+    const policy = __shareSessionTestUtils.normalizeRedactionPolicy({
+      namesHeuristic: true,
+      phones: true,
+      ipAddresses: true,
+      jwtAndBearer: true,
+    });
+
+    const first = __shareSessionTestUtils.defaultRedactHtmlForShare(
+      "John Appleseed alice@example.com +1 (415) 555-1212 10.0.0.8 /Users/alice/workspace/oppi",
+      policy,
+    );
+    const second = __shareSessionTestUtils.defaultRedactHtmlForShare(first.html, policy);
+
+    expect(second.totalReplacements).toBe(0);
+    expect(second.html).toBe(first.html);
   });
 });

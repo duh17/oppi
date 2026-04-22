@@ -1,15 +1,17 @@
 import SwiftUI
 import UIKit
 
-struct TreeNavigationComposerUpdate: Equatable {
+struct TreeNavigationViewUpdate: Equatable {
+    let scrollTargetID: String
     let inputText: String
     let shouldFocusComposer: Bool
 
-    static func from(editorText: String?, showComposer: Bool) -> Self {
+    static func from(targetId: String, editorText: String?, showComposer: Bool) -> Self {
         let normalized = editorText?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        return TreeNavigationComposerUpdate(
+        return TreeNavigationViewUpdate(
+            scrollTargetID: targetId,
             inputText: normalized,
             shouldFocusComposer: !normalized.isEmpty && !showComposer
         )
@@ -50,6 +52,12 @@ struct ChatView: View {
     @State private var renameText = ""
     @State private var copiedSessionID = false
     @State private var forkedSessionToOpen: ForkRoute?
+    @State private var showShareRedactionSheet = false
+    @State private var shareRedactionPolicy = AppPreferences.Share.redactionPolicy
+    @State private var sharePreflightResult: ShareSessionPrepareResult?
+    @State private var sharePreflightError: String?
+    @State private var isSharePreflightRunning = false
+    @State private var sharePreflightTask: Task<Void, Never>?
 
     @State private var showCompactConfirmation = false
     @State private var showContextInspector = false
@@ -261,6 +269,7 @@ struct ChatView: View {
             .sheet(isPresented: $showOutline) { outlineSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
+            .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
@@ -869,7 +878,17 @@ struct ChatView: View {
     }
 
     private func shareSessionFromTitleMenu() {
-        sendShareSlashCommand(clearComposer: false, restoreInputOnFailure: nil)
+        guard hasShareSlashCommand else {
+            reducer.process(
+                .error(sessionId: sessionId, message: "Share command is not enabled for this workspace.")
+            )
+            return
+        }
+
+        shareRedactionPolicy = AppPreferences.Share.redactionPolicy
+        sharePreflightResult = nil
+        sharePreflightError = nil
+        showShareRedactionSheet = true
     }
 
     private func sendShareSlashCommand(clearComposer: Bool, restoreInputOnFailure: String?) {
@@ -881,11 +900,13 @@ struct ChatView: View {
         }
 
         let sessionManagerRef = sessionManager
+        let policy = AppPreferences.Share.redactionPolicy
 
         actionHandler.shareSession(
             connection: connection,
             reducer: reducer,
             sessionId: sessionId,
+            redactionPolicy: policy,
             onDispatchStarted: {
                 guard clearComposer else { return }
                 inputText = ""
@@ -903,6 +924,55 @@ struct ChatView: View {
         )
     }
 
+    private func scheduleSharePreflight() {
+        sharePreflightTask?.cancel()
+        isSharePreflightRunning = true
+        sharePreflightError = nil
+
+        let policy = shareRedactionPolicy.normalized
+
+        sharePreflightTask = Task { @MainActor in
+            defer { isSharePreflightRunning = false }
+
+            do {
+                try await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, showShareRedactionSheet else { return }
+                let prepared = try await connection.prepareShareSession(redactionPolicy: policy)
+                guard !Task.isCancelled else { return }
+                sharePreflightResult = prepared
+                sharePreflightError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                sharePreflightResult = nil
+                sharePreflightError = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelSharePreflight() {
+        sharePreflightTask?.cancel()
+        sharePreflightTask = nil
+        isSharePreflightRunning = false
+    }
+
+    private func publishSessionWithCurrentRedactionPolicy() {
+        let sessionManagerRef = sessionManager
+        let policy = shareRedactionPolicy.normalized
+
+        AppPreferences.Share.setRedactionPolicy(policy)
+        cancelSharePreflight()
+        showShareRedactionSheet = false
+
+        actionHandler.shareSession(
+            connection: connection,
+            reducer: reducer,
+            sessionId: sessionId,
+            redactionPolicy: policy,
+            onNeedsReconnect: {
+                sessionManagerRef.reconnect()
+            }
+        )
+    }
 
     // MARK: - Sheets & Alerts
 
@@ -920,11 +990,49 @@ struct ChatView: View {
             onNavigateTreeNode: { request in
                 try await navigateFromTree(request)
             },
-            loadTree: {
-                try await connection.getSessionTree()
+            loadTree: { filterMode in
+                try await connection.getSessionTree(filterMode: filterMode)
             }
         )
         .presentationDetents([.medium, .large])
+    }
+
+    private var shareRedactionSheet: some View {
+        ShareSessionRedactionSheet(
+            policy: $shareRedactionPolicy,
+            preflight: sharePreflightResult,
+            isAnalyzing: isSharePreflightRunning,
+            errorMessage: sharePreflightError,
+            isSharing: actionHandler.isSending,
+            onRefresh: {
+                scheduleSharePreflight()
+            },
+            onShare: {
+                publishSessionWithCurrentRedactionPolicy()
+            },
+            onCancel: {
+                cancelSharePreflight()
+                showShareRedactionSheet = false
+            }
+        )
+        .onAppear {
+            shareRedactionPolicy = AppPreferences.Share.redactionPolicy
+            sharePreflightResult = nil
+            sharePreflightError = nil
+            scheduleSharePreflight()
+        }
+        .onDisappear {
+            cancelSharePreflight()
+        }
+        .onChange(of: shareRedactionPolicy) { _, newPolicy in
+            let normalized = newPolicy.normalized
+            if normalized != shareRedactionPolicy {
+                shareRedactionPolicy = normalized
+                return
+            }
+            AppPreferences.Share.setRedactionPolicy(normalized)
+            scheduleSharePreflight()
+        }
     }
 
     @MainActor
@@ -958,18 +1066,18 @@ struct ChatView: View {
             throw TreeNavigationError.historyReloadFailed
         }
 
-        scrollController.requestScrollToBottom()
-
-        let composerUpdate = TreeNavigationComposerUpdate.from(
+        let viewUpdate = TreeNavigationViewUpdate.from(
+            targetId: request.targetId,
             editorText: result.editorText,
             showComposer: showComposer
         )
 
-        inputText = composerUpdate.inputText
+        scrollController.scrollTargetID = viewUpdate.scrollTargetID
+        inputText = viewUpdate.inputText
         pendingImages = []
         pendingFiles = []
 
-        if composerUpdate.shouldFocusComposer {
+        if viewUpdate.shouldFocusComposer {
             composerExternalFocusRequestID &+= 1
         }
     }

@@ -42,7 +42,7 @@ enum ClientMessage: Sendable {
     case setAutoCompaction(enabled: Bool, requestId: String? = nil)
     case fork(entryId: String, requestId: String? = nil)
     case getForkMessages(requestId: String? = nil)
-    case getSessionTree(requestId: String? = nil)
+    case getSessionTree(filterMode: SessionTreeFilterMode? = nil, requestId: String? = nil)
     case navigateTree(
         targetId: String,
         summarize: Bool,
@@ -66,7 +66,11 @@ enum ClientMessage: Sendable {
 
     // ── Commands ──
     case getCommands(requestId: String? = nil)
-    case shareSession(requestId: String? = nil)
+    case shareSession(
+        action: ShareSessionAction? = nil,
+        redactionPolicy: ShareSessionRedactionPolicy? = nil,
+        requestId: String? = nil
+    )
 
     // ── File suggestions ──
     case getFileSuggestions(query: String, requestId: String? = nil)
@@ -142,6 +146,37 @@ enum ThinkingLevel: String, Codable, Sendable {
 enum QueueMode: String, Codable, Sendable {
     case all
     case oneAtATime = "one-at-a-time"
+}
+
+enum ShareSessionAction: String, Codable, Sendable {
+    case prepare
+    case publish
+}
+
+struct ShareSessionRedactionPolicy: Codable, Sendable, Equatable {
+    var secrets: Bool
+    var emails: Bool
+    var phones: Bool
+    var userPaths: Bool
+    var ipAddresses: Bool
+    var jwtAndBearer: Bool
+    var namesHeuristic: Bool
+
+    static let recommended = ShareSessionRedactionPolicy(
+        secrets: true,
+        emails: true,
+        phones: true,
+        userPaths: true,
+        ipAddresses: true,
+        jwtAndBearer: true,
+        namesHeuristic: false
+    )
+
+    var normalized: ShareSessionRedactionPolicy {
+        var policy = self
+        policy.secrets = true
+        return policy
+    }
 }
 
 // MARK: - Manual Encodable
@@ -265,8 +300,9 @@ extension ClientMessage: Encodable {
             try c.encode("get_fork_messages", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .getSessionTree(let reqId):
+        case .getSessionTree(let filterMode, let reqId):
             try c.encode("get_session_tree", forKey: .type)
+            try c.encodeIfPresent(filterMode?.rawValue, forKey: .filterMode)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         case .navigateTree(
@@ -321,8 +357,10 @@ extension ClientMessage: Encodable {
             try c.encode("get_commands", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
-        case .shareSession(let reqId):
+        case .shareSession(let action, let redactionPolicy, let reqId):
             try c.encode("share_session", forKey: .type)
+            try c.encodeIfPresent(action, forKey: .action)
+            try c.encodeIfPresent(redactionPolicy?.normalized, forKey: .redactionPolicy)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── File suggestions ──
@@ -374,9 +412,9 @@ extension ClientMessage: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case type, message, images, streamingBehavior, requestId, clientTurnId
-        case id, action, scope, expiresInMs, value, confirmed, cancelled
+        case id, action, redactionPolicy, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
-        case customInstructions, entryId, sessionPath, command, query
+        case customInstructions, entryId, sessionPath, command, query, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
         case sessionId, sinceSeq

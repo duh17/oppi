@@ -101,6 +101,27 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testShareRedactionReportPreview() throws {
+        launchPreview(screen: "share-redaction-report")
+
+        let title = app.staticTexts["Redaction report"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Redaction report title not found")
+
+        saveScreenshot(name: "share-redaction-report")
+    }
+
+    func testShareRedactionSettingsPreview() throws {
+        launchPreview(screen: "share-redaction-settings")
+
+        let title = app.navigationBars["Share Session"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Share session settings title not found")
+
+        let summary = app.staticTexts["share-redaction-summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), "Preflight redaction summary not shown")
+
+        saveScreenshot(name: "share-redaction-settings")
+    }
+
     // MARK: - Helpers
 
     private func launchPreview(screen: String) {
