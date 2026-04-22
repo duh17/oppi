@@ -598,18 +598,23 @@ struct WorkspaceDetailView: View {
 
     /// Whether a session matches the current search.
     ///
-    /// For short queries (< 3 chars) or while server results are loading,
-    /// falls back to local FuzzyMatch on title. Once server results arrive,
-    /// uses the server's FTS5 matched set.
+    /// For short queries (< 3 chars), use local FuzzyMatch on title.
+    /// For server queries (>= 3 chars), use authoritative server results once
+    /// available (including zero-result responses). While a server query is
+    /// in-flight, avoid local fallback to prevent stale or misleading matches.
     private func matchesSessionSearch(_ session: Session) -> Bool {
         guard hasSessionSearchQuery else {
             return true
         }
 
-        // If server search returned results, use those
-        if normalizedSessionSearchQuery.count >= SessionSearchStore.minQueryLength,
-           !searchStore.matchedSessionIds.isEmpty {
-            return searchStore.matchedSessionIds.contains(session.id)
+        if normalizedSessionSearchQuery.count >= SessionSearchStore.minQueryLength {
+            if searchStore.completedServerQuery == normalizedSessionSearchQuery {
+                return searchStore.matchedSessionIds.contains(session.id)
+            }
+
+            if searchStore.activeServerQuery == normalizedSessionSearchQuery {
+                return false
+            }
         }
 
         // Local fallback: fuzzy match on title

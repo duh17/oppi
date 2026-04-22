@@ -88,8 +88,8 @@ extension ServerConnection {
 
     // MARK: - Tree Navigation
 
-    func getSessionTree() async throws -> SessionTreeSnapshot {
-        try await sender.getSessionTree()
+    func getSessionTree(filterMode: SessionTreeFilterMode = .standard) async throws -> SessionTreeSnapshot {
+        try await sender.getSessionTree(filterMode: filterMode)
     }
 
     func navigateTree(

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
@@ -24,6 +24,31 @@ describe("shareSession", () => {
         ensureGhAuthenticated: () => {},
       }),
     ).rejects.toThrow("[share:session_not_persisted]");
+  });
+
+  it("uploads the default export as session.html for the share viewer", async () => {
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      writeFileSync(outputPath, "<html><body>ok</body></html>", "utf-8");
+    });
+
+    let uploadedPath = "";
+    const result = await shareSession(makeSession("/tmp/session.jsonl"), {
+      ensureGhAuthenticated: () => {},
+      exportSessionToHtml,
+      createSecretGist: async (htmlPath) => {
+        uploadedPath = htmlPath;
+        return {
+          stdout: "https://gist.github.com/demo-user/abc123\n",
+          stderr: "",
+          code: 0,
+        };
+      },
+      makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
+    });
+
+    expect(result.phase).toBe("published");
+    expect(basename(uploadedPath)).toBe("session.html");
+    expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
   });
 
   it("auto-redacts sensitive content before gist upload", async () => {
@@ -62,9 +87,15 @@ describe("shareSession", () => {
     expect(uploadedHtml).not.toContain("/Users/alice/workspace/oppi");
 
     expect(result.redaction.totalReplacements).toBeGreaterThanOrEqual(3);
-    expect(result.redaction.findings.some((finding) => finding.kind === "openai_api_key")).toBe(true);
-    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(true);
-    expect(result.redaction.findings.some((finding) => finding.kind === "unix_user_path")).toBe(true);
+    expect(result.redaction.findings.some((finding) => finding.kind === "openai_api_key")).toBe(
+      true,
+    );
+    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(
+      true,
+    );
+    expect(result.redaction.findings.some((finding) => finding.kind === "unix_user_path")).toBe(
+      true,
+    );
 
     expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
     expect(existsSync(tempHtmlPath)).toBe(false);
@@ -171,7 +202,9 @@ describe("shareSession", () => {
 
     expect(result.canPublish).toBe(true);
     expect(result.redaction.totalReplacements).toBeGreaterThanOrEqual(1);
-    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(true);
+    expect(result.redaction.findings.some((finding) => finding.kind === "email_address")).toBe(
+      true,
+    );
 
     expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
     expect(existsSync(tempHtmlPath)).toBe(false);

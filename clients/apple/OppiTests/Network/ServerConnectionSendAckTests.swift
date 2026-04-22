@@ -329,6 +329,51 @@ struct ServerConnectionSendAckTests {
         }
     }
 
+    @Test func commandTimeoutPolicyAppliesRouteSpecificBudgets() {
+        let defaultTimeout = MessageSender.defaultCommandTimeout(
+            command: "get_session_tree",
+            message: .getSessionTree(requestId: "req-default")
+        )
+
+        let navigateNoSummary = MessageSender.defaultCommandTimeout(
+            command: "navigate_tree",
+            message: .navigateTree(targetId: "entry-1", summarize: false, requestId: "req-nav-1")
+        )
+
+        let navigateWithSummary = MessageSender.defaultCommandTimeout(
+            command: "navigate_tree",
+            message: .navigateTree(targetId: "entry-1", summarize: true, requestId: "req-nav-2")
+        )
+
+        let compactTimeout = MessageSender.defaultCommandTimeout(
+            command: "compact",
+            message: .compact(customInstructions: nil, requestId: "req-compact")
+        )
+
+        let sharePrepareTimeout = MessageSender.defaultCommandTimeout(
+            command: "share_session",
+            message: .shareSession(action: .prepare, redactionPolicy: nil, requestId: "req-share-prepare")
+        )
+
+        let sharePublishTimeout = MessageSender.defaultCommandTimeout(
+            command: "share_session",
+            message: .shareSession(action: .publish, redactionPolicy: nil, requestId: "req-share-publish")
+        )
+
+        let shareImplicitPublishTimeout = MessageSender.defaultCommandTimeout(
+            command: "share_session",
+            message: .shareSession(action: nil, redactionPolicy: nil, requestId: "req-share-implicit")
+        )
+
+        #expect(defaultTimeout == MessageSender.commandRequestTimeoutDefault)
+        #expect(navigateNoSummary == MessageSender.commandRequestTimeoutDefault)
+        #expect(navigateWithSummary == MessageSender.commandRequestTimeoutTreeNavigateSummarize)
+        #expect(compactTimeout == MessageSender.commandRequestTimeoutCompact)
+        #expect(sharePrepareTimeout == MessageSender.commandRequestTimeoutShareSessionPrepare)
+        #expect(sharePublishTimeout == MessageSender.commandRequestTimeoutShareSessionPublish)
+        #expect(shareImplicitPublishTimeout == MessageSender.commandRequestTimeoutShareSessionPublish)
+    }
+
     // MARK: - Session Tree
 
     @Test func getSessionTreeParsesCommandResultPayload() async throws {
@@ -336,7 +381,8 @@ struct ServerConnectionSendAckTests {
 
         conn._sendMessageForTesting = { message in
             switch message {
-            case .getSessionTree(let requestId):
+            case .getSessionTree(let filterMode, let requestId):
+                #expect(filterMode == .standard)
                 pipe.handle(
                     .commandResult(
                         command: "get_session_tree",
@@ -352,6 +398,8 @@ struct ServerConnectionSendAckTests {
                                     "timestamp": .string("2026-04-19T07:11:10.000Z"),
                                     "depth": .number(0),
                                     "isLeafPath": .bool(false),
+                                    "defaultVisible": .bool(true),
+                                    "matchesFilter": .bool(true),
                                     "role": .string("user"),
                                     "textPreview": .string("Plan rollout"),
                                     "label": .null,
@@ -363,6 +411,8 @@ struct ServerConnectionSendAckTests {
                                     "timestamp": .string("2026-04-19T07:12:10.000Z"),
                                     "depth": .number(1),
                                     "isLeafPath": .bool(true),
+                                    "defaultVisible": .bool(false),
+                                    "matchesFilter": .bool(false),
                                     "label": .string("Branch summary"),
                                 ]),
                             ]),
@@ -388,6 +438,8 @@ struct ServerConnectionSendAckTests {
         #expect(root.type == "message")
         #expect(root.depth == 0)
         #expect(root.isLeafPath == false)
+        #expect(root.defaultVisible == true)
+        #expect(root.matchesFilter == true)
         #expect(root.role == "user")
         #expect(root.textPreview == "Plan rollout")
         #expect(root.label == nil)
@@ -398,6 +450,8 @@ struct ServerConnectionSendAckTests {
         #expect(leaf.type == "summary")
         #expect(leaf.depth == 1)
         #expect(leaf.isLeafPath == true)
+        #expect(leaf.defaultVisible == false)
+        #expect(leaf.matchesFilter == false)
         #expect(leaf.label == "Branch summary")
     }
 
@@ -406,7 +460,8 @@ struct ServerConnectionSendAckTests {
 
         conn._sendMessageForTesting = { message in
             switch message {
-            case .getSessionTree(let requestId):
+            case .getSessionTree(let filterMode, let requestId):
+                #expect(filterMode == .standard)
                 pipe.handle(
                     .commandResult(
                         command: "get_session_tree",

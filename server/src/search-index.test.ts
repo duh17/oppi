@@ -150,6 +150,39 @@ describe("SearchIndex indexes transcript content only", () => {
     }
   });
 
+  it("reindexes when session metadata changes even if transcript file is unchanged", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "keep transcript stable", "assistant transcript content");
+
+    const session = makeSession({
+      id: "sess-metadata",
+      name: "oldtitletoken",
+      piSessionFile: jsonlPath,
+    });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      const first = index.sync([session]);
+      expect(first.added).toBe(1);
+      expect(index.search("oldtitletoken", "ws-1", 10)).toHaveLength(1);
+
+      session.name = "newtitletoken";
+
+      const second = index.sync([session]);
+      expect(second.reindexed).toBe(1);
+      expect(second.skipped).toBe(0);
+      expect(index.search("newtitletoken", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("oldtitletoken", "ws-1", 10)).toHaveLength(0);
+    } finally {
+      index.close();
+    }
+  });
+
   it("boosts newer sessions for equal-relevance query matches", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
     cleanupPaths.add(dataDir);

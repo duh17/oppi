@@ -231,8 +231,12 @@ struct ToolPresentationBuilderTests {
             isError: false, isDone: true,
             context: emptyContext(args: [
                 "path": .string("file.swift"),
-                "old_text": .string("old line\n"),
-                "new_text": .string("new line\nanother line\n"),
+                "edits": .array([
+                    .object([
+                        "oldText": .string("old line\n"),
+                        "newText": .string("new line\nanother line\n"),
+                    ]),
+                ]),
             ])
         )
 
@@ -251,8 +255,12 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(
                 args: [
                     "path": .string("file.swift"),
-                    "old_text": .string("old"),
-                    "new_text": .string("new"),
+                    "edits": .array([
+                        .object([
+                            "oldText": .string("old"),
+                            "newText": .string("new"),
+                        ]),
+                    ]),
                 ],
                 expanded: ["t1"]
             )
@@ -557,8 +565,12 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(
                 args: [
                     "path": .string("App.swift"),
-                    "old_text": .string("let value = 1"),
-                    "new_text": .string("let value = 2"),
+                    "edits": .array([
+                        .object([
+                            "oldText": .string("let value = 1"),
+                            "newText": .string("let value = 2"),
+                        ]),
+                    ]),
                 ],
                 expanded: ["edit-diff"]
             )

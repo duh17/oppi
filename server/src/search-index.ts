@@ -6,7 +6,7 @@
  * SQLite database file alongside the session data.
  *
  * Lifecycle:
- * - Server boot: open db, incremental sync (mtime-based)
+ * - Server boot: open db, incremental sync (JSONL state + session metadata)
  * - Live: debounced re-index on message_end / agent_end events
  * - Shutdown: close db
  */
@@ -16,6 +16,7 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Session } from "./types.js";
+import { createLogger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,12 +53,7 @@ function extractToolNames(content: unknown): Set<string> {
   const names = new Set<string>();
   if (!Array.isArray(content)) return names;
   for (const block of content) {
-    if (
-      block &&
-      typeof block === "object" &&
-      (block.type === "toolCall" || block.type === "tool_call") &&
-      block.name
-    ) {
+    if (block && typeof block === "object" && block.type === "toolCall" && block.name) {
       names.add(block.name);
     }
   }
@@ -66,6 +62,8 @@ function extractToolNames(content: unknown): Set<string> {
 
 const USER_MESSAGE_CAP = 50_000;
 const ASSISTANT_MESSAGE_CAP = 100_000;
+
+const log = createLogger({ base: { component: "search_index" } });
 
 interface TranscriptContent {
   userMessages: string;
@@ -190,6 +188,7 @@ export class SearchIndex {
   private stmtDelete!: SqliteStatement;
   private stmtDeleteMeta!: SqliteStatement;
   private stmtGetMeta!: SqliteStatement;
+  private stmtGetIndexedRow!: SqliteStatement;
   private stmtCount!: SqliteStatement;
 
   private getSession: (id: string) => Session | undefined;
@@ -286,7 +285,11 @@ export class SearchIndex {
     `);
 
     this.stmtGetMeta = this.db.prepare(
-      "SELECT jsonl_mtime_ms, jsonl_size FROM fts_meta WHERE session_id = ?",
+      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size FROM fts_meta WHERE session_id = ?",
+    );
+
+    this.stmtGetIndexedRow = this.db.prepare(
+      "SELECT workspace_id, title FROM session_fts WHERE session_id = ?",
     );
 
     // Search across all workspaces.
@@ -357,7 +360,9 @@ export class SearchIndex {
       return this.stmtSearch.all(ftsQuery, cap) as SearchResult[];
     } catch (err) {
       // FTS5 query syntax errors — return empty rather than crash
-      console.error("[search-index] query error:", (err as Error).message);
+      log.error("search_index.query.failed", {
+        error: (err as Error).message,
+      });
       return [];
     }
   }
@@ -465,7 +470,7 @@ export class SearchIndex {
     }
 
     if (batch.length > 0) {
-      console.log("[search-index] re-indexed", { count: batch.length });
+      log.info("search_index.reindexed_batch", { count: batch.length });
     }
   }
 
@@ -475,7 +480,8 @@ export class SearchIndex {
 
   /**
    * Synchronize the index with current session data.
-   * - Re-indexes sessions whose JSONL mtime/size changed
+   * - Re-indexes sessions whose JSONL path/mtime/size changed
+   * - Re-indexes sessions whose indexed metadata (title/workspace) changed
    * - Indexes new sessions not yet in the index
    * - Removes orphaned index entries for deleted sessions
    */
@@ -513,22 +519,43 @@ export class SearchIndex {
         // Check if already indexed with same transcript state.
         const meta = this.stmtGetMeta.get(session.id) as
           | {
+              jsonl_path: string | null;
               jsonl_mtime_ms: number;
               jsonl_size: number;
             }
           | undefined;
 
+        const indexedRow = this.stmtGetIndexedRow.get(session.id) as
+          | {
+              workspace_id: string;
+              title: string;
+            }
+          | undefined;
+
         const jsonlMtimeMs = fileStat ? Math.floor(fileStat.mtimeMs) : 0;
         const jsonlSize = fileStat?.size ?? 0;
+        const expectedJsonlPath = fileStat ? (jsonlPath ?? null) : null;
+        const workspaceId = session.workspaceId ?? "";
 
-        if (meta && meta.jsonl_mtime_ms === jsonlMtimeMs && meta.jsonl_size === jsonlSize) {
+        const sameTranscriptState =
+          !!meta &&
+          meta.jsonl_mtime_ms === jsonlMtimeMs &&
+          meta.jsonl_size === jsonlSize &&
+          meta.jsonl_path === expectedJsonlPath;
+
+        const sameIndexedMetadata =
+          !!indexedRow &&
+          indexedRow.workspace_id === workspaceId &&
+          indexedRow.title === content.title;
+
+        if (sameTranscriptState && sameIndexedMetadata) {
           skipped++;
           continue;
         }
 
         this.upsertRow(
           session.id,
-          session.workspaceId ?? "",
+          workspaceId,
           content.title,
           content.userMessages,
           content.assistantMessages,
@@ -568,7 +595,7 @@ export class SearchIndex {
 
     const result = txn();
     const elapsed = performance.now() - start;
-    console.log("[search-index] sync complete", {
+    log.info("search_index.sync_complete", {
       elapsedMs: Math.round(elapsed),
       added: result.added,
       reindexed: result.reindexed,

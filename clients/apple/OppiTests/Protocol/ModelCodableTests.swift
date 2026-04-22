@@ -184,6 +184,77 @@ struct ModelInfoCodableTests {
     }
 }
 
+// MARK: - Provider Auth Codable
+
+@Suite("ProviderAuth Codable")
+struct ProviderAuthCodableTests {
+
+    @Test func decodeProviderStatus() throws {
+        let json = """
+        {
+            "id": "openai-codex",
+            "name": "ChatGPT (Codex)",
+            "supportsApiKey": false,
+            "oauth": {
+                "flowType": "oauth_callback",
+                "supportsServerBrowserLaunch": true,
+                "supportsPhoneBrowserLaunch": true,
+                "supportsManualCodeInput": true,
+                "mayPromptForInput": true
+            },
+            "authenticated": true,
+            "credentialType": "oauth",
+            "expiresAt": 1700003600000
+        }
+        """
+
+        let status = try JSONDecoder().decode(
+            ProviderAuthProviderStatus.self,
+            from: json.data(using: .utf8)!
+        )
+
+        #expect(status.id == "openai-codex")
+        #expect(status.oauth?.flowType == .oauthCallback)
+        #expect(status.authenticated)
+        #expect(status.credentialType == .oauth)
+        #expect(status.expiresAtDate?.timeIntervalSince1970 == 1700003600)
+    }
+
+    @Test func decodeFlowSnapshot() throws {
+        let json = """
+        {
+            "flowId": "pa_123",
+            "providerId": "openai-codex",
+            "flowType": "oauth_callback",
+            "launchMode": "server_browser",
+            "status": "awaiting_manual_code",
+            "auth": {
+                "url": "https://auth.openai.com/oauth/authorize?foo=bar",
+                "instructions": "Complete sign-in in browser"
+            },
+            "prompt": null,
+            "lastProgress": "waiting",
+            "error": null,
+            "createdAt": 1700000000000,
+            "updatedAt": 1700000100000,
+            "expiresAt": 1700000600000
+        }
+        """
+
+        let flow = try JSONDecoder().decode(
+            ProviderAuthFlowSnapshot.self,
+            from: json.data(using: .utf8)!
+        )
+
+        #expect(flow.id == "pa_123")
+        #expect(flow.flowType == .oauthCallback)
+        #expect(flow.launchMode == .serverBrowser)
+        #expect(flow.status == .awaitingManualCode)
+        #expect(flow.auth?.url == "https://auth.openai.com/oauth/authorize?foo=bar")
+        #expect(flow.status.isTerminal == false)
+    }
+}
+
 // MARK: - Permission Codable
 
 @Suite("Permission Codable")

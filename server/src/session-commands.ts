@@ -1,7 +1,7 @@
 import { formatSkillsForPrompt, type AgentSession } from "@mariozechner/pi-coding-agent";
 
-import { ts } from "./log-utils.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
+import { createLogger } from "./logger.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import {
   shareSession,
@@ -12,21 +12,19 @@ import { composeModelId, type SessionStateActiveSession } from "./session-state.
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 
+const log = createLogger({ base: { component: "session_commands" } });
+
 function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 function readCompactInstructions(command: Record<string, unknown>): string | undefined {
-  if (typeof command.customInstructions === "string") {
-    return command.customInstructions;
+  if (typeof command.customInstructions !== "string") {
+    return undefined;
   }
 
-  // Backward compatibility with previous internal field name.
-  if (typeof command.instructions === "string") {
-    return command.instructions;
-  }
-
-  return undefined;
+  const trimmed = command.customInstructions.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
@@ -103,7 +101,7 @@ function collectSessionContextComposition(
 const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
   {
     name: "share",
-    description: "Share session as a secret GitHub gist",
+    description: "Share session as an auto-redacted secret GitHub gist",
     source: "builtin",
   },
 ];
@@ -143,6 +141,8 @@ function collectSessionCommands(session: AgentSession): { commands: SessionComma
   return { commands };
 }
 
+type SessionTreeFilterMode = "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+
 interface SessionTreeNodeSnapshot {
   id: string;
   parentId: string | null;
@@ -150,6 +150,8 @@ interface SessionTreeNodeSnapshot {
   timestamp: string;
   depth: number;
   isLeafPath: boolean;
+  defaultVisible: boolean;
+  matchesFilter: boolean;
   role?: string;
   textPreview?: string;
   label?: string;
@@ -159,6 +161,18 @@ type SessionTreeNode = ReturnType<AgentSession["sessionManager"]["getTree"]>[num
 type SessionTreeEntry = SessionTreeNode["entry"];
 
 const MAX_TEXT_PREVIEW_CHARS = 160;
+const TREE_DEFAULT_HIDDEN_ENTRY_TYPES = new Set([
+  "label",
+  "custom",
+  "model_change",
+  "thinking_level_change",
+  "session_info",
+]);
+
+interface TreeToolCallSnapshot {
+  name: string;
+  arguments: Record<string, unknown>;
+}
 
 function compareTreeNodesByTimestamp(left: SessionTreeNode, right: SessionTreeNode): number {
   const leftTime = Date.parse(left.entry.timestamp);
@@ -218,7 +232,7 @@ function previewText(rawText: string): string | undefined {
   return `${normalized.slice(0, MAX_TEXT_PREVIEW_CHARS - 1)}…`;
 }
 
-function extractTextFromMessageContent(content: unknown): string {
+function extractDisplayTextFromMessageContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
   }
@@ -236,39 +250,303 @@ function extractTextFromMessageContent(content: unknown): string {
       typeof record.text === "string"
     ) {
       parts.push(record.text);
-      continue;
-    }
-
-    if (record.type === "thinking" && typeof record.thinking === "string") {
-      parts.push(record.thinking);
     }
   }
 
   return parts.join(" ");
 }
 
-function extractMessageSnapshot(entry: SessionTreeEntry): { role?: string; textPreview?: string } {
-  if (entry.type !== "message") {
-    return {};
+function hasDisplayTextContent(content: unknown): boolean {
+  return previewText(extractDisplayTextFromMessageContent(content)) !== undefined;
+}
+
+function shortenTreePath(path: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (home && path.startsWith(home)) {
+    return `~${path.slice(home.length)}`;
+  }
+  return path;
+}
+
+function formatTreeToolCall(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "read": {
+      const path = shortenTreePath(String(args.path || ""));
+      const offset = args.offset;
+      const limit = args.limit;
+      let display = path;
+      if (offset !== undefined || limit !== undefined) {
+        const start = typeof offset === "number" ? offset : 1;
+        const limitNumber = typeof limit === "number" ? limit : undefined;
+        const end = limitNumber !== undefined ? start + limitNumber - 1 : "";
+        display += `:${start}${end ? `-${end}` : ""}`;
+      }
+      return `[read: ${display}]`;
+    }
+
+    case "write": {
+      const path = shortenTreePath(String(args.path || ""));
+      return `[write: ${path}]`;
+    }
+
+    case "edit": {
+      const path = shortenTreePath(String(args.path || ""));
+      return `[edit: ${path}]`;
+    }
+
+    case "bash": {
+      const rawCommand = String(args.command || "");
+      const command = rawCommand
+        .replace(/[\n\t]/g, " ")
+        .trim()
+        .slice(0, 50);
+      return `[bash: ${command}${rawCommand.length > 50 ? "..." : ""}]`;
+    }
+
+    case "grep": {
+      const pattern = String(args.pattern || "");
+      const path = shortenTreePath(String(args.path || "."));
+      return `[grep: /${pattern}/ in ${path}]`;
+    }
+
+    case "find": {
+      const pattern = String(args.pattern || "");
+      const path = shortenTreePath(String(args.path || "."));
+      return `[find: ${pattern} in ${path}]`;
+    }
+
+    case "ls": {
+      const path = shortenTreePath(String(args.path || "."));
+      return `[ls: ${path}]`;
+    }
+
+    default: {
+      const argsJson = JSON.stringify(args);
+      const preview = argsJson.slice(0, 40);
+      return `[${name}: ${preview}${argsJson.length > 40 ? "..." : ""}]`;
+    }
+  }
+}
+
+function collectTreeToolCalls(tree: SessionTreeNode[]): Map<string, TreeToolCallSnapshot> {
+  const toolCalls = new Map<string, TreeToolCallSnapshot>();
+  const stack = [...tree];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+
+    const entry = current.entry;
+    if (entry.type === "message") {
+      const message = toRecord(entry.message);
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        for (const block of message.content) {
+          const record = toRecord(block);
+          if (
+            record.type === "toolCall" &&
+            typeof record.id === "string" &&
+            typeof record.name === "string"
+          ) {
+            toolCalls.set(record.id, {
+              name: record.name,
+              arguments: toRecord(record.arguments),
+            });
+          }
+        }
+      }
+    }
+
+    for (const child of current.children) {
+      stack.push(child);
+    }
+  }
+
+  return toolCalls;
+}
+
+function isTreeEntryEligibleForFilters(entry: SessionTreeEntry, leafId: string | null): boolean {
+  if (entry.type !== "message" || entry.id === leafId) {
+    return true;
   }
 
   const message = toRecord(entry.message);
-  const role = typeof message.role === "string" ? message.role : undefined;
-  const textPreview = previewText(extractTextFromMessageContent(message.content));
+  if (message.role !== "assistant") {
+    return true;
+  }
 
-  return {
-    ...(role ? { role } : {}),
-    ...(textPreview ? { textPreview } : {}),
-  };
+  const hasText = hasDisplayTextContent(message.content);
+  const stopReason = typeof message.stopReason === "string" ? message.stopReason : undefined;
+  const isErrorOrAborted =
+    stopReason !== undefined && stopReason !== "stop" && stopReason !== "toolUse";
+
+  return hasText || isErrorOrAborted;
 }
 
-function serializeSessionTree(session: AgentSession): {
+function isTreeEntryVisibleByDefault(entry: SessionTreeEntry, leafId: string | null): boolean {
+  return (
+    isTreeEntryEligibleForFilters(entry, leafId) && !TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(entry.type)
+  );
+}
+
+function matchesSessionTreeFilter(
+  node: SessionTreeNode,
+  filterMode: SessionTreeFilterMode,
+  leafId: string | null,
+): boolean {
+  if (!isTreeEntryEligibleForFilters(node.entry, leafId)) {
+    return false;
+  }
+
+  const entry = node.entry;
+  const isSettingsEntry = TREE_DEFAULT_HIDDEN_ENTRY_TYPES.has(entry.type);
+
+  switch (filterMode) {
+    case "user-only":
+      return entry.type === "message" && toRecord(entry.message).role === "user";
+
+    case "no-tools":
+      return (
+        !isSettingsEntry &&
+        !(entry.type === "message" && toRecord(entry.message).role === "toolResult")
+      );
+
+    case "labeled-only":
+      return node.label !== undefined;
+
+    case "all":
+      return true;
+
+    case "default":
+    default:
+      return !isSettingsEntry;
+  }
+}
+
+function extractTreeNodeSnapshot(
+  entry: SessionTreeEntry,
+  toolCalls: Map<string, TreeToolCallSnapshot>,
+  leafId: string | null,
+): { defaultVisible: boolean; role?: string; textPreview?: string } {
+  const defaultVisible = isTreeEntryVisibleByDefault(entry, leafId);
+
+  switch (entry.type) {
+    case "message": {
+      const message = toRecord(entry.message);
+      const role = typeof message.role === "string" ? message.role : undefined;
+      let textPreview: string | undefined;
+
+      switch (role) {
+        case "toolResult": {
+          const toolCallId =
+            typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+          const toolCall = toolCallId ? toolCalls.get(toolCallId) : undefined;
+          textPreview = toolCall
+            ? formatTreeToolCall(toolCall.name, toolCall.arguments)
+            : typeof message.toolName === "string"
+              ? `[${message.toolName}]`
+              : undefined;
+          break;
+        }
+
+        case "bashExecution": {
+          const command = typeof message.command === "string" ? message.command : "";
+          textPreview = previewText(command);
+          break;
+        }
+
+        default:
+          textPreview = previewText(extractDisplayTextFromMessageContent(message.content));
+          break;
+      }
+
+      return {
+        defaultVisible,
+        ...(role ? { role } : {}),
+        ...(textPreview ? { textPreview } : {}),
+      };
+    }
+
+    case "compaction":
+      return {
+        defaultVisible,
+        textPreview:
+          typeof entry.tokensBefore === "number"
+            ? `${Math.round(entry.tokensBefore / 1000)}k tokens`
+            : undefined,
+      };
+
+    case "branch_summary":
+      return {
+        defaultVisible,
+        ...(previewText(entry.summary) ? { textPreview: previewText(entry.summary) } : {}),
+      };
+
+    case "custom_message": {
+      const rawContent =
+        typeof entry.content === "string"
+          ? entry.content
+          : extractDisplayTextFromMessageContent(entry.content);
+      const textPreview = previewText(rawContent);
+      return {
+        defaultVisible,
+        ...(textPreview ? { textPreview } : {}),
+      };
+    }
+
+    case "session_info":
+      return {
+        defaultVisible,
+        ...(previewText(entry.name || "") ? { textPreview: previewText(entry.name || "") } : {}),
+      };
+
+    case "model_change":
+      return {
+        defaultVisible,
+        ...(previewText(entry.modelId || "")
+          ? { textPreview: previewText(entry.modelId || "") }
+          : {}),
+      };
+
+    case "thinking_level_change":
+      return {
+        defaultVisible,
+        ...(previewText(entry.thinkingLevel || "")
+          ? { textPreview: previewText(entry.thinkingLevel || "") }
+          : {}),
+      };
+
+    case "label":
+      return {
+        defaultVisible,
+        ...(previewText(entry.label || "") ? { textPreview: previewText(entry.label || "") } : {}),
+      };
+
+    case "custom":
+      return {
+        defaultVisible,
+        ...(previewText(entry.customType || "")
+          ? { textPreview: previewText(entry.customType || "") }
+          : {}),
+      };
+
+    default:
+      return { defaultVisible };
+  }
+}
+
+function serializeSessionTree(
+  session: AgentSession,
+  filterMode: SessionTreeFilterMode = "default",
+): {
   leafId: string | null;
   nodes: SessionTreeNodeSnapshot[];
 } {
   const tree = session.sessionManager.getTree();
   const leafId = session.sessionManager.getLeafId();
   const leafPathIds = collectLeafPathIds(session, leafId);
+  const toolCalls = collectTreeToolCalls(tree);
 
   const nodes: SessionTreeNodeSnapshot[] = [];
   const stack = sortTreeNodes(tree, leafPathIds)
@@ -281,6 +559,7 @@ function serializeSessionTree(session: AgentSession): {
       continue;
     }
 
+    const extracted = extractTreeNodeSnapshot(current.node.entry, toolCalls, leafId);
     const snapshot: SessionTreeNodeSnapshot = {
       id: current.node.entry.id,
       parentId: current.node.entry.parentId,
@@ -288,7 +567,8 @@ function serializeSessionTree(session: AgentSession): {
       timestamp: current.node.entry.timestamp,
       depth: current.depth,
       isLeafPath: leafPathIds.has(current.node.entry.id),
-      ...extractMessageSnapshot(current.node.entry),
+      matchesFilter: matchesSessionTreeFilter(current.node, filterMode, leafId),
+      ...extracted,
       ...(current.node.label
         ? {
             label: current.node.label,
@@ -331,6 +611,26 @@ function readRequiredString(value: unknown, fieldName: string): string {
 
 function readOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function readSessionTreeFilterMode(command: Record<string, unknown>): SessionTreeFilterMode {
+  switch (readOptionalString(command.filterMode)) {
+    case undefined:
+    case "default":
+      return "default";
+    case "no-tools":
+      return "no-tools";
+    case "user-only":
+      return "user-only";
+    case "labeled-only":
+      return "labeled-only";
+    case "all":
+      return "all";
+    default:
+      throw new Error(
+        "Invalid payload: expected filterMode to be one of default, no-tools, user-only, labeled-only, all",
+      );
+  }
 }
 
 function readShareSessionAction(command: Record<string, unknown>): ShareSessionAction {
@@ -452,7 +752,10 @@ export class SessionCommandCoordinator {
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
     ["get_messages", (session) => session.messages],
     ["get_fork_messages", (session) => ({ messages: session.getUserMessagesForForking() })],
-    ["get_session_tree", (session) => serializeSessionTree(session)],
+    [
+      "get_session_tree",
+      (session, cmd) => serializeSessionTree(session, readSessionTreeFilterMode(cmd)),
+    ],
     [
       "navigate_tree",
       (session, cmd) =>
@@ -475,10 +778,14 @@ export class SessionCommandCoordinator {
     [
       "share_session",
       (session, cmd) =>
-        shareSession(session, {}, {
-          action: readShareSessionAction(cmd),
-          redactionPolicy: readShareSessionRedactionPolicy(cmd),
-        }),
+        shareSession(
+          session,
+          {},
+          {
+            action: readShareSessionAction(cmd),
+            redactionPolicy: readShareSessionRedactionPolicy(cmd),
+          },
+        ),
     ],
 
     ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
@@ -692,9 +999,11 @@ export class SessionCommandCoordinator {
           }
         } catch (stateErr) {
           const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
-          console.warn(
-            `[sdk] ${cmdType} state refresh failed for ${active.session.id}: ${message}`,
-          );
+          log.warn("session_commands.state_refresh.failed", {
+            sessionId: active.session.id,
+            commandType: cmdType,
+            error: message,
+          });
         }
       }
 
@@ -753,7 +1062,9 @@ export class SessionCommandCoordinator {
         void backend.abort();
         break;
       default:
-        console.warn(`${ts()} [sdk] Unhandled fire-and-forget command: ${type}`);
+        log.warn("session_commands.unhandled_fire_and_forget_command", {
+          commandType: type,
+        });
     }
   }
 }

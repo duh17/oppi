@@ -20,7 +20,6 @@ describe("isManagedExtensionName", () => {
     expect(isManagedExtensionName("permission-gate")).toBe(true);
     expect(isManagedExtensionName("ask")).toBe(true);
     expect(isManagedExtensionName("subagents")).toBe(true);
-    expect(isManagedExtensionName("spawn_agent")).toBe(true);
   });
 
   it("does not mark regular host extensions as managed", () => {
@@ -46,8 +45,8 @@ describe("isWorkspaceExtensionEnabled", () => {
     expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(false);
   });
 
-  it("accepts legacy spawn_agent allowlist entries for backward compatibility", () => {
+  it("requires canonical extension names in workspace allowlists", () => {
     const workspace = makeWorkspace(["spawn_agent"]);
-    expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(true);
+    expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(false);
   });
 });

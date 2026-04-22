@@ -284,8 +284,4 @@ export class WorkspaceRuntime {
     return count;
   }
 
-  /** Method alias for globalSessionCount (used by session-limits tests). */
-  getGlobalSessionCount(): number {
-    return this.globalSessionCount;
-  }
 }

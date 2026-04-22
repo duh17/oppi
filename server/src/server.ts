@@ -64,6 +64,7 @@ import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider } from "./stt-provider.js";
+import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -321,6 +322,7 @@ export class Server {
   private bonjourAdvertiser: BonjourAdvertiser | null = null;
   private modelRegistry: ModelRegistry;
   private models: ModelCatalog;
+  private providerAuth: ProviderAuthManager;
   private runtimeUpdates: RuntimeUpdateManager;
   private titleGenerator: SessionTitleGenerator;
 
@@ -360,6 +362,38 @@ export class Server {
       this.storage,
       storage.getConfig().modelAllowlist,
     );
+    this.providerAuth = new ProviderAuthManager({
+      authStorage,
+      getKnownApiKeyProviderIds: () => {
+        const knownApiKeyProviders = new Set<string>([
+          "anthropic",
+          "openai",
+          "google",
+          "mistral",
+          "groq",
+          "xai",
+          "openrouter",
+          "zai",
+        ]);
+        const oauthOnlyProviders = new Set<string>([
+          "openai-codex",
+          "github-copilot",
+          "google-gemini-cli",
+          "google-antigravity",
+        ]);
+
+        for (const model of this.modelRegistry.getAll()) {
+          if (!oauthOnlyProviders.has(model.provider)) {
+            knownApiKeyProviders.add(model.provider);
+          }
+        }
+
+        return [...knownApiKeyProviders];
+      },
+      onCredentialsChanged: () => {
+        this.models.refresh();
+      },
+    });
     // Runtime version reporter — updates are managed by the Mac app via Sparkle.
     this.runtimeUpdates = new RuntimeUpdateManager({
       currentVersion: Server.detectPiAgentVersion(),
@@ -558,6 +592,7 @@ export class Server {
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
       streamMux: this.streamMux,
+      providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: () => {

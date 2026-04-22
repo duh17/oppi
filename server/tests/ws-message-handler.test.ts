@@ -390,6 +390,7 @@ describe("WsMessageHandler", () => {
 
     await dispatch(harness, {
       type: "get_session_tree",
+      filterMode: "no-tools",
       requestId: "req-tree-1",
     });
 
@@ -398,10 +399,34 @@ describe("WsMessageHandler", () => {
       "s1",
       {
         type: "get_session_tree",
+        filterMode: "no-tools",
         requestId: "req-tree-1",
       },
       "req-tree-1",
     );
+  });
+
+  it("returns command_result when passthrough forwarding throws", async () => {
+    const harness = makeHarness();
+    harness.sessions.forwardClientCommand.mockRejectedValueOnce(
+      new Error("Session not active: s1"),
+    );
+
+    await dispatch(harness, {
+      type: "get_session_tree",
+      filterMode: "default",
+      requestId: "req-tree-err",
+    });
+
+    expect(harness.sent).toEqual([
+      {
+        type: "command_result",
+        command: "get_session_tree",
+        requestId: "req-tree-err",
+        success: false,
+        error: "Session not active: s1",
+      },
+    ]);
   });
 
   it("forwards navigate_tree requests", async () => {

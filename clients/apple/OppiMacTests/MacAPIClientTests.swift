@@ -29,11 +29,11 @@ struct MacAPIClientTests {
         #expect(MacAPIClient.readOwnerToken(dataDir: dir) == "sk_abc123")
     }
 
-    @Test func readOwnerTokenFromOwnerTokenField() throws {
+    @Test func readOwnerTokenIgnoresLegacyOwnerTokenField() throws {
         let dir = try writeTempConfig(#"{"ownerToken": "sk_owner456"}"#)
         defer { try? FileManager.default.removeItem(atPath: dir) }
 
-        #expect(MacAPIClient.readOwnerToken(dataDir: dir) == "sk_owner456")
+        #expect(MacAPIClient.readOwnerToken(dataDir: dir) == nil)
     }
 
     @Test func readOwnerTokenPrefersTokenOverOwnerToken() throws {

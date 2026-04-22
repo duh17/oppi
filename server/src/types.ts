@@ -25,7 +25,7 @@ export interface Workspace {
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
 
   // Extensions
-  extensions?: string[]; // Extension allowlist (host extensions + first-party names like ask/spawn_agent)
+  extensions?: string[]; // Extension allowlist (host extensions + first-party names like ask/subagents)
 
   // Git status
   gitStatusEnabled?: boolean; // Show git status context bar (default: true)
@@ -1057,7 +1057,11 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "set_auto_compaction"; enabled: boolean; requestId?: string }
     | { type: "fork"; entryId: string; requestId?: string }
     | { type: "get_fork_messages"; requestId?: string }
-    | { type: "get_session_tree"; requestId?: string }
+    | {
+        type: "get_session_tree";
+        filterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+        requestId?: string;
+      }
     | {
         type: "navigate_tree";
         targetId: string;

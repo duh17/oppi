@@ -2,12 +2,14 @@ import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import type { Session, ServerMessage } from "./types.js";
-import { ts } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 
 export interface SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
 }
+
+const log = createLogger({ base: { component: "session_state" } });
 
 export interface SessionStateCoordinatorDeps {
   storage: Storage;
@@ -48,7 +50,7 @@ export class SessionStateCoordinator {
   async refreshSessionState(
     key: string,
     active: SessionStateActiveSession,
-  ): Promise<{ sessionFile?: string; sessionId?: string } | null> {
+  ): Promise<{ sessionFile?: string; sessionId?: string; leafId?: string | null } | null> {
     try {
       const snapshot = active.sdkBackend.getStateSnapshot();
       if (this.applyPiStateSnapshot(active.session, snapshot)) {
@@ -57,6 +59,7 @@ export class SessionStateCoordinator {
       return {
         sessionFile: active.session.piSessionFile,
         sessionId: active.session.piSessionId,
+        leafId: active.sdkBackend.session.sessionManager.getLeafId(),
       };
     } catch {
       return null;
@@ -133,9 +136,10 @@ export class SessionStateCoordinator {
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `${ts()} [session:${active.session.id}] failed to apply remembered thinking level: ${message}`,
-      );
+      log.warn("session_state.apply_remembered_thinking_level.failed", {
+        sessionId: active.session.id,
+        error: message,
+      });
       return false;
     }
   }

@@ -113,7 +113,6 @@ describe("Storage config validation", () => {
       host: "0.0.0.0",
       dataDir: dir,
       defaultModel: "anthropic/claude-sonnet-4-0",
-      sessionTimeout: 600_000,
       sessionIdleTimeoutMs: 600_000,
       workspaceIdleTimeoutMs: 1_800_000,
       maxSessionsPerWorkspace: 3,

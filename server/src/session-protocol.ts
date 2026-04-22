@@ -358,18 +358,6 @@ function resolveToolCallId(event: AgentSessionEvent): string | undefined {
     if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
       return event.toolCallId;
     }
-    return undefined;
-  }
-
-  // Compatibility fallback: some older payloads on start/end carry the call id
-  // as `id` instead of `toolCallId`.
-  if (
-    (event.type === "tool_execution_start" || event.type === "tool_execution_end") &&
-    "id" in event &&
-    typeof event.id === "string" &&
-    event.id.length > 0
-  ) {
-    return event.id;
   }
 
   return undefined;

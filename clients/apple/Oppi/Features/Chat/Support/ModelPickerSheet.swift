@@ -13,6 +13,7 @@ struct ModelPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
+    @State private var collapsedProviders: Set<String> = []
     private var recentIds: [String] { RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
@@ -107,17 +108,20 @@ struct ModelPickerSheet: View {
             }
 
             ForEach(groupedModels, id: \.provider) { group in
+                let isCollapsed = isProviderCollapsed(group.provider)
+
                 Section {
-                    ForEach(group.models) { model in
-                        modelRow(model)
+                    if !isCollapsed {
+                        ForEach(group.models) { model in
+                            modelRow(model)
+                        }
                     }
                 } header: {
-                    HStack(spacing: 6) {
-                        ProviderIcon(provider: group.provider)
-                        Text(providerDisplayName(group.provider))
-                    }
-                    .font(.caption.bold())
-                    .foregroundStyle(.themeFgDim)
+                    providerHeader(
+                        provider: group.provider,
+                        isCollapsed: isCollapsed,
+                        modelCount: group.models.count
+                    )
                 }
             }
         }
@@ -147,6 +151,56 @@ struct ModelPickerSheet: View {
 
     private func providerDisplayName(_ provider: String) -> String {
         ProviderIcon.displayName(for: provider)
+    }
+
+    private func isProviderCollapsed(_ provider: String) -> Bool {
+        searchText.isEmpty && collapsedProviders.contains(provider)
+    }
+
+    private func toggleProviderCollapse(_ provider: String) {
+        if collapsedProviders.contains(provider) {
+            collapsedProviders.remove(provider)
+        } else {
+            collapsedProviders.insert(provider)
+        }
+    }
+
+    private func providerHeader(provider: String, isCollapsed: Bool, modelCount: Int) -> some View {
+        let isSearchActive = !searchText.isEmpty
+        let name = providerDisplayName(provider)
+
+        return Button {
+            guard !isSearchActive else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                toggleProviderCollapse(provider)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                ProviderIcon(provider: provider)
+                Text(name)
+
+                Spacer(minLength: 8)
+
+                if !isSearchActive {
+                    Text("\(modelCount)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.caption.bold())
+        .foregroundStyle(.themeFgDim)
+        .accessibilityLabel(
+            isSearchActive
+                ? name
+                : (isCollapsed ? "Expand \(name) models" : "Collapse \(name) models")
+        )
     }
 }
 

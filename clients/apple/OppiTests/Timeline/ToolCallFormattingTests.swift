@@ -45,12 +45,12 @@ struct ToolCallFormattingTests {
         #expect(ToolCallFormatting.filePath(from: args) == "/src/main.swift")
     }
 
-    @Test func filePathFromFilePath() {
+    @Test func filePathIgnoresLegacyFilePathKey() {
         let args: [String: JSONValue] = ["file_path": .string("/src/index.ts")]
-        #expect(ToolCallFormatting.filePath(from: args) == "/src/index.ts")
+        #expect(ToolCallFormatting.filePath(from: args) == nil)
     }
 
-    @Test func filePathPrefersPath() {
+    @Test func filePathReadsCanonicalPath() {
         let args: [String: JSONValue] = [
             "path": .string("/preferred"),
             "file_path": .string("/fallback"),
@@ -200,8 +200,12 @@ struct ToolCallFormattingTests {
 
     @Test func editDiffStatsCountsReplacements() {
         let args: [String: JSONValue] = [
-            "oldText": .string("let value = 1\n"),
-            "newText": .string("let value = 2\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("let value = 1\n"),
+                    "newText": .string("let value = 2\n"),
+                ]),
+            ]),
         ]
 
         let stats = ToolCallFormatting.editDiffStats(from: args)
@@ -211,8 +215,12 @@ struct ToolCallFormattingTests {
 
     @Test func editDiffStatsCountsInsertionsAndDeletions() {
         let args: [String: JSONValue] = [
-            "oldText": .string("a\nb\nc\n"),
-            "newText": .string("a\nb\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("a\nb\nc\n"),
+                    "newText": .string("a\nb\n"),
+                ]),
+            ]),
         ]
 
         let stats = ToolCallFormatting.editDiffStats(from: args)
@@ -222,8 +230,12 @@ struct ToolCallFormattingTests {
 
     @Test func editDiffStatsUsesLCSAndDoesNotOvercountShiftedInsertions() {
         let args: [String: JSONValue] = [
-            "oldText": .string("a\nb\nc\nd\n"),
-            "newText": .string("a\ninserted\nb\nc\nd\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("a\nb\nc\nd\n"),
+                    "newText": .string("a\ninserted\nb\nc\nd\n"),
+                ]),
+            ]),
         ]
 
         let stats = ToolCallFormatting.editDiffStats(from: args)
@@ -231,26 +243,24 @@ struct ToolCallFormattingTests {
         #expect(stats?.removed == 0)
     }
 
-    @Test func editOldAndNewTextSupportsAliasKeys() {
+    @Test func editOldAndNewTextIgnoresLegacyAliasKeys() {
         let args: [String: JSONValue] = [
             "beforeText": .string("old"),
             "after": .string("new"),
         ]
 
         let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair?.oldText == "old")
-        #expect(pair?.newText == "new")
+        #expect(pair == nil)
     }
 
-    @Test func editDiffStatsSupportsSnakeCaseVariants() {
+    @Test func editDiffStatsIgnoresLegacySnakeCaseVariants() {
         let args: [String: JSONValue] = [
             "old_text": .string("a\nb\n"),
             "new_text": .string("a\nb\nc\n"),
         ]
 
         let stats = ToolCallFormatting.editDiffStats(from: args)
-        #expect(stats?.added == 1)
-        #expect(stats?.removed == 0)
+        #expect(stats == nil)
     }
 
     @Test func editDiffStatsNilWhenArgsMissing() {
@@ -300,16 +310,14 @@ struct ToolCallFormattingTests {
         #expect(stats?.removed == 1)
     }
 
-    @Test func editOldAndNewTextLegacyFormatStillWorks() {
-        // Legacy format should still work when both top-level and edits exist
+    @Test func editOldAndNewTextRequiresEditsArray() {
         let args: [String: JSONValue] = [
             "oldText": .string("legacy_old"),
             "newText": .string("legacy_new"),
         ]
 
         let pair = ToolCallFormatting.editOldAndNewText(from: args)
-        #expect(pair?.oldText == "legacy_old")
-        #expect(pair?.newText == "legacy_new")
+        #expect(pair == nil)
     }
 
     @Test func editOldAndNewTextNilForEmptyEditsArray() {

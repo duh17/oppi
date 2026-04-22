@@ -86,7 +86,7 @@ const bash: MobileToolRenderer = {
 
 const read: MobileToolRenderer = {
   renderCall(args) {
-    const path = shortenPath(str(args.path || args.file_path));
+    const path = shortenPath(str(args.path));
     const segs: StyledSegment[] = [
       { text: "read ", style: "bold" },
       { text: path || "…", style: "accent" },
@@ -115,7 +115,7 @@ const read: MobileToolRenderer = {
 
 const edit: MobileToolRenderer = {
   renderCall(args) {
-    const path = shortenPath(str(args.path || args.file_path));
+    const path = shortenPath(str(args.path));
     const segs: StyledSegment[] = [
       { text: "edit ", style: "bold" },
       { text: path || "…", style: "accent" },
@@ -135,7 +135,7 @@ const edit: MobileToolRenderer = {
 
 const write: MobileToolRenderer = {
   renderCall(args) {
-    const path = shortenPath(str(args.path || args.file_path));
+    const path = shortenPath(str(args.path));
     return [
       { text: "write ", style: "bold" },
       { text: path || "…", style: "accent" },

@@ -110,8 +110,7 @@ struct ContentView: View {
         .sheet(item: $liveConnection.activeExtensionDialog) { request in
             ExtensionDialogSheet(request: request)
         }
-        .alert(
-            "Extension",
+        .sheet(
             isPresented: Binding(
                 get: { connection.extensionToast != nil },
                 set: { showing in
@@ -121,11 +120,9 @@ struct ContentView: View {
                 }
             )
         ) {
-            Button("OK", role: .cancel) {
-                connection.extensionToast = nil
+            if let toast = connection.extensionToast {
+                ExtensionToastSheet(message: toast)
             }
-        } message: {
-            Text(connection.extensionToast ?? "")
         }
         .fullScreenCover(isPresented: $nav.showWhatsNew) {
             WhatsNewView {
@@ -412,4 +409,88 @@ private struct ExtensionDialogSheet: View {
             }
         }
     }
+}
+
+private struct ExtensionToastSheet: View {
+    let message: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(parsedLines) { line in
+                        if let url = line.url {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(line.label)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 12) {
+                                    Button(action: { UIApplication.shared.open(url) }) {
+                                        Text(url.absoluteString)
+                                            .font(.body)
+                                            .lineLimit(1)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.blue)
+
+                                    Spacer()
+
+                                    Button {
+                                        UIPasteboard.general.string = url.absoluteString
+                                        let feedback = UIImpactFeedbackGenerator(style: .light)
+                                        feedback.impactOccurred(intensity: 0.8)
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .imageScale(.medium)
+                                    }
+                                }
+                            }
+                        } else {
+                            Text(line.text)
+                                .font(.body)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Extension")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.fraction(0.35), .medium])
+    }
+
+    private var parsedLines: [ParsedLine] {
+        message.components(separatedBy: .newlines).compactMap { raw -> ParsedLine? in
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return nil }
+
+            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+            let range = NSRange(location: 0, length: trimmed.utf16.count)
+            guard let match = detector?.firstMatch(in: trimmed, options: [], range: range),
+                  let urlRange = Range(match.range, in: trimmed),
+                  let url = URL(string: String(trimmed[urlRange])),
+                  url.scheme?.hasPrefix("http") == true else {
+                return ParsedLine(text: trimmed, label: trimmed, url: nil)
+            }
+
+            let prefix = String(trimmed[..<urlRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let label = prefix.isEmpty ? "Link" : prefix
+            return ParsedLine(text: trimmed, label: label, url: url)
+        }
+    }
+}
+
+private struct ParsedLine: Identifiable {
+    let id = UUID()
+    let text: String
+    let label: String
+    let url: URL?
 }

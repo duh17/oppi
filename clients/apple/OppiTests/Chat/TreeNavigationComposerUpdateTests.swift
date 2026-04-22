@@ -1,40 +1,56 @@
 import Testing
 @testable import Oppi
 
-@Suite("Tree navigation composer update")
-struct TreeNavigationComposerUpdateTests {
-    @Test("clears composer when navigate_tree returns nil editor text")
-    func clearsComposerWhenEditorTextMissing() {
-        let update = TreeNavigationComposerUpdate.from(editorText: nil, showComposer: true)
+@Suite("Tree navigation view update")
+struct TreeNavigationViewUpdateTests {
+    @Test("keeps the selected tree node as the scroll target")
+    func keepsSelectedTreeNodeAsScrollTarget() {
+        let update = TreeNavigationViewUpdate.from(
+            targetId: "entry-42",
+            editorText: nil,
+            showComposer: true
+        )
+
+        #expect(update.scrollTargetID == "entry-42")
         #expect(update.inputText.isEmpty)
         #expect(update.shouldFocusComposer == false)
     }
 
     @Test("treats whitespace-only editor text as empty")
     func trimsWhitespaceOnlyEditorText() {
-        let update = TreeNavigationComposerUpdate.from(editorText: "   \n\t  ", showComposer: false)
+        let update = TreeNavigationViewUpdate.from(
+            targetId: "entry-42",
+            editorText: "   \n\t  ",
+            showComposer: false
+        )
+
+        #expect(update.scrollTargetID == "entry-42")
         #expect(update.inputText.isEmpty)
         #expect(update.shouldFocusComposer == false)
     }
 
     @Test("keeps editor text and requests focus when composer is hidden")
     func requestsFocusForNonEmptyTextWhenComposerHidden() {
-        let update = TreeNavigationComposerUpdate.from(
+        let update = TreeNavigationViewUpdate.from(
+            targetId: "entry-42",
             editorText: "  Continue from this branch  ",
             showComposer: false
         )
 
+        #expect(update.scrollTargetID == "entry-42")
         #expect(update.inputText == "Continue from this branch")
         #expect(update.shouldFocusComposer == true)
     }
 
     @Test("keeps editor text without focus request when composer already visible")
     func doesNotRequestFocusWhenComposerVisible() {
-        let update = TreeNavigationComposerUpdate.from(
+        let update = TreeNavigationViewUpdate.from(
+            targetId: "entry-42",
             editorText: "Follow up",
             showComposer: true
         )
 
+        #expect(update.scrollTargetID == "entry-42")
         #expect(update.inputText == "Follow up")
         #expect(update.shouldFocusComposer == false)
     }

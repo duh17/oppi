@@ -32,7 +32,16 @@ final class MessageSender {
     static let turnSendRetryDelay: Duration = .milliseconds(250)
     static let turnSendMaxAttempts = 2
     static let turnSendRequiredStage: TurnAckStage = .dispatched
+
+    /// Baseline request timeout for fast RPC-style commands.
     static let commandRequestTimeoutDefault: Duration = .seconds(8)
+
+    /// Route-specific timeout presets for long-running commands.
+    static let commandRequestTimeoutTreeNavigateSummarize: Duration = .seconds(60)
+    static let commandRequestTimeoutCompact: Duration = .seconds(60)
+    static let commandRequestTimeoutShareSessionPrepare: Duration = .seconds(45)
+    static let commandRequestTimeoutShareSessionPublish: Duration = .seconds(90)
+
     static let stopRetryDelay: Duration = .milliseconds(250)
     static let stopMaxAttempts = 3
     static let stopCommandTimeout: Duration = .seconds(1)
@@ -85,6 +94,34 @@ final class MessageSender {
             return true
         default:
             return false
+        }
+    }
+
+    /// Standard timeout policy for command requests.
+    ///
+    /// Keep short defaults for snappy RPCs and assign longer budgets to known
+    /// long-running routes.
+    static func defaultCommandTimeout(command: String, message: ClientMessage) -> Duration {
+        switch command {
+        case "navigate_tree":
+            if case .navigateTree(_, let summarize, _, _, _, _) = message,
+               summarize {
+                return commandRequestTimeoutTreeNavigateSummarize
+            }
+            return commandRequestTimeoutDefault
+
+        case "compact":
+            return commandRequestTimeoutCompact
+
+        case "share_session":
+            if case .shareSession(let action, _, _) = message,
+               action == .prepare {
+                return commandRequestTimeoutShareSessionPrepare
+            }
+            return commandRequestTimeoutShareSessionPublish
+
+        default:
+            return commandRequestTimeoutDefault
         }
     }
 
@@ -198,9 +235,12 @@ final class MessageSender {
     // MARK: - Command Request/Response
 
     /// Send a command and await its result via CommandTracker correlation.
+    ///
+    /// Timeout defaults are chosen via `defaultCommandTimeout(command:message:)`
+    /// so long-running command routes can opt into larger budgets centrally.
     func sendCommandAwaitingResult(
         command: String,
-        timeout: Duration = MessageSender.commandRequestTimeoutDefault,
+        timeout: Duration? = nil,
         message: (String) -> ClientMessage
     ) async throws -> JSONValue? {
         if _sendMessageForTesting == nil, wsClient == nil {
@@ -208,11 +248,17 @@ final class MessageSender {
         }
 
         let requestId = UUID().uuidString
+        let outboundMessage = message(requestId)
+        let effectiveTimeout = timeout ?? Self.defaultCommandTimeout(
+            command: command,
+            message: outboundMessage
+        )
+
         let pending = PendingCommand(command: command, requestId: requestId)
         commands.registerCommand(pending)
 
         do {
-            try await dispatchSend(message(requestId))
+            try await dispatchSend(outboundMessage)
         } catch {
             commands.unregisterCommand(requestId: requestId)
             pending.waiter.resolve(.failure(error))
@@ -220,7 +266,11 @@ final class MessageSender {
         }
 
         do {
-            let response = try await waitForCommandResult(waiter: pending.waiter, command: command, timeout: timeout)
+            let response = try await waitForCommandResult(
+                waiter: pending.waiter,
+                command: command,
+                timeout: effectiveTimeout
+            )
             commands.unregisterCommand(requestId: requestId)
             return response.data
         } catch {
@@ -423,9 +473,9 @@ final class MessageSender {
         }
     }
 
-    func getSessionTree() async throws -> SessionTreeSnapshot {
+    func getSessionTree(filterMode: SessionTreeFilterMode = .standard) async throws -> SessionTreeSnapshot {
         let data = try await sendCommandAwaitingResult(command: "get_session_tree") { requestId in
-            .getSessionTree(requestId: requestId)
+            .getSessionTree(filterMode: filterMode, requestId: requestId)
         }
 
         return try Self.parseSessionTreeSnapshot(from: data)
@@ -509,6 +559,16 @@ final class MessageSender {
             command: command,
             field: "\(fieldPrefix).isLeafPath"
         )
+        let defaultVisible = try readOptionalBool(
+            valueForAnyKey(["defaultVisible", "default_visible"], in: object),
+            command: command,
+            field: "\(fieldPrefix).defaultVisible"
+        ) ?? true
+        let matchesFilter = try readOptionalBool(
+            valueForAnyKey(["matchesFilter", "matches_filter"], in: object),
+            command: command,
+            field: "\(fieldPrefix).matchesFilter"
+        ) ?? defaultVisible
         let role = try readOptionalString(
             object["role"],
             command: command,
@@ -532,6 +592,8 @@ final class MessageSender {
             timestamp: timestamp,
             depth: depth,
             isLeafPath: isLeafPath,
+            defaultVisible: defaultVisible,
+            matchesFilter: matchesFilter,
             role: role,
             textPreview: textPreview,
             label: label

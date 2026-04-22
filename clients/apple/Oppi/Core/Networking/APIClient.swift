@@ -304,6 +304,91 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).models
     }
 
+    // MARK: - Provider Auth
+
+    /// List provider auth status (OAuth/API key) from the server.
+    func listProviderAuthStatus() async throws -> [ProviderAuthProviderStatus] {
+        let data = try await get("/provider-auth/status")
+        struct Response: Decodable { let providers: [ProviderAuthProviderStatus] }
+        return try JSONDecoder().decode(Response.self, from: data).providers
+    }
+
+    /// Start an OAuth/device-code flow for a provider.
+    func startProviderAuthFlow(
+        providerId: String,
+        launchMode: ProviderAuthFlowSnapshot.LaunchMode = .serverBrowser
+    ) async throws -> ProviderAuthFlowSnapshot {
+        struct Body: Encodable {
+            let providerId: String
+            let launchMode: ProviderAuthFlowSnapshot.LaunchMode
+        }
+
+        let data = try await post(
+            "/provider-auth/flows",
+            body: Body(providerId: providerId, launchMode: launchMode)
+        )
+        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
+        return try JSONDecoder().decode(Response.self, from: data).flow
+    }
+
+    /// Fetch latest state for an in-flight provider auth flow.
+    func getProviderAuthFlow(flowId: String) async throws -> ProviderAuthFlowSnapshot {
+        let data = try await get("/provider-auth/flows/\(flowId)")
+        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
+        return try JSONDecoder().decode(Response.self, from: data).flow
+    }
+
+    /// Submit response for a provider flow prompt.
+    func submitProviderAuthPromptResponse(flowId: String, value: String) async throws -> ProviderAuthFlowSnapshot {
+        struct Body: Encodable { let value: String }
+        let data = try await post(
+            "/provider-auth/flows/\(flowId)/prompt-response",
+            body: Body(value: value)
+        )
+        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
+        return try JSONDecoder().decode(Response.self, from: data).flow
+    }
+
+    /// Submit manually pasted callback URL/code for a provider flow.
+    func submitProviderAuthManualCode(flowId: String, input: String) async throws -> ProviderAuthFlowSnapshot {
+        struct Body: Encodable { let input: String }
+        let data = try await post(
+            "/provider-auth/flows/\(flowId)/manual-code",
+            body: Body(input: input)
+        )
+        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
+        return try JSONDecoder().decode(Response.self, from: data).flow
+    }
+
+    /// Cancel an in-flight provider auth flow.
+    func cancelProviderAuthFlow(flowId: String, reason: String? = nil) async throws -> ProviderAuthFlowSnapshot {
+        struct Body: Encodable { let reason: String? }
+        let data = try await post(
+            "/provider-auth/flows/\(flowId)/cancel",
+            body: Body(reason: reason)
+        )
+        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
+        return try JSONDecoder().decode(Response.self, from: data).flow
+    }
+
+    /// Save an API key credential for a provider.
+    func setProviderAPIKey(providerId: String, key: String) async throws {
+        struct Body: Encodable {
+            let providerId: String
+            let key: String
+        }
+        _ = try await put(
+            "/provider-auth/api-key",
+            body: Body(providerId: providerId, key: key)
+        )
+    }
+
+    /// Remove saved credential for a provider.
+    func removeProviderCredential(providerId: String) async throws {
+        let (data, response) = try await request("DELETE", path: "/provider-auth/\(providerId)")
+        try checkStatus(response, data: data)
+    }
+
     // MARK: - Auto-Title
 
     /// Server-side auto-title configuration.

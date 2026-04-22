@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SessionCommandCoordinator, type CommandSessionState } from "../src/session-commands.js";
 import type { SdkBackend } from "../src/sdk-backend.js";
-import type { Session, ServerMessage } from "../src/types.js";
+import type { Session } from "../src/types.js";
 
 function makeSession(id = "s1"): Session {
   const now = Date.now();
@@ -30,7 +30,7 @@ function makeCoordinator(agentSession: AgentSession): {
     } as unknown as SdkBackend,
   };
 
-  const broadcast = vi.fn((_key: string, _message: ServerMessage) => {});
+  const broadcast = vi.fn();
 
   const coordinator = new SessionCommandCoordinator({
     getActiveSession: vi.fn(() => activeState),
@@ -106,7 +106,7 @@ describe("SessionCommandCoordinator", () => {
       commands: [
         {
           name: "share",
-          description: "Share session as a secret GitHub gist",
+          description: "Share session as an auto-redacted secret GitHub gist",
           source: "builtin",
         },
         {
@@ -162,7 +162,7 @@ describe("SessionCommandCoordinator", () => {
     });
   });
 
-  it("serializes get_session_tree as compact deterministic DFS nodes", async () => {
+  it("serializes get_session_tree with TUI-aligned default visibility and previews", async () => {
     const entry1 = {
       id: "entry-1",
       parentId: null,
@@ -197,7 +197,47 @@ describe("SessionCommandCoordinator", () => {
       timestamp: "2026-04-19T07:14:10.000Z",
       summary: "compacted",
       firstKeptEntryId: "entry-2",
-      tokensBefore: 100,
+      tokensBefore: 12_000,
+    };
+    const entry5 = {
+      id: "entry-5",
+      parentId: "entry-4",
+      type: "message",
+      timestamp: "2026-04-19T07:15:10.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "tool-call-1",
+            name: "read",
+            arguments: {
+              path: "/Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
+              offset: 10,
+              limit: 5,
+            },
+          },
+        ],
+      },
+    };
+    const entry6 = {
+      id: "entry-6",
+      parentId: "entry-5",
+      type: "message",
+      timestamp: "2026-04-19T07:16:10.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tool-call-1",
+        toolName: "read",
+        content: "file contents that should not be used as preview",
+      },
+    };
+    const entry7 = {
+      id: "entry-7",
+      parentId: "entry-6",
+      type: "session_info",
+      timestamp: "2026-04-19T07:17:10.000Z",
+      name: "Pinned title",
     };
 
     const byId = new Map<string, unknown>([
@@ -205,6 +245,9 @@ describe("SessionCommandCoordinator", () => {
       [entry2.id, entry2],
       [entry3.id, entry3],
       [entry4.id, entry4],
+      [entry5.id, entry5],
+      [entry6.id, entry6],
+      [entry7.id, entry7],
     ]);
 
     const getTree = vi.fn(() => [
@@ -220,7 +263,22 @@ describe("SessionCommandCoordinator", () => {
             children: [
               {
                 entry: entry4,
-                children: [],
+                children: [
+                  {
+                    entry: entry5,
+                    children: [
+                      {
+                        entry: entry6,
+                        children: [
+                          {
+                            entry: entry7,
+                            children: [],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
@@ -258,6 +316,8 @@ describe("SessionCommandCoordinator", () => {
           timestamp: "2026-04-19T07:11:10.000Z",
           depth: 0,
           isLeafPath: true,
+          defaultVisible: true,
+          matchesFilter: true,
           role: "user",
           textPreview: "Plan rollout",
           label: "Root label",
@@ -269,6 +329,8 @@ describe("SessionCommandCoordinator", () => {
           timestamp: "2026-04-19T07:13:10.000Z",
           depth: 1,
           isLeafPath: true,
+          defaultVisible: true,
+          matchesFilter: true,
           role: "user",
           textPreview: "Second branch",
         },
@@ -279,6 +341,8 @@ describe("SessionCommandCoordinator", () => {
           timestamp: "2026-04-19T07:12:10.000Z",
           depth: 1,
           isLeafPath: false,
+          defaultVisible: true,
+          matchesFilter: true,
           role: "assistant",
           textPreview: "Assistant answer extra",
         },
@@ -289,12 +353,156 @@ describe("SessionCommandCoordinator", () => {
           timestamp: "2026-04-19T07:14:10.000Z",
           depth: 2,
           isLeafPath: false,
+          defaultVisible: true,
+          matchesFilter: true,
+          textPreview: "12k tokens",
+        },
+        {
+          id: "entry-5",
+          parentId: "entry-4",
+          type: "message",
+          timestamp: "2026-04-19T07:15:10.000Z",
+          depth: 3,
+          isLeafPath: false,
+          defaultVisible: false,
+          matchesFilter: false,
+          role: "assistant",
+        },
+        {
+          id: "entry-6",
+          parentId: "entry-5",
+          type: "message",
+          timestamp: "2026-04-19T07:16:10.000Z",
+          depth: 4,
+          isLeafPath: false,
+          defaultVisible: true,
+          matchesFilter: true,
+          role: "toolResult",
+          textPreview:
+            "[read: ~/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift:10-14]",
+        },
+        {
+          id: "entry-7",
+          parentId: "entry-6",
+          type: "session_info",
+          timestamp: "2026-04-19T07:17:10.000Z",
+          depth: 5,
+          isLeafPath: false,
+          defaultVisible: false,
+          matchesFilter: false,
+          textPreview: "Pinned title",
         },
       ],
     });
 
     expect(getTree).toHaveBeenCalledTimes(1);
     expect(getLeafId).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks all filter visibility without surfacing tool-call-only assistant nodes", async () => {
+    const entry1 = {
+      id: "entry-1",
+      parentId: null,
+      type: "message",
+      timestamp: "2026-04-19T07:11:10.000Z",
+      message: { role: "user", content: "Plan rollout" },
+    };
+    const entry2 = {
+      id: "entry-2",
+      parentId: "entry-1",
+      type: "message",
+      timestamp: "2026-04-19T07:12:10.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "tool-call-1",
+            name: "read",
+            arguments: { path: "/tmp/file.txt" },
+          },
+        ],
+      },
+    };
+    const entry3 = {
+      id: "entry-3",
+      parentId: "entry-2",
+      type: "message",
+      timestamp: "2026-04-19T07:13:10.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tool-call-1",
+        toolName: "read",
+        content: "ignored",
+      },
+    };
+    const entry4 = {
+      id: "entry-4",
+      parentId: "entry-3",
+      type: "session_info",
+      timestamp: "2026-04-19T07:14:10.000Z",
+      name: "Pinned title",
+    };
+
+    const getTree = vi.fn(() => [
+      {
+        entry: entry1,
+        children: [
+          {
+            entry: entry2,
+            children: [
+              {
+                entry: entry3,
+                children: [
+                  {
+                    entry: entry4,
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const agentSession = {
+      sessionManager: {
+        getTree,
+        getLeafId: vi.fn(() => "entry-4"),
+        getEntry: vi.fn((id: string) => {
+          switch (id) {
+            case "entry-4":
+              return entry4;
+            case "entry-3":
+              return entry3;
+            case "entry-2":
+              return entry2;
+            case "entry-1":
+              return entry1;
+            default:
+              return undefined;
+          }
+        }),
+      },
+    } as unknown as AgentSession;
+
+    const { coordinator } = makeCoordinator(agentSession);
+    const result = (await coordinator.sendCommandAsync("s1", {
+      type: "get_session_tree",
+      filterMode: "all",
+    })) as {
+      leafId: string | null;
+      nodes: Array<{ id: string; matchesFilter: boolean }>;
+    };
+
+    expect(result.leafId).toBe("entry-4");
+    expect(result.nodes.map((node) => [node.id, node.matchesFilter])).toEqual([
+      ["entry-1", true],
+      ["entry-2", false],
+      ["entry-3", true],
+      ["entry-4", true],
+    ]);
   });
 
   it("forwards navigate_tree options to AgentSession.navigateTree", async () => {

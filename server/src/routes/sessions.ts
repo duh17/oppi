@@ -26,7 +26,8 @@ import {
   validateCwdAlignment,
 } from "../local-sessions.js";
 import { type Session } from "../types.js";
-import { ts, safeErrorMessage } from "../log-utils.js";
+import { safeErrorMessage } from "../log-utils.js";
+import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -38,6 +39,8 @@ import {
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
 const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
+
+const log = createLogger({ base: { component: "route_sessions" } });
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   /** Bulk list: all sessions across all workspaces in one response. */
@@ -339,10 +342,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       helpers.json(res, { session: hydrated });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
-      console.error(
-        `${ts()} [resume] Failed to resume session ${sessionId}:`,
-        safeErrorMessage(err),
-      );
+      log.error("sessions.resume.failed", {
+        sessionId,
+        workspaceId,
+        error: safeErrorMessage(err),
+      });
       helpers.error(res, 500, message);
     }
   }
@@ -420,10 +424,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       await ctx.sessions.stopSession(forkSession.id).catch(() => {});
       ctx.storage.deleteSession(forkSession.id);
       const message = err instanceof Error ? err.message : "Fork failed";
-      console.error(
-        `${ts()} [fork] Failed to fork session ${sourceSessionId}:`,
-        safeErrorMessage(err),
-      );
+      log.error("sessions.fork.failed", {
+        workspaceId,
+        sourceSessionId,
+        forkSessionId: forkSession.id,
+        entryId,
+        error: safeErrorMessage(err),
+      });
       helpers.error(res, 500, message);
       return;
     }
@@ -778,22 +785,28 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   function loadSessionTrace(
     session: Session,
     traceView: TraceViewMode = "context",
+    leafId?: string | null,
   ): ReturnType<typeof readSessionTrace> {
     const baseDir = traceBaseDir();
-    let trace = readSessionTrace(baseDir, session.id, session.workspaceId, {
+    const traceOptions = {
       view: traceView,
-    });
+      ...(leafId !== undefined ? { leafId } : {}),
+    };
+    let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
 
     if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(session.piSessionFiles, { view: traceView });
+      trace = readSessionTraceFromFiles(session.piSessionFiles, traceOptions);
     }
     if ((!trace || trace.length === 0) && session.piSessionFile) {
-      trace = readSessionTraceFromFile(session.piSessionFile, { view: traceView });
+      trace = readSessionTraceFromFile(session.piSessionFile, traceOptions);
     }
     if ((!trace || trace.length === 0) && session.piSessionId) {
-      trace = readSessionTraceByUuid(baseDir, session.piSessionId, session.workspaceId, {
-        view: traceView,
-      });
+      trace = readSessionTraceByUuid(
+        baseDir,
+        session.piSessionId,
+        session.workspaceId,
+        traceOptions,
+      );
     }
 
     return trace;
@@ -857,26 +870,35 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const traceView = resolveTraceView(url);
-    const hydratedSession = ctx.ensureSessionContextWindow(session);
+    const live = await ctx.sessions.refreshSessionState(sessionId);
+    const refreshedSession = ctx.storage.getSession(sessionId) || session;
+    const hydratedSession = ctx.ensureSessionContextWindow(refreshedSession);
     const baseDir = traceBaseDir();
 
-    let trace = loadSessionTrace(hydratedSession, traceView);
+    let trace = loadSessionTrace(hydratedSession, traceView, live?.leafId);
 
     if (!trace || trace.length === 0) {
-      const live = await ctx.sessions.refreshSessionState(sessionId);
+      const traceOptions = {
+        view: traceView,
+        ...(live?.leafId !== undefined ? { leafId: live.leafId } : {}),
+      };
+
       if (live?.sessionFile) {
-        trace = readSessionTraceFromFile(live.sessionFile, { view: traceView });
+        trace = readSessionTraceFromFile(live.sessionFile, traceOptions);
       }
       if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(baseDir, live.sessionId, hydratedSession.workspaceId, {
-          view: traceView,
-        });
+        trace = readSessionTraceByUuid(
+          baseDir,
+          live.sessionId,
+          hydratedSession.workspaceId,
+          traceOptions,
+        );
       }
 
       const refreshed = ctx.storage.getSession(sessionId);
       if (refreshed && (!trace || trace.length === 0)) {
         ctx.ensureSessionContextWindow(refreshed);
-        trace = loadSessionTrace(refreshed, traceView);
+        trace = loadSessionTrace(refreshed, traceView, live?.leafId);
       }
     }
 
@@ -903,7 +925,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     for (const [index, result] of deleteResults.entries()) {
       if (result.status === "rejected") {
-        console.warn("[sessions] Failed to delete pi session file", {
+        log.warn("sessions.trace_file_delete.failed", {
           sessionId,
           jsonlPath: jsonlPaths[index],
           error: safeErrorMessage(result.reason),

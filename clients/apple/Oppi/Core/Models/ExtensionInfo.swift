@@ -9,7 +9,7 @@ struct ExtensionInfo: Codable, Identifiable, Sendable, Equatable {
     let name: String
     let path: String
     let kind: String    // "file" | "directory" | "built-in"
-    let source: String? // "oppi" | "pi" — nil treated as "pi" for back-compat
+    let source: String // "oppi" | "pi"
 
     var id: String { name }
 

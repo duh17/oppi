@@ -9,6 +9,24 @@ struct ForkMessage: Equatable, Sendable {
 
 // MARK: - Session Tree Types
 
+enum SessionTreeFilterMode: String, CaseIterable, Sendable {
+    case standard = "default"
+    case noTools = "no-tools"
+    case userOnly = "user-only"
+    case labeledOnly = "labeled-only"
+    case all = "all"
+
+    var title: String {
+        switch self {
+        case .standard: return "Default"
+        case .noTools: return "No Tools"
+        case .userOnly: return "Users"
+        case .labeledOnly: return "Labeled"
+        case .all: return "All"
+        }
+    }
+}
+
 struct SessionTreeNodeSnapshot: Equatable, Sendable {
     let id: String
     let parentId: String?
@@ -16,9 +34,37 @@ struct SessionTreeNodeSnapshot: Equatable, Sendable {
     let timestamp: String
     let depth: Int
     let isLeafPath: Bool
+    let defaultVisible: Bool
+    let matchesFilter: Bool
     let role: String?
     let textPreview: String?
     let label: String?
+
+    init(
+        id: String,
+        parentId: String?,
+        type: String,
+        timestamp: String,
+        depth: Int,
+        isLeafPath: Bool,
+        defaultVisible: Bool = true,
+        matchesFilter: Bool? = nil,
+        role: String?,
+        textPreview: String?,
+        label: String?
+    ) {
+        self.id = id
+        self.parentId = parentId
+        self.type = type
+        self.timestamp = timestamp
+        self.depth = depth
+        self.isLeafPath = isLeafPath
+        self.defaultVisible = defaultVisible
+        self.matchesFilter = matchesFilter ?? defaultVisible
+        self.role = role
+        self.textPreview = textPreview
+        self.label = label
+    }
 }
 
 struct SessionTreeSnapshot: Equatable, Sendable {

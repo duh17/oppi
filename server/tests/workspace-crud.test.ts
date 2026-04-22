@@ -87,14 +87,14 @@ describe("Storage.createWorkspace", () => {
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
 
-  it("canonicalizes legacy spawn_agent extension name to subagents", () => {
+  it("keeps explicit extension names as provided", () => {
     const ws = storage.createWorkspace(
       createReq({
         extensions: ["spawn_agent", "ask"],
       }),
     );
 
-    expect(ws.extensions).toEqual(["subagents", "ask"]);
+    expect(ws.extensions).toEqual(["spawn_agent", "ask"]);
   });
 
   it("persists to disk as JSON", () => {
@@ -313,13 +313,13 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("normalizes, canonicalizes, and updates extensions", () => {
+  it("normalizes, deduplicates, and updates extensions", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
       extensions: [" spawn_agent ", "subagents", "ask", "spawn_agent"],
     });
 
-    expect(updated!.extensions).toEqual(["subagents", "ask"]);
+    expect(updated!.extensions).toEqual(["spawn_agent", "subagents", "ask"]);
   });
 
   it("updates defaultModel", () => {

@@ -167,9 +167,8 @@ struct GitStatusTests {
         #expect(!pi.isOppi)
     }
 
-    @Test func extensionInfoNilSourceTreatedAsPi() {
-        let ext = ExtensionInfo(name: "legacy", path: "~/.pi/agent/extensions/legacy.ts", kind: "file", source: nil)
-        #expect(!ext.isOppi)
-        #expect(ext.locationLabel == "~/.pi/agent/extensions")
+    @Test func extensionInfoRequiresSourceWhenDecoding() {
+        let json = #"{"name":"legacy","path":"~/.pi/agent/extensions/legacy.ts","kind":"file"}"#
+        #expect((try? JSONDecoder().decode(ExtensionInfo.self, from: Data(json.utf8))) == nil)
     }
 }

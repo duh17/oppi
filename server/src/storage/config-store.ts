@@ -196,9 +196,7 @@ function normalizeConfig(
     config.defaultModel = model;
   }
 
-  // Accept "sessionTimeout" as an alias for sessionIdleTimeoutMs
-  const sessionIdleTimeoutMs =
-    readNumber("sessionIdleTimeoutMs", { min: 1 }) ?? readNumber("sessionTimeout", { min: 1 });
+  const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 });
   if (sessionIdleTimeoutMs !== undefined) {
     config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
   }

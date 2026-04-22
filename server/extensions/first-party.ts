@@ -2,16 +2,8 @@ import type { Workspace } from "../src/types.js";
 
 /**
  * Server-managed extension names.
- *
- * Includes legacy alias `spawn_agent` for backward compatibility with saved
- * workspace extension allowlists.
  */
-export const MANAGED_EXTENSION_NAMES = [
-  "permission-gate",
-  "ask",
-  "subagents",
-  "spawn_agent",
-] as const;
+export const MANAGED_EXTENSION_NAMES = ["permission-gate", "ask", "subagents"] as const;
 
 export type ManagedExtensionName = (typeof MANAGED_EXTENSION_NAMES)[number];
 export type FirstPartyExtensionName = "ask" | "subagents";
@@ -20,10 +12,6 @@ export type FirstPartyExtensionName = "ask" | "subagents";
 export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = ["ask", "subagents"];
 
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
-
-const LEGACY_EXTENSION_ALIASES: Partial<Record<FirstPartyExtensionName, readonly string[]>> = {
-  subagents: ["spawn_agent"],
-};
 
 /**
  * Managed by oppi-server itself, not loaded from pi host extension directories.
@@ -52,10 +40,5 @@ export function isWorkspaceExtensionEnabled(
     return true;
   }
 
-  if (allowedNames.includes(extensionName)) {
-    return true;
-  }
-
-  const aliases = LEGACY_EXTENSION_ALIASES[extensionName] ?? [];
-  return aliases.some((alias) => allowedNames.includes(alias));
+  return allowedNames.includes(extensionName);
 }

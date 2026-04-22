@@ -49,7 +49,7 @@ Settings are listed in the order they appear in the config file. Auth state is d
 | `maxSessionsPerWorkspace` | number | `20`      | Max concurrent sessions in a single workspace. Min: 1.                                        |
 | `maxSessionsGlobal`       | number | `40`      | Max concurrent sessions across all workspaces. Min: 1.                                        |
 
-The alias `sessionTimeout` is accepted for `sessionIdleTimeoutMs` (legacy compat). If both are present, `sessionIdleTimeoutMs` takes precedence.
+Use `sessionIdleTimeoutMs` in config files.
 
 ### Permission Gate
 

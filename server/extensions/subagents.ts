@@ -325,19 +325,19 @@ function formatToolArgs(name: string, args: Record<string, unknown>): string {
       return line1.length > 80 ? line1.slice(0, 77) + "..." : line1;
     }
     case "read": {
-      const p = shortenPath(String(args.path ?? args.file_path ?? ""));
+      const p = shortenPath(String(args.path ?? ""));
       const parts = [p];
       if (args.offset) parts.push(`:${args.offset}`);
       if (args.limit) parts.push(`+${args.limit}`);
       return parts.join("");
     }
     case "write": {
-      const p = shortenPath(String(args.path ?? args.file_path ?? ""));
+      const p = shortenPath(String(args.path ?? ""));
       const lines = String(args.content ?? "").split("\n").length;
       return `${p} (${lines} lines)`;
     }
     case "edit":
-      return shortenPath(String(args.path ?? args.file_path ?? ""));
+      return shortenPath(String(args.path ?? ""));
     default: {
       const first = Object.values(args).find((v) => typeof v === "string");
       return first ? String(first).slice(0, 60) : JSON.stringify(args).slice(0, 60);

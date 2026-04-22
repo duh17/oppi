@@ -9,7 +9,6 @@ const TEST_CONFIG: ServerConfig = {
   host: "127.0.0.1",
   dataDir: "/tmp/oppi-spawn-state-tests",
   defaultModel: "anthropic/claude-sonnet-4-0",
-  sessionTimeout: 600_000,
   sessionIdleTimeoutMs: 600_000,
   workspaceIdleTimeoutMs: 1_800_000,
   maxSessionsPerWorkspace: 10,

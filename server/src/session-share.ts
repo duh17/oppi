@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -346,7 +345,10 @@ const NAME_HEURISTIC_STOP_WORDS = new Set([
 ]);
 
 function looksLikeHeuristicPersonName(match: string): boolean {
-  const words = match.trim().split(/\s+/).filter((word) => word.length > 0);
+  const words = match
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
   if (words.length < 2 || words.length > 3) {
     return false;
   }
@@ -375,14 +377,16 @@ const NAME_HEURISTIC_PATTERNS: ReadonlyArray<ShareRedactionPattern> = [
   },
 ];
 
-const SECRET_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = SECRET_PATTERNS.map((pattern) => ({
-  kind: pattern.kind,
-  category: "secrets",
-  regex: pattern.regex,
-  replacementLabel: pattern.replacement,
-  replaceWith: pattern.replacement,
-  sampleKind: "secret",
-}));
+const SECRET_REDACTION_PATTERNS: ReadonlyArray<ShareRedactionPattern> = SECRET_PATTERNS.map(
+  (pattern) => ({
+    kind: pattern.kind,
+    category: "secrets",
+    regex: pattern.regex,
+    replacementLabel: pattern.replacement,
+    replaceWith: pattern.replacement,
+    sampleKind: "secret",
+  }),
+);
 
 const DEFAULT_SHARE_REDACTION_POLICY: ShareSessionRedactionPolicy = {
   secrets: true,
@@ -417,7 +421,10 @@ function defaultRedactionPolicyFromEnv(): ShareSessionRedactionPolicy {
     secrets: true,
     emails: parseBoolEnv("OPPI_SHARE_REDACT_EMAILS", DEFAULT_SHARE_REDACTION_POLICY.emails),
     phones: parseBoolEnv("OPPI_SHARE_REDACT_PHONES", DEFAULT_SHARE_REDACTION_POLICY.phones),
-    userPaths: parseBoolEnv("OPPI_SHARE_REDACT_USER_PATHS", DEFAULT_SHARE_REDACTION_POLICY.userPaths),
+    userPaths: parseBoolEnv(
+      "OPPI_SHARE_REDACT_USER_PATHS",
+      DEFAULT_SHARE_REDACTION_POLICY.userPaths,
+    ),
     ipAddresses: parseBoolEnv(
       "OPPI_SHARE_REDACT_IP_ADDRESSES",
       DEFAULT_SHARE_REDACTION_POLICY.ipAddresses,
@@ -562,7 +569,10 @@ function maskShareSample(kind: ShareSampleKind, match: string): string {
   }
 
   if (kind === "name") {
-    const parts = match.trim().split(/\s+/).filter((part) => part.length > 0);
+    const parts = match
+      .trim()
+      .split(/\s+/)
+      .filter((part) => part.length > 0);
     const masked = parts.map((part) => `${part[0] ?? ""}***`).join(" ");
     return masked.length > 0 ? masked : "[name]";
   }
@@ -585,9 +595,9 @@ function applyRedactionPattern(
 
     if (typeof pattern.replaceWith === "function") {
       const captureCount = Math.max(0, rest.length - 2);
-      const captures = rest.slice(0, captureCount).map((value) =>
-        typeof value === "string" ? value : ""
-      );
+      const captures = rest
+        .slice(0, captureCount)
+        .map((value) => (typeof value === "string" ? value : ""));
       const candidate = pattern.replaceWith(match, ...captures);
       if (typeof candidate !== "string" || candidate === match) {
         return match;
@@ -906,13 +916,14 @@ export async function shareSession(
     );
   }
 
-  const tempDir = typeof deps.makeTempPath === "function"
-    ? null
-    : mkdtempSync(join(tmpdir(), "oppi-share-"));
+  const tempDir =
+    typeof deps.makeTempPath === "function" ? null : mkdtempSync(join(tmpdir(), "oppi-share-"));
+  // The public share viewer expects the gist to contain a stable `session.html` file.
+  // Keep the parent temp directory unique, but the uploaded filename deterministic.
   const tempHtmlPath =
     typeof deps.makeTempPath === "function"
       ? deps.makeTempPath()
-      : join(tempDir ?? tmpdir(), `session-${randomUUID()}.html`);
+      : join(tempDir ?? tmpdir(), "session.html");
 
   try {
     await exportSessionToHtml(session, tempHtmlPath);
@@ -942,10 +953,10 @@ export async function shareSession(
     const redactionResult = redactionEnabled
       ? redactHtml(html, redactionPolicy)
       : {
-        html,
-        findings: [] as ShareRedactionFinding[],
-        totalReplacements: 0,
-      };
+          html,
+          findings: [] as ShareRedactionFinding[],
+          totalReplacements: 0,
+        };
 
     if (redactionEnabled && redactionResult.html !== html) {
       html = redactionResult.html;

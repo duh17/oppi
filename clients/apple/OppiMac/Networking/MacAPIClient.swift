@@ -32,7 +32,7 @@ final class MacAPIClient: Sendable {
 
     /// Read the owner token from the server's config file.
     ///
-    /// Path: `~/.config/oppi/config.json` → `.ownerToken`
+    /// Path: `~/.config/oppi/config.json` → `.token`
     static func readOwnerToken(dataDir: String? = nil) -> String? {
         let dir = dataDir ?? NSString("~/.config/oppi").expandingTildeInPath
         let configPath = (dir as NSString).appendingPathComponent("config.json")
@@ -44,12 +44,11 @@ final class MacAPIClient: Sendable {
 
         struct ConfigFile: Decodable {
             let token: String?
-            let ownerToken: String?
         }
 
         do {
             let config = try JSONDecoder().decode(ConfigFile.self, from: data)
-            return config.token ?? config.ownerToken
+            return config.token
         } catch {
             logger.error("Failed to parse config.json: \(error.localizedDescription)")
             return nil

@@ -141,10 +141,7 @@ extension ServerConnection {
         redactionPolicy: ShareSessionRedactionPolicy? = nil
     ) async throws -> ShareSessionPrepareResult? {
         do {
-            let data = try await sendCommandAwaitingResult(
-                command: "share_session",
-                timeout: .seconds(45)
-            ) { requestId in
+            let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
                 .shareSession(
                     action: .prepare,
                     redactionPolicy: redactionPolicy?.normalized,
@@ -161,10 +158,7 @@ extension ServerConnection {
         redactionPolicy: ShareSessionRedactionPolicy? = nil
     ) async throws -> SharedSessionPublishResult? {
         do {
-            let data = try await sendCommandAwaitingResult(
-                command: "share_session",
-                timeout: .seconds(90)
-            ) { requestId in
+            let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
                 .shareSession(
                     action: .publish,
                     redactionPolicy: redactionPolicy?.normalized,

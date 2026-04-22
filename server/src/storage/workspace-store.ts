@@ -12,15 +12,7 @@ import type {
 } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
-const LEGACY_EXTENSION_NAME_ALIASES: Record<string, string> = {
-  spawn_agent: "subagents",
-};
-
 const log = createLogger({ base: { component: "workspace_store" } });
-
-function canonicalizeExtensionName(name: string): string {
-  return LEGACY_EXTENSION_NAME_ALIASES[name] ?? name;
-}
 
 function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
   if (!extensions) {
@@ -31,7 +23,7 @@ function normalizeExtensions(extensions: string[] | undefined): string[] | undef
   const normalized: string[] = [];
 
   for (const value of extensions) {
-    const name = canonicalizeExtensionName(value.trim());
+    const name = value.trim();
     if (name.length === 0 || unique.has(name)) {
       continue;
     }

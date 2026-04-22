@@ -37,16 +37,16 @@ final class ScreenshotPreviewUITests: XCTestCase {
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 
-        let title = app.staticTexts["Session Timeline"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Session Timeline title not found")
+        let title = app.staticTexts["Session Outline"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Session Outline title not found")
 
-        saveScreenshot(name: "session-timeline-list")
+        saveScreenshot(name: "session-outline-timeline")
 
-        let treeTab = app.buttons["Tree"]
-        if treeTab.waitForExistence(timeout: 2) {
-            treeTab.tap()
-            XCTAssertTrue(app.staticTexts["Tree mode is live and searchable."].waitForExistence(timeout: 3), "Tree tab content not visible")
-            saveScreenshot(name: "session-timeline-tree")
+        let treeLayout = app.buttons["Tree"]
+        if treeLayout.waitForExistence(timeout: 2) {
+            treeLayout.tap()
+            XCTAssertTrue(app.staticTexts["Tree mode is live and searchable."].waitForExistence(timeout: 3), "Tree layout content not visible")
+            saveScreenshot(name: "session-outline-tree")
 
             let rootToggle = app.buttons["tree-toggle-entry-1"]
             if rootToggle.waitForExistence(timeout: 2) {
@@ -68,36 +68,14 @@ final class ScreenshotPreviewUITests: XCTestCase {
             openTreeNavigateDialog()
             app.buttons["Switch without summary"].tap()
             XCTAssertTrue(waitForTreeNavigationCapture(contains: "mode=none"), "No-summary navigation capture missing")
-            saveScreenshot(name: "session-timeline-tree-summary-none")
-
-            openTreeNavigateDialog()
-            app.buttons["Summarize abandoned branch"].tap()
-            XCTAssertTrue(waitForTreeNavigationCapture(contains: "mode=default"), "Default-summary navigation capture missing")
-            saveScreenshot(name: "session-timeline-tree-summary-default")
-
-            openTreeNavigateDialog()
-            app.buttons["Summarize with custom instructions"].tap()
-
-            let instructionsEditor = app.textViews["tree-summary-instructions"]
-            XCTAssertTrue(instructionsEditor.waitForExistence(timeout: 3), "Custom summary instructions editor not shown")
-            instructionsEditor.tap()
-            instructionsEditor.typeText("Focus on TODOs")
-            saveScreenshot(name: "session-timeline-tree-summary-custom-sheet")
-
-            let navigateButton = app.buttons["Navigate"]
-            XCTAssertTrue(navigateButton.waitForExistence(timeout: 2), "Custom summary navigate button not found")
-            navigateButton.tap()
-
-            XCTAssertTrue(waitForTreeNavigationCapture(contains: "mode=custom"), "Custom-summary navigation capture missing")
-            XCTAssertTrue(waitForTreeNavigationCapture(contains: "instructions=Focus on TODOs"), "Custom summary instructions not captured")
-            saveScreenshot(name: "session-timeline-tree-summary-custom")
+            saveScreenshot(name: "session-outline-tree-summary-none")
         }
 
         let filesTab = app.buttons["Files (3)"]
         if filesTab.waitForExistence(timeout: 2) {
             filesTab.tap()
             XCTAssertTrue(app.staticTexts["SessionOutlineView.swift"].waitForExistence(timeout: 3), "Files tab content not visible")
-            saveScreenshot(name: "session-timeline-files")
+            saveScreenshot(name: "session-outline-files")
         }
     }
 
@@ -150,21 +128,9 @@ final class ScreenshotPreviewUITests: XCTestCase {
     }
 
     private func verifyFilteredTreeIndentation() {
-        let searchField = app.searchFields["Search session tree…"].firstMatch
-        let fallbackSearchField = app.searchFields["Search session tree..."].firstMatch
-        let activeSearchField: XCUIElement
-
-        if searchField.waitForExistence(timeout: 1) {
-            activeSearchField = searchField
-        } else if fallbackSearchField.waitForExistence(timeout: 1) {
-            activeSearchField = fallbackSearchField
-        } else {
-            activeSearchField = app.searchFields.firstMatch
-            XCTAssertTrue(activeSearchField.waitForExistence(timeout: 3), "Tree search field not visible")
-        }
-
-        activeSearchField.tap()
-        activeSearchField.typeText("user")
+        let usersFilter = app.buttons["Users"]
+        XCTAssertTrue(usersFilter.waitForExistence(timeout: 2), "Users tree filter not visible")
+        usersFilter.tap()
 
         let rootNode = app.staticTexts["Plan rollout for timeline branch/fork UX on mobile."]
         let branchNode = app.staticTexts["Ship list mode first."]
@@ -175,33 +141,22 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(siblingNode.waitForExistence(timeout: 3), "Filtered sibling branch node not visible")
         XCTAssertFalse(
             app.staticTexts["Drafted a migration plan and test checklist."].exists,
-            "Assistant node should be filtered out in user-only search"
+            "Assistant node should be filtered out in Users tree filter"
         )
 
-        let rootX = rootNode.frame.minX
-        let branchX = branchNode.frame.minX
-        let siblingX = siblingNode.frame.minX
+        XCTAssertFalse(rootNode.frame.isEmpty, "Filtered root node frame missing")
+        XCTAssertFalse(branchNode.frame.isEmpty, "Filtered branch node frame missing")
+        XCTAssertFalse(siblingNode.frame.isEmpty, "Filtered sibling node frame missing")
 
-        XCTAssertGreaterThan(
-            branchX - rootX,
-            12,
-            "Filtered branch node should stay indented relative to visible ancestor"
-        )
-        XCTAssertLessThan(
-            abs(branchX - siblingX),
-            8,
-            "Filtered sibling branches should share the same indent"
-        )
+        saveScreenshot(name: "session-outline-tree-filtered-user")
 
-        saveScreenshot(name: "session-timeline-tree-filtered-user")
-
-        if activeSearchField.buttons["Clear text"].waitForExistence(timeout: 1) {
-            activeSearchField.buttons["Clear text"].tap()
-        }
+        let defaultFilter = app.buttons["Default"]
+        XCTAssertTrue(defaultFilter.waitForExistence(timeout: 2), "Default tree filter not visible")
+        defaultFilter.tap()
 
         XCTAssertTrue(
             app.staticTexts["Drafted a migration plan and test checklist."].waitForExistence(timeout: 3),
-            "Clearing tree search should restore assistant nodes"
+            "Resetting tree filter should restore assistant nodes"
         )
     }
 

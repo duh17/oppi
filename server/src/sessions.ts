@@ -36,7 +36,9 @@ import type { SessionCatchUpResponse } from "./session-broadcast.js";
 import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { type ExtensionUIResponse } from "./session-ui.js";
-import { ts } from "./log-utils.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger({ base: { component: "sessions" } });
 
 function parsePositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -173,18 +175,22 @@ export class SessionManager extends EventEmitter {
       .loadAllRenderers()
       .then(({ loaded, errors }) => {
         if (loaded.length > 0) {
-          console.log("[mobile-renderer] loaded", {
+          log.info("sessions.mobile_renderer.loaded", {
             count: loaded.length,
             loaded,
           });
         }
         for (const err of errors) {
-          console.error(`${ts()} [mobile-renderer] ${err}`);
+          log.error("sessions.mobile_renderer_load.error", {
+            error: String(err),
+          });
         }
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`${ts()} [mobile-renderer] ${message}`);
+        log.error("sessions.mobile_renderer_load.error", {
+          error: message,
+        });
       });
   }
 
@@ -380,7 +386,7 @@ export class SessionManager extends EventEmitter {
    */
   async refreshSessionState(
     sessionId: string,
-  ): Promise<{ sessionFile?: string; sessionId?: string } | null> {
+  ): Promise<{ sessionFile?: string; sessionId?: string; leafId?: string | null } | null> {
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) return null;
@@ -560,7 +566,17 @@ export class SessionManager extends EventEmitter {
 
   /** Return the stored ask broadcast message if this session has a pending ask. */
   getPendingAskMessage(sessionId: string): ServerMessage | undefined {
-    return this.active.get(this.sessionKey(sessionId))?.pendingAsk?.broadcastMessage;
+    const ask = this.active.get(this.sessionKey(sessionId))?.pendingAsk;
+    if (!ask) {
+      return undefined;
+    }
+
+    // If iOS already answered, don't re-send the AskCard on reconnect.
+    if (ask.response) {
+      return undefined;
+    }
+
+    return ask.broadcastMessage;
   }
 
   /** Cancel pending ask and resolve all deferred selects as cancelled. */
@@ -570,6 +586,20 @@ export class SessionManager extends EventEmitter {
     if (!active?.pendingAsk) return;
 
     const ask = active.pendingAsk;
+
+    // Route cancellation through the synthetic ask request so late-arriving
+    // deferred select()/input calls are also cancelled instead of leaking into
+    // normal UI flow (which can deadlock stop/abort).
+    const handled = this.respondToUIRequest(sessionId, {
+      type: "extension_ui_response",
+      id: ask.requestId,
+      cancelled: true,
+    });
+    if (handled) {
+      return;
+    }
+
+    // Defensive fallback — should rarely happen.
     for (const { id } of ask.deferred) {
       this.respondToUIRequest(sessionId, {
         type: "extension_ui_response",
@@ -578,7 +608,6 @@ export class SessionManager extends EventEmitter {
       });
     }
 
-    // Also cancel the synthetic ask request itself
     active.pendingUIRequests.delete(ask.requestId);
     active.pendingAsk = undefined;
   }

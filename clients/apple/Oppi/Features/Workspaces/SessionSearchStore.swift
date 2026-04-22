@@ -21,6 +21,12 @@ final class SessionSearchStore {
     /// Snippets keyed by session ID for display in rows.
     private(set) var snippetsBySessionId: [String: AttributedString] = [:]
 
+    /// Normalized query currently in-flight against the server.
+    private(set) var activeServerQuery: String?
+
+    /// Normalized query with a completed successful server response.
+    private(set) var completedServerQuery: String?
+
     private var searchTask: Task<Void, Never>?
 
     /// Minimum query length before we hit the server.
@@ -34,15 +40,25 @@ final class SessionSearchStore {
         searchTask?.cancel()
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = trimmed.lowercased()
         guard trimmed.count >= Self.minQueryLength, let apiClient else {
             results = []
             matchedSessionIds = []
             snippetsBySessionId = [:]
+            activeServerQuery = nil
+            completedServerQuery = nil
             isSearching = false
             return
         }
 
+        // Reset state immediately for a new server query so stale results are not reused.
+        results = []
+        matchedSessionIds = []
+        snippetsBySessionId = [:]
+        activeServerQuery = normalizedQuery
+        completedServerQuery = nil
         isSearching = true
+
         searchTask = Task {
             // Debounce
             try? await Task.sleep(for: .milliseconds(Self.debounceMs))
@@ -55,6 +71,7 @@ final class SessionSearchStore {
                     limit: 50
                 )
                 guard !Task.isCancelled else { return }
+                guard activeServerQuery == normalizedQuery else { return }
 
                 results = response.results
                 matchedSessionIds = Set(response.results.map(\.sessionId))
@@ -67,11 +84,19 @@ final class SessionSearchStore {
                     }
                 }
                 snippetsBySessionId = snippets
+                completedServerQuery = normalizedQuery
                 isSearching = false
             } catch {
                 guard !Task.isCancelled else { return }
                 logger.error("Search failed: \(error.localizedDescription)")
-                isSearching = false
+                if activeServerQuery == normalizedQuery {
+                    activeServerQuery = nil
+                    completedServerQuery = nil
+                    results = []
+                    matchedSessionIds = []
+                    snippetsBySessionId = [:]
+                    isSearching = false
+                }
             }
         }
     }
@@ -82,6 +107,8 @@ final class SessionSearchStore {
         results = []
         matchedSessionIds = []
         snippetsBySessionId = [:]
+        activeServerQuery = nil
+        completedServerQuery = nil
         isSearching = false
     }
 

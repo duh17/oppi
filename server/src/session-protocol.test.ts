@@ -263,10 +263,10 @@ describe("updateSessionChangeStats", () => {
     expect(session.changeStats!.filesChanged).toBe(0);
   });
 
-  it("accepts file_path as alternative to path", () => {
+  it("ignores file_path when canonical path is missing", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "write", { file_path: "/tmp/a.ts", content: "x" });
-    expect(session.changeStats!.changedFiles).toEqual(["/tmp/a.ts"]);
+    expect(session.changeStats!.filesChanged).toBe(0);
   });
 
   it("accumulates line deltas correctly for edits", () => {
@@ -1090,7 +1090,7 @@ describe("translatePiEvent", () => {
       expect(result).toEqual([]);
     });
 
-    it("uses event.id as fallback toolCallId when toolCallId is missing", () => {
+    it("does not backfill toolCallId from event.id", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("evt-1", "read");
 
@@ -1105,9 +1105,7 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(result).toHaveLength(1);
-      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).toolCallId).toBe(
-        "evt-1",
-      );
+      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).toolCallId).toBeUndefined();
     });
   });
 
@@ -1880,7 +1878,7 @@ describe("translatePiEvent", () => {
       expect((result[0] as Extract<ServerMessage, { type: "tool_start" }>).toolCallId).toBe("tc-1");
     });
 
-    it("falls back to id when toolCallId is empty string", () => {
+    it("returns undefined when toolCallId is empty string", () => {
       const ctx = makeCtx();
       const result = translatePiEvent(
         {
@@ -1892,9 +1890,9 @@ describe("translatePiEvent", () => {
         } as unknown as AgentSessionEvent,
         ctx,
       );
-      expect((result[0] as Extract<ServerMessage, { type: "tool_start" }>).toolCallId).toBe(
-        "evt-1",
-      );
+      expect(
+        (result[0] as Extract<ServerMessage, { type: "tool_start" }>).toolCallId,
+      ).toBeUndefined();
     });
 
     it("returns undefined when both toolCallId and id are missing", () => {

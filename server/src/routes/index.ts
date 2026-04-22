@@ -11,6 +11,7 @@ import { createPolicyRoutes } from "./policy.js";
 import { createThemeRoutes } from "./themes.js";
 import { createTelemetryRoutes } from "./telemetry.js";
 import { createWorkspaceFileRoutes } from "./workspace-files.js";
+import { createProviderAuthRoutes } from "./provider-auth.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -29,6 +30,7 @@ export class RouteHandler {
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),
       createWorkspaceFileRoutes(this.ctx, this.helpers),
+      createProviderAuthRoutes(this.ctx, this.helpers),
     ];
   }
 

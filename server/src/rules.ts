@@ -144,7 +144,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseDecision(value: unknown): RuleDecision | null {
   if (value === "allow" || value === "ask" || value === "deny") return value;
-  if (value === "block") return "deny";
   return null;
 }
 

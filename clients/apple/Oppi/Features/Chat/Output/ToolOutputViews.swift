@@ -115,7 +115,7 @@ extension ToolPresentationBuilder {
         // The extension sets details.expandedText + details.presentationFormat to
         // control how the expanded content appears without iOS knowing tool specifics.
         let textOutput: String
-        if let expandedText = extensionDetailString(details, keys: ["expandedText", "expanded_text"]),
+        if let expandedText = extensionDetailString(details, keys: ["expandedText"]),
            !expandedText.isEmpty {
             textOutput = expandedText
         } else {
@@ -123,9 +123,9 @@ extension ToolPresentationBuilder {
             textOutput = sanitized.isEmpty ? output : sanitized
         }
         let format = normalizedExtensionPresentationFormat(details)
-        let filePathHint = extensionDetailString(details, keys: ["filePath", "file_path", "path", "file"])
+        let filePathHint = extensionDetailString(details, keys: ["filePath"])
         let languageHint = extensionLanguageHint(details: details, filePathHint: filePathHint)
-        let startLineHint = extensionDetailInt(details, keys: ["startLine", "start_line", "start"])
+        let startLineHint = extensionDetailInt(details, keys: ["startLine"])
         let note: (String) -> ToolExpandedContent = {
             .text(text: textOutput + "\n\n[render note: \($0)]", language: nil)
         }
@@ -191,19 +191,7 @@ extension ToolPresentationBuilder {
     }
 
     private static func normalizedExtensionPresentationFormat(_ details: JSONValue?) -> String? {
-        guard let raw = extensionDetailString(
-            details,
-            keys: ["presentationFormat", "presentation_format", "format"]
-        )?.lowercased() else {
-            return nil
-        }
-
-        switch raw {
-        case "md": return "markdown"
-        case "patch", "unified-diff", "unified_diff": return "diff"
-        case "source", "syntax": return "code"
-        default: return raw
-        }
+        extensionDetailString(details, keys: ["presentationFormat"])?.lowercased()
     }
 
     private static func extensionDetailString(_ details: JSONValue?, keys: [String]) -> String? {
@@ -234,7 +222,7 @@ extension ToolPresentationBuilder {
     }
 
     private static func extensionLanguageHint(details: JSONValue?, filePathHint: String?) -> SyntaxLanguage? {
-        if let explicit = extensionDetailString(details, keys: ["language", "lang", "syntaxLanguage", "syntax_language"]) {
+        if let explicit = extensionDetailString(details, keys: ["language"]) {
             let detected = SyntaxLanguage.detect(explicit)
             if detected != .unknown {
                 return detected

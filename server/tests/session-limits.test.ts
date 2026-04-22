@@ -42,6 +42,6 @@ describe("WorkspaceRuntime session limits", () => {
     runtime.releaseSession({ workspaceId: "w1", sessionId: "s1" });
     runtime.reserveSessionStart({ workspaceId: "w3", sessionId: "s3" });
 
-    expect(runtime.getGlobalSessionCount()).toBe(2);
+    expect(runtime.globalSessionCount).toBe(2);
   });
 });

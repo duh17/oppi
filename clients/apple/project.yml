@@ -427,6 +427,11 @@ targets:
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         ENABLE_HARDENED_RUNTIME: true
         CODE_SIGN_ENTITLEMENTS: OppiMac/OppiMac.entitlements
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: ""
+          CODE_SIGNING_ALLOWED: "NO"
+          ENABLE_HARDENED_RUNTIME: false
     info:
       path: OppiMac/Resources/Info.plist
       properties:

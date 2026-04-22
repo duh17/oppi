@@ -81,7 +81,6 @@ describe("resolveRuntimeLimits", () => {
       host: "0.0.0.0",
       dataDir: "/tmp",
       defaultModel: "sonnet",
-      sessionTimeout: 0,
     } as ServerConfig;
 
     const limits = resolveRuntimeLimits(config);
@@ -98,7 +97,6 @@ describe("resolveRuntimeLimits", () => {
       host: "0.0.0.0",
       dataDir: "/tmp",
       defaultModel: "sonnet",
-      sessionTimeout: 0,
       maxSessionsPerWorkspace: 5,
       maxSessionsGlobal: 10,
       sessionIdleTimeoutMs: 30_000,

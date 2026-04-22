@@ -25,7 +25,7 @@ enum ToolCallFormatting {
 
     /// Extract file path from structured args.
     static func filePath(from args: [String: JSONValue]?) -> String? {
-        args?["path"]?.stringValue ?? args?["file_path"]?.stringValue
+        args?["path"]?.stringValue
     }
 
     /// Extract read offset (defaults to 1).
@@ -222,34 +222,7 @@ enum ToolCallFormatting {
         let removed: Int
     }
 
-    private static func firstStringValue(
-        in args: [String: JSONValue]?,
-        keys: [String]
-    ) -> String? {
-        guard let args else { return nil }
-        for key in keys {
-            if let value = args[key]?.stringValue {
-                return value
-            }
-        }
-        return nil
-    }
-
     static func editOldAndNewText(from args: [String: JSONValue]?) -> (oldText: String, newText: String)? {
-        // Legacy format: top-level oldText/newText
-        let oldText = firstStringValue(
-            in: args,
-            keys: ["oldText", "old_text", "oldString", "old_string", "before", "beforeText"]
-        )
-        let newText = firstStringValue(
-            in: args,
-            keys: ["newText", "new_text", "newString", "new_string", "after", "afterText"]
-        )
-        if let oldText, let newText {
-            return (oldText: oldText, newText: newText)
-        }
-
-        // New format: edits array [{oldText, newText}]
         guard let editsArray = args?["edits"]?.arrayValue, !editsArray.isEmpty else { return nil }
 
         var olds: [String] = []

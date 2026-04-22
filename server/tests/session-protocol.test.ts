@@ -249,7 +249,7 @@ describe("session-protocol translatePiEvent", () => {
     });
   });
 
-  it("falls back to event id when toolCallId is missing", () => {
+  it("does not backfill toolCallId from event id", () => {
     const ctx = makeCtx();
 
     const start = translatePiEvent(
@@ -276,11 +276,11 @@ describe("session-protocol translatePiEvent", () => {
     );
 
     expect(start).toEqual([
-      { type: "tool_start", tool: "read", args: { path: "README.md" }, toolCallId: "evt-tool-1" },
+      { type: "tool_start", tool: "read", args: { path: "README.md" }, toolCallId: undefined },
     ]);
     expect(end).toEqual([
-      { type: "tool_output", output: "content", toolCallId: "evt-tool-1" },
-      { type: "tool_end", tool: "read", toolCallId: "evt-tool-1" },
+      { type: "tool_output", output: "content", toolCallId: undefined },
+      { type: "tool_end", tool: "read", toolCallId: undefined },
     ]);
   });
 

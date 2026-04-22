@@ -99,7 +99,7 @@ describe("resolveWorkspaceExtensions", () => {
   });
 
   it("warns and ignores managed extensions in explicit list", () => {
-    for (const name of ["permission-gate", "ask", "subagents", "spawn_agent"]) {
+    for (const name of ["permission-gate", "ask", "subagents"]) {
       const result = resolveWorkspaceExtensions([name]);
       expect(result.extensions).toHaveLength(0);
       expect(result.warnings.some((w) => w.includes("managed"))).toBe(true);
@@ -126,7 +126,6 @@ describe("listHostExtensions", () => {
     expect(extensions.find((e) => e.name === "permission-gate")).toBeUndefined();
     expect(extensions.find((e) => e.name === "ask")).toBeUndefined();
     expect(extensions.find((e) => e.name === "subagents")).toBeUndefined();
-    expect(extensions.find((e) => e.name === "spawn_agent")).toBeUndefined();
   });
 
   it("does not list mobile renderers (they live in ~/.pi/agent/mobile-renderers/)", () => {

@@ -40,7 +40,7 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     const rawFallback = body.fallback;
 
     const normalizedFallback =
-      rawFallback === "block" || rawFallback === "deny" || rawFallback === "denied"
+      rawFallback === "deny"
         ? "deny"
         : rawFallback === "allow" || rawFallback === "ask"
           ? rawFallback
@@ -109,11 +109,9 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
 
     const rawDecision = body.decision;
     const decision =
-      rawDecision === "block"
-        ? "deny"
-        : rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
-          ? rawDecision
-          : null;
+      rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+        ? rawDecision
+        : null;
     if (!decision) {
       helpers.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
       return;
@@ -273,11 +271,9 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     if (hasField("decision")) {
       const rawDecision = body.decision;
       const normalized =
-        rawDecision === "block"
-          ? "deny"
-          : rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
-            ? rawDecision
-            : null;
+        rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+          ? rawDecision
+          : null;
       if (!normalized) {
         helpers.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
         return;
