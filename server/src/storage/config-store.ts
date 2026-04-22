@@ -1,11 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { createLogger } from "../logger.js";
 import { defaultPolicy } from "../policy-presets.js";
 import type { PolicyHeuristics, ServerConfig, SubagentConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
+
+const log = createLogger({ base: { component: "config_store" } });
 
 export interface ConfigValidationResult {
   valid: boolean;
@@ -889,10 +892,15 @@ export class ConfigStore {
         const normalized = normalizeConfig(loadedRaw, this.dataDir, false);
 
         for (const err of normalized.errors) {
-          console.warn(`[config] ${err} (using default for invalid field)`);
+          log.warn("config_store.field.invalid", {
+            issue: err,
+            action: "using_default_for_invalid_field",
+          });
         }
         for (const warning of normalized.warnings) {
-          console.warn(`[config] ${warning}`);
+          log.warn("config_store.validation.warning", {
+            warning,
+          });
         }
 
         // Safe rewrite only when the normalized config is fully valid.
@@ -905,8 +913,13 @@ export class ConfigStore {
         return normalized.config;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[config] Failed to parse ${this.configPath}: ${message}`);
-        console.warn("[config] Falling back to defaults.");
+        log.warn("config_store.config_parse.failed", {
+          configPath: this.configPath,
+          error: message,
+        });
+        log.warn("config_store.defaults_fallback", {
+          configPath: this.configPath,
+        });
       }
     }
 

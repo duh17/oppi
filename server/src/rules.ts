@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "no
 import { dirname, normalize, resolve } from "node:path";
 import { homedir } from "node:os";
 import { generateId } from "./id.js";
+import { createLogger } from "./logger.js";
 
 export type RuleDecision = "allow" | "ask" | "deny";
 export type RuleScope = "session" | "workspace" | "global";
@@ -54,6 +55,8 @@ export interface RulePatch {
 }
 
 const FILE_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
+
+const log = createLogger({ base: { component: "rules" } });
 
 function firstGlobIndex(value: string): number {
   for (let i = 0; i < value.length; i++) {
@@ -668,7 +671,7 @@ export class RuleStore {
 
       this.persisted = next;
     } catch {
-      console.warn(`[rules] Failed to load ${this.path}, starting fresh`);
+      log.warn("rules.load_failed_starting_fresh", { path: this.path });
       this.persisted = [];
     }
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -700,9 +700,13 @@ describe("buildSessionContext edge cases", () => {
   });
 
   it("warns on unknown content block types instead of silently dropping", () => {
-    const warnings: string[] = [];
-    const origWarn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+    const stderrLines: string[] = [];
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        stderrLines.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+        return true;
+      }) as typeof process.stderr.write);
 
     try {
       const lines = [
@@ -730,11 +734,16 @@ describe("buildSessionContext edge cases", () => {
       const events = parseJsonl(lines);
       // The known text block should still be emitted
       expect(events.some((e) => e.type === "assistant" && e.text === "I can still answer")).toBe(true);
-      // The unknown block type should trigger a warning
-      expect(warnings.length).toBeGreaterThanOrEqual(1);
-      expect(warnings[0]).toContain("future_block_type");
+
+      const warningEvents = stderrLines
+        .join("")
+        .split("\n")
+        .filter((line) => line.includes("\"event\":\"trace.unknown_assistant_block_type\""));
+
+      expect(warningEvents.length).toBeGreaterThanOrEqual(1);
+      expect(warningEvents[0]).toContain("future_block_type");
     } finally {
-      console.warn = origWarn;
+      writeSpy.mockRestore();
     }
   });
 

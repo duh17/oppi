@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 
 import { generateId } from "../id.js";
+import { createLogger } from "../logger.js";
+import { safeErrorMessage } from "../log-utils.js";
 import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -13,6 +15,8 @@ import type { ConfigStore } from "./config-store.js";
 const LEGACY_EXTENSION_NAME_ALIASES: Record<string, string> = {
   spawn_agent: "subagents",
 };
+
+const log = createLogger({ base: { component: "workspace_store" } });
 
 function canonicalizeExtensionName(name: string): string {
   return LEGACY_EXTENSION_NAME_ALIASES[name] ?? name;
@@ -186,8 +190,11 @@ export class WorkspaceStore {
       try {
         const workspace = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
         workspaces.push(this.sanitizeWorkspace(workspace));
-      } catch (err) {
-        console.error(`[storage] Corrupt workspace file ${path}, skipping:`, err);
+      } catch (err: unknown) {
+        log.error("workspace_store.workspace_file_parse.failed", {
+          workspaceFilePath: path,
+          error: safeErrorMessage(err),
+        });
       }
     }
 

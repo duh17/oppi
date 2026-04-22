@@ -1,4 +1,3 @@
-/* eslint-disable local/structured-log-format -- bench script uses console for human-readable output */
 /**
  * Comprehensive server hot-path benchmark.
  *
@@ -17,14 +16,14 @@
  * Each path is exercised with realistic payloads at realistic volume.
  */
 
-import { translatePiEvent, type TranslationContext } from "./session-protocol.js";
-import { MobileRendererRegistry } from "./mobile-renderer.js";
-import { sanitizeToolResultDetails } from "./visual-schema.js";
-import { EventRing } from "./event-ring.js";
-import { SessionBroadcaster, type BroadcastSessionState } from "./session-broadcast.js";
-import { stripAnsiEscapes } from "./ansi.js";
+import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { sanitizeToolResultDetails } from "../src/visual-schema.js";
+import { EventRing } from "../src/event-ring.js";
+import { SessionBroadcaster, type BroadcastSessionState } from "../src/session-broadcast.js";
+import { stripAnsiEscapes } from "../src/ansi.js";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { ServerMessage, Session } from "./types.js";
+import type { ServerMessage, Session } from "../src/types.js";
 
 // ─── Config ───
 
@@ -645,8 +644,7 @@ function benchAnsiStrip(): BenchResult[] {
 
 // ─── Main ───
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- top-level entry point
-function main() {
+function main(): void {
   const renderers = new MobileRendererRegistry();
 
   const allResults: BenchResult[] = [];

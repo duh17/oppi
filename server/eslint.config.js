@@ -207,8 +207,7 @@ export default tseslint.config(
       "no-template-curly-in-string": "warn",
 
       // Code quality
-      // Server app — console.log is the logging mechanism
-      "no-console": "off",
+      "no-console": "error",
       "no-empty": ["error", { allowEmptyCatch: true }],
       eqeqeq: ["error", "always"],
       "no-var": "error",
@@ -234,9 +233,16 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/cli.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+  {
     files: ["src/**/*.test.ts", "src/**/__tests__/**/*.ts", "extensions/**/*.test.ts"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",
+      "no-console": "off",
     },
   },
   {

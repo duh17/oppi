@@ -16,6 +16,7 @@ import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ServerMessage } from "./types.js";
+import { createLogger } from "./logger.js";
 
 // ─── Types ───
 
@@ -52,6 +53,8 @@ interface GateResponse {
 const DEFAULT_APPROVAL_TIMEOUT_MS = 0; // never expire — wait indefinitely for phone approval
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
+
+const log = createLogger({ base: { component: "gate" } });
 
 // ─── Gate Server ───
 
@@ -141,7 +144,7 @@ export class GateServer extends EventEmitter {
     this.ruleStore.clearSessionRules(sessionId);
 
     this.guards.delete(sessionId);
-    console.log("[gate] Destroyed guard", {
+    log.info("gate.guard.destroyed", {
       sessionId,
     });
   }
@@ -170,9 +173,12 @@ export class GateServer extends EventEmitter {
     const normalizedScope = normalizedChoice.scope;
 
     if (normalizedChoice.normalized) {
-      console.warn(
-        `[gate] Scope ${scope} is not permitted for ${action}; downgraded to ${normalizedScope} (request=${requestId})`,
-      );
+      log.warn("gate.scope_normalized", {
+        requestId,
+        action,
+        requestedScope: scope,
+        normalizedScope,
+      });
     }
 
     let learnedRuleId: string | undefined;
@@ -191,10 +197,10 @@ export class GateServer extends EventEmitter {
       if (ruleInput) {
         const rule = this.ruleStore.add(ruleInput);
         learnedRuleId = rule.id;
-        console.log("[gate] Learned rule", {
+        log.info("gate.learned_rule.created", {
+          ruleId: rule.id,
           label: rule.label || "(no label)",
           scope: normalizedScope,
-          id: rule.id,
           expiresAt,
         });
       }
@@ -234,7 +240,7 @@ export class GateServer extends EventEmitter {
       expiresAt,
     });
 
-    console.log("[gate] Decision resolved", {
+    log.info("gate.decision_resolved", {
       requestId,
       action,
       scope: normalizedScope,
@@ -310,7 +316,7 @@ export class GateServer extends EventEmitter {
     };
 
     this.guards.set(sessionId, guard);
-    console.log("[gate] Guard created", {
+    log.info("gate.guard.created", {
       sessionId,
     });
     this.emit("guard_ready", { sessionId });

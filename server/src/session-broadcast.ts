@@ -2,6 +2,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import type { EventRing } from "./event-ring.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
+import { createLogger } from "./logger.js";
 
 export interface SessionCatchUpResponse {
   events: ServerMessage[];
@@ -9,6 +10,8 @@ export interface SessionCatchUpResponse {
   session: Session;
   catchUpComplete: boolean;
 }
+
+const log = createLogger({ base: { component: "session_broadcast" } });
 
 export interface SessionBroadcastEvent {
   sessionId: string;
@@ -166,7 +169,12 @@ export class SessionBroadcaster {
       try {
         cb(sequenced);
       } catch (err) {
-        console.error("Subscriber error:", safeErrorMessage(err));
+        log.error("session_broadcast.subscriber_callback.failed", {
+          sessionId: active.session.id,
+          messageType: sequenced.type,
+          durable: true,
+          error: safeErrorMessage(err),
+        });
       }
     }
   }
@@ -192,7 +200,12 @@ export class SessionBroadcaster {
       try {
         cb(message);
       } catch (err) {
-        console.error("Subscriber error:", safeErrorMessage(err));
+        log.error("session_broadcast.subscriber_callback.failed", {
+          sessionId: active.session.id,
+          messageType: message.type,
+          durable: false,
+          error: safeErrorMessage(err),
+        });
       }
     }
   }

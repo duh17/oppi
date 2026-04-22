@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { defaultPolicy } from "../policy-presets.js";
+import { createLogger } from "../logger.js";
 import type { Rule, RuleInput } from "../rules.js";
 import type { AuditEntry } from "../audit.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+
+const log = createLogger({ base: { component: "route_policy" } });
 
 export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function isRuleVisibleToUser(rule: Rule): boolean {
@@ -369,7 +372,7 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       return;
     }
 
-    console.log("[policy] Rule updated", {
+    log.info("policy.rule.updated", {
       ruleId,
       label: updated.label || "(no label)",
     });
@@ -402,7 +405,7 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       return;
     }
 
-    console.log("[policy] Rule deleted", {
+    log.info("policy.rule.deleted", {
       ruleId,
       label: rule.label || "(no label)",
     });

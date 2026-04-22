@@ -9,7 +9,6 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: [
         "src/cli.ts", // CLI entry point — not unit-testable
-        "src/server-hotpath-bench.ts", // benchmark script — not production code
         "src/server-metric-registry.ts", // const registry + types — no logic to test
         "src/routes/types.ts", // type-only exports — no runtime code
       ],

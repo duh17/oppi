@@ -1,8 +1,10 @@
 import type { SdkBackend } from "./sdk-backend.js";
-import { ts } from "./log-utils.js";
 import type { Session, ServerMessage } from "./types.js";
+import { createLogger } from "./logger.js";
 
 export type StopRequestSource = "user" | "timeout" | "server";
+
+const log = createLogger({ base: { component: "session_stop" } });
 
 export interface PendingStop {
   mode: "abort" | "terminate";
@@ -192,9 +194,10 @@ export class SessionStopCoordinator {
         return;
       }
 
-      console.warn(
-        `${ts()} [session] Terminate stop still pending after ${timeoutMs}ms; forcing session shutdown`,
-      );
+      log.warn("session_stop.terminate_timeout_force_shutdown", {
+        sessionId: current.session.id,
+        timeoutMs,
+      });
       this.forceTerminateSessionProcess(
         key,
         current,
@@ -241,7 +244,8 @@ export class SessionStopCoordinator {
       }
 
       // Phase 1: first abort timed out — retry abort to interrupt running tools
-      console.log("[session] Abort timed out, retrying abort", {
+      log.info("session_stop.abort_timeout_retrying", {
+        sessionId: current.session.id,
         timeoutMs: this.stopAbortTimeoutMs,
       });
       this.deps.broadcast(key, {
@@ -269,9 +273,10 @@ export class SessionStopCoordinator {
           return;
         }
 
-        console.warn(
-          `${ts()} [session] Abort still pending after retry + ${this.stopAbortRetryTimeoutMs}ms; giving up (session stays alive)`,
-        );
+        log.warn("session_stop.abort_retry_timeout_give_up", {
+          sessionId: still.session.id,
+          timeoutMs: this.stopAbortRetryTimeoutMs,
+        });
         this.finishPendingStopWithFailure(
           key,
           still,

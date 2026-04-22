@@ -12,10 +12,13 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerMetricSample } from "./server-metric-collector.js";
 import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv } from "./metric-utils.js";
+import { createLogger } from "./logger.js";
 
 const FILE_PREFIX = "server-ops-metrics-";
 const FILE_SUFFIX = ".jsonl";
 const DEFAULT_RETENTION_DAYS = 30;
+
+const log = createLogger({ base: { component: "server_metric_writer" } });
 
 export interface MetricWriter {
   writeBatch(samples: ServerMetricSample[]): void;
@@ -56,7 +59,7 @@ export class JsonlMetricWriter implements MetricWriter {
     } catch (err) {
       // Best effort — never throw from the writer
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[server-ops-metrics] write failed", { error: message });
+      log.error("server_ops_metrics.write.failed", { error: message });
     }
   }
 

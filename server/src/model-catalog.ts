@@ -10,9 +10,11 @@
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
-import { ts } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 
 // ─── Types ───
+
+const log = createLogger({ base: { component: "model_catalog" } });
 
 export interface ModelInfo {
   id: string;
@@ -90,16 +92,16 @@ export class ModelCatalog {
 
       const allCount = this.registry.getAll().length;
       if (allCount > 0) {
-        console.warn(
-          `${ts()} [models] no authenticated/configured models available; hiding ${allCount} unauthenticated model(s)`,
-        );
+        log.warn("models.no_authenticated_models_available", {
+          hiddenModelCount: allCount,
+        });
         return;
       }
 
-      console.warn(`${ts()} [models] SDK ModelRegistry returned 0 models`);
+      log.warn("models.registry_returned_zero", { availableModelCount: 0 });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
+      log.warn("models.refresh.failed", { error: message });
     }
   }
 
@@ -217,7 +219,7 @@ export class ModelCatalog {
     }
 
     if (healedCount > 0) {
-      console.log("[models] healed context windows", {
+      log.info("models.context_windows.healed", {
         healedCount,
       });
     }

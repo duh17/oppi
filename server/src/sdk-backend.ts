@@ -7,6 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import { safeErrorMessage } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
@@ -173,6 +174,8 @@ const CUSTOM_UI_COMPAT_CONTROL_INPUT: Record<
   down: "__OPPI_TUI_DOWN__",
   enter: "__OPPI_TUI_ENTER__",
 };
+
+const log = createLogger({ base: { component: "sdk_backend" } });
 
 function decodeCustomUIControlOption(option: string | undefined): CustomUIControl | undefined {
   switch (option) {
@@ -379,7 +382,7 @@ export class SdkBackend {
           ? resolveRegistryModel(modelRegistry, session.model)
           : undefined;
       if (shouldSeedFromSessionState && session.model && !model) {
-        console.warn("[sdk] Failed to resolve model, using default", {
+        log.warn("sdk.model_resolve_defaulted", {
           model: session.model,
         });
       }
@@ -444,7 +447,7 @@ export class SdkBackend {
             (ext) => `${getExtensionName(ext)}(tools:${[...ext.tools.keys()].join(",") || "none"})`,
           );
           if (process.env.DEBUG) {
-            console.log("[sdk] Extensions override", {
+            log.info("sdk.extensions_override_debug", {
               workspace: workspace?.name,
               input: extNames,
               errors: base.errors.map((e) => `${e.path}: ${e.error}`),
@@ -531,7 +534,7 @@ export class SdkBackend {
           createEditToolDefinition(cwd, { operations: createGondolinEditOps(vm, cwd) }),
           createWriteToolDefinition(cwd, { operations: createGondolinWriteOps(vm, cwd) }),
         ];
-        console.log("[sdk] Sandbox VM ready", { workspaceId: workspace.id || "unknown" });
+        log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
 
       const createResult = await createAgentSession({
@@ -588,7 +591,7 @@ export class SdkBackend {
     const bindMs = totalMs - preBindMs;
     config.metrics?.record("server.session_create_bind_ms", bindMs);
 
-    console.log("[sdk] Session created", {
+    log.info("sdk.session.created", {
       model: backend.piSession.model?.id ?? backend.piSession.model?.name,
       thinking: backend.piSession.thinkingLevel,
       setupMs: preBindMs,
@@ -1057,7 +1060,7 @@ export class SdkBackend {
       })
       .catch((err) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error("[sdk] prompt error", { error: safeErrorMessage(err) });
+        log.error("sdk.prompt.failed", { error: safeErrorMessage(err) });
         this.emitEvent({ type: "prompt_error", error: errorMessage });
       });
   }
@@ -1135,7 +1138,7 @@ export class SdkBackend {
       try {
         listener();
       } catch (err: unknown) {
-        console.error("[sdk] shutdown cleanup listener failed", {
+        log.error("sdk.shutdown_cleanup_listener.failed", {
           sessionId: this.piSession.sessionId,
           error: safeErrorMessage(err),
         });
@@ -1159,7 +1162,7 @@ export class SdkBackend {
       try {
         listener();
       } catch (err: unknown) {
-        console.error("[sdk] shutdown cleanup listener failed", {
+        log.error("sdk.shutdown_cleanup_listener.failed", {
           sessionId: this.piSession.sessionId,
           error: safeErrorMessage(err),
         });
@@ -1178,7 +1181,7 @@ export class SdkBackend {
         // session lifecycle (extensions + event subscriptions).
         await this.runtime.dispose();
       } catch (err: unknown) {
-        console.error("[sdk] runtime dispose failed", {
+        log.error("sdk.runtime_dispose.failed", {
           sessionId: this.piSession.sessionId,
           error: safeErrorMessage(err),
         });
@@ -1236,7 +1239,7 @@ function createPermissionGateFactory(
 
     // Register guard for this session.
     gate.createGuard(sessionId, workspaceId);
-    console.log("[sdk-gate] Virtual guard registered", {
+    log.info("sdk.gate_guard.registered", {
       sessionId,
       workspaceId,
     });
@@ -1263,7 +1266,7 @@ function createPermissionGateFactory(
     // Clean up on shutdown
     pi.on("session_shutdown", () => {
       gate.destroySessionGuard(sessionId);
-      console.log("[sdk-gate] Guard destroyed", {
+      log.info("sdk.gate_guard.destroyed", {
         sessionId,
       });
     });

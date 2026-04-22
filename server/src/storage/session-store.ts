@@ -1,8 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { generateId } from "../id.js";
+import { createLogger } from "../logger.js";
+import { safeErrorMessage } from "../log-utils.js";
 import type { Session, SessionChangeStats } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
+
+const log = createLogger({ base: { component: "session_store" } });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -101,20 +105,29 @@ export class SessionStore {
       try {
         const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
         if (!isRecord(raw)) {
-          console.error(`[storage] Corrupt session file ${path}, skipping`);
+          log.error("session_store.session_file.invalid", {
+            sessionFilePath: path,
+            reason: "top_level_not_object",
+          });
           continue;
         }
 
         const session = raw.session as Session | undefined;
         if (!session) {
-          console.error(`[storage] Corrupt session file ${path}, skipping`);
+          log.error("session_store.session_file.invalid", {
+            sessionFilePath: path,
+            reason: "missing_session_payload",
+          });
           continue;
         }
 
         backfillTokens(session);
         this.cache.set(session.id, stripInternalFields(session));
-      } catch {
-        console.error(`[storage] Corrupt session file ${path}, skipping`);
+      } catch (err: unknown) {
+        log.error("session_store.session_file_parse.failed", {
+          sessionFilePath: path,
+          error: safeErrorMessage(err),
+        });
       }
     }
 

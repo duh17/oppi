@@ -15,9 +15,12 @@ import {
 } from "@mariozechner/pi-coding-agent";
 
 import { isManagedExtensionName } from "../extensions/first-party.js";
+import { createLogger } from "./logger.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 const HOST_EXTENSIONS_DIR = join(DEFAULT_AGENT_DIR, "extensions");
+
+const log = createLogger({ base: { component: "extension_loader" } });
 
 const EXTENSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
@@ -133,7 +136,7 @@ export async function listConfiguredHostExtensions(
     return listFromResolvedResources(resolved.extensions);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[extensions] Failed to resolve configured extensions: ${message}`);
+    log.warn("extensions.configured_resolution.failed", { error: message });
 
     return listHostExtensions({
       cwd: options.cwd,

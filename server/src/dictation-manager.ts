@@ -14,6 +14,7 @@
 import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
 import type { SttProvider } from "./stt-provider.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import { createLogger } from "./logger.js";
 
 // ─── Constants ───
 
@@ -22,6 +23,8 @@ const SAMPLE_RATE = 16000;
 const BITS_PER_SAMPLE = 16;
 const NUM_CHANNELS = 1;
 const BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8;
+
+const log = createLogger({ base: { component: "dictation_manager" } });
 
 // ─── Per-connection session state ───
 
@@ -150,7 +153,7 @@ export class DictationManager {
       await this.sttProvider.start();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error("[stt] Failed to start session:", errorMsg);
+      log.error("dictation.stt_start.failed", { error: errorMsg });
       this.send({
         type: "dictation_error",
         error: `STT failed to start: ${errorMsg}`,

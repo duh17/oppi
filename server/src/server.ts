@@ -48,6 +48,7 @@ import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
 import type { Session, Workspace, ServerMessage, ApiError, ServerConfig } from "./types.js";
 import { ts, safeErrorMessage } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import {
   BonjourAdvertiser,
@@ -85,6 +86,8 @@ function secureTokenEquals(expected: string, actual: string): boolean {
 
 const WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const WS_CLOSE_GOING_AWAY = 1001;
+
+const log = createLogger({ base: { component: "server" } });
 
 function writeUpgradeErrorResponse(
   socket: Duplex,
@@ -436,8 +439,8 @@ export class Server {
       metrics: this.opsMetrics,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
-      handleClientMessage: (session, msg, send) =>
-        this.wsMessageHandler.handleClientMessage(session, msg, send),
+      handleClientMessage: (session, msg, send, meta) =>
+        this.wsMessageHandler.handleClientMessage(session, msg, send, meta),
       trackConnection: (ws) => this.trackConnection(ws),
       untrackConnection: (ws) => this.untrackConnection(ws),
       dictationManager: this.dictationManager,
@@ -542,7 +545,9 @@ export class Server {
       this.searchIndex = new SearchIndex(config.dataDir, (id) => this.storage.getSession(id));
       this.sessions.searchIndex = this.searchIndex;
     } catch (err) {
-      console.error("[server] Failed to initialize search index:", (err as Error).message);
+      log.error("server.search_index_init.failed", {
+        error: safeErrorMessage(err),
+      });
     }
 
     // Create route handler (dispatch + all HTTP business logic)
@@ -706,14 +711,14 @@ export class Server {
 
     const securityWarnings = formatStartupSecurityWarnings(config);
     for (const warning of securityWarnings) {
-      console.warn(`[startup][security] ${warning}`);
+      log.warn("startup.security.warning", { warning });
     }
 
     return new Promise((resolve, reject) => {
       this.httpServer.once("error", reject);
       this.httpServer.listen(config.port, config.host, () => {
         this.httpServer.removeListener("error", reject);
-        console.log("🚀 oppi listening", {
+        log.info("server.listening", {
           scheme: this.transportScheme,
           host: config.host,
           port: this.port,
@@ -722,8 +727,8 @@ export class Server {
         try {
           this.startBonjourAdvertisement();
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[bonjour] advertisement disabled: ${message}`);
+          const message = safeErrorMessage(err);
+          log.warn("bonjour.advertisement_disabled", { error: message });
         }
 
         this.resourceSampler.start();
@@ -737,7 +742,9 @@ export class Server {
             try {
               idx.sync(sessions);
             } catch (err) {
-              console.error("[search-index] sync error:", (err as Error).message);
+              log.error("server.search_index_sync.failed", {
+                error: safeErrorMessage(err),
+              });
             }
           }, 0);
         }
@@ -779,20 +786,27 @@ export class Server {
     }
 
     if (!isDnsSdAvailable()) {
-      console.warn("[bonjour] dns-sd command not found; skipping LAN advertisement");
+      log.warn("bonjour.skipped", {
+        reason: "dns_sd_unavailable",
+      });
       return;
     }
 
     const config = this.storage.getConfig();
     const normalizedBindHost = normalizeBindHost(config.host);
     if (isLoopbackBindHost(normalizedBindHost)) {
-      console.warn(`[bonjour] host=${config.host} is loopback-only; skipping LAN advertisement`);
+      log.warn("bonjour.skipped", {
+        reason: "loopback_bind_host",
+        host: config.host,
+      });
       return;
     }
 
     const lanHost = resolveBonjourLanHost(config.host);
     if (!lanHost) {
-      console.warn("[bonjour] no LAN IPv4 address detected; skipping LAN advertisement");
+      log.warn("bonjour.skipped", {
+        reason: "no_lan_ipv4",
+      });
       return;
     }
 
@@ -820,7 +834,7 @@ export class Server {
       txt,
     });
 
-    console.log("[bonjour] advertising", {
+    log.info("bonjour.advertising", {
       serviceName,
       host: lanHost,
       port: this.port,
@@ -862,7 +876,7 @@ export class Server {
     }
 
     if (healed > 0) {
-      console.log("[startup] healed orphaned sessions", { count: healed });
+      log.info("startup.healed_orphaned_sessions", { count: healed });
     }
   }
 
@@ -875,14 +889,12 @@ export class Server {
       lastEvent: "Permission required",
       priority: 10,
     });
-    console.log(
-      formatPermissionRequestLog({
-        requestId: pending.id,
-        sessionId: pending.sessionId,
-        tool: pending.tool,
-        displaySummary: pending.displaySummary,
-      }),
-    );
+    log.info("gate.permission_request", {
+      requestId: pending.id,
+      sessionId: pending.sessionId,
+      tool: pending.tool,
+      summaryChars: pending.displaySummary.length,
+    });
   }
 
   // ─── User Connection Tracking ───
@@ -1025,7 +1037,7 @@ export class Server {
         paths.push(userPath);
         continue;
       }
-      console.warn(`[skills] Workspace skill not found: "${name}"`);
+      log.warn("skills.workspace_skill_not_found", { skill: name });
     }
     return paths;
   }
@@ -1105,7 +1117,11 @@ export class Server {
         await this.routes.dispatch(method, path, url, req, res);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Internal error";
-        console.error("HTTP error:", safeErrorMessage(err));
+        log.error("http.request.failed", {
+          method,
+          path,
+          error: safeErrorMessage(err),
+        });
         this.error(res, 500, message);
       }
       return;
@@ -1113,14 +1129,12 @@ export class Server {
 
     const authenticated = this.authenticate(req, url);
     if (!authenticated) {
-      console.log(
-        formatUnauthorizedAuthLog({
-          transport: "http",
-          method,
-          path,
-          authorization: req.headers.authorization,
-        }),
-      );
+      log.warn("auth.unauthorized", {
+        transport: "http",
+        method,
+        path,
+        authPresent: hasAuthHeader(req.headers.authorization),
+      });
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -1131,7 +1145,11 @@ export class Server {
       await this.routes.dispatch(method, path, url, req, res);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Internal error";
-      console.error("HTTP error:", safeErrorMessage(err));
+      log.error("http.request.failed", {
+        method,
+        path,
+        error: safeErrorMessage(err),
+      });
       this.error(res, 500, message);
     }
   }
@@ -1161,13 +1179,11 @@ export class Server {
 
     const authenticated = this.authenticate(req);
     if (!authenticated) {
-      console.log(
-        formatUnauthorizedAuthLog({
-          transport: "ws",
-          path: url.pathname,
-          authorization: req.headers.authorization,
-        }),
-      );
+      log.warn("auth.unauthorized", {
+        transport: "ws",
+        path: url.pathname,
+        authPresent: hasAuthHeader(req.headers.authorization),
+      });
       writeUpgradeErrorResponse(socket, "HTTP/1.1 401 Unauthorized", {
         "WWW-Authenticate": 'Bearer realm="oppi"',
         Connection: "close",
@@ -1186,7 +1202,7 @@ export class Server {
     }
 
     if (!isAllowedWebSocketOrigin(req, this.transportScheme)) {
-      console.warn("[ws] Rejected /stream upgrade due to origin mismatch", {
+      log.warn("ws.upgrade_rejected_origin_mismatch", {
         origin: req.headers.origin,
         host: req.headers.host,
       });

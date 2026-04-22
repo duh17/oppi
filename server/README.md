@@ -207,9 +207,17 @@ npm run check                       # typecheck + lint + iOS architecture bounda
 npm run check:architecture          # run iOS architecture boundary checks directly
 npm run review                      # generate AI review prompt from staged diff
 npm run dev                         # watch mode
+npm run bench:correctness           # check + test before perf measurements
+npm run bench                       # correctness + perf regression gate (median vs baseline)
+npm run bench:perf                  # hotpath microbenchmark once (skip compare)
+npm run bench:perf:gate             # hotpath benchmark gate (median vs baseline)
+npm run bench:hotpath               # critical event pipeline benchmark
+npm run bench:hotpath:gate          # hotpath gate (correctness + median compare)
 npm run test:e2e:linux              # linux container E2E
 npm run test:e2e:lmstudio:contract  # real model contract tests
 ```
+
+Benchmark conventions, baselines, and comparison workflow live in [bench/README.md](bench/README.md).
 
 ## Local release telemetry dashboard (SQLite + Grafana)
 

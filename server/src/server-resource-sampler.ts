@@ -11,11 +11,14 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { dateString, pruneOldJsonlFiles, retentionDaysFromEnv, round2 } from "./metric-utils.js";
+import { createLogger } from "./logger.js";
 
 const FILE_PREFIX = "server-metrics-";
 const FILE_SUFFIX = ".jsonl";
 const DEFAULT_INTERVAL_MS = 30_000; // 30s
 const DEFAULT_RETENTION_DAYS = 30;
+
+const log = createLogger({ base: { component: "server_resource_sampler" } });
 
 export interface EventRingSnapshot {
   ring: string;
@@ -76,7 +79,7 @@ export class ServerResourceSampler {
     // Don't block process exit
     this.timer.unref();
 
-    console.log("[server-metrics] started", { intervalMs });
+    log.info("server_metrics.sampler.started", { intervalMs });
   }
 
   stop(): void {
@@ -174,7 +177,7 @@ export class ServerResourceSampler {
     } catch (err) {
       // Best effort — don't crash the server
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[server-metrics] sample failed", { error: message });
+      log.error("server_metrics.sample.failed", { error: message });
     }
   }
 

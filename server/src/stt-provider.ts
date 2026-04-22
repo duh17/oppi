@@ -9,6 +9,8 @@
  * any OpenAI-compatible streaming STT endpoint (not tied to a specific backend).
  */
 
+import { createLogger } from "./logger.js";
+
 // ─── Interface ───
 
 /**
@@ -58,6 +60,8 @@ export interface StreamingSttOptions {
  * Uses encoder window caching + decoder KV reuse for O(1) per-chunk latency.
  * Compatible with any streaming STT endpoint that implements the session API.
  */
+const log = createLogger({ base: { component: "stt_provider" } });
+
 export class StreamingSttProvider implements SttProvider {
   readonly name: string;
   readonly model: string;
@@ -237,11 +241,10 @@ export class StreamingSttProvider implements SttProvider {
         signal: AbortSignal.timeout(5_000),
       });
     } catch (err) {
-      console.warn(
-        "[stt] Failed to delete session:",
-        id,
-        err instanceof Error ? err.message : String(err),
-      );
+      log.warn("stt.session_delete.failed", {
+        sessionId: id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -332,19 +335,23 @@ export class StreamingSttProvider implements SttProvider {
         }
       } else if (res.status === 404) {
         // Stale session — server likely restarted
-        console.warn("[stt] Session", this.sessionId, "not found (404), recreating");
+        log.warn("stt.session_not_found_recreating", {
+          sessionId: this.sessionId,
+          status: res.status,
+        });
         this.sessionId = null;
         try {
           await this.createSession();
         } catch (err) {
-          console.warn(
-            "[stt] Failed to recreate session:",
-            err instanceof Error ? err.message : String(err),
-          );
+          log.warn("stt.session_recreate.failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     } catch (err) {
-      console.warn("[stt] Feed error:", err instanceof Error ? err.message : String(err));
+      log.warn("stt.feed.failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       this.feeding = false;
     }

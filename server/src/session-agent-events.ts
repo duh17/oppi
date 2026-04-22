@@ -1,6 +1,7 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 import type { PiMessage, SessionBackendEvent } from "./pi-events.js";
+import { createLogger } from "./logger.js";
 import {
   extractAssistantText,
   extractToolFullOutputPath,
@@ -20,6 +21,8 @@ export interface SessionAgentEventState
   subscribers: Set<(msg: ServerMessage) => void>;
   toolFullOutputPaths: Map<string, string>;
 }
+
+const log = createLogger({ base: { component: "session_agent_events" } });
 
 export interface SessionAgentEventCoordinatorDeps {
   getActiveSession: (key: string) => SessionAgentEventState | undefined;
@@ -67,7 +70,7 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "extension_error") {
-      console.error("[pi] extension error", {
+      log.error("session_agent_events.extension.error", {
         sessionId: active.session.id,
         extensionPath: data.extensionPath,
         error: data.error,
@@ -77,7 +80,7 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "prompt_error") {
-      console.error("[pi] prompt error", {
+      log.error("session_agent_events.prompt.error", {
         sessionId: active.session.id,
         error: data.error,
       });
@@ -91,7 +94,7 @@ export class SessionAgentEventCoordinator {
     if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(event.type)) {
       const toolName =
         "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
-      console.log("[pi] event", {
+      log.info("session_agent_events.pi_event", {
         sessionId: active.session.id,
         eventType: event.type,
         toolName,
@@ -155,7 +158,7 @@ export class SessionAgentEventCoordinator {
     }
 
     if (SessionAgentEventCoordinator.STATUS_BROADCAST_TYPES.has(event.type)) {
-      console.log("[pi] status update", {
+      log.info("session_agent_events.status_update", {
         sessionId: active.session.id,
         status: active.session.status,
       });

@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createLogger } from "./logger.js";
 
 /**
  * Path to the shared fetch domain allowlist.
@@ -12,6 +13,8 @@ import { join } from "node:path";
  *   # comments and blank lines
  */
 const FETCH_ALLOWLIST_PATH = join(homedir(), ".config", "fetch", "allowed_domains.txt");
+
+const log = createLogger({ base: { component: "policy_allowlist" } });
 
 /** Cached allowlist. Loaded once at module init, reloaded on PolicyEngine construction. */
 let cachedAllowedDomains: Set<string> | null = null;
@@ -85,7 +88,11 @@ export function addDomainToAllowlist(domain: string, allowlistPath?: string): vo
     cachedAllowedDomains = null;
     cachedAllowlistMtime = 0;
   } catch (err) {
-    console.error(`[policy] Failed to add domain to allowlist: ${err}`);
+    log.error("policy.allowlist.add.failed", {
+      domain: lower,
+      path,
+      error: String(err),
+    });
   }
 }
 
@@ -119,7 +126,11 @@ export function removeDomainFromAllowlist(domain: string, allowlistPath?: string
     cachedAllowedDomains = null;
     cachedAllowlistMtime = 0;
   } catch (err) {
-    console.error(`[policy] Failed to remove domain from allowlist: ${err}`);
+    log.error("policy.allowlist.remove.failed", {
+      domain: lower,
+      path,
+      error: String(err),
+    });
   }
 }
 

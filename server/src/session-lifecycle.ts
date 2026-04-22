@@ -3,6 +3,7 @@ import type { PendingStop, StopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
+import { createLogger } from "./logger.js";
 
 export interface SessionLifecycleSessionState {
   session: Session;
@@ -32,6 +33,8 @@ export interface SessionLifecycleCoordinatorDeps {
   hasActiveChildren: (sessionId: string) => boolean;
   metrics?: ServerMetricCollector;
 }
+
+const log = createLogger({ base: { component: "session_lifecycle" } });
 
 export class SessionLifecycleCoordinator {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -110,9 +113,9 @@ export class SessionLifecycleCoordinator {
       const hasCompletedWork = active.session.tokens.output > active.outputTokensAtStart;
 
       if (hasCompletedWork && this.deps.getChildAutoStopWhenDone()) {
-        console.log("[session] auto-stopping idle child", {
+        log.info("session_lifecycle.child_auto_stop_when_done", {
           sessionId: active.session.id,
-          parent: active.session.parentSessionId,
+          parentSessionId: active.session.parentSessionId,
         });
         this.pendingIdleTimeoutKeys.add(key);
         setTimeout(() => {
@@ -128,9 +131,10 @@ export class SessionLifecycleCoordinator {
         const timer = setTimeout(() => {
           const current = this.deps.getActiveSession(key);
           if (current?.session.parentSessionId && current.session.status === "ready") {
-            console.log("[session] child idle timeout (post-work)", {
+            log.info("session_lifecycle.child_idle_timeout_post_work", {
               sessionId: current.session.id,
-              parent: current.session.parentSessionId,
+              parentSessionId: current.session.parentSessionId,
+              timeoutMs: childIdleMs,
             });
             this.pendingIdleTimeoutKeys.add(key);
             void this.deps.stopSession(current.session.id);
@@ -145,9 +149,10 @@ export class SessionLifecycleCoordinator {
         const timer = setTimeout(() => {
           const current = this.deps.getActiveSession(key);
           if (current?.session.parentSessionId && current.session.status === "ready") {
-            console.log("[session] auto-stopping idle child (grace expired)", {
+            log.info("session_lifecycle.child_startup_grace_expired", {
               sessionId: current.session.id,
-              parent: current.session.parentSessionId,
+              parentSessionId: current.session.parentSessionId,
+              timeoutMs: graceMs,
             });
             this.pendingIdleTimeoutKeys.add(key);
             void this.deps.stopSession(current.session.id);
@@ -168,7 +173,7 @@ export class SessionLifecycleCoordinator {
       // Don't idle-stop a parent while any of its children are still active.
       // The parent needs to stay alive to receive child results and coordinate.
       if (this.deps.hasActiveChildren(active.session.id)) {
-        console.log("[session] idle timeout deferred — active children", {
+        log.info("session_lifecycle.idle_timeout_deferred_active_children", {
           sessionId: active.session.id,
         });
         // Re-arm the timer so we check again later.
@@ -176,8 +181,10 @@ export class SessionLifecycleCoordinator {
         return;
       }
 
-      console.log("[session] idle timeout", {
+      log.info("session_lifecycle.idle_timeout", {
+        sessionId: active.session.id,
         key,
+        timeoutMs,
       });
       this.pendingIdleTimeoutKeys.add(key);
       void this.deps.stopSession(active.session.id);

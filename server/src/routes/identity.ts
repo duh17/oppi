@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
+import { createLogger } from "../logger.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -16,6 +17,8 @@ import {
 const PAIRING_MAX_FAILURES = 5;
 const PAIRING_WINDOW_MS = 60_000;
 const PAIRING_COOLDOWN_MS = 120_000;
+
+const log = createLogger({ base: { component: "route_identity" } });
 
 export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const pairingFailuresBySource = new Map<string, number[]>();
@@ -150,7 +153,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     // ServerProcessManager detects the exit and auto-restarts.
     if (result.ok) {
       setTimeout(() => {
-        console.log("[runtime-update] Update installed, exiting for restart...");
+        log.info("identity.runtime_update.restart_scheduled", {
+          delayMs: 1_000,
+        });
         process.exit(0);
       }, 1_000);
     }
@@ -169,12 +174,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const tokenType = body.tokenType || "apns";
     if (tokenType === "liveactivity") {
       ctx.storage.setLiveActivityToken(body.deviceToken);
-      console.log("[push] Live Activity token registered", {
+      log.info("identity.push.live_activity_token.registered", {
         owner: ctx.storage.getOwnerName(),
       });
     } else {
       ctx.storage.addPushDeviceToken(body.deviceToken);
-      console.log("[push] Device token registered", {
+      log.info("identity.push.device_token.registered", {
         owner: ctx.storage.getOwnerName(),
       });
     }
@@ -186,7 +191,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const body = await helpers.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
       ctx.storage.removePushDeviceToken(body.deviceToken);
-      console.log("[push] Device token removed", {
+      log.info("identity.push.device_token.removed", {
         owner: ctx.storage.getOwnerName(),
       });
     }

@@ -1,10 +1,13 @@
 import { appendSessionMessage } from "./session-protocol.js";
 import type { TurnSessionState } from "./session-turns.js";
 import type { Session, TurnCommand } from "./types.js";
+import { createLogger } from "./logger.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
 }
+
+const log = createLogger({ base: { component: "session_input" } });
 
 export interface SessionInputCoordinatorDeps {
   getActiveSession: (key: string) => SessionInputSessionState | undefined;
@@ -95,7 +98,7 @@ export class SessionInputCoordinator {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
-    console.log("[sdk] prompt sent to pi", {
+    log.info("session_input.prompt_sent", {
       sessionId: active.session.id,
       status: active.session.status,
     });

@@ -17,6 +17,7 @@ import type { PiMessage } from "./pi-events.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 import { stripAnsiEscapes } from "./ansi.js";
 import { normalizePiUsage } from "./token-usage.js";
+import { createLogger } from "./logger.js";
 
 // ─── Shell Preview Constants ───
 
@@ -34,6 +35,8 @@ const SHELL_PREVIEW_MAX_BYTES = 16 * 1024; // 16KB
 
 /** Minimum interval between replace snapshots for the same tool call. */
 const SHELL_PREVIEW_MIN_INTERVAL_MS = 150;
+
+const log = createLogger({ base: { component: "session_protocol" } });
 
 function isShellLikeTool(toolName: string): boolean {
   return SHELL_LIKE_TOOLS.has(toolName.toLowerCase());
@@ -613,9 +616,11 @@ export function translatePiEvent(
       // and built-in tools emit BashToolDetails, ReadToolDetails, etc.
       const detailsResult = sanitizeToolResultDetails(event.result?.details);
       if (detailsResult.warnings.length > 0) {
-        console.warn(
-          `[session:${ctx.sessionId}] tool_end details sanitized for ${event.toolName}: ${detailsResult.warnings.join("; ")}`,
-        );
+        log.warn("session.tool_end_details_sanitized", {
+          sessionId: ctx.sessionId,
+          tool: event.toolName,
+          warnings: detailsResult.warnings,
+        });
       }
 
       const details = detailsResult.details;

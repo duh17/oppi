@@ -8,7 +8,8 @@
 
 import type { Workspace } from "./types.js";
 import type { GondolinVm } from "./gondolin-ops.js";
-import { ts, safeErrorMessage } from "./log-utils.js";
+import { safeErrorMessage } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 
 /**
  * Factory function that creates a Gondolin VM.
@@ -86,6 +87,8 @@ export async function defaultVmFactory(
   return vm;
 }
 
+const log = createLogger({ base: { component: "gondolin_manager" } });
+
 export class GondolinManager {
   /** workspaceId → running VM */
   private vms = new Map<string, GondolinVm & { close(): Promise<void> }>();
@@ -137,15 +140,14 @@ export class GondolinManager {
     if (!vm) return;
 
     this.vms.delete(workspaceId);
-    console.log("[gondolin] stopping VM", { workspaceId, ts: ts() });
+    log.info("gondolin.vm_stopping", { workspaceId });
 
     try {
       await vm.close();
     } catch (err) {
-      console.error("[gondolin] error stopping VM", {
+      log.error("gondolin.vm_stop.failed", {
         workspaceId,
         error: safeErrorMessage(err),
-        ts: ts(),
       });
     }
   }
@@ -171,17 +173,16 @@ export class GondolinManager {
     extraEnv?: Record<string, string>,
   ): Promise<GondolinVm & { close(): Promise<void> }> {
     const allowedHosts = workspace.sandboxConfig?.allowedHosts ?? ["*"];
-    console.log("[gondolin] starting VM", {
+    log.info("gondolin.vm_starting", {
       workspaceId: workspace.id,
       cwd: hostCwd,
       allowedHosts,
       roMounts: readonlyMounts?.length ?? 0,
-      ts: ts(),
     });
 
     const vm = await this.factory({ hostCwd, allowedHosts, secrets, readonlyMounts, extraEnv });
 
-    console.log("[gondolin] VM ready", { workspaceId: workspace.id, ts: ts() });
+    log.info("gondolin.vm_ready", { workspaceId: workspace.id });
     return vm;
   }
 }

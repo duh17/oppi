@@ -11,6 +11,7 @@
 import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateId } from "./id.js";
+import { createLogger } from "./logger.js";
 
 // ─── Types ───
 
@@ -48,6 +49,8 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB before rotation
 const MAX_QUERY_LIMIT = 500;
 const DEFAULT_QUERY_LIMIT = 50;
 
+const log = createLogger({ base: { component: "audit" } });
+
 // ─── AuditLog ───
 
 export class AuditLog {
@@ -71,7 +74,10 @@ export class AuditLog {
     try {
       appendFileSync(this.path, JSON.stringify(full) + "\n", { mode: 0o600 });
     } catch (err) {
-      console.error(`[audit] Failed to write: ${err}`);
+      log.error("audit.write.failed", {
+        path: this.path,
+        error: String(err),
+      });
     }
 
     // Check rotation
@@ -145,7 +151,8 @@ export class AuditLog {
 
       const backup = this.path + ".1";
       renameSync(this.path, backup);
-      console.log("[audit] Rotated log", {
+      log.info("audit.rotated", {
+        path: this.path,
         sizeMb: (size / 1024 / 1024).toFixed(1),
         backup,
       });

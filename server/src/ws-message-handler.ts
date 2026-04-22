@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 
 import { getFileSuggestions } from "./file-suggestions.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type {
   ClientMessage,
@@ -11,6 +13,8 @@ import type {
   Session,
   Workspace,
 } from "./types.js";
+
+const log = createLogger({ base: { component: "ws_message_handler" } });
 
 interface TurnCommandMessage {
   message: string;
@@ -100,6 +104,10 @@ export interface WsMessageHandlerDeps {
   resolveWorkspaceForSession?: (session: Session) => Workspace | undefined;
 }
 
+export interface WsCommandMeta {
+  connId?: string;
+}
+
 export class WsMessageHandler {
   constructor(private readonly deps: WsMessageHandlerDeps) {}
 
@@ -107,6 +115,7 @@ export class WsMessageHandler {
     session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta = {},
   ): Promise<void> {
     switch (msg.type) {
       case "subscribe":
@@ -119,34 +128,50 @@ export class WsMessageHandler {
       }
 
       case "prompt":
-        await this.handleTurnCommand(session, "prompt", msg, send, (id, text, opts) =>
-          this.deps.sessions.sendPrompt(id, text, {
-            ...opts,
-            streamingBehavior: msg.streamingBehavior,
-            timestamp: Date.now(),
-          }),
+        await this.handleTurnCommand(
+          session,
+          "prompt",
+          msg,
+          send,
+          (id, text, opts) =>
+            this.deps.sessions.sendPrompt(id, text, {
+              ...opts,
+              streamingBehavior: msg.streamingBehavior,
+              timestamp: Date.now(),
+            }),
+          meta,
         );
         return;
 
       case "steer":
-        await this.handleTurnCommand(session, "steer", msg, send, (id, text, opts) =>
-          this.deps.sessions.sendSteer(id, text, opts),
+        await this.handleTurnCommand(
+          session,
+          "steer",
+          msg,
+          send,
+          (id, text, opts) => this.deps.sessions.sendSteer(id, text, opts),
+          meta,
         );
         return;
 
       case "follow_up":
-        await this.handleTurnCommand(session, "follow_up", msg, send, (id, text, opts) =>
-          this.deps.sessions.sendFollowUp(id, text, opts),
+        await this.handleTurnCommand(
+          session,
+          "follow_up",
+          msg,
+          send,
+          (id, text, opts) => this.deps.sessions.sendFollowUp(id, text, opts),
+          meta,
         );
         return;
 
       case "abort":
       case "stop":
-        await this.handleStopCommand(session, msg, send);
+        await this.handleStopCommand(session, msg, send, meta);
         return;
 
       case "stop_session":
-        await this.handleStopSessionCommand(session, msg, send);
+        await this.handleStopSessionCommand(session, msg, send, meta);
         return;
 
       case "get_state": {
@@ -192,7 +217,7 @@ export class WsMessageHandler {
 
       // ── File suggestions (server-handled, no pi round-trip) ──
       case "get_file_suggestions": {
-        this.handleFileSuggestions(session, msg.query, msg.requestId, send);
+        this.handleFileSuggestions(session, msg.query, msg.requestId, send, meta);
         return;
       }
 
@@ -220,9 +245,53 @@ export class WsMessageHandler {
       case "set_auto_retry":
       case "abort_retry":
       case "abort_bash": {
+        const commandStart = Date.now();
         const command: Record<string, unknown> = { ...msg };
-        await this.deps.sessions.forwardClientCommand(session.id, command, msg.requestId);
-        return;
+
+        log.info("ws.command.received", {
+          connId: meta.connId,
+          sessionId: session.id,
+          command: msg.type,
+          requestId: msg.requestId,
+        });
+
+        try {
+          await this.deps.sessions.forwardClientCommand(session.id, command, msg.requestId);
+
+          log.info("ws.command.completed", {
+            connId: meta.connId,
+            sessionId: session.id,
+            command: msg.type,
+            requestId: msg.requestId,
+            durationMs: Date.now() - commandStart,
+          });
+
+          return;
+        } catch (err: unknown) {
+          const message = safeErrorMessage(err);
+
+          log.warn("ws.command.failed", {
+            connId: meta.connId,
+            sessionId: session.id,
+            command: msg.type,
+            requestId: msg.requestId,
+            durationMs: Date.now() - commandStart,
+            error: message,
+          });
+
+          if (msg.requestId) {
+            send({
+              type: "command_result",
+              command: msg.type,
+              requestId: msg.requestId,
+              success: false,
+              error: message,
+            });
+            return;
+          }
+
+          throw err;
+        }
       }
 
       // Dictation messages are handled at the stream level (UserStreamMux),
@@ -269,7 +338,9 @@ export class WsMessageHandler {
         requestId?: string;
       },
     ) => Promise<void>,
+    meta: WsCommandMeta,
   ): Promise<void> {
+    const startedAt = Date.now();
     const requestId = msg.requestId;
     const chars = msg.message.length;
     const images = msg.images?.map((img) => ({
@@ -278,9 +349,12 @@ export class WsMessageHandler {
       mimeType: img.mimeType,
     }));
     const imageCount = images?.length ?? 0;
-    console.log("[ws] Handling turn command", {
-      command: command.toUpperCase(),
+
+    log.info("ws.turn_command.received", {
+      connId: meta.connId,
       sessionId: session.id,
+      command,
+      requestId,
       chars,
       imageCount,
     });
@@ -291,11 +365,30 @@ export class WsMessageHandler {
         clientTurnId: msg.clientTurnId,
         requestId,
       });
+
       if (requestId) {
         send({ type: "command_result", command, requestId, success: true });
       }
+
+      log.info("ws.turn_command.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        command,
+        requestId,
+        durationMs: Date.now() - startedAt,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeErrorMessage(err);
+
+      log.warn("ws.turn_command.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        command,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
+
       if (requestId) {
         send({ type: "command_result", command, requestId, success: false, error: message });
         return;
@@ -381,11 +474,17 @@ export class WsMessageHandler {
     session: Session,
     msg: Extract<ClientMessage, { type: "abort" | "stop" }>,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
   ): Promise<void> {
+    const startedAt = Date.now();
     const requestId = msg.requestId;
     const command = msg.type;
-    console.log("[ws] STOP command", {
+
+    log.info("ws.stop.received", {
+      connId: meta.connId,
       sessionId: session.id,
+      command,
+      requestId,
     });
 
     try {
@@ -393,8 +492,26 @@ export class WsMessageHandler {
       if (requestId) {
         send({ type: "command_result", command, requestId, success: true });
       }
+
+      log.info("ws.stop.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        command,
+        requestId,
+        durationMs: Date.now() - startedAt,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeErrorMessage(err);
+
+      log.warn("ws.stop.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        command,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
+
       if (requestId) {
         send({ type: "command_result", command, requestId, success: false, error: message });
         return;
@@ -407,10 +524,15 @@ export class WsMessageHandler {
     session: Session,
     msg: Extract<ClientMessage, { type: "stop_session" }>,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
   ): Promise<void> {
+    const startedAt = Date.now();
     const requestId = msg.requestId;
-    console.log("[ws] STOP_SESSION command", {
+
+    log.info("ws.stop_session.received", {
+      connId: meta.connId,
       sessionId: session.id,
+      requestId,
     });
 
     try {
@@ -418,8 +540,24 @@ export class WsMessageHandler {
       if (requestId) {
         send({ type: "command_result", command: "stop_session", requestId, success: true });
       }
+
+      log.info("ws.stop_session.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        requestId,
+        durationMs: Date.now() - startedAt,
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeErrorMessage(err);
+
+      log.warn("ws.stop_session.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      });
+
       if (requestId) {
         send({
           type: "command_result",
@@ -439,6 +577,7 @@ export class WsMessageHandler {
     query: string,
     requestId: string | undefined,
     send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
   ): void {
     const command = "get_file_suggestions";
 
@@ -452,6 +591,12 @@ export class WsMessageHandler {
 
     const workspace = this.deps.resolveWorkspaceForSession?.(session);
     if (!workspace) {
+      log.warn("ws.file_suggestions.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        requestId,
+        error: "workspace_unavailable",
+      });
       sendResult({ command, requestId, success: false, error: "workspace_unavailable" });
       return;
     }
@@ -470,8 +615,21 @@ export class WsMessageHandler {
 
       const result = getFileSuggestions(workspaceRoot, query, additionalRoots);
       sendResult({ command, requestId, success: true, data: result });
+
+      log.debug("ws.file_suggestions.completed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        requestId,
+        matches: result.items.length,
+      });
     } catch (err: unknown) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = safeErrorMessage(err);
+      log.warn("ws.file_suggestions.failed", {
+        connId: meta.connId,
+        sessionId: session.id,
+        requestId,
+        error,
+      });
       sendResult({ command, requestId, success: false, error });
     }
   }

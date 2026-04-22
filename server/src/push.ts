@@ -11,6 +11,7 @@ import { connect as http2Connect, type ClientHttp2Session } from "node:http2";
 import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import { createLogger } from "./logger.js";
 
 // ─── Config ───
 
@@ -56,6 +57,8 @@ const APNS_HOSTS = {
 
 // JWT is valid for 1 hour; refresh at 50 minutes to avoid edge cases.
 const JWT_REFRESH_MS = 50 * 60 * 1000;
+
+const log = createLogger({ base: { component: "push" } });
 
 export function redactTokenForLog(token: string): string {
   return `<redacted:${token.length} chars>`;
@@ -269,15 +272,19 @@ export class APNsClient {
             const parsed = JSON.parse(responseBody);
             reason = parsed.reason || responseBody;
           } catch {}
-          console.error(
-            `[apns] Push failed (${responseStatus}): ${reason} [token: ${redactTokenForLog(deviceToken)}]`,
-          );
+          log.error("apns.push.failed", {
+            status: responseStatus,
+            reason,
+            deviceToken: redactTokenForLog(deviceToken),
+          });
 
           // Handle specific APNs errors
           if (responseStatus === 410 || reason === "Unregistered") {
-            console.warn(
-              `[apns] Device token expired/unregistered: ${redactTokenForLog(deviceToken)}`,
-            );
+            log.warn("apns.device_token_unregistered", {
+              status: responseStatus,
+              reason,
+              deviceToken: redactTokenForLog(deviceToken),
+            });
             // Caller should remove this token
           }
 
@@ -286,7 +293,7 @@ export class APNsClient {
       });
 
       req.on("error", (err) => {
-        console.error("[apns] Request error:", err.message);
+        log.error("apns.request.error", { error: err.message });
         if (this.metrics) {
           this.metrics.record("server.push_send_ms", Date.now() - sendStart, {
             push_type: opts.pushType,
@@ -317,13 +324,13 @@ export class APNsClient {
       });
 
       conn.on("error", (err) => {
-        console.error("[apns] Connection error:", err.message);
+        log.error("apns.connection.error", { error: err.message });
         this.connection = null;
         reject(err);
       });
 
       conn.on("goaway", () => {
-        console.warn("[apns] Server sent GOAWAY, will reconnect on next push");
+        log.warn("apns.connection_goaway", { host: this.host });
         this.connection = null;
       });
 
@@ -405,7 +412,7 @@ export type PushClient = APNsClient | NoopAPNsClient;
 
 export function createPushClient(config?: APNsConfig, metrics?: ServerMetricCollector): PushClient {
   if (!config) {
-    console.log("APNs not configured", {
+    log.info("apns.not_configured", {
       enabled: false,
       reason: "not_configured",
     });
@@ -414,14 +421,17 @@ export function createPushClient(config?: APNsConfig, metrics?: ServerMetricColl
 
   try {
     const client = new APNsClient(config, metrics);
-    console.log("APNs configured", {
+    log.info("apns.configured", {
       environment: config.environment || "sandbox",
       enabled: true,
     });
     return client;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`📱 APNs setup failed: ${message} — push notifications disabled`);
+    log.error("apns.setup.failed", {
+      error: message,
+      pushDisabled: true,
+    });
     return new NoopAPNsClient();
   }
 }

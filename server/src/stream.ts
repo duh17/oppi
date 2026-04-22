@@ -14,6 +14,8 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 
 // ─── Types ───
 
@@ -36,6 +38,7 @@ export interface StreamContext {
     session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
+    meta?: { connId?: string },
   ) => Promise<void>;
   trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
@@ -49,6 +52,8 @@ const PING_INTERVAL_MS = 30_000;
 
 /** Typed stream error code: command sent for non-full subscription session. */
 export const STREAM_ERROR_NOT_SUBSCRIBED_FULL = "stream_not_subscribed_full";
+
+const log = createLogger({ base: { component: "stream" } });
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -123,6 +128,7 @@ export function startServerPing(
   label: string,
   intervalMs = PING_INTERVAL_MS,
   metrics?: ServerMetricCollector,
+  connId?: string,
 ): () => void {
   let missedPongs = 0;
   let lastPingSentAt = 0;
@@ -138,8 +144,10 @@ export function startServerPing(
     missedPongs++;
     if (missedPongs > 2) {
       metrics?.record("server.ws_ping_timeout", 1);
-      console.log("[ws] Ping timeout (2 consecutive misses) — terminating", {
+      log.warn("ws.ping_timeout", {
+        connId,
         label,
+        consecutiveMisses: missedPongs,
       });
       clearInterval(timer);
       ws.terminate();
@@ -159,6 +167,7 @@ export class UserStreamMux {
   private streamRing: EventRing | null = null;
   private readonly ringCapacity: number;
   private dictationManager?: DictationManager;
+  private connectionSeq = 0;
 
   constructor(
     private ctx: StreamContext,
@@ -166,6 +175,11 @@ export class UserStreamMux {
   ) {
     this.ringCapacity = options?.ringCapacity ?? 2000;
     this.dictationManager = ctx.dictationManager;
+  }
+
+  private nextConnId(): string {
+    this.connectionSeq += 1;
+    return `stream_${this.connectionSeq}`;
   }
 
   // ─── Message Classification ───
@@ -263,22 +277,21 @@ export class UserStreamMux {
   async handleWebSocket(ws: WebSocket, upgradeReceivedAt?: number): Promise<void> {
     const connectedAt = Date.now();
     const metrics = this.ctx.metrics;
+    const owner = this.ctx.storage.getOwnerName();
+    const connId = this.nextConnId();
 
     if (upgradeReceivedAt && metrics) {
       metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt);
     }
 
-    console.log("[ws] Connected: /stream", {
-      owner: this.ctx.storage.getOwnerName(),
+    log.info("ws.stream_connected", {
+      connId,
+      owner,
+      path: "/stream",
     });
     this.ctx.trackConnection(ws);
 
-    const stopPing = startServerPing(
-      ws,
-      `/stream (${this.ctx.storage.getOwnerName()})`,
-      PING_INTERVAL_MS,
-      metrics,
-    );
+    const stopPing = startServerPing(ws, `/stream (${owner})`, PING_INTERVAL_MS, metrics, connId);
 
     let msgSent = 0;
     let msgRecv = 0;
@@ -288,10 +301,11 @@ export class UserStreamMux {
 
     const send = (msg: ServerMessage): void => {
       if (ws.readyState !== WebSocket.OPEN) {
-        console.warn("[ws] Drop message from /stream", {
+        log.warn("ws.stream_drop_message", {
+          connId,
           messageType: msg.type,
           readyState: ws.readyState,
-          owner: this.ctx.storage.getOwnerName(),
+          owner,
         });
         return;
       }
@@ -325,8 +339,22 @@ export class UserStreamMux {
       sinceSeq?: number,
     ): Promise<void> => {
       const subscribeStart = Date.now();
+      log.info("stream.subscribe.received", {
+        connId,
+        sessionId,
+        requestId,
+        level,
+        sinceSeq,
+      });
 
       if (sinceSeq !== undefined && (!Number.isInteger(sinceSeq) || sinceSeq < 0)) {
+        log.warn("stream.subscribe.rejected", {
+          connId,
+          sessionId,
+          requestId,
+          reason: "invalid_since_seq",
+          sinceSeq,
+        });
         send({
           type: "command_result",
           command: "subscribe",
@@ -340,6 +368,12 @@ export class UserStreamMux {
 
       const session = this.ctx.storage.getSession(sessionId);
       if (!session) {
+        log.warn("stream.subscribe.rejected", {
+          connId,
+          sessionId,
+          requestId,
+          reason: "session_not_found",
+        });
         send({
           type: "command_result",
           command: "subscribe",
@@ -357,6 +391,12 @@ export class UserStreamMux {
       // the event loop and causing ping timeouts → more reconnects.
       const existing = subscriptions.get(sessionId);
       if (existing && existing.level === level && sinceSeq === undefined) {
+        log.debug("stream.subscribe.deduplicated", {
+          connId,
+          sessionId,
+          requestId,
+          level,
+        });
         send({
           type: "command_result",
           command: "subscribe",
@@ -391,7 +431,8 @@ export class UserStreamMux {
           });
 
           const connectedSentMs = Date.now() - subStartMs;
-          console.log("[stream] Subscribing to session", {
+          log.info("stream.subscribe.session.started", {
+            connId,
             sessionId,
             startSessionMs,
             connectedSentMs,
@@ -453,7 +494,8 @@ export class UserStreamMux {
           send(pendingAskMsg);
         }
 
-        metrics?.record("server.session_subscribe_ms", Date.now() - subscribeStart, {
+        const durationMs = Date.now() - subscribeStart;
+        metrics?.record("server.session_subscribe_ms", durationMs, {
           level,
         });
 
@@ -470,8 +512,17 @@ export class UserStreamMux {
           },
           sessionId,
         });
+
+        log.info("stream.subscribe.completed", {
+          connId,
+          sessionId,
+          requestId,
+          level,
+          catchUpComplete,
+          durationMs,
+        });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = safeErrorMessage(err);
         send({
           type: "command_result",
           command: "subscribe",
@@ -479,6 +530,15 @@ export class UserStreamMux {
           success: false,
           error: message,
           sessionId,
+        });
+
+        log.warn("stream.subscribe.failed", {
+          connId,
+          sessionId,
+          requestId,
+          level,
+          durationMs: Date.now() - subscribeStart,
+          error: message,
         });
       }
     };
@@ -503,7 +563,7 @@ export class UserStreamMux {
 
     send({
       type: "stream_connected",
-      userName: this.ctx.storage.getOwnerName(),
+      userName: owner,
       ...(this.dictationManager ? { asrAvailable: true } : {}),
     });
 
@@ -544,17 +604,23 @@ export class UserStreamMux {
           }
 
           const msg = parsed.message;
-          console.log("[ws] Received stream message", {
+          const trace = msg as { requestId?: string; sessionId?: string };
+          log.debug("ws.stream_message_received", {
+            connId,
+            owner,
             messageType: msg.type,
-            owner: this.ctx.storage.getOwnerName(),
+            requestId: trace.requestId,
+            sessionId: trace.sessionId,
           });
 
           switch (msg.type) {
             case "subscribe": {
               if (isSubscribeRateLimited()) {
-                console.warn("[ws] Subscribe rate limited", {
+                log.warn("stream.subscribe.rate_limited", {
+                  connId,
+                  owner,
                   sessionId: msg.sessionId,
-                  owner: this.ctx.storage.getOwnerName(),
+                  requestId: msg.requestId,
                 });
                 send({
                   type: "command_result",
@@ -654,17 +720,23 @@ export class UserStreamMux {
                 return;
               }
 
-              await this.ctx.handleClientMessage(targetSession, msg, (out) => {
-                sendForSession(targetSessionId, out);
-              });
+              await this.ctx.handleClientMessage(
+                targetSession,
+                msg,
+                (out) => {
+                  sendForSession(targetSessionId, out);
+                },
+                { connId },
+              );
               break;
             }
           }
         })
         .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : "Unknown error";
-          console.error("[ws] Stream message error /stream", {
-            message,
+          const message = safeErrorMessage(err);
+          log.error("ws.stream_message.error", {
+            connId,
+            error: message,
           });
           send({ type: "error", error: message });
         });
@@ -673,16 +745,20 @@ export class UserStreamMux {
     ws.on("close", (code, reason) => {
       stopPing();
       const reasonStr = reason?.toString() || "";
-      console.log("[ws] Disconnected /stream", {
-        owner: this.ctx.storage.getOwnerName(),
+      const durationMs = Date.now() - connectedAt;
+
+      log.info("ws.stream_disconnected", {
+        connId,
+        owner,
         code,
         reason: reasonStr || undefined,
         sent: msgSent,
         recv: msgRecv,
+        durationMs,
       });
 
       if (metrics) {
-        metrics.record("server.ws_session_duration_ms", Date.now() - connectedAt);
+        metrics.record("server.ws_session_duration_ms", durationMs);
         metrics.record("server.ws_messages_sent", msgSent);
         metrics.record("server.ws_messages_received", msgRecv);
         metrics.record("server.ws_close_code", 1, { code: String(code) });
@@ -695,9 +771,10 @@ export class UserStreamMux {
 
     ws.on("error", (err) => {
       stopPing();
-      console.error("[ws] Stream error /stream", {
-        owner: this.ctx.storage.getOwnerName(),
-        error: err,
+      log.error("ws.stream.error", {
+        connId,
+        owner,
+        error: safeErrorMessage(err),
       });
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);

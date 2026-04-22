@@ -10,7 +10,7 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { Api, Model } from "@mariozechner/pi-ai";
 
-import { ts } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 
 // ─── Types ───
 
@@ -54,6 +54,8 @@ Examples:
 const MIN_MESSAGE_LENGTH = 15;
 const MAX_TITLE_LENGTH = 48;
 const GENERATION_TIMEOUT_MS = 15_000;
+
+const log = createLogger({ base: { component: "session_title_generator" } });
 
 // ─── Normalization ───
 
@@ -151,7 +153,9 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
     try {
       const model = this.resolveModel();
       if (!model) {
-        console.warn(`${ts()} [auto-title] model not found: ${this.modelId}`);
+        log.warn("session_title_generator.model_not_found", {
+          model: this.modelId,
+        });
         return null;
       }
       const auth = await this.modelRegistry.getApiKeyAndHeaders(model);
@@ -196,10 +200,16 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
         clearTimeout(timeout);
         if (abortController.signal.aborted) {
           status = "timeout";
-          console.warn(`${ts()} [auto-title] generation timed out for model ${this.modelId}`);
+          log.warn("session_title_generator.generation.timed_out", {
+            model: this.modelId,
+            timeoutMs: GENERATION_TIMEOUT_MS,
+          });
         } else {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`${ts()} [auto-title] generation failed: ${message}`);
+          log.warn("session_title_generator.generation.failed", {
+            model: this.modelId,
+            error: message,
+          });
         }
         return null;
       }
@@ -300,10 +310,13 @@ export class SessionTitleGenerator {
 
         this.deps.updateSessionName(sessionId, title);
         this.deps.broadcastSessionUpdate(sessionId);
-        console.log("[auto-title] generated", { sessionId, title });
+        log.info("session_title_generator.generated", { sessionId, title });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`${ts()} [auto-title] failed for session=${sessionId}: ${message}`);
+        log.warn("session_title_generator.generate_for_session.failed", {
+          sessionId,
+          error: message,
+        });
       }
     });
   }
