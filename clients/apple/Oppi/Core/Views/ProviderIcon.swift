@@ -1,38 +1,167 @@
 import SwiftUI
 
-/// Provider brand badge — colored initial letter.
+/// Compact provider mark for model/provider UIs.
 ///
-/// Renders the provider's first letter in a brand-associated color.
-/// Designed for compact spaces: pills, list rows, toolbar items.
-/// The color is applied directly, so parent `foregroundStyle` won't override it.
+/// Prefers a bundled provider logo asset when available. Falls back to a
+/// monogram mark when we don't have a vetted local asset yet.
 struct ProviderIcon: View {
     let provider: String
 
+    private static let iconSize: CGFloat = 11
+
     var body: some View {
-        Text(initial)
-            .font(.system(.caption2, design: .rounded, weight: .heavy))
-            .foregroundStyle(brandColor)
+        Group {
+            if let assetName = Self.logoAssetName(for: provider) {
+                Image(assetName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(Self.brandColor(for: provider))
+            } else {
+                Text(Self.mark(for: provider))
+                    .font(.system(.caption2, design: .rounded, weight: .heavy))
+                    .foregroundStyle(Self.brandColor(for: provider))
+            }
+        }
+        .frame(width: Self.iconSize, height: Self.iconSize, alignment: .center)
     }
 
-    /// Provider brand color (uses theme palette for visual cohesion).
-    var brandColor: Color {
-        switch provider.lowercased() {
-        case "anthropic": return .themeOrange
-        case "openai", "openai-codex": return .themeGreen
-        case "google": return .themeBlue
-        case "lmstudio": return .themePurple
-        default: return .themeComment
+    /// Human-friendly label for provider IDs used by pi/SDK.
+    static func displayName(for provider: String) -> String {
+        let normalized = normalize(provider)
+        if let label = knownDisplayNames[normalized] {
+            return label
+        }
+
+        let canonical = canonicalProviderKey(for: normalized)
+        if let label = knownDisplayNames[canonical] {
+            return label
+        }
+
+        return humanizedProviderName(normalized)
+    }
+
+    /// Asset catalog image name for a provider logo, if we have one.
+    static func logoAssetName(for provider: String) -> String? {
+        let key = canonicalProviderKey(for: provider)
+        guard providersWithLogoAsset.contains(key) else {
+            return nil
+        }
+        return "provider-\(key)"
+    }
+
+    /// Provider color mapped onto the active theme palette.
+    static func brandColor(for provider: String) -> Color {
+        switch canonicalProviderKey(for: provider) {
+        case "anthropic":
+            return .themeOrange
+        case "openai", "azure-openai-responses", "github-copilot":
+            return .themeGreen
+        case "google", "google-vertex":
+            return .themeBlue
+        case "openrouter", "vercel-ai-gateway", "opencode":
+            return .themeCyan
+        case "amazon-bedrock":
+            return .themeYellow
+        case "lmstudio", "omlx", "ollama", "xai", "groq", "mistral", "cerebras", "huggingface",
+             "kimi-coding", "minimax", "zai":
+            return .themePurple
+        default:
+            return .themeComment
         }
     }
 
-    private var initial: String {
-        switch provider.lowercased() {
+    /// Single-character monogram mark for compact rendering.
+    static func mark(for provider: String) -> String {
+        switch canonicalProviderKey(for: provider) {
         case "anthropic": return "A"
-        case "openai", "openai-codex": return "O"
-        case "google": return "G"
+        case "openai", "azure-openai-responses": return "O"
+        case "google", "google-vertex": return "G"
+        case "openrouter": return "R"
+        case "amazon-bedrock": return "B"
+        case "mistral", "minimax": return "M"
+        case "xai": return "X"
+        case "zai": return "Z"
+        case "github-copilot", "cerebras": return "C"
+        case "groq": return "Q"
+        case "huggingface": return "H"
+        case "kimi-coding": return "K"
+        case "vercel-ai-gateway": return "V"
         case "lmstudio": return "L"
+        case "omlx", "ollama", "opencode": return "O"
         default:
             return provider.first.map { String($0).uppercased() } ?? "?"
         }
+    }
+
+    private static let providerAliases: [String: String] = [
+        "openai-codex": "openai",
+        "google-gemini-cli": "google",
+        "google-antigravity": "google",
+        "minimax-cn": "minimax",
+        "opencode-go": "opencode",
+    ]
+
+    /// Providers that passed explicit logo usage audit for in-app display.
+    private static let providersWithLogoAsset: Set<String> = [
+        "github-copilot",
+        "huggingface",
+        "mistral",
+        "openai",
+        "vercel-ai-gateway",
+    ]
+
+    private static let knownDisplayNames: [String: String] = [
+        "amazon-bedrock": "Amazon Bedrock",
+        "anthropic": "Anthropic",
+        "azure-openai-responses": "Azure OpenAI",
+        "cerebras": "Cerebras",
+        "github-copilot": "GitHub Copilot",
+        "google": "Google",
+        "google-antigravity": "Google Antigravity",
+        "google-gemini-cli": "Gemini CLI",
+        "google-vertex": "Google Vertex AI",
+        "groq": "Groq",
+        "huggingface": "Hugging Face",
+        "kimi-coding": "Kimi Coding",
+        "lmstudio": "LM Studio",
+        "minimax": "MiniMax",
+        "minimax-cn": "MiniMax CN",
+        "ollama": "Ollama",
+        "omlx": "OMLX",
+        "mistral": "Mistral",
+        "openai": "OpenAI",
+        "openai-codex": "OpenAI Codex",
+        "opencode": "OpenCode",
+        "opencode-go": "OpenCode Go",
+        "openrouter": "OpenRouter",
+        "vercel-ai-gateway": "Vercel AI Gateway",
+        "xai": "xAI",
+        "zai": "Z.AI",
+    ]
+
+    private static let acronymTokens: Set<String> = ["ai", "api", "cli", "cn", "llm", "ml"]
+
+    private static func normalize(_ provider: String) -> String {
+        provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func canonicalProviderKey(for provider: String) -> String {
+        let key = normalize(provider)
+        return providerAliases[key] ?? key
+    }
+
+    private static func humanizedProviderName(_ provider: String) -> String {
+        guard !provider.isEmpty else { return "Unknown" }
+        let tokens = provider.split(whereSeparator: { $0 == "-" || $0 == "_" })
+        return tokens
+            .map { token in
+                let value = String(token)
+                if acronymTokens.contains(value) {
+                    return value.uppercased()
+                }
+                return value.prefix(1).uppercased() + value.dropFirst()
+            }
+            .joined(separator: " ")
     }
 }

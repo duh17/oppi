@@ -112,9 +112,12 @@ struct ModelPickerSheet: View {
                         modelRow(model)
                     }
                 } header: {
-                    Text(providerDisplayName(group.provider))
-                        .font(.caption.bold())
-                        .foregroundStyle(.themeFgDim)
+                    HStack(spacing: 6) {
+                        ProviderIcon(provider: group.provider)
+                        Text(providerDisplayName(group.provider))
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(.themeFgDim)
                 }
             }
         }
@@ -143,14 +146,7 @@ struct ModelPickerSheet: View {
     }
 
     private func providerDisplayName(_ provider: String) -> String {
-        switch provider {
-        case "anthropic": return "Anthropic"
-        case "openai-codex": return "OpenAI Codex"
-        case "openai": return "OpenAI"
-        case "google": return "Google"
-        case "lmstudio": return "LM Studio"
-        default: return provider.capitalized
-        }
+        ProviderIcon.displayName(for: provider)
     }
 }
 
