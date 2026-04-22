@@ -19,6 +19,7 @@ describe("isManagedExtensionName", () => {
   it("marks server-managed extensions as managed", () => {
     expect(isManagedExtensionName("permission-gate")).toBe(true);
     expect(isManagedExtensionName("ask")).toBe(true);
+    expect(isManagedExtensionName("subagents")).toBe(true);
     expect(isManagedExtensionName("spawn_agent")).toBe(true);
   });
 
@@ -31,17 +32,22 @@ describe("isManagedExtensionName", () => {
 describe("isWorkspaceExtensionEnabled", () => {
   it("defaults first-party extensions to enabled when no allowlist is set", () => {
     expect(isWorkspaceExtensionEnabled(undefined, "ask")).toBe(true);
-    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "spawn_agent")).toBe(true);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "subagents")).toBe(true);
   });
 
   it("treats an explicit empty allowlist as disabling first-party extensions", () => {
     expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "ask")).toBe(false);
-    expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "spawn_agent")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "subagents")).toBe(false);
   });
 
   it("respects the workspace allowlist", () => {
     const workspace = makeWorkspace(["ask", "memory"]);
     expect(isWorkspaceExtensionEnabled(workspace, "ask")).toBe(true);
-    expect(isWorkspaceExtensionEnabled(workspace, "spawn_agent")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(false);
+  });
+
+  it("accepts legacy spawn_agent allowlist entries for backward compatibility", () => {
+    const workspace = makeWorkspace(["spawn_agent"]);
+    expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(true);
   });
 });

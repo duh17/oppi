@@ -153,11 +153,11 @@ node dist/src/cli.js server stop             # stop background server
 The server provides two first-party extensions:
 
 - **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards and routes answers back.
-- **spawn_agent** — multi-agent orchestration. Spawn child sessions, inspect traces, send messages mid-turn, stop or resume agents. See [docs/sub-agents.md](docs/sub-agents.md).
+- **subagents** — multi-agent orchestration. Includes the `spawn_agent`, `stop_agent`, `send_message`, and `inspect_agent` tools. See [docs/sub-agents.md](docs/sub-agents.md).
 
 Both are enabled by default when a workspace does not set `extensions`.
 
-If a workspace sets `extensions`, that list becomes an authoritative allowlist for optional extensions. To keep first-party tools enabled in that mode, include `ask` and `spawn_agent` explicitly.
+If a workspace sets `extensions`, that list becomes an authoritative allowlist for optional extensions. To keep first-party tools enabled in that mode, include `ask` and `subagents` explicitly.
 
 Pi provides the core runtime and extension model. Oppi builds on top of that with the mobile client, transport, server orchestration, native rendering, and server-managed capabilities.
 

@@ -12,18 +12,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  existsSync,
-  rmSync,
-} from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
-import type { Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest } from "../src/types.js";
+import type { CreateWorkspaceRequest } from "../src/types.js";
 
 // ─── Helpers ───
 
@@ -38,7 +31,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
-
 
 function createReq(overrides?: Partial<CreateWorkspaceRequest>): CreateWorkspaceRequest {
   return {
@@ -73,7 +65,8 @@ describe("Storage.createWorkspace", () => {
   });
 
   it("creates workspace with all optional fields", () => {
-    const ws = storage.createWorkspace(createReq({
+    const ws = storage.createWorkspace(
+      createReq({
         description: "A coding workspace",
         icon: "terminal",
         systemPrompt: "Be helpful",
@@ -92,6 +85,16 @@ describe("Storage.createWorkspace", () => {
     expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.extensions).toEqual(["memory", "todos"]);
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
+  });
+
+  it("canonicalizes legacy spawn_agent extension name to subagents", () => {
+    const ws = storage.createWorkspace(
+      createReq({
+        extensions: ["spawn_agent", "ask"],
+      }),
+    );
+
+    expect(ws.extensions).toEqual(["subagents", "ask"]);
   });
 
   it("persists to disk as JSON", () => {
@@ -210,7 +213,11 @@ describe("Storage.listWorkspaces", () => {
     const ws3 = storage.createWorkspace(createReq({ name: "third" }));
 
     // Force distinct timestamps on disk
-    for (const [ws, ts] of [[ws1, 1000], [ws2, 2000], [ws3, 3000]] as const) {
+    for (const [ws, ts] of [
+      [ws1, 1000],
+      [ws2, 2000],
+      [ws3, 3000],
+    ] as const) {
       const path = join(dataDir, "workspaces", `${ws.id}.json`);
       const raw = JSON.parse(readFileSync(path, "utf-8"));
       raw.createdAt = ts;
@@ -306,13 +313,13 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("normalizes and updates extensions", () => {
+  it("normalizes, canonicalizes, and updates extensions", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
-      extensions: [" memory ", "todos", "memory"],
+      extensions: [" spawn_agent ", "subagents", "ask", "spawn_agent"],
     });
 
-    expect(updated!.extensions).toEqual(["memory", "todos"]);
+    expect(updated!.extensions).toEqual(["subagents", "ask"]);
   });
 
   it("updates defaultModel", () => {
@@ -347,7 +354,8 @@ describe("Storage.updateWorkspace", () => {
   });
 
   it("preserves unchanged fields", () => {
-    const ws = storage.createWorkspace(createReq({
+    const ws = storage.createWorkspace(
+      createReq({
         name: "keep-me",
         description: "original desc",
         icon: "terminal",

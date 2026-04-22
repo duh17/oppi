@@ -1,38 +1,28 @@
 # Sub-agents
 
-Oppi's `spawn_agent` extension lets agents create and manage child sessions within a workspace. The parent agent delegates tasks, monitors progress, and collects results — all without leaving its own context.
+Oppi's `subagents` extension lets agents create and manage child sessions within a workspace. The parent agent delegates tasks, monitors progress, and collects results — all without leaving its own context.
 
 ## Tools
 
-The extension registers five tools. Root sessions get all five; child sessions get `check_agents`, `inspect_agent`, and `send_message` only (no spawning or stopping).
+The extension registers four tools. Root sessions get all four; child sessions get `inspect_agent` and `send_message` only (no spawning or stopping).
 
 ### spawn_agent
 
 Create a new session in the current workspace.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `message` | string | required | Task prompt for the child. Include all context — the child has no access to the parent's conversation. |
-| `name` | string | truncated message | Display name shown in the app and `check_agents` output. |
-| `model` | string | inherited | Model override (e.g. `anthropic/claude-sonnet-4-6`). Omit to inherit from parent. |
-| `thinking` | string | inherited | Thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. |
-| `detached` | boolean | `false` | If true, creates an independent session with no parent-child link. Gets full capabilities including its own `spawn_agent`. Monitored from the app, not via `check_agents`. |
-| `wait` | boolean | `false` | If true, blocks until the child finishes and returns its final response inline. |
-| `timeout_seconds` | number | 1800 | Max seconds to wait (only when `wait=true`). |
+| Parameter         | Type    | Default           | Description                                                                                                                                        |
+| ----------------- | ------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`         | string  | required          | Task prompt for the child. Include all context — the child has no access to the parent's conversation.                                             |
+| `name`            | string  | truncated message | Display name shown in the app and session tree.                                                                                                    |
+| `model`           | string  | inherited         | Model override (e.g. `anthropic/claude-sonnet-4-6`). Omit to inherit from parent.                                                                  |
+| `thinking`        | string  | inherited         | Thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.                                                                                |
+| `detached`        | boolean | `false`           | If true, creates an independent session with no parent-child link. Gets full capabilities including its own `spawn_agent`. Monitored from the app. |
+| `wait`            | boolean | `false`           | If true, blocks until the child finishes and returns its final response inline.                                                                    |
+| `timeout_seconds` | number  | 1800              | Max seconds to wait (only when `wait=true`).                                                                                                       |
 
-**Fire-and-forget** (default): returns immediately with the child's session ID. Use `check_agents` to poll progress.
+**Fire-and-forget** (default): returns immediately with the child's session ID. When the child finishes, the parent gets a `subagent_result` message containing status, cost, changed files, and the child's last response. If the parent is idle, the result is appended without triggering a turn. If the parent is busy, the result is queued as a follow-up so it does not interrupt the current turn.
 
 **Wait mode** (`wait=true`): blocks the parent's context until the child reaches a terminal state. Returns the child's last response, cost, changed files, and duration. Use for sequential dependencies where the parent needs the result before continuing.
-
-### check_agents
-
-Poll child session status.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `scope` | `"children"` \| `"workspace"` | `"children"` | `children`: direct children of this session. `workspace`: all active sessions in the workspace. |
-
-Returns status, message count, cost, duration, and cache warmth hints for stopped children.
 
 ### inspect_agent
 
@@ -50,13 +40,14 @@ Works on both active and stopped sessions — the trace is read from the session
 
 Send a message to another session in the workspace.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `id` | string | required | Target session ID. |
-| `message` | string | required | Message content. |
+| Parameter  | Type                      | Default   | Description                             |
+| ---------- | ------------------------- | --------- | --------------------------------------- |
+| `id`       | string                    | required  | Target session ID.                      |
+| `message`  | string                    | required  | Message content.                        |
 | `behavior` | `"steer"` \| `"followUp"` | `"steer"` | How to deliver when the target is busy. |
 
 Delivery depends on the target's state:
+
 - **Idle**: starts a new turn (prompt).
 - **Busy + steer**: injected after current tool calls finish, before the next LLM call. Use for course corrections.
 - **Busy + followUp**: queued until the current turn finishes. Use for "do this next."
@@ -68,9 +59,9 @@ An agent-origin preamble (`[From agent "Name" (id)]`) is prepended so the recipi
 
 Stop a running child session. Only works on sessions in the caller's spawn tree (not workspace-wide).
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | string | Session ID to stop. |
+| Parameter | Type   | Description         |
+| --------- | ------ | ------------------- |
+| `id`      | string | Session ID to stop. |
 
 ## Spawn tree
 
@@ -82,7 +73,7 @@ The iOS app renders the spawn tree with a collapsible status bar showing each ch
 
 A parent waiting on a child (via `wait=true`) receives aggregate progress updates — status, message count, cost, and elapsed time. It does **not** receive individual tool calls, streaming text, or tool output from the child. This is intentional: the parent's context window is expensive, and flooding it with every `bash` and `read` from a child would be wasteful.
 
-Progress updates are event-driven, not polled. The server's internal subscribe mechanism delivers `state` messages at turn-level boundaries (agent start, agent end, message end, tool start). A 30-second fallback poll exists as a safety net but is not the primary mechanism.
+Progress updates are event-driven. The server's internal subscribe mechanism delivers `state` messages at turn-level boundaries such as agent start, agent end, and message end. Child completion hooks and `wait=true` both rely on those lifecycle events rather than sleep loops or polling.
 
 To inspect a child's detailed execution, use `inspect_agent` after the fact — it reads the child's JSONL trace file and provides progressive disclosure from overview down to individual tool output.
 
@@ -101,12 +92,12 @@ All subagent lifecycle behavior is configurable via `config.subagents`:
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `maxDepth` | `1` | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled. |
-| `autoStopWhenDone` | `true` | Whether children automatically stop after completing their work. When `false`, children stay alive for follow-up messages via `send_message`. |
-| `startupGraceMs` | `60000` | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
-| `defaultWaitTimeoutMs` | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`. |
+| Field                  | Default   | Description                                                                                                                                                                                |
+| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `maxDepth`             | `1`       | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled.                                                                       |
+| `autoStopWhenDone`     | `true`    | Whether children automatically stop after completing their work. When `false`, children stay alive for follow-up messages via `send_message`.                                              |
+| `startupGraceMs`       | `60000`   | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
+| `defaultWaitTimeoutMs` | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`.                                                                                       |
 
 Set via CLI: `oppi config set subagents '{"maxDepth": 2, "autoStopWhenDone": false}'`. Partial updates merge with defaults.
 
@@ -116,6 +107,6 @@ All agents in a workspace share the same working directory. For tasks that touch
 
 ## Workspace configuration
 
-`spawn_agent` and `ask` are enabled by default.
+`subagents` and `ask` are enabled by default.
 
-If a workspace sets `extensions`, that field becomes an authoritative allowlist for optional extensions. Omitting `spawn_agent` or `ask` disables them for that workspace.
+If a workspace sets `extensions`, that field becomes an authoritative allowlist for optional extensions. Omitting `subagents` or `ask` disables them for that workspace.

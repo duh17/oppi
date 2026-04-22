@@ -10,6 +10,14 @@ import type {
 } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
+const LEGACY_EXTENSION_NAME_ALIASES: Record<string, string> = {
+  spawn_agent: "subagents",
+};
+
+function canonicalizeExtensionName(name: string): string {
+  return LEGACY_EXTENSION_NAME_ALIASES[name] ?? name;
+}
+
 function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
   if (!extensions) {
     return undefined;
@@ -19,7 +27,7 @@ function normalizeExtensions(extensions: string[] | undefined): string[] | undef
   const normalized: string[] = [];
 
   for (const value of extensions) {
-    const name = value.trim();
+    const name = canonicalizeExtensionName(value.trim());
     if (name.length === 0 || unique.has(name)) {
       continue;
     }

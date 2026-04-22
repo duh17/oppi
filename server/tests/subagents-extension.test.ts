@@ -1,17 +1,16 @@
 /**
- * spawn_agent extension tests — mock context, no real LLM.
+ * subagents extension tests — mock context, no real LLM.
  *
  * Exercises the tool surface and utility helpers exposed by
- * createSpawnAgentFactory with a mock context.
+ * createSubagentsFactory with a mock context.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as fs from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Session, ServerMessage } from "../src/types.js";
-import { createSpawnAgentFactory, type SpawnAgentContext } from "../extensions/spawn-agent.js";
+import { createSubagentsFactory, type SubagentsContext } from "../extensions/subagents.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,8 +74,12 @@ function setup(
 
   const subscriberCallbacks = opts.subscribers ?? new Map<string, (msg: ServerMessage) => void>();
   const spawnChildCalls: Array<Record<string, unknown>> = [];
+  const sentMessages: Array<{
+    message: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
 
-  const ctx: SpawnAgentContext = {
+  const ctx: SubagentsContext = {
     workspaceId: "ws-1",
     sessionId: parentId,
 
@@ -135,9 +138,15 @@ function setup(
     registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
       tools.set(tool.name, { name: tool.name, execute: tool.execute });
     },
+    on() {
+      /* no-op */
+    },
+    sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>) {
+      sentMessages.push({ message, options });
+    },
   };
 
-  const factory = createSpawnAgentFactory(ctx);
+  const factory = createSubagentsFactory(ctx);
   factory(mockPi as never);
 
   return {
@@ -145,8 +154,8 @@ function setup(
     sessions,
     subscriberCallbacks,
     spawnChildCalls,
+    sentMessages,
     spawn: tools.get("spawn_agent")!,
-    check: tools.get("check_agents")!,
     inspect: tools.get("inspect_agent")!,
     /** Helper: set a session's status after spawn */
     setStatus(id: string, status: string) {
@@ -164,7 +173,7 @@ let tmpDir: string;
 
 beforeEach(() => {
   nextSessionId = 1;
-  tmpDir = mkdtempSync(join(tmpdir(), "spawn-agent-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "subagents-test-"));
 });
 
 afterEach(() => {
@@ -195,6 +204,7 @@ describe("spawn_agent", () => {
 
     expect(result.content[0].text).toContain('Spawned agent "auth-tests"');
     expect(result.content[0].text).toContain("running independently");
+    expect(result.content[0].text).toContain("subagent_result");
     expect(result.details.agentId).toBeTruthy();
     expect(result.details.name).toBe("auth-tests");
     expect(result.details.status).toBe("starting");
@@ -207,6 +217,48 @@ describe("spawn_agent", () => {
     });
 
     expect(result.details.name).toBe("Fix the login flow for OAuth2 providers");
+  });
+
+  it("sends subagent_result without queueing when parent is idle", async () => {
+    const { spawn, sessions, subscriberCallbacks, sentMessages } = setup();
+    sessions.set("parent-1", makeSession({ id: "parent-1", status: "ready" }));
+
+    await spawn.execute("tc-1", {
+      message: "Write tests for auth module",
+      name: "auth-tests",
+    });
+
+    const childId = [...subscriberCallbacks.keys()][0]!;
+    const child = sessions.get(childId)!;
+    (child as Record<string, unknown>).status = "stopped";
+    (child as Record<string, unknown>).lastMessage = "Finished the work";
+
+    subscriberCallbacks.get(childId)?.({ type: "session_ended", reason: "done" } as ServerMessage);
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].message.customType).toBe("subagent_result");
+    expect(sentMessages[0].message.content).toContain("Finished the work");
+    expect(sentMessages[0].options).toBeUndefined();
+  });
+
+  it("queues subagent_result as follow-up when parent is busy", async () => {
+    const { spawn, sessions, subscriberCallbacks, sentMessages } = setup();
+    sessions.set("parent-1", makeSession({ id: "parent-1", status: "busy" }));
+
+    await spawn.execute("tc-1", {
+      message: "Write tests for auth module",
+      name: "auth-tests",
+    });
+
+    const childId = [...subscriberCallbacks.keys()][0]!;
+    const child = sessions.get(childId)!;
+    (child as Record<string, unknown>).status = "stopped";
+
+    subscriberCallbacks.get(childId)?.({ type: "state", session: child } as ServerMessage);
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].message.customType).toBe("subagent_result");
+    expect(sentMessages[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
   });
 
   it("truncates long messages to 80 chars for default name", async () => {
@@ -325,7 +377,7 @@ describe("spawn_agent", () => {
       const parent = makeSession({ id: "parent-1" });
       sessions.set("parent-1", parent);
 
-      const ctx: SpawnAgentContext = {
+      const ctx: SubagentsContext = {
         workspaceId: "ws-1",
         sessionId: "parent-1",
         async spawnChild(params) {
@@ -350,10 +402,16 @@ describe("spawn_agent", () => {
       };
 
       const tools = new Map<string, RegisteredTool>();
-      const factory = createSpawnAgentFactory(ctx);
+      const factory = createSubagentsFactory(ctx);
       factory({
         registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
           tools.set(tool.name, tool as RegisteredTool);
+        },
+        on() {
+          /* no-op */
+        },
+        sendMessage() {
+          /* no-op */
         },
       } as never);
 
@@ -428,7 +486,7 @@ describe("spawn_agent", () => {
     const sessions = new Map<string, Session>();
     sessions.set("parent-1", makeSession({ id: "parent-1" }));
 
-    const ctx: SpawnAgentContext = {
+    const ctx: SubagentsContext = {
       workspaceId: "ws-1",
       sessionId: "parent-1",
       async spawnChild() {
@@ -445,10 +503,16 @@ describe("spawn_agent", () => {
     };
 
     const tools = new Map<string, RegisteredTool>();
-    const factory = createSpawnAgentFactory(ctx);
+    const factory = createSubagentsFactory(ctx);
     factory({
       registerTool(tool: { name: string; execute: RegisteredTool["execute"] }) {
         tools.set(tool.name, tool as RegisteredTool);
+      },
+      on() {
+        /* no-op */
+      },
+      sendMessage() {
+        /* no-op */
       },
     } as never);
 
@@ -471,130 +535,6 @@ describe("spawn_agent", () => {
       details: Record<string, unknown>;
     };
     expect(firstUpdate.content[0].text).toContain('Creating session "my-agent"');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// check_agents
-// ---------------------------------------------------------------------------
-
-describe("check_agents", () => {
-  it("returns empty message when no children", async () => {
-    const { check } = setup();
-    const result = await check.execute("tc-1", {});
-    expect(result.content[0].text).toBe("No child sessions found.");
-    expect(result.details.agents).toEqual([]);
-  });
-
-  it("lists child sessions with status icons", async () => {
-    const children = [
-      makeSession({
-        id: "c1",
-        name: "auth-tests",
-        status: "busy",
-        parentSessionId: "parent-1",
-        cost: 0.12,
-      }),
-      makeSession({
-        id: "c2",
-        name: "db-refactor",
-        status: "stopped",
-        parentSessionId: "parent-1",
-        cost: 0.45,
-      }),
-      makeSession({
-        id: "c3",
-        name: "broken",
-        status: "error",
-        parentSessionId: "parent-1",
-        cost: 0.01,
-      }),
-    ];
-    const { check } = setup({ sessions: children });
-
-    const result = await check.execute("tc-1", {});
-    const text = result.content[0].text;
-
-    // Status icons
-    expect(text).toContain("⏳ auth-tests");
-    expect(text).toContain("✓ db-refactor");
-    expect(text).toContain("✗ broken");
-
-    // Summary line
-    expect(text).toContain("3 child sessions");
-    expect(text).toContain("1 working");
-    expect(text).toContain("1 done");
-    expect(text).toContain("1 error");
-  });
-
-  it("shows tree cost aggregation", async () => {
-    const children = [
-      makeSession({ id: "c1", parentSessionId: "parent-1", cost: 1.0, messageCount: 10 }),
-      makeSession({ id: "c2", parentSessionId: "parent-1", cost: 2.0, messageCount: 20 }),
-    ];
-    const { check } = setup({ sessions: children });
-
-    const result = await check.execute("tc-1", {});
-    const text = result.content[0].text;
-
-    // Tree total should include parent + children
-    expect(text).toContain("Tree total:");
-    expect(text).toContain("3 sessions"); // parent + 2 children
-  });
-
-  it("shows grandchild count for children that have their own children", async () => {
-    const children = [
-      makeSession({ id: "c1", name: "orchestrator", parentSessionId: "parent-1" }),
-      makeSession({ id: "gc1", name: "sub-task-1", parentSessionId: "c1" }),
-      makeSession({ id: "gc2", name: "sub-task-2", parentSessionId: "c1" }),
-    ];
-    const { check } = setup({ sessions: children });
-
-    const result = await check.execute("tc-1", {});
-    const text = result.content[0].text;
-
-    // Only direct children should be listed (c1 is direct child)
-    // c1 should show grandchild indicator
-    expect(text).toContain("(+2 children)");
-  });
-
-  it("formats cost correctly", async () => {
-    const children = [
-      makeSession({ id: "c1", parentSessionId: "parent-1", cost: 0 }),
-      makeSession({ id: "c2", parentSessionId: "parent-1", cost: 0.001 }),
-      makeSession({ id: "c3", parentSessionId: "parent-1", cost: 1.5 }),
-    ];
-    const { check } = setup({ sessions: children });
-
-    const result = await check.execute("tc-1", {});
-    const text = result.content[0].text;
-
-    expect(text).toContain("$0");
-    expect(text).toContain("$0.0010");
-    expect(text).toContain("$1.50");
-  });
-
-  it("includes all agent summaries in details", async () => {
-    const children = [
-      makeSession({
-        id: "c1",
-        name: "task-a",
-        status: "busy",
-        parentSessionId: "parent-1",
-        cost: 0.5,
-        messageCount: 7,
-      }),
-    ];
-    const { check } = setup({ sessions: children });
-
-    const result = await check.execute("tc-1", {});
-    expect(result.details.agents).toHaveLength(1);
-    const agent = (result.details.agents as Array<Record<string, unknown>>)[0];
-    expect(agent.id).toBe("c1");
-    expect(agent.name).toBe("task-a");
-    expect(agent.status).toBe("busy");
-    expect(agent.cost).toBe(0.5);
-    expect(agent.messageCount).toBe(7);
   });
 });
 
@@ -1054,60 +994,5 @@ describe("trace formatting", () => {
     const result = await inspect.execute("tc-1", { id: "my-child", turn: 1 });
     expect(result.content[0].text).toContain("ERROR");
     expect(result.content[0].text).toContain("Permission denied");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tree cost aggregation
-// ---------------------------------------------------------------------------
-
-describe("tree cost aggregation (via check_agents)", () => {
-  it("aggregates cost across parent and all descendants", async () => {
-    const children = [
-      makeSession({ id: "c1", parentSessionId: "parent-1", cost: 1.0, messageCount: 5 }),
-      makeSession({ id: "c2", parentSessionId: "parent-1", cost: 2.0, messageCount: 10 }),
-      makeSession({ id: "gc1", parentSessionId: "c1", cost: 0.5, messageCount: 3 }),
-    ];
-    // Parent session cost
-    const parent = makeSession({ id: "parent-1", cost: 0.1, messageCount: 2 });
-    const { check } = setup({ sessions: [parent, ...children] });
-
-    const result = await check.execute("tc-1", {});
-    const text = result.content[0].text;
-
-    // Tree total should include parent + c1 + c2 + gc1
-    expect(text).toContain("4 sessions");
-    expect(text).toContain("20 msgs"); // 2 + 5 + 10 + 3
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Duration formatting
-// ---------------------------------------------------------------------------
-
-describe("duration formatting (via check_agents)", () => {
-  it("formats seconds-only durations", async () => {
-    const child = makeSession({
-      id: "c1",
-      parentSessionId: "parent-1",
-      createdAt: Date.now() - 45_000, // 45 seconds ago
-    });
-    const { check } = setup({ sessions: [child] });
-
-    const result = await check.execute("tc-1", {});
-    // Should show "45s" or similar
-    expect(result.content[0].text).toMatch(/\d+s/);
-  });
-
-  it("formats minute+second durations", async () => {
-    const child = makeSession({
-      id: "c1",
-      parentSessionId: "parent-1",
-      createdAt: Date.now() - 125_000, // 2m5s ago
-    });
-    const { check } = setup({ sessions: [child] });
-
-    const result = await check.execute("tc-1", {});
-    expect(result.content[0].text).toMatch(/2m\d+s/);
   });
 });

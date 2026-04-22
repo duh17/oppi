@@ -1,11 +1,11 @@
 /**
- * spawn_agent — first-party extension for managing child sessions.
+ * subagents — first-party extension for managing child sessions.
  *
  * Root and detached sessions get:
- *   spawn_agent, stop_agent, send_message, check_agents, inspect_agent
+ *   spawn_agent, stop_agent, send_message, inspect_agent
  *
  * Child sessions get the non-spawning subset:
- *   send_message, check_agents, inspect_agent
+ *   send_message, inspect_agent
  *
  * Injected as an in-process first-party factory extension.
  * Uses direct SessionManager methods — no HTTP round-trip needed.
@@ -21,7 +21,7 @@ import { defaultSubagentConfig } from "../src/storage/config-store.js";
 // Context interface — thin abstraction over SessionManager
 // ---------------------------------------------------------------------------
 
-export interface SpawnAgentContext {
+export interface SubagentsContext {
   /** Workspace this session belongs to. */
   workspaceId: string;
   /** This session's ID (the parent). */
@@ -73,7 +73,7 @@ export interface SpawnAgentContext {
 // Kept as a fallback default if config is not provided.
 
 /** Walk parentSessionId chain upward to compute depth. Root = 0. */
-function getSpawnDepth(ctx: SpawnAgentContext): number {
+function getSpawnDepth(ctx: SubagentsContext): number {
   let depth = 0;
   let currentId: string | undefined = ctx.sessionId;
   const visited = new Set<string>();
@@ -89,7 +89,7 @@ function getSpawnDepth(ctx: SpawnAgentContext): number {
 }
 
 /** Find the root session ID of the spawn tree. */
-function getRootSessionId(ctx: SpawnAgentContext): string {
+function getRootSessionId(ctx: SubagentsContext): string {
   let currentId = ctx.sessionId;
   const visited = new Set<string>();
   while (true) {
@@ -118,38 +118,6 @@ function getDescendants(rootId: string, allSessions: Session[]): Session[] {
     }
   }
   return descendants;
-}
-
-interface TreeCostSummary {
-  totalSessions: number;
-  totalCost: number;
-  totalTokensInput: number;
-  totalTokensOutput: number;
-  totalTokensCacheRead: number;
-  totalTokensCacheWrite: number;
-  totalMessages: number;
-  busyCount: number;
-  stoppedCount: number;
-  errorCount: number;
-}
-
-function computeTreeCost(rootId: string, allSessions: Session[]): TreeCostSummary {
-  const root = allSessions.find((s) => s.id === rootId);
-  const descendants = getDescendants(rootId, allSessions);
-  const tree = root ? [root, ...descendants] : descendants;
-
-  return {
-    totalSessions: tree.length,
-    totalCost: tree.reduce((s, t) => s + t.cost, 0),
-    totalTokensInput: tree.reduce((s, t) => s + t.tokens.input, 0),
-    totalTokensOutput: tree.reduce((s, t) => s + t.tokens.output, 0),
-    totalTokensCacheRead: tree.reduce((s, t) => s + (t.tokens.cacheRead ?? 0), 0),
-    totalTokensCacheWrite: tree.reduce((s, t) => s + (t.tokens.cacheWrite ?? 0), 0),
-    totalMessages: tree.reduce((s, t) => s + t.messageCount, 0),
-    busyCount: tree.filter((t) => t.status === "busy" || t.status === "starting").length,
-    stoppedCount: tree.filter((t) => t.status === "stopped" || t.status === "ready").length,
-    errorCount: tree.filter((t) => t.status === "error").length,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -182,9 +150,8 @@ const spawnAgentParams = Type.Object({
     Type.Boolean({
       description:
         "If true, create an independent session (no parent-child link). " +
-        "The session won't appear in check_agents, gets full capabilities " +
-        "including its own spawn_agent, and is monitored via the app. " +
-        "Default: false (child session in the spawn tree).",
+        "The session gets full capabilities including its own spawn_agent, " +
+        "and is monitored via the app. Default: false (child session in the spawn tree).",
     }),
   ),
   wait: Type.Optional(
@@ -199,16 +166,6 @@ const spawnAgentParams = Type.Object({
       description:
         "Maximum seconds to wait for the child to finish (only when wait=true). Default: 1800 (30 minutes).",
       minimum: 1,
-    }),
-  ),
-});
-
-const checkAgentsParams = Type.Object({
-  scope: Type.Optional(
-    Type.Union([Type.Literal("children"), Type.Literal("workspace")], {
-      description:
-        'What to list. "children" (default): direct child sessions of this session. ' +
-        '"workspace": all alive sessions in the workspace (id, name, status, task, files touched).',
     }),
   ),
 });
@@ -291,21 +248,6 @@ interface StopAgentDetails {
   status: string;
 }
 
-interface CheckAgentsDetails {
-  agents: AgentSummary[];
-}
-
-interface AgentSummary {
-  id: string;
-  name?: string;
-  status: string;
-  model?: string;
-  cost: number;
-  messageCount: number;
-  durationMs: number;
-  firstMessage?: string;
-}
-
 interface InspectAgentDetails {
   sessionId: string;
   level: "overview" | "turn" | "tool";
@@ -317,19 +259,6 @@ interface InspectAgentDetails {
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
-
-function sessionToSummary(s: Session): AgentSummary {
-  return {
-    id: s.id,
-    name: s.name ?? undefined,
-    status: s.status,
-    model: s.model ?? undefined,
-    cost: s.cost,
-    messageCount: s.messageCount,
-    durationMs: Date.now() - s.createdAt,
-    firstMessage: s.firstMessage ?? undefined,
-  };
-}
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -344,15 +273,6 @@ function formatCost(cost: number): string {
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   return `$${cost.toFixed(2)}`;
 }
-
-const STATUS_ICONS: Record<string, string> = {
-  starting: "⏳",
-  ready: "⏸",
-  busy: "⏳",
-  stopping: "⏹",
-  stopped: "✓",
-  error: "✗",
-};
 
 // ---------------------------------------------------------------------------
 // JSONL trace parser
@@ -672,16 +592,16 @@ function renderToolDetail(turns: ParsedTurn[], n: number, toolIdx: number): stri
 }
 
 // ---------------------------------------------------------------------------
-// Wait mode — poll child session until terminal status
+// Child completion helpers
 // ---------------------------------------------------------------------------
-
-// Default fallback poll interval — only used as a safety net.
-// Progress updates are driven by subscribe events, not polling.
-const FALLBACK_POLL_INTERVAL_MS = 5_000;
 
 /** Terminal session statuses — the child is done. */
 function isTerminal(status: string): boolean {
   return status === "stopped" || status === "error";
+}
+
+function isSessionBusy(session: Session | undefined): boolean {
+  return session?.status === "busy" || session?.status === "starting";
 }
 
 interface WaitResult {
@@ -694,12 +614,99 @@ interface WaitResult {
   timedOut: boolean;
 }
 
+function appendChangeStatsLines(
+  lines: string[],
+  changeStats: Session["changeStats"] | undefined,
+): void {
+  if (!changeStats || changeStats.filesChanged <= 0) {
+    return;
+  }
+
+  lines.push(
+    `Changes: ${changeStats.filesChanged} file${changeStats.filesChanged !== 1 ? "s" : ""}, +${changeStats.addedLines}/-${changeStats.removedLines} lines`,
+  );
+  if (changeStats.changedFiles.length > 0) {
+    for (const filePath of changeStats.changedFiles.slice(0, 10)) {
+      lines.push(`  ${shortenPath(filePath)}`);
+    }
+    if (changeStats.changedFilesOverflow && changeStats.changedFilesOverflow > 0) {
+      lines.push(`  ... and ${changeStats.changedFilesOverflow} more`);
+    }
+  }
+}
+
+function appendLastResponseLines(
+  lines: string[],
+  session: Session | undefined,
+  fallbackLastMessage?: string,
+): void {
+  const tracePath = session?.piSessionFile;
+  if (tracePath) {
+    const turns = parseJsonlTrace(tracePath);
+    const lastTurn = turns[turns.length - 1];
+    if (lastTurn?.assistantText) {
+      lines.push("");
+      lines.push("Last response:");
+      lines.push(lastTurn.assistantText);
+      return;
+    }
+  }
+
+  if (fallbackLastMessage) {
+    lines.push("");
+    lines.push("Last message:");
+    lines.push(fallbackLastMessage);
+  }
+}
+
+function buildChildCompletionText(
+  ctx: SubagentsContext,
+  childId: string,
+  childName: string,
+  durationMs: number,
+  options?: {
+    timedOut?: boolean;
+    timeoutMs?: number;
+    fallbackLastMessage?: string;
+  },
+): { text: string; status: string; cost: number; durationMs: number } {
+  const session = ctx.getSession(childId);
+  const lines: string[] = [];
+  const status = session?.status ?? "unknown";
+  const cost = session?.cost ?? 0;
+
+  lines.push(`Agent "${childName}" (${childId}) finished: ${status.toUpperCase()}`);
+  lines.push(
+    `${session?.messageCount ?? 0} messages, ${formatCost(cost)}, ${formatDuration(durationMs)}`,
+  );
+
+  if (options?.timedOut) {
+    lines.push(
+      `WARNING: Timed out after ${formatDuration(options.timeoutMs ?? durationMs)}. The child may still be running.`,
+    );
+  }
+
+  appendChangeStatsLines(lines, session?.changeStats);
+  appendLastResponseLines(
+    lines,
+    session,
+    options?.fallbackLastMessage ?? session?.lastMessage ?? undefined,
+  );
+
+  return {
+    text: lines.join("\n"),
+    status,
+    cost,
+    durationMs,
+  };
+}
+
 /**
  * Block until child reaches terminal status. Streams lightweight progress
  * updates to the parent via onUpdate. Respects AbortSignal and timeout.
  */
 function waitForChildCompletion(
-  ctx: SpawnAgentContext,
+  ctx: SubagentsContext,
   childId: string,
   timeoutMs: number,
   signal: AbortSignal | undefined,
@@ -719,7 +726,6 @@ function waitForChildCompletion(
 
     const cleanup = (): void => {
       resolved = true;
-      clearInterval(fallbackTimer);
       clearTimeout(timeoutTimer);
       unsubscribe();
       signal?.removeEventListener("abort", onAbort);
@@ -799,28 +805,12 @@ function waitForChildCompletion(
       return;
     }
 
-    // Abort signal handler
     const onAbort = (): void => finalize(false);
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    // Precise timeout via setTimeout (not dependent on poll frequency)
     const timeoutTimer = setTimeout(() => {
       if (!resolved) finalize(true);
     }, timeoutMs);
-
-    // Fallback poll — safety net only. All real progress is event-driven
-    // via subscribe. This catches edge cases where a subscribe event is
-    // missed (e.g. unexpected gaps in the event stream).
-    const fallbackTimer = setInterval(() => {
-      if (resolved) return;
-      const session = ctx.getSession(childId);
-      if (!session) return;
-      if (isTerminal(session.status)) {
-        finalize(false);
-        return;
-      }
-      emitProgress(session);
-    }, FALLBACK_POLL_INTERVAL_MS);
   });
 }
 
@@ -833,15 +823,12 @@ function waitForChildCompletion(
 // ---------------------------------------------------------------------------
 
 /** Check if a session is in the same workspace. */
-function isInWorkspace(ctx: SpawnAgentContext, sessionId: string): boolean {
+function isInWorkspace(ctx: SubagentsContext, sessionId: string): boolean {
   return ctx.listWorkspaceSessions().some((s) => s.id === sessionId);
 }
 
-/** Alive statuses for workspace listing: actively running or idle. */
-const ALIVE_STATUSES = new Set(["busy", "starting", "ready"]);
-
 /** Build agent-origin preamble for inter-session messages. */
-function buildAgentPreamble(ctx: SpawnAgentContext): string {
+function buildAgentPreamble(ctx: SubagentsContext): string {
   const sender = ctx.getSession(ctx.sessionId);
   const name = sender?.name;
   return name ? `[From agent "${name}" (${ctx.sessionId})]` : `[From agent ${ctx.sessionId}]`;
@@ -851,8 +838,8 @@ function buildAgentPreamble(ctx: SpawnAgentContext): string {
 // Factory options
 // ---------------------------------------------------------------------------
 
-export interface SpawnAgentFactoryOptions {
-  /** If true, only register check_agents, send_message, inspect_agent (no spawn/stop). */
+export interface SubagentsFactoryOptions {
+  /** If true, only register send_message + inspect_agent (no spawn/stop). */
   childMode?: boolean;
   /** Subagent lifecycle config. Falls back to defaults if not provided. */
   subagentConfig?: SubagentConfig;
@@ -862,13 +849,104 @@ export interface SpawnAgentFactoryOptions {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createSpawnAgentFactory(
-  ctx: SpawnAgentContext,
-  options?: SpawnAgentFactoryOptions,
+export function createSubagentsFactory(
+  ctx: SubagentsContext,
+  options?: SubagentsFactoryOptions,
 ): ExtensionFactory {
   return (pi) => {
     const childMode = options?.childMode ?? false;
     const subagentConfig = options?.subagentConfig ?? defaultSubagentConfig();
+    const completionWatchers = new Map<string, () => void>();
+
+    const clearCompletionWatcher = (childId: string): void => {
+      const cleanup = completionWatchers.get(childId);
+      if (cleanup) cleanup();
+    };
+
+    const armChildCompletionHook = (childId: string, childName: string): void => {
+      clearCompletionWatcher(childId);
+
+      let finished = false;
+      let unsubscribe: () => void = () => {};
+
+      const cleanup = (): void => {
+        if (finished) return;
+        finished = true;
+        unsubscribe();
+        completionWatchers.delete(childId);
+      };
+
+      const finalize = (): void => {
+        if (finished) return;
+
+        const result = buildChildCompletionText(
+          ctx,
+          childId,
+          childName,
+          Math.max(0, Date.now() - (ctx.getSession(childId)?.createdAt ?? Date.now())),
+        );
+        const parentSession = ctx.getSession(ctx.sessionId);
+
+        cleanup();
+
+        if (isSessionBusy(parentSession)) {
+          pi.sendMessage(
+            {
+              customType: "subagent_result",
+              content: result.text,
+              display: true,
+              details: {
+                agentId: childId,
+                name: childName,
+                status: result.status,
+                cost: result.cost,
+                durationMs: result.durationMs,
+              },
+            },
+            { deliverAs: "followUp", triggerTurn: true },
+          );
+          return;
+        }
+
+        pi.sendMessage({
+          customType: "subagent_result",
+          content: result.text,
+          display: true,
+          details: {
+            agentId: childId,
+            name: childName,
+            status: result.status,
+            cost: result.cost,
+            durationMs: result.durationMs,
+          },
+        });
+      };
+
+      unsubscribe = ctx.subscribe(childId, (msg: ServerMessage) => {
+        if (finished) return;
+        if (msg.type === "session_ended") {
+          finalize();
+          return;
+        }
+        if (msg.type === "state" && isTerminal(msg.session.status)) {
+          finalize();
+        }
+      });
+
+      completionWatchers.set(childId, cleanup);
+
+      const initial = ctx.getSession(childId);
+      if (initial && isTerminal(initial.status)) {
+        finalize();
+      }
+    };
+
+    pi.on("session_shutdown", () => {
+      for (const cleanup of completionWatchers.values()) {
+        cleanup();
+      }
+      completionWatchers.clear();
+    });
 
     // ─── spawn_agent (root/detached only) ───
 
@@ -889,9 +967,9 @@ export function createSpawnAgentFactory(
           "Use spawn_agent for tasks that can run independently without blocking the current conversation.",
           "Give each spawned agent a clear, self-contained task description with all needed context.",
           "The child agent cannot see the parent's conversation history — include relevant context in the message.",
-          "Use check_agents to poll child status, inspect_agent to drill into a child's execution trace.",
+          "Fire-and-forget children automatically send a subagent_result message when they finish. Use inspect_agent to drill into a child's execution trace when you need details.",
           "Set wait=true when you need the child's result before continuing (sequential dependency). Default is fire-and-forget.",
-          "wait=true blocks your context window until the child finishes. Use fire-and-forget + check_agents for parallel tasks.",
+          "wait=true blocks your context window until the child finishes. Use fire-and-forget when the work can complete in the background.",
           "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
           "Child sessions cannot spawn their own agents. Use detached=true to create a fully independent session with its own spawn capability.",
           "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
@@ -984,6 +1062,10 @@ export function createSpawnAgentFactory(
 
             // ─── Fire-and-forget (default) ───
             if (!params.wait) {
+              if (!isDetached) {
+                armChildCompletionHook(session.id, session.name ?? name);
+              }
+
               const lines = [
                 `Spawned ${isDetached ? "detached " : ""}agent "${session.name ?? name}" (${session.id}).`,
                 `Status: ${session.status}, Model: ${session.model ?? "inherited"}`,
@@ -995,7 +1077,7 @@ export function createSpawnAgentFactory(
                 );
               } else {
                 lines.push(
-                  "The session is now running independently. Use check_agents to monitor progress.",
+                  "The session is now running independently. You'll get a subagent_result message when it finishes.",
                 );
               }
 
@@ -1040,56 +1122,20 @@ export function createSpawnAgentFactory(
               session.name ?? name,
             );
 
-            // Build final result text
-            const lines: string[] = [];
-            lines.push(
-              `Agent "${session.name ?? name}" (${session.id}) finished: ${result.status.toUpperCase()}`,
+            const completion = buildChildCompletionText(
+              ctx,
+              session.id,
+              session.name ?? name,
+              result.durationMs,
+              {
+                timedOut: result.timedOut,
+                timeoutMs,
+                fallbackLastMessage: result.lastMessage,
+              },
             );
-            lines.push(
-              `${result.messageCount} messages, ${formatCost(result.cost)}, ${formatDuration(result.durationMs)}`,
-            );
-
-            if (result.timedOut) {
-              lines.push(
-                `WARNING: Timed out after ${formatDuration(timeoutMs)}. The child may still be running.`,
-              );
-            }
-
-            if (result.changeStats && result.changeStats.filesChanged > 0) {
-              const cs = result.changeStats;
-              lines.push(
-                `Changes: ${cs.filesChanged} file${cs.filesChanged !== 1 ? "s" : ""}, +${cs.addedLines}/-${cs.removedLines} lines`,
-              );
-              if (cs.changedFiles.length > 0) {
-                for (const f of cs.changedFiles.slice(0, 10)) {
-                  lines.push(`  ${shortenPath(f)}`);
-                }
-                if (cs.changedFilesOverflow && cs.changedFilesOverflow > 0) {
-                  lines.push(`  ... and ${cs.changedFilesOverflow} more`);
-                }
-              }
-            }
-
-            // Read full last response from JSONL trace (session.lastMessage is truncated to 100 chars)
-            const childSession = ctx.getSession(session.id);
-            const tracePath = childSession?.piSessionFile;
-            if (tracePath) {
-              const turns = parseJsonlTrace(tracePath);
-              const lastTurn = turns[turns.length - 1];
-              if (lastTurn?.assistantText) {
-                lines.push("");
-                lines.push("Last response:");
-                lines.push(lastTurn.assistantText);
-              }
-            } else if (result.lastMessage) {
-              // Fallback to truncated lastMessage if no trace available
-              lines.push("");
-              lines.push("Last message:");
-              lines.push(result.lastMessage);
-            }
 
             return {
-              content: [{ type: "text", text: lines.join("\n") }],
+              content: [{ type: "text", text: completion.text }],
               details: {
                 agentId: session.id,
                 name: session.name ?? name,
@@ -1097,7 +1143,7 @@ export function createSpawnAgentFactory(
                 model: session.model,
                 waited: true,
                 cost: result.cost,
-                durationMs: result.durationMs,
+                durationMs: completion.durationMs,
               },
             };
           } catch (err: unknown) {
@@ -1124,7 +1170,7 @@ export function createSpawnAgentFactory(
         promptGuidelines: [
           "Use stop_agent to terminate a child that is no longer needed or is going in the wrong direction.",
           "The stop is graceful — the child gets a chance to clean up before terminating.",
-          "Use check_agents first to find the session ID of the child you want to stop.",
+          "Use the session ID returned by spawn_agent (or from a prior subagent_result) to target the right child.",
         ],
         parameters: stopAgentParams,
 
@@ -1150,7 +1196,7 @@ export function createSpawnAgentFactory(
               content: [
                 {
                   type: "text" as const,
-                  text: `Session ${params.id} is not in this session's tree. Use check_agents() to list children.`,
+                  text: `Session ${params.id} is not in this session's tree.`,
                 },
               ],
               details: { agentId: params.id, name: session.name ?? undefined, status: "error" },
@@ -1223,7 +1269,7 @@ export function createSpawnAgentFactory(
           "Use for non-urgent additions like 'when you're done, also check Z'.",
         "If the target is idle (not busy), the message starts a new turn regardless of behavior.",
         "If the target is stopped, it is automatically resumed and the message is delivered as a new prompt.",
-        "Use check_agents first to find the session ID.",
+        "Use the session ID returned by spawn_agent (or from a prior subagent_result).",
       ],
       parameters: sendMessageParams,
 
@@ -1243,7 +1289,7 @@ export function createSpawnAgentFactory(
             content: [
               {
                 type: "text" as const,
-                text: `Session ${params.id} is not in this workspace. Use check_agents(scope: "workspace") to list sessions.`,
+                text: `Session ${params.id} is not in this workspace.`,
               },
             ],
             details: {
@@ -1362,139 +1408,6 @@ export function createSpawnAgentFactory(
       },
     });
 
-    // ─── check_agents ───
-
-    pi.registerTool<typeof checkAgentsParams, CheckAgentsDetails>({
-      name: "check_agents",
-      label: "Check Agents",
-      description:
-        "Check the status of child agent sessions spawned from this session. " +
-        "Returns each child's status, cost, message count, and duration.",
-      promptSnippet: "check_agents() — poll status of spawned child sessions",
-      parameters: checkAgentsParams,
-
-      async execute(_toolCallId: string, params: Static<typeof checkAgentsParams>) {
-        const scope = params.scope ?? "children";
-
-        // ─── Workspace scope: all alive sessions in workspace ───
-        if (scope === "workspace") {
-          const allSessions = ctx.listWorkspaceSessions();
-          const alive = allSessions.filter(
-            (s) => s.id !== ctx.sessionId && ALIVE_STATUSES.has(s.status),
-          );
-
-          if (alive.length === 0) {
-            return {
-              content: [{ type: "text", text: "No active sessions in workspace." }],
-              details: { agents: [] },
-            };
-          }
-
-          const lines = alive.map((s) => {
-            const icon = STATUS_ICONS[s.status] ?? "?";
-            const name = s.name ?? s.id.slice(0, 8);
-            const duration = formatDuration(Date.now() - s.createdAt);
-            const cost = formatCost(s.cost);
-            let line = `${icon} ${name} (${s.id})  [${s.status.toUpperCase()}]  ${s.messageCount} msgs  ${cost}  ${duration}`;
-
-            if (s.firstMessage) {
-              const preview = s.firstMessage.slice(0, 80).replace(/\n/g, " ");
-              line += `\n  "${preview}${s.firstMessage.length > 80 ? "..." : ""}"`;
-            }
-
-            if (s.changeStats && s.changeStats.filesChanged > 0) {
-              const files = s.changeStats.changedFiles ?? [];
-              const shown = files.slice(0, 5).map(shortenPath);
-              const overflow =
-                (s.changeStats.changedFilesOverflow ?? 0) + Math.max(0, files.length - 5);
-              const fileLine =
-                overflow > 0 ? `${shown.join(", ")} (+${overflow} more)` : shown.join(", ");
-              line += `\n  Files: ${fileLine}`;
-            }
-
-            return line;
-          });
-
-          const text = `${alive.length} active session${alive.length !== 1 ? "s" : ""} in workspace\n\n${lines.join("\n\n")}`;
-
-          return {
-            content: [{ type: "text", text }],
-            details: { agents: alive.map(sessionToSummary) },
-          };
-        }
-
-        // ─── Children scope (default): existing behavior ───
-        const children = ctx.listChildren();
-        const agents = children.map(sessionToSummary);
-
-        if (agents.length === 0) {
-          return {
-            content: [{ type: "text", text: "No child sessions found." }],
-            details: { agents: [] },
-          };
-        }
-
-        const allSessions = ctx.listWorkspaceSessions();
-        const childrenById = new Map(children.map((c) => [c.id, c]));
-        const lines = agents.map((a) => {
-          const icon = STATUS_ICONS[a.status] ?? "?";
-          const duration = formatDuration(a.durationMs);
-          const cost = formatCost(a.cost);
-          const name = a.name ?? a.id.slice(0, 8);
-          // Show grandchild count if this child has its own children
-          const grandchildren = allSessions.filter((s) => s.parentSessionId === a.id);
-          const gcMark = grandchildren.length > 0 ? ` (+${grandchildren.length} children)` : "";
-          // For stopped sessions, show how long ago they stopped and cache hint
-          let cacheHint = "";
-          if (a.status === "stopped" || a.status === "ready") {
-            const child = childrenById.get(a.id);
-            if (child) {
-              const stoppedAgoMs = Date.now() - (child.lastActivity ?? child.createdAt);
-              const stoppedAgo = formatDuration(stoppedAgoMs);
-              const cacheWarm = stoppedAgoMs < 5 * 60 * 1000; // 5-minute cache TTL
-              cacheHint = cacheWarm
-                ? `  (stopped ${stoppedAgo} ago, cache likely warm)`
-                : `  (stopped ${stoppedAgo} ago, cache likely cold)`;
-            }
-          }
-          return `${icon} ${name}  [${a.status.toUpperCase()}]  ${a.messageCount} msgs  ${cost}  ${duration}${gcMark}${cacheHint}`;
-        });
-
-        const busyCount = agents.filter(
-          (a) => a.status === "busy" || a.status === "starting",
-        ).length;
-        const doneCount = agents.filter(
-          (a) => a.status === "stopped" || a.status === "ready",
-        ).length;
-        const errorCount = agents.filter((a) => a.status === "error").length;
-
-        const summary = [
-          `${agents.length} child session${agents.length !== 1 ? "s" : ""}`,
-          busyCount > 0 ? `${busyCount} working` : null,
-          doneCount > 0 ? `${doneCount} done` : null,
-          errorCount > 0 ? `${errorCount} error` : null,
-        ]
-          .filter(Boolean)
-          .join(", ");
-
-        // Tree-wide cost aggregation
-        const rootId = getRootSessionId(ctx);
-        const treeCost = computeTreeCost(rootId, allSessions);
-
-        const treeLine =
-          `Tree total: ${treeCost.totalSessions} sessions, ` +
-          `${treeCost.totalMessages} msgs, ` +
-          `${formatCost(treeCost.totalCost)}`;
-
-        const text = `${summary}\n\n${lines.join("\n")}\n\n${treeLine}`;
-
-        return {
-          content: [{ type: "text", text }],
-          details: { agents },
-        };
-      },
-    });
-
     // ─── inspect_agent ───
 
     pi.registerTool<typeof inspectAgentParams, InspectAgentDetails>({
@@ -1532,7 +1445,7 @@ export function createSpawnAgentFactory(
             content: [
               {
                 type: "text",
-                text: `Session ${params.id} is not in this workspace. Use check_agents(scope: "workspace") to list sessions.`,
+                text: `Session ${params.id} is not in this workspace.`,
               },
             ],
             details: { sessionId: params.id, level: "overview" },

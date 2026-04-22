@@ -2,7 +2,7 @@ import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
 import { createAskFactory } from "../extensions/ask.js";
 import { isWorkspaceExtensionEnabled } from "../extensions/first-party.js";
-import { createSpawnAgentFactory } from "../extensions/spawn-agent.js";
+import { createSubagentsFactory } from "../extensions/subagents.js";
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -54,7 +54,7 @@ export interface SessionStartCoordinatorDeps {
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
-  // spawn_agent support
+  // subagents extension support
   spawnChildSession: (
     parentSessionId: string,
     params: {
@@ -108,11 +108,11 @@ export class SessionStartCoordinator {
           extraExtensionFactories.push(createAskFactory());
         }
 
-        if (isWorkspaceExtensionEnabled(workspace, "spawn_agent")) {
-          // Root/detached sessions get full tools (spawn, stop, check, send, inspect).
-          // Child sessions get childMode (check, send, inspect only — no spawning).
+        if (isWorkspaceExtensionEnabled(workspace, "subagents")) {
+          // Root/detached sessions get full tools (spawn, stop, send, inspect).
+          // Child sessions get childMode (send, inspect only — no spawning).
           const isChildSession = !!session.parentSessionId;
-          const spawnAgentCtx = {
+          const subagentsCtx = {
             workspaceId: identity.workspaceId,
             sessionId: session.id,
             spawnChild: (params: {
@@ -143,7 +143,7 @@ export class SessionStartCoordinator {
           };
           const subagentConfig = this.deps.runtimeManager.getLimits().subagents;
           extraExtensionFactories.push(
-            createSpawnAgentFactory(spawnAgentCtx, {
+            createSubagentsFactory(subagentsCtx, {
               childMode: isChildSession,
               subagentConfig,
             }),
