@@ -120,6 +120,7 @@ struct PastableTextView: UIViewRepresentable {
     let font: UIFont
     let textColor: UIColor
     let tintColor: UIColor
+    let volatileSuffixLength: Int
     let maxLines: Int
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
@@ -187,14 +188,16 @@ struct PastableTextView: UIViewRepresentable {
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
         let textChanged = textView.text != text
-        if textChanged {
-            textView.text = text
-        }
+        textView.applyStyledText(
+            text,
+            font: font,
+            baseColor: textColor,
+            volatileSuffixLength: volatileSuffixLength,
+            volatileColor: UIColor(Color.themeBlue)
+        )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
         textView.onAlternateEnter = onAlternateEnter
-        textView.font = font
-        textView.textColor = textColor
         textView.tintColor = tintColor
 
         let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
@@ -226,6 +229,7 @@ struct PastableTextView: UIViewRepresentable {
                 if !textView.isFirstResponder {
                     textView.becomeFirstResponder()
                 }
+                textView.moveCaretToEnd()
             }
         }
 
@@ -491,6 +495,7 @@ struct FullSizeTextView: UIViewRepresentable {
     let font: UIFont
     let textColor: UIColor
     let tintColor: UIColor
+    let volatileSuffixLength: Int
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
@@ -547,14 +552,16 @@ struct FullSizeTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
-        if textView.text != text {
-            textView.text = text
-        }
+        textView.applyStyledText(
+            text,
+            font: font,
+            baseColor: textColor,
+            volatileSuffixLength: volatileSuffixLength,
+            volatileColor: UIColor(Color.themeBlue)
+        )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
         textView.onAlternateEnter = onAlternateEnter
-        textView.font = font
-        textView.textColor = textColor
         textView.tintColor = tintColor
         textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
         context.coordinator.observedTextView = textView
@@ -583,6 +590,7 @@ struct FullSizeTextView: UIViewRepresentable {
                 if !textView.isFirstResponder {
                     textView.becomeFirstResponder()
                 }
+                textView.moveCaretToEnd()
             }
         }
     }
@@ -655,6 +663,12 @@ final class PastableUITextView: UITextView {
     var onAlternateEnter: (() -> Void)?
     var onKeyboardRestoreRequest: (() -> Void)?
 
+    private var renderedTextCache = ""
+    private var renderedVolatileSuffixLengthCache = -1
+    private var renderedFontCache: UIFont?
+    private var renderedBaseColorCache: UIColor?
+    private var renderedVolatileColorCache: UIColor?
+
     /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
     private(set) var isKeyboardSuppressed = false
 
@@ -674,6 +688,71 @@ final class PastableUITextView: UITextView {
         tap.delegate = self
         return tap
     }()
+
+    func applyStyledText(
+        _ text: String,
+        font: UIFont,
+        baseColor: UIColor,
+        volatileSuffixLength: Int,
+        volatileColor: UIColor
+    ) {
+        let clampedVolatileSuffixLength = max(0, min(volatileSuffixLength, text.count))
+        let styleUnchanged = renderedTextCache == text
+            && renderedVolatileSuffixLengthCache == clampedVolatileSuffixLength
+            && (renderedFontCache?.isEqual(font) ?? false)
+            && (renderedBaseColorCache?.isEqual(baseColor) ?? false)
+            && (renderedVolatileColorCache?.isEqual(volatileColor) ?? false)
+
+        guard !styleUnchanged else { return }
+
+        let previousSelection = self.selectedRange
+        let previousTextLength = textStorage.length
+        let keepCaretPinnedToEnd = previousSelection.length == 0 && previousSelection.location >= previousTextLength
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: baseColor,
+            ]
+        )
+
+        if clampedVolatileSuffixLength > 0 {
+            let volatileStart = text.index(text.endIndex, offsetBy: -clampedVolatileSuffixLength)
+            let volatileRange = NSRange(volatileStart..<text.endIndex, in: text)
+            attributed.addAttributes(
+                [
+                    .foregroundColor: volatileColor,
+                ],
+                range: volatileRange
+            )
+        }
+
+        self.attributedText = attributed
+        typingAttributes = [
+            .font: font,
+            .foregroundColor: baseColor,
+        ]
+
+        let maxSelectionLocation = (text as NSString).length
+        let restoredSelection: NSRange
+        if keepCaretPinnedToEnd {
+            restoredSelection = NSRange(location: maxSelectionLocation, length: 0)
+        } else {
+            let clampedLocation = min(previousSelection.location, maxSelectionLocation)
+            restoredSelection = NSRange(
+                location: clampedLocation,
+                length: min(previousSelection.length, max(0, maxSelectionLocation - clampedLocation))
+            )
+        }
+        self.selectedRange = restoredSelection
+        scrollRangeToVisible(restoredSelection)
+
+        renderedTextCache = text
+        renderedVolatileSuffixLengthCache = clampedVolatileSuffixLength
+        renderedFontCache = font
+        renderedBaseColorCache = baseColor
+        renderedVolatileColorCache = volatileColor
+    }
 
     override var intrinsicContentSize: CGSize {
         // Return noIntrinsicMetric — sizeThatFits is the authoritative source
@@ -755,6 +834,12 @@ final class PastableUITextView: UITextView {
     func installKeyboardRestoreGesture() {
         keyboardRestoreTap.isEnabled = false
         addGestureRecognizer(keyboardRestoreTap)
+    }
+
+    func moveCaretToEnd() {
+        let end = textStorage.length
+        selectedRange = NSRange(location: end, length: 0)
+        scrollRangeToVisible(selectedRange)
     }
 
     /// Toggle keyboard suppression. When suppressed, the cursor remains visible

@@ -301,6 +301,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         font: composerInputFont,
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
+                        volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
                         maxLines: effectiveMaxLines,
                         autocorrectionEnabled: composerAutocorrectionEnabled,
                         onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },

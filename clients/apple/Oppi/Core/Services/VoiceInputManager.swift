@@ -81,6 +81,94 @@ final class VoiceInputManager {
         }
     }
 
+    /// Yuwp-style preview split for full-replacement transcript updates.
+    /// Everything after `committedText` stays visually volatile until the next
+    /// segment commit (`snap`) settles it.
+    private struct ReplaceTranscriptState {
+        var committedText = ""
+        var activeText = ""
+
+        var isTracking: Bool {
+            !committedText.isEmpty || !activeText.isEmpty
+        }
+
+        mutating func reset() {
+            committedText = ""
+            activeText = ""
+        }
+
+        mutating func applyReplacement(fullText: String, snap: Bool) {
+            let trimmedFullText = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedFullText.isEmpty else {
+                reset()
+                return
+            }
+
+            if snap {
+                committedText = trimmedFullText
+                activeText = ""
+                return
+            }
+
+            if let active = Self.splitActiveText(from: trimmedFullText, committedText: committedText) {
+                activeText = active
+            } else {
+                committedText = ""
+                activeText = trimmedFullText
+            }
+        }
+
+        func visibleActiveSuffixLength(in displayText: String) -> Int {
+            guard isTracking else { return 0 }
+            let trimmedDisplayText = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedDisplayText.isEmpty else { return 0 }
+
+            let committedPrefixLength = committedVisiblePrefixLength(in: trimmedDisplayText)
+            return max(0, trimmedDisplayText.count - committedPrefixLength)
+        }
+
+        private func committedVisiblePrefixLength(in displayText: String) -> Int {
+            guard !displayText.isEmpty, !committedText.isEmpty else { return 0 }
+            let shared = Self.commonPrefixCount(displayText, committedText)
+
+            if !activeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               shared < displayText.count {
+                let index = displayText.index(displayText.startIndex, offsetBy: shared)
+                if displayText[index] == " " {
+                    return min(displayText.count, shared + 1)
+                }
+            }
+
+            return min(displayText.count, shared)
+        }
+
+        private static func splitActiveText(from fullText: String, committedText: String) -> String? {
+            let trimmedCommitted = committedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedCommitted.isEmpty else { return fullText }
+            if fullText == trimmedCommitted { return "" }
+
+            let separator = trimmedCommitted + " "
+            guard fullText.hasPrefix(separator) else { return nil }
+            return String(fullText.dropFirst(separator.count))
+        }
+
+        private static func commonPrefixCount(_ lhs: String, _ rhs: String) -> Int {
+            var count = 0
+            var leftIndex = lhs.startIndex
+            var rightIndex = rhs.startIndex
+
+            while leftIndex < lhs.endIndex,
+                  rightIndex < rhs.endIndex,
+                  lhs[leftIndex] == rhs[rightIndex] {
+                count += 1
+                leftIndex = lhs.index(after: leftIndex)
+                rightIndex = rhs.index(after: rightIndex)
+            }
+
+            return count
+        }
+    }
+
     // MARK: - Published State
 
     private(set) var state: State = .idle
@@ -99,12 +187,27 @@ final class VoiceInputManager {
     var currentTranscript: String {
         let base: String
         if typewriterAnimator.isAnimating {
-            // During animation, show the partially revealed text
+            // During animation, show the partially revealed text.
             base = typewriterAnimator.displayText + volatileTranscript
         } else {
             base = finalizedTranscript + volatileTranscript
         }
         return base.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Visible volatile suffix in the current transcript preview.
+    /// Used by the composer to tint unstable text without affecting settled text.
+    var currentTranscriptVolatileSuffixLength: Int {
+        if replaceTranscriptState.isTracking {
+            return replaceTranscriptState.visibleActiveSuffixLength(in: currentTranscript)
+        }
+
+        if typewriterAnimator.isAnimating {
+            return min(currentTranscript.count, typewriterAnimator.visibleAnimatedSuffixLength)
+        }
+
+        guard !volatileTranscript.isEmpty else { return 0 }
+        return min(currentTranscript.count, volatileTranscript.count)
     }
 
     var isRecording: Bool { state == .recording }
@@ -164,6 +267,7 @@ final class VoiceInputManager {
     private var dictationSessionStart: ContinuousClock.Instant?
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
+    private var replaceTranscriptState = ReplaceTranscriptState()
 
     // MARK: - Server Configuration
 
@@ -367,6 +471,7 @@ final class VoiceInputManager {
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
+        replaceTranscriptState.reset()
 
         state = .preparingModel
         let startTime = ContinuousClock.now
@@ -707,23 +812,25 @@ final class VoiceInputManager {
     ) {
         switch event {
         case .partialTranscript(let text):
+            replaceTranscriptState.reset()
             volatileTranscript = text
             resultUpdateCount += 1
             logger.debug("Volatile: \(text.count) chars")
         case .appendFinalTranscript(let text):
+            replaceTranscriptState.reset()
             finalizedTranscript += text
             volatileTranscript = ""
             resultUpdateCount += 1
             logger.debug("Finalized append: \(text.count) chars")
         case .replaceFinalTranscript(let text, let snap):
+            replaceTranscriptState.applyReplacement(fullText: text, snap: snap)
             finalizedTranscript = text
             volatileTranscript = ""
             resultUpdateCount += 1
             if state == .recording {
                 if snap {
-                    // Batch correction: commit any in-progress animation.
-                    // Don't start a new one — currentTranscript reads
-                    // finalizedTranscript directly when not animating.
+                    // Segment commit: keep the full replacement visible, but
+                    // settle the volatile styling immediately.
                     typewriterAnimator.commitCurrentAnimation()
                 } else {
                     typewriterAnimator.update(fullText: text)
@@ -750,6 +857,7 @@ final class VoiceInputManager {
         sessionMonitor.teardown()
         finalizedTranscript = ""
         volatileTranscript = ""
+        replaceTranscriptState.reset()
         audioLevel = 0
         activeLanguageLabel = nil
         activeEngine = nil

@@ -32,6 +32,16 @@ final class TypewriterAnimator {
     /// Whether a character-reveal animation is in progress.
     private(set) var isAnimating = false
 
+    /// Count of visible leading characters that were already stable when the
+    /// current animation started. Any visible text beyond this prefix is the
+    /// freshly revealed, still-volatile tail.
+    private(set) var stablePrefixCount = 0
+
+    var visibleAnimatedSuffixLength: Int {
+        guard isAnimating else { return 0 }
+        return max(0, displayText.count - stablePrefixCount)
+    }
+
     // MARK: - Internal State
 
     /// The full text that the current animation is revealing toward.
@@ -112,6 +122,7 @@ final class TypewriterAnimator {
 
         guard Self.shouldAnimate(deltaCount: deltaCount) else {
             displayText = fullText
+            stablePrefixCount = displayText.count
             isAnimating = false
             logger.debug("Typewriter: snapped \(deltaCount) chars")
             return
@@ -132,6 +143,7 @@ final class TypewriterAnimator {
             targetDurationNs / UInt64(stepCount)
         )
 
+        stablePrefixCount = displayText.count
         isAnimating = true
 
         animationTask = Task { [weak self] in
@@ -157,6 +169,7 @@ final class TypewriterAnimator {
             guard let self else { return }
             if !Task.isCancelled {
                 self.isAnimating = false
+                self.stablePrefixCount = self.displayText.count
             }
         }
 
@@ -171,6 +184,7 @@ final class TypewriterAnimator {
         animationTask?.cancel()
         animationTask = nil
         displayText = targetText
+        stablePrefixCount = displayText.count
         isAnimating = false
     }
 
@@ -180,6 +194,7 @@ final class TypewriterAnimator {
         animationTask = nil
         targetText = ""
         displayText = ""
+        stablePrefixCount = 0
         isAnimating = false
     }
 

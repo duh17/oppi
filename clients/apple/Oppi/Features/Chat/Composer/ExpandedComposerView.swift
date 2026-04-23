@@ -127,6 +127,7 @@ struct ExpandedComposerView: View {
                     font: composerInputFont,
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
+                    volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },
                     onCommandEnter: handleSend,

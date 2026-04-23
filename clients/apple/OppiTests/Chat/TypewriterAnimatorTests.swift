@@ -246,10 +246,12 @@ struct TypewriterAnimatorTests {
         #expect(partialLength > 0, "Should have revealed at least one character")
         #expect(partialLength < longText.count, "Should not have revealed all characters yet")
         #expect(animator.isAnimating)
+        #expect(animator.visibleAnimatedSuffixLength == partialLength)
 
         // Wait for completion.
         try await Task.sleep(for: .milliseconds(300))
         #expect(animator.displayText == longText)
+        #expect(animator.visibleAnimatedSuffixLength == 0)
     }
 
     @Test func rapidUpdatesConverge() async throws {
