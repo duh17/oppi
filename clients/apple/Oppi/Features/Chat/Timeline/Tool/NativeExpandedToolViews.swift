@@ -1,4 +1,3 @@
-import AVFoundation
 import UIKit
 import SwiftUI
 
@@ -78,27 +77,6 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if !parsed.videos.isEmpty {
-            let countLabel = UILabel()
-            countLabel.font = ToolFont.smallBold
-            countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = parsed.videos.count == 1 ? "Video" : "Videos (\(parsed.videos.count))"
-            rootStack.addArrangedSubview(countLabel)
-
-            for video in parsed.videos.prefix(4) {
-                let videoView = NativeExpandedInlineVideoView()
-                videoView.apply(base64: video.base64, mimeType: video.mimeType)
-                rootStack.addArrangedSubview(videoView)
-            }
-            if parsed.videos.count > 4 {
-                let more = UILabel()
-                more.font = ToolFont.small
-                more.textColor = UIColor(palette.comment)
-                more.text = "+\(parsed.videos.count - 4) more video attachment(s)"
-                rootStack.addArrangedSubview(more)
-            }
-        }
-
         if !parsed.audio.isEmpty {
             let countLabel = UILabel()
             countLabel.font = ToolFont.smallBold
@@ -124,7 +102,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.videos.isEmpty && parsed.audio.isEmpty {
+        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.audio.isEmpty {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
@@ -323,126 +301,23 @@ final class NativeExpandedInlineImageView: UIView {
     }
 }
 
-final class NativeExpandedInlineVideoView: UIView {
-    override class var layerClass: AnyClass { AVPlayerLayer.self }
-
-    private let placeholder = UIActivityIndicatorView(style: .medium)
-    private var decodeTask: Task<Void, Never>?
-    private var decodedKey: String?
-    private var playbackObserver: NSObjectProtocol?
-
-    private var playerLayer: AVPlayerLayer? {
-        layer as? AVPlayerLayer
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupViews()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit {
-        decodeTask?.cancel()
-        teardownPlayer()
-    }
-
-    func apply(base64: String, mimeType: String?) {
-        let key = "video-\(base64.count)-\(base64.prefix(64))-\(base64.suffix(64))"
-        guard key != decodedKey else { return }
-        decodedKey = key
-
-        decodeTask?.cancel()
-        teardownPlayer()
-        placeholder.isHidden = false
-        placeholder.startAnimating()
-
-        decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
-                await MainActor.run { [weak self] in
-                    self?.placeholder.stopAnimating()
-                    self?.placeholder.isHidden = true
-                }
-                return
-            }
-
-            do {
-                let ext = MediaMimeType.preferredFileExtension(forVideo: mimeType)
-                let url = try MediaTempFileStore.fileURL(for: data, preferredExtension: ext)
-                await MainActor.run { [weak self] in
-                    guard let self, self.decodedKey == key else { return }
-                    let player = AVPlayer(url: url)
-                    player.isMuted = true
-                    player.actionAtItemEnd = .none
-                    self.playerLayer?.player = player
-                    self.playerLayer?.videoGravity = .resizeAspect
-                    self.playbackObserver = NotificationCenter.default.addObserver(
-                        forName: .AVPlayerItemDidPlayToEndTime,
-                        object: player.currentItem,
-                        queue: .main
-                    ) { _ in
-                        player.seek(to: .zero)
-                        player.play()
-                    }
-                    self.placeholder.stopAnimating()
-                    self.placeholder.isHidden = true
-                    player.play()
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    self?.placeholder.stopAnimating()
-                    self?.placeholder.isHidden = true
-                }
-            }
-        }
-    }
-
-    private func setupViews() {
-        translatesAutoresizingMaskIntoConstraints = false
-        clipsToBounds = true
-        backgroundColor = .clear
-        playerLayer?.backgroundColor = UIColor.clear.cgColor
-
-        placeholder.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(placeholder)
-
-        NSLayoutConstraint.activate([
-            placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalTo: widthAnchor, multiplier: 9.0 / 16.0),
-        ])
-    }
-
-    private func teardownPlayer() {
-        if let playbackObserver {
-            NotificationCenter.default.removeObserver(playbackObserver)
-            self.playbackObserver = nil
-        }
-        playerLayer?.player?.pause()
-        playerLayer?.player = nil
-    }
-}
-
 private struct NativeExpandedReadMediaParsed {
     let strippedText: String
     let images: [ImageExtractor.ExtractedImage]
-    let videos: [VideoExtractor.ExtractedVideo]
     let audio: [AudioExtractor.ExtractedAudio]
 }
 
 private enum NativeExpandedReadMediaParser {
     static func parse(_ output: String) -> NativeExpandedReadMediaParsed {
         let images = ImageExtractor.extract(from: output)
-        let videos = VideoExtractor.extract(from: output)
         let audio = AudioExtractor.extract(from: output)
 
         let strippedText: String
-        if images.isEmpty && videos.isEmpty && audio.isEmpty {
+        if images.isEmpty && audio.isEmpty {
             strippedText = output.trimmingCharacters(in: .whitespacesAndNewlines)
         } else {
             var text = output
-            let ranges = (images.map(\.range) + videos.map(\.range) + audio.map(\.range))
+            let ranges = (images.map(\.range) + audio.map(\.range))
                 .sorted { $0.lowerBound > $1.lowerBound }
             for range in ranges {
                 text.removeSubrange(range)
@@ -453,7 +328,6 @@ private enum NativeExpandedReadMediaParser {
         return NativeExpandedReadMediaParsed(
             strippedText: strippedText,
             images: images,
-            videos: videos,
             audio: audio
         )
     }

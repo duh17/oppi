@@ -10,6 +10,7 @@ import SwiftUI
 /// - JSON: pretty-printed with UIKit-backed colored keys/values
 /// - Images: inline preview with tap-to-zoom
 /// - Audio: inline playback rows for extracted data URIs
+/// - Video: placeholder only (preview intentionally unsupported)
 /// - Plain text: UIKit-backed monospaced with line numbers
 struct FileContentView: View {
     let content: String
@@ -77,7 +78,7 @@ struct FileContentView: View {
         case .audio:
             AudioOutputView(content: content)
         case .video:
-            VideoOutputView(content: content)
+            VideoFileView(content: content)
         case .pdf:
             PDFFileView(content: content)
         case .binary:

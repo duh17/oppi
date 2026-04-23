@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 /// - Code: syntax-highlighted source with line numbers
 /// - JSON: pretty-printed with colored tokens
 /// - Images: inline preview
-/// - Video/Audio: native AVPlayer with playback controls
+/// - Audio: native AVPlayer with playback controls
+/// - Video: placeholder only (preview intentionally unsupported)
 /// - PDF: PDFKit with scroll, zoom, and text selection
 /// - Plain text: monospaced with line numbers
 ///
@@ -66,9 +67,6 @@ struct FileBrowserContentView: View {
         if fileExtension == "svg" {
             return .image
         }
-        if MediaMimeType.videoMimeType(forPathExtension: fileExtension) != nil {
-            return .video
-        }
         if MediaMimeType.audioMimeType(forPathExtension: fileExtension) != nil {
             return .audio
         }
@@ -104,10 +102,14 @@ struct FileBrowserContentView: View {
                 .ignoresSafeArea(edges: .top)
             case .image(let data):
                 imageView(data)
-            case .video(let fileURL):
-                VideoFileBrowserView(fileURL: fileURL)
-            case .audio(let fileURL):
-                AudioFileBrowserView(fileURL: fileURL, fileName: fileName)
+            case .video:
+                ContentUnavailableView(
+                    "Video Preview Unavailable",
+                    systemImage: "film",
+                    description: Text("Oppi does not preview video files.")
+                )
+            case .audio(let url):
+                AudioBrowserView(url: url, fileName: fileName)
             case .pdf(let data):
                 PDFBrowserView(data: data)
             case .binary:
@@ -133,9 +135,6 @@ struct FileBrowserContentView: View {
         }
         .task { await loadContent() }
         .task { await checkNetworkCost() }
-        .onDisappear {
-            cleanupLoadedMediaFile()
-        }
     }
 
     // MARK: - Size Warning
@@ -231,19 +230,10 @@ struct FileBrowserContentView: View {
 
             switch category {
             case .video:
-                let fileURL = try await api.downloadWorkspaceFileToTemporaryURL(
-                    workspaceId: workspaceId,
-                    path: filePath,
-                    suggestedFilename: fileName
-                )
-                content = .video(fileURL)
+                content = .video
             case .audio:
-                let fileURL = try await api.downloadWorkspaceFileToTemporaryURL(
-                    workspaceId: workspaceId,
-                    path: filePath,
-                    suggestedFilename: fileName
-                )
-                content = .audio(fileURL)
+                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
+                content = .audio(url)
             case .image, .pdf, .text:
                 let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
                 switch category {
@@ -290,15 +280,6 @@ struct FileBrowserContentView: View {
         )
     }
 
-    private func cleanupLoadedMediaFile() {
-        switch content {
-        case .video(let fileURL), .audio(let fileURL):
-            try? FileManager.default.removeItem(at: fileURL)
-        default:
-            break
-        }
-    }
-
     // MARK: - Share
 
     /// Build shareable content from the current loaded phase.
@@ -331,35 +312,25 @@ struct FileBrowserContentView: View {
     }
 }
 
-// MARK: - Video View
-
-/// Video player backed by a locally downloaded temp file.
-/// This avoids buffering the full asset into memory before playback starts.
-private struct VideoFileBrowserView: View {
-    let fileURL: URL
-
-    var body: some View {
-        FileURLVideoPlayerView(
-            fileURL: fileURL,
-            height: 260,
-            autoplay: false,
-            loops: false,
-            cleanupOnDisappear: false
-        )
-        .padding()
-    }
-}
-
 // MARK: - Audio View
 
-private struct AudioFileBrowserView: View {
-    let fileURL: URL
+/// Audio player with playback controls, centered in the view.
+private struct AudioBrowserView: View {
+    let url: URL
     let fileName: String
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var currentTime: TimeInterval = 0
+    @State private var duration: TimeInterval = 0
+    @State private var timeObserver: Any?
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 24) {
+            Spacer()
+
+            // Album art placeholder
             Image(systemName: "waveform")
-                .font(.system(size: 40))
+                .font(.system(size: 60))
                 .foregroundStyle(.themeComment)
 
             Text(fileName)
@@ -368,14 +339,90 @@ private struct AudioFileBrowserView: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
 
-            FileURLAudioPlayerView(
-                fileURL: fileURL,
-                height: 120,
-                autoplay: false,
-                cleanupOnDisappear: false
-            )
+            // Progress bar
+            VStack(spacing: 4) {
+                ProgressView(value: duration > 0 ? currentTime / duration : 0)
+                    .tint(.themeSyntaxKeyword)
+
+                HStack {
+                    Text(formatTime(currentTime))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                    Spacer()
+                    Text(formatTime(duration))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .padding(.horizontal, 40)
+
+            // Play/pause button
+            Button {
+                togglePlayback()
+            } label: {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.themeSyntaxKeyword)
+            }
+
+            Spacer()
         }
         .padding()
+        .onAppear { setupPlayer() }
+        .onDisappear { teardownPlayer() }
+    }
+
+    private func setupPlayer() {
+        let avPlayer = AVPlayer(url: url)
+        player = avPlayer
+
+        // Observe playback time at 10Hz
+        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            currentTime = time.seconds
+            if let item = avPlayer.currentItem {
+                let dur = item.duration.seconds
+                if dur.isFinite { duration = dur }
+            }
+        }
+
+        // Observe when playback ends
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: avPlayer.currentItem,
+            queue: .main
+        ) { _ in
+            isPlaying = false
+        }
+    }
+
+    private func teardownPlayer() {
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
+        }
+        player?.pause()
+        player = nil
+    }
+
+    private func togglePlayback() {
+        guard let player else { return }
+        if isPlaying {
+            player.pause()
+        } else {
+            // If at end, seek to start
+            if currentTime >= duration - 0.1, duration > 0 {
+                player.seek(to: .zero)
+            }
+            player.play()
+        }
+        isPlaying.toggle()
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return "\(mins):\(String(format: "%02d", secs))"
     }
 }
 
@@ -430,7 +477,7 @@ private enum FileContentPhase: Equatable {
     case error(String)
     case text(String)
     case image(Data)
-    case video(URL)
+    case video
     case audio(URL)
     case pdf(Data)
     case binary
@@ -442,7 +489,7 @@ private enum FileContentPhase: Equatable {
         case (.error(let a), .error(let b)): a == b
         case (.text(let a), .text(let b)): a == b
         case (.image(let a), .image(let b)): a == b
-        case (.video(let a), .video(let b)): a == b
+        case (.video, .video): true
         case (.audio(let a), .audio(let b)): a == b
         case (.pdf(let a), .pdf(let b)): a == b
         case (.binary, .binary): true

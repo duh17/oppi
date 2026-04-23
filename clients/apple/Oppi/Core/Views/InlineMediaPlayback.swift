@@ -32,18 +32,6 @@ enum MediaMimeType {
         }
     }
 
-    static func videoMimeType(forPathExtension pathExtension: String?) -> String? {
-        switch (pathExtension ?? "").lowercased() {
-        case "mp4", "m4v": return "video/mp4"
-        case "mov": return "video/quicktime"
-        case "webm": return "video/webm"
-        case "avi": return "video/x-msvideo"
-        case "mkv": return "video/x-matroska"
-        case "ogv": return "video/ogg"
-        default: return nil
-        }
-    }
-
     static func audioMimeType(forPathExtension pathExtension: String?) -> String? {
         switch (pathExtension ?? "").lowercased() {
         case "mp3": return "audio/mpeg"
@@ -55,19 +43,6 @@ enum MediaMimeType {
         case "flac": return "audio/flac"
         case "opus": return "audio/opus"
         default: return nil
-        }
-    }
-
-    static func preferredFileExtension(forVideo mimeType: String?, fallbackPathExtension: String? = nil) -> String {
-        if let fallback = sanitizedPathExtension(fallbackPathExtension) {
-            return fallback
-        }
-
-        switch normalized(mimeType) {
-        case "video/quicktime": return "mov"
-        case "video/webm": return "webm"
-        case "video/x-msvideo": return "avi"
-        default: return "mp4"
         }
     }
 
@@ -404,96 +379,7 @@ struct DataImagePreviewView: View {
     }
 }
 
-// MARK: - Video Extraction + Playback
-
-struct VideoExtractor {
-    struct ExtractedVideo: Identifiable, Sendable {
-        let id = UUID()
-        let base64: String
-        let mimeType: String?
-        let range: Range<String.Index>
-    }
-
-    static func extract(from text: String) -> [ExtractedVideo] {
-        var videos: [ExtractedVideo] = []
-        let dataUriPattern = /data:video\/([a-zA-Z0-9+.-]+);base64,((?:[A-Za-z0-9+\/=]|[\r\n](?!data:))+)/
-        for match in text.matches(of: dataUriPattern) {
-            let mimeType = "video/" + String(match.output.1)
-            let base64 = String(match.output.2)
-                .replacingOccurrences(of: "\n", with: "")
-                .replacingOccurrences(of: "\r", with: "")
-            videos.append(ExtractedVideo(base64: base64, mimeType: mimeType, range: match.range))
-        }
-        return videos
-    }
-}
-
-struct Base64VideoBlobView: View {
-    let base64: String
-    let mimeType: String?
-    var height: CGFloat = 220
-
-    @State private var decodedData: Data?
-    @State private var decodeFailed = false
-
-    var body: some View {
-        Group {
-            if let decodedData {
-                DataVideoPlayerView(data: decodedData, mimeType: mimeType, height: height)
-            } else if decodeFailed {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: height)
-                    .overlay {
-                        VStack(spacing: 4) {
-                            Image(systemName: "video.slash")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                            Text("Video preview unavailable")
-                                .font(.caption2)
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: height)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-            }
-        }
-        .task(id: base64.prefix(32)) {
-            decodeFailed = false
-            decodedData = await Task.detached(priority: .userInitiated) {
-                Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
-            }.value
-            if decodedData == nil {
-                decodeFailed = true
-            }
-        }
-    }
-}
-
-private enum LocalMediaKind {
-    case video
-    case audio
-
-    var unavailableSymbol: String {
-        switch self {
-        case .video: "video.slash"
-        case .audio: "speaker.slash"
-        }
-    }
-
-    var unavailableLabel: String {
-        switch self {
-        case .video: "Video preview unavailable"
-        case .audio: "Audio preview unavailable"
-        }
-    }
-}
+// MARK: - Audio Playback
 
 @MainActor
 private final class LocalMediaPlaybackModel: ObservableObject {
@@ -505,7 +391,6 @@ private final class LocalMediaPlaybackModel: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var currentPlayerItem: AVPlayerItem?
     private var preparedKey: String?
-    private var cleanupFileURL: URL?
 
     func prepare(
         data: Data,
@@ -526,105 +411,65 @@ private final class LocalMediaPlaybackModel: ObservableObject {
             let fileURL = try await Task.detached(priority: .userInitiated) {
                 try MediaTempFileStore.fileURL(for: data, preferredExtension: preferredExtension)
             }.value
-            configurePlayer(
-                fileURL: fileURL,
-                autoplay: autoplay,
-                loops: loops,
-                muteByDefault: muteByDefault,
-                cleanupOnTeardown: false
+
+            let asset = AVURLAsset(url: fileURL)
+            let item = AVPlayerItem(
+                asset: asset,
+                automaticallyLoadedAssetKeys: [
+                    "playable",
+                    "tracks",
+                    "duration",
+                    "hasProtectedContent",
+                ]
             )
+            let player = AVPlayer(playerItem: item)
+            player.automaticallyWaitsToMinimizeStalling = true
+            player.isMuted = muteByDefault
+
+            currentPlayerItem = item
+            self.player = player
+
+            if loops {
+                endObserver = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: item,
+                    queue: .main
+                ) { _ in
+                    player.seek(to: .zero)
+                    if autoplay {
+                        player.play()
+                    }
+                }
+            }
+
+            statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                guard let self else { return }
+                Task { @MainActor in
+                    switch item.status {
+                    case .readyToPlay:
+                        self.isLoading = false
+                        self.errorMessage = nil
+                        if autoplay {
+                            player.play()
+                        }
+                    case .failed:
+                        self.isLoading = false
+                        self.errorMessage = item.error?.localizedDescription ?? "Media failed to load"
+                        player.pause()
+                        self.player = nil
+                    case .unknown:
+                        self.isLoading = true
+                    @unknown default:
+                        self.isLoading = false
+                        self.errorMessage = "Unsupported media state"
+                        self.player = nil
+                    }
+                }
+            }
         } catch {
             isLoading = false
             errorMessage = error.localizedDescription
             player = nil
-        }
-    }
-
-    func prepare(
-        fileURL: URL,
-        cacheKey: String,
-        autoplay: Bool,
-        loops: Bool,
-        muteByDefault: Bool,
-        cleanupOnTeardown: Bool
-    ) {
-        guard preparedKey != cacheKey else { return }
-
-        teardown(resetPreparedKey: false)
-        preparedKey = cacheKey
-        isLoading = true
-        errorMessage = nil
-
-        configurePlayer(
-            fileURL: fileURL,
-            autoplay: autoplay,
-            loops: loops,
-            muteByDefault: muteByDefault,
-            cleanupOnTeardown: cleanupOnTeardown
-        )
-    }
-
-    private func configurePlayer(
-        fileURL: URL,
-        autoplay: Bool,
-        loops: Bool,
-        muteByDefault: Bool,
-        cleanupOnTeardown: Bool
-    ) {
-        let asset = AVURLAsset(url: fileURL)
-        let item = AVPlayerItem(
-            asset: asset,
-            automaticallyLoadedAssetKeys: [
-                "playable",
-                "tracks",
-                "duration",
-                "hasProtectedContent",
-            ]
-        )
-        let player = AVPlayer(playerItem: item)
-        player.automaticallyWaitsToMinimizeStalling = true
-        player.isMuted = muteByDefault
-
-        currentPlayerItem = item
-        cleanupFileURL = cleanupOnTeardown ? fileURL : nil
-        self.player = player
-
-        if loops {
-            endObserver = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: item,
-                queue: .main
-            ) { _ in
-                player.seek(to: .zero)
-                if autoplay {
-                    player.play()
-                }
-            }
-        }
-
-        statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-            guard let self else { return }
-            Task { @MainActor in
-                switch item.status {
-                case .readyToPlay:
-                    self.isLoading = false
-                    self.errorMessage = nil
-                    if autoplay {
-                        player.play()
-                    }
-                case .failed:
-                    self.isLoading = false
-                    self.errorMessage = item.error?.localizedDescription ?? "Media failed to load"
-                    player.pause()
-                    self.player = nil
-                case .unknown:
-                    self.isLoading = true
-                @unknown default:
-                    self.isLoading = false
-                    self.errorMessage = "Unsupported media state"
-                    self.player = nil
-                }
-            }
         }
     }
 
@@ -641,11 +486,6 @@ private final class LocalMediaPlaybackModel: ObservableObject {
         player = nil
         currentPlayerItem = nil
         isLoading = false
-
-        if let cleanupFileURL {
-            try? FileManager.default.removeItem(at: cleanupFileURL)
-            self.cleanupFileURL = nil
-        }
 
         if resetPreparedKey {
             preparedKey = nil
@@ -672,14 +512,9 @@ private struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     }
 }
 
-private enum LocalMediaSource {
-    case data(Data, preferredExtension: String)
-    case fileURL(URL, cleanupOnTeardown: Bool)
-}
-
 private struct LocalMediaPlayerView: View {
-    let source: LocalMediaSource
-    let kind: LocalMediaKind
+    let data: Data
+    let preferredExtension: String
     var height: CGFloat
     var autoplay: Bool
     var loops: Bool
@@ -700,10 +535,10 @@ private struct LocalMediaPlayerView: View {
                     .frame(height: height)
                     .overlay {
                         VStack(spacing: 6) {
-                            Image(systemName: kind.unavailableSymbol)
+                            Image(systemName: "speaker.slash")
                                 .font(.caption)
                                 .foregroundStyle(.themeComment)
-                            Text(kind.unavailableLabel)
+                            Text("Audio preview unavailable")
                                 .font(.caption2)
                                 .foregroundStyle(.themeComment)
                             Text(errorMessage)
@@ -725,26 +560,14 @@ private struct LocalMediaPlayerView: View {
             }
         }
         .task(id: cacheKey) {
-            switch source {
-            case .data(let data, let preferredExtension):
-                await model.prepare(
-                    data: data,
-                    preferredExtension: preferredExtension,
-                    cacheKey: cacheKey,
-                    autoplay: autoplay,
-                    loops: loops,
-                    muteByDefault: muteByDefault
-                )
-            case .fileURL(let fileURL, let cleanupOnTeardown):
-                model.prepare(
-                    fileURL: fileURL,
-                    cacheKey: cacheKey,
-                    autoplay: autoplay,
-                    loops: loops,
-                    muteByDefault: muteByDefault,
-                    cleanupOnTeardown: cleanupOnTeardown
-                )
-            }
+            await model.prepare(
+                data: data,
+                preferredExtension: preferredExtension,
+                cacheKey: cacheKey,
+                autoplay: autoplay,
+                loops: loops,
+                muteByDefault: muteByDefault
+            )
         }
         .onDisappear {
             model.teardown()
@@ -752,58 +575,8 @@ private struct LocalMediaPlayerView: View {
     }
 
     private var cacheKey: String {
-        switch source {
-        case .data(let data, let preferredExtension):
-            let ext = preferredExtension.lowercased()
-            return "\(kind)-data-\(ext)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))"
-        case .fileURL(let fileURL, _):
-            return "\(kind)-url-\(fileURL.path)"
-        }
-    }
-}
-
-struct DataVideoPlayerView: View {
-    let data: Data
-    let mimeType: String?
-    var sourceFileExtension: String? = nil
-    var height: CGFloat = 220
-    var autoplay = true
-    var loops = true
-
-    var body: some View {
-        LocalMediaPlayerView(
-            source: .data(
-                data,
-                preferredExtension: MediaMimeType.preferredFileExtension(
-                    forVideo: mimeType,
-                    fallbackPathExtension: sourceFileExtension
-                )
-            ),
-            kind: .video,
-            height: height,
-            autoplay: autoplay,
-            loops: loops,
-            muteByDefault: false
-        )
-    }
-}
-
-struct FileURLVideoPlayerView: View {
-    let fileURL: URL
-    var height: CGFloat = 220
-    var autoplay = true
-    var loops = true
-    var cleanupOnDisappear = false
-
-    var body: some View {
-        LocalMediaPlayerView(
-            source: .fileURL(fileURL, cleanupOnTeardown: cleanupOnDisappear),
-            kind: .video,
-            height: height,
-            autoplay: autoplay,
-            loops: loops,
-            muteByDefault: false
-        )
+        let ext = preferredExtension.lowercased()
+        return "audio-\(ext)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))"
     }
 }
 
@@ -816,32 +589,11 @@ struct DataAudioPlayerView: View {
 
     var body: some View {
         LocalMediaPlayerView(
-            source: .data(
-                data,
-                preferredExtension: MediaMimeType.preferredFileExtension(
-                    forAudio: mimeType,
-                    fallbackPathExtension: sourceFileExtension
-                )
+            data: data,
+            preferredExtension: MediaMimeType.preferredFileExtension(
+                forAudio: mimeType,
+                fallbackPathExtension: sourceFileExtension
             ),
-            kind: .audio,
-            height: height,
-            autoplay: autoplay,
-            loops: false,
-            muteByDefault: false
-        )
-    }
-}
-
-struct FileURLAudioPlayerView: View {
-    let fileURL: URL
-    var height: CGFloat = 140
-    var autoplay = false
-    var cleanupOnDisappear = false
-
-    var body: some View {
-        LocalMediaPlayerView(
-            source: .fileURL(fileURL, cleanupOnTeardown: cleanupOnDisappear),
-            kind: .audio,
             height: height,
             autoplay: autoplay,
             loops: false,

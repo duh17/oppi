@@ -23,7 +23,6 @@ struct RemoteFileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
-    @State private var downloadedMediaURL: URL?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadedServerBaseURL: URL?
@@ -55,17 +54,8 @@ struct RemoteFileView: View {
     }
 
     private var isVideoPath: Bool {
-        if let pathType {
-            return pathType.conforms(to: .movie) || pathType.conforms(to: .video)
-        }
-        return MediaMimeType.videoMimeType(forPathExtension: pathExtension) != nil
-    }
-
-    private var isAudioPath: Bool {
-        if let pathType {
-            return pathType.conforms(to: .audio)
-        }
-        return MediaMimeType.audioMimeType(forPathExtension: pathExtension) != nil
+        guard let pathType else { return false }
+        return pathType.conforms(to: .movie) || pathType.conforms(to: .video)
     }
 
     private var currentWorkspaceHostMount: String? {
@@ -131,46 +121,13 @@ struct RemoteFileView: View {
                         }
                     }
                 }
-            } else if let downloadedMediaURL, isVideoPath {
+            } else if !isLoading && isVideoPath {
                 NavigationStack {
-                    FileURLVideoPlayerView(
-                        fileURL: downloadedMediaURL,
-                        height: 260,
-                        autoplay: false,
-                        loops: false,
-                        cleanupOnDisappear: false
+                    ContentUnavailableView(
+                        "Video Preview Unavailable",
+                        systemImage: "film",
+                        description: Text("Oppi does not preview video files.")
                     )
-                    .padding()
-                    .background(Color.themeBg)
-                    .navigationTitle(filename)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { dismiss() }
-                        }
-                    }
-                }
-            } else if let downloadedMediaURL, isAudioPath {
-                NavigationStack {
-                    VStack(spacing: 16) {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.themeComment)
-
-                        Text(filename)
-                            .font(.headline)
-                            .foregroundStyle(.themeFg)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-
-                        FileURLAudioPlayerView(
-                            fileURL: downloadedMediaURL,
-                            height: 120,
-                            autoplay: false,
-                            cleanupOnDisappear: false
-                        )
-                    }
-                    .padding()
                     .background(Color.themeBg)
                     .navigationTitle(filename)
                     .navigationBarTitleDisplayMode(.inline)
@@ -214,14 +171,6 @@ struct RemoteFileView: View {
         .task {
             await loadFile()
         }
-        .onDisappear {
-            cleanupDownloadedMediaFile()
-        }
-    }
-
-    private func cleanupDownloadedMediaFile() {
-        guard let downloadedMediaURL else { return }
-        try? FileManager.default.removeItem(at: downloadedMediaURL)
     }
 
     private func loadFile() async {
@@ -261,13 +210,8 @@ struct RemoteFileView: View {
                     path: path
                 )
                 self.imageData = data
-            } else if isVideoPath || isAudioPath {
-                let fileURL = try await api.downloadSessionFileToTemporaryURL(
-                    workspaceId: resolvedWorkspaceId,
-                    sessionId: sessionId,
-                    path: path
-                )
-                self.downloadedMediaURL = fileURL
+            } else if isVideoPath {
+                // Intentionally unsupported to keep the client code lean.
             } else {
                 let text = try await api.getSessionFile(
                     workspaceId: resolvedWorkspaceId,
