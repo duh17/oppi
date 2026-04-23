@@ -235,6 +235,100 @@ struct KeyboardSuppressionTests {
         #expect(!textView.isKeyboardSuppressed)
     }
 
+    // MARK: - Cursor Retention During Programmatic Updates
+
+    @Test("Programmatic transcript updates keep a trailing caret pinned to the end")
+    func programmaticUpdatesKeepTrailingCaretAtEnd() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+
+        textView.applyStyledText(
+            "Hello",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+        textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
+
+        textView.applyStyledText(
+            "Hello there",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 5,
+            volatileColor: .systemBlue
+        )
+
+        #expect(textView.selectedRange == NSRange(location: textView.textStorage.length, length: 0))
+    }
+
+    @Test("Programmatic transcript updates from empty input move the caret to the new end")
+    func programmaticUpdatesFromEmptyInputMoveCaretToEnd() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+
+        #expect(textView.selectedRange == NSRange(location: 0, length: 0))
+
+        textView.applyStyledText(
+            "Let’s try to find ways to fix this warning",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 7,
+            volatileColor: .systemBlue
+        )
+
+        #expect(textView.selectedRange == NSRange(location: textView.textStorage.length, length: 0))
+    }
+
+    @Test("Programmatic transcript updates preserve non-terminal selections")
+    func programmaticUpdatesPreserveNonTerminalSelections() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+
+        textView.applyStyledText(
+            "Hello there",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 0,
+            volatileColor: .systemBlue
+        )
+        textView.selectedRange = NSRange(location: 2, length: 0)
+
+        textView.applyStyledText(
+            "Hello there!",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 1,
+            volatileColor: .systemBlue
+        )
+
+        #expect(textView.selectedRange == NSRange(location: 2, length: 0))
+    }
+
+    @Test("Programmatic transcript updates tint the volatile suffix blue")
+    func programmaticUpdatesTintVolatileSuffix() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let baseColor = UIColor.label
+        let volatileColor = UIColor.systemBlue
+        let text = "Hello there"
+
+        textView.applyStyledText(
+            text,
+            font: font,
+            baseColor: baseColor,
+            volatileSuffixLength: 5,
+            volatileColor: volatileColor
+        )
+
+        let attributed = textView.attributedText ?? NSAttributedString()
+        let stableColor = attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
+        let volatileColorAtEnd = attributed.attribute(.foregroundColor, at: text.count - 1, effectiveRange: nil) as? UIColor
+
+        #expect(stableColor?.isEqual(baseColor) == true)
+        #expect(volatileColorAtEnd?.isEqual(volatileColor) == true)
+    }
+
     // MARK: - Keyboard Shortcuts
 
     @Test("Key commands expose Command+Enter and Alt+Enter")

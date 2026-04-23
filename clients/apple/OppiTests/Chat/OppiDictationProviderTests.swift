@@ -182,9 +182,9 @@ struct DictationEventMappingTests {
         #expect(event == .replaceFinalTranscript("Hello world"))
     }
 
-    @Test func finalMapsToReplaceFinalTranscript() {
+    @Test func finalMapsToSettledReplaceFinalTranscript() {
         let event = mapServerMessage(.dictationFinal(text: "Complete transcript"))
-        #expect(event == .replaceFinalTranscript("Complete transcript"))
+        #expect(event == .replaceFinalTranscript("Complete transcript", snap: true))
     }
 
     @Test func readyMapsToNil() {
@@ -206,7 +206,7 @@ struct DictationEventMappingTests {
         case .dictationResult(let text, let snap):
             return .replaceFinalTranscript(text, snap: snap)
         case .dictationFinal(let text):
-            return text.isEmpty ? nil : .replaceFinalTranscript(text)
+            return text.isEmpty ? nil : .replaceFinalTranscript(text, snap: true)
         case .dictationError(_, let fatal):
             return fatal ? nil : nil
         default:
@@ -626,7 +626,7 @@ struct OppiDictationSessionMessageListenerTests {
         #expect(events[0] == .replaceFinalTranscript("Snapped text", snap: true))
     }
 
-    @Test func identicalDictationFinalDoesNotYieldDuplicateTranscriptEvent() async {
+    @Test func identicalDictationFinalStillYieldsSettledTranscriptEvent() async {
         let connection = ServerConnection()
         let (messageStream, messageCont) = AsyncStream.makeStream(of: ServerMessage.self)
         let session = OppiDictationSession(
@@ -649,11 +649,12 @@ struct OppiDictationSessionMessageListenerTests {
             if case .replaceFinalTranscript = $0 { return true }
             return false
         }
-        #expect(transcriptEvents.count == 1)
-        #expect(transcriptEvents.first == .replaceFinalTranscript("Hello world"))
+        #expect(transcriptEvents.count == 2)
+        #expect(transcriptEvents[0] == .replaceFinalTranscript("Hello world"))
+        #expect(transcriptEvents[1] == .replaceFinalTranscript("Hello world", snap: true))
     }
 
-    @Test func dictationFinalYieldsTranscriptAndFinishes() async {
+    @Test func dictationFinalYieldsSettledTranscriptAndFinishes() async {
         let connection = ServerConnection()
         let (messageStream, messageCont) = AsyncStream.makeStream(of: ServerMessage.self)
         let session = OppiDictationSession(
@@ -670,8 +671,8 @@ struct OppiDictationSessionMessageListenerTests {
         messageCont.yield(.dictationFinal(text: "Final transcript"))
 
         let (events, error) = await collectTask.value
-        // Should have received the final transcript
-        #expect(events.contains(.replaceFinalTranscript("Final transcript")))
+        // Should have received the settled final transcript
+        #expect(events.contains(.replaceFinalTranscript("Final transcript", snap: true)))
         // Stream should finish cleanly (no error)
         #expect(error == nil)
     }
