@@ -199,9 +199,15 @@ final class SessionStore {
 
     private func mergePreservingContext(existing: Session, incoming: Session) -> Session {
         var merged = incoming
-        if merged.contextTokens == nil {
+
+        if let existingTokens = existing.contextTokens, existingTokens > 0 {
+            if merged.contextTokens == nil || merged.contextTokens == 0 {
+                merged.contextTokens = existingTokens
+            }
+        } else if merged.contextTokens == nil {
             merged.contextTokens = existing.contextTokens
         }
+
         if merged.contextWindow == nil {
             merged.contextWindow = existing.contextWindow
         }
@@ -245,7 +251,15 @@ final class SessionStore {
             return now.timeIntervalSince(local.createdAt) <= preserveRecentWindow
         }
 
-        var merged = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
+        let currentById = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        var merged: [String: Session] = [:]
+        for remote in snapshot {
+            if let existing = currentById[remote.id] {
+                merged[remote.id] = mergePreservingContext(existing: existing, incoming: remote)
+            } else {
+                merged[remote.id] = remote
+            }
+        }
         for local in preservedLocals {
             merged[local.id] = local
         }

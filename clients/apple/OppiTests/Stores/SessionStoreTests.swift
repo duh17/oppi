@@ -88,6 +88,24 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextWindow == 200_000)
     }
 
+    @Test func upsertPreservesLastNonZeroContextUsageWhenIncomingUpdateReportsZero() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var initial = makeTestSession(id: "s1", status: .busy, model: "openai-codex/gpt-5.4")
+        initial.contextTokens = 142_198
+        initial.contextWindow = 272_000
+        store.upsert(initial)
+
+        var stopped = makeTestSession(id: "s1", status: .stopped, model: "openai-codex/gpt-5.4")
+        stopped.contextTokens = 0
+        stopped.contextWindow = 272_000
+        store.upsert(stopped)
+
+        #expect(store.session(id: "s1")?.status == .stopped)
+        #expect(store.session(id: "s1")?.contextTokens == 142_198)
+    }
+
     // MARK: - Remove
 
     @Test func removeClearsActiveSessionId() {
@@ -163,6 +181,23 @@ struct SessionStorePartitioningTests {
 
         let ids = Set(store.sessions.map(\.id))
         #expect(ids.contains("recent"))
+    }
+
+    @Test func snapshotPreservesLastNonZeroContextUsageWhenServerSnapshotReportsZero() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var local = makeTestSession(id: "s1", status: .stopped, model: "openai-codex/gpt-5.4")
+        local.contextTokens = 142_198
+        local.contextWindow = 272_000
+        store.upsert(local)
+
+        var remote = makeTestSession(id: "s1", status: .stopped, model: "openai-codex/gpt-5.4")
+        remote.contextTokens = 0
+        remote.contextWindow = 272_000
+        store.applyServerSnapshot([remote])
+
+        #expect(store.session(id: "s1")?.contextTokens == 142_198)
     }
 
     @Test func snapshotDropsOldStopped() {
