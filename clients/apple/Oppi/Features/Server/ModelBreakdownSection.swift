@@ -20,12 +20,14 @@ private struct AggregatedModel: Identifiable {
 
     var id: String { displayName }
 
-    /// Cache read hit rate: cacheRead / (cacheRead + uncachedInput).
-    /// Excludes output and cache-write tokens to better reflect prompt-cache effectiveness.
-    var cacheHitRate: Double? {
-        let denominator = cacheRead + inputTokens
-        guard cacheRead > 0, denominator > 0 else { return nil }
-        return Double(cacheRead) / Double(denominator)
+    /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
+    /// Excludes output tokens, but counts cache writes against the total.
+    var cacheRate: Double? {
+        computePromptCacheRate(
+            cacheRead: cacheRead,
+            inputTokens: inputTokens,
+            cacheWrite: cacheWrite
+        )
     }
 }
 
@@ -231,8 +233,8 @@ struct ModelBreakdownSection: View {
                     // Indent to align with model name
                     Color.clear.frame(width: 8)
 
-                    if let hitRate = item.cacheHitRate {
-                        Text("cache \(Int((hitRate * 100).rounded()))%")
+                    if let cacheRate = item.cacheRate {
+                        Text("cache \(Int((cacheRate * 100).rounded()))%")
                             .foregroundStyle(.themeGreen)
                     }
 

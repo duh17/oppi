@@ -67,6 +67,27 @@ struct StatsModelBreakdown: Codable {
     let share: Double
 }
 
+func computePromptCacheRate(cacheRead: Int, inputTokens: Int, cacheWrite: Int) -> Double? {
+    let denominator = cacheRead + inputTokens + cacheWrite
+    guard cacheRead > 0, denominator > 0 else { return nil }
+    return Double(cacheRead) / Double(denominator)
+}
+
+extension StatsModelBreakdown {
+    /// Prompt-cache effectiveness on the input side.
+    ///
+    /// Uses cacheRead / (cacheRead + uncachedInput + cacheWrite).
+    /// Output tokens are excluded; cache writes are included because they are
+    /// paid prompt-side work and should count against effectiveness.
+    var promptCacheRate: Double? {
+        computePromptCacheRate(
+            cacheRead: cacheRead ?? 0,
+            inputTokens: inputTokens,
+            cacheWrite: cacheWrite ?? 0
+        )
+    }
+}
+
 // MARK: - Workspace breakdown
 
 struct StatsWorkspaceBreakdown: Codable {

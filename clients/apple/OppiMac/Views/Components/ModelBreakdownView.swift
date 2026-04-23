@@ -17,10 +17,12 @@ private struct AggregatedModel: Identifiable {
 
     var id: String { displayName }
 
-    var cacheHitRate: Double? {
-        let denominator = cacheRead + inputTokens
-        guard cacheRead > 0, denominator > 0 else { return nil }
-        return Double(cacheRead) / Double(denominator)
+    var cacheRate: Double? {
+        computePromptCacheRate(
+            cacheRead: cacheRead,
+            inputTokens: inputTokens,
+            cacheWrite: cacheWrite
+        )
     }
 }
 
@@ -172,8 +174,8 @@ struct ModelBreakdownView: View {
                 HStack(spacing: 6) {
                     Color.clear.frame(width: 7)
 
-                    if let hitRate = item.cacheHitRate {
-                        Text("cache \(Int((hitRate * 100).rounded()))%")
+                    if let cacheRate = item.cacheRate {
+                        Text("cache \(Int((cacheRate * 100).rounded()))%")
                             .foregroundStyle(.green)
                     }
 

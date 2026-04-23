@@ -736,6 +736,37 @@ struct ServerStatsTests {
         #expect(breakdown.cacheWrite == 0)
     }
 
+    @Test func promptCacheRateIncludesCacheWriteInDenominator() {
+        let breakdown = StatsModelBreakdown(
+            model: "anthropic/claude-opus-4-6",
+            sessions: 1,
+            cost: 1,
+            tokens: 10_000,
+            inputTokens: 20,
+            cacheRead: 80,
+            cacheWrite: 20,
+            share: 1
+        )
+
+        let expected = 80.0 / 120.0
+        #expect(abs((breakdown.promptCacheRate ?? 0) - expected) < 0.000_001)
+    }
+
+    @Test func promptCacheRateReturnsNilWithoutCacheReads() {
+        let breakdown = StatsModelBreakdown(
+            model: "anthropic/claude-opus-4-6",
+            sessions: 1,
+            cost: 1,
+            tokens: 10_000,
+            inputTokens: 20,
+            cacheRead: 0,
+            cacheWrite: 20,
+            share: 1
+        )
+
+        #expect(breakdown.promptCacheRate == nil)
+    }
+
     // MARK: - ServerInfo Presentation Helpers
 
     @Test func uptimeLabelFormatsDays() {
