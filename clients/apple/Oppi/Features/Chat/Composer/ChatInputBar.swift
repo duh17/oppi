@@ -51,6 +51,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var inlineVisualLineCount = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Text in the field before voice recording started.
     /// Used to prepend existing text when streaming transcription.
@@ -114,7 +115,8 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var sendActionForegroundColor: Color {
-        (canSend || isSending) ? .white : .themeComment
+        guard canSend || isSending else { return .themeComment }
+        return ThemeColorContrast.foreground(for: sendActionFillColor)
     }
 
     private var autocompleteContext: ComposerAutocompleteContext {
@@ -260,7 +262,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 .padding(.horizontal, composerHorizontalPadding)
                 .padding(.top, 8)
                 .padding(.bottom, 4)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(ThemeMotion.move(edge: .top, reduceMotion: reduceMotion))
             }
 
             // Image strip inside capsule
@@ -349,7 +351,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 .padding(.horizontal, composerHorizontalPadding)
                 .padding(.top, 2)
                 .padding(.bottom, 7)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(ThemeMotion.move(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
         .frame(minHeight: 38)
@@ -362,7 +364,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     .padding(.trailing, composerHorizontalPadding)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: showsComposerActionRow)
+        .animation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion), value: showsComposerActionRow)
     }
 
     private var attachButton: some View {
@@ -453,8 +455,8 @@ struct ChatInputBar<ActionRow: View>: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.caption)
-                                .foregroundStyle(.white)
-                                .background(Circle().fill(.black.opacity(0.6)))
+                                .foregroundStyle(.themeFg)
+                                .background(Circle().fill(.themeScrim))
                         }
                         .offset(x: 4, y: -4)
                     }
@@ -507,7 +509,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 if isSending {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.white)
+                        .tint(sendActionForegroundColor)
                 } else {
                     Image(systemName: "arrow.up")
                         .font(.appButton)
@@ -592,19 +594,22 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var stopActionButton: some View {
-        Button(action: onStop) {
+        let fillColor = isStopping ? Color.themeOrange : Color.themeRed
+        let foregroundColor = ThemeColorContrast.foreground(for: fillColor)
+
+        return Button(action: onStop) {
             ZStack {
-                Circle().fill(isStopping ? Color.themeOrange : Color.themeRed)
-                Circle().stroke((isStopping ? Color.themeOrange : Color.themeRed).opacity(0.9), lineWidth: 1)
+                Circle().fill(fillColor)
+                Circle().stroke(fillColor.opacity(0.9), lineWidth: 1)
 
                 if isStopping {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.white)
+                        .tint(foregroundColor)
                 } else {
                     Image(systemName: "stop.fill")
                         .font(.appActionBold)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(foregroundColor)
                 }
             }
             .frame(width: actionVisualDiameter + 2, height: actionVisualDiameter + 2)

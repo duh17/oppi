@@ -5,6 +5,7 @@ import SwiftUI
 struct ChatEmptyState: View {
     var sessionId: String = ""
     @State private var visible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -30,7 +31,7 @@ struct ChatEmptyState: View {
             // Delay appearance to avoid flash on existing sessions
             // that briefly have empty items while loading.
             try? await Task.sleep(for: .milliseconds(300))
-            withAnimation(.easeIn(duration: 0.3)) {
+            withAnimation(ThemeMotion.easeIn(duration: 0.3, reduceMotion: reduceMotion)) {
                 visible = true
             }
         }
@@ -45,6 +46,7 @@ struct JumpToBottomHintButton: View {
     let onTap: () -> Void
 
     @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var providerColor: Color {
         ProviderColor.color(for: modelId, palette: ThemeRuntimeState.currentPalette())
@@ -59,7 +61,7 @@ struct JumpToBottomHintButton: View {
                     idleContent
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: isBusy)
+            .animation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion), value: isBusy)
         }
         .buttonStyle(.plain)
         .contentShape(Circle())
@@ -91,12 +93,12 @@ struct JumpToBottomHintButton: View {
             .overlay(alignment: .bottomTrailing) {
                 Image(systemName: "arrow.down")
                     .font(.system(size: 7, weight: .black))
-                    .foregroundStyle(.themeBg)
+                    .foregroundStyle(ThemeColorContrast.foreground(for: providerColor))
                     .frame(width: 14, height: 14)
                     .background(providerColor, in: Circle())
                     .offset(x: 2, y: 2)
             }
-            .transition(.scale(scale: 0.8).combined(with: .opacity))
+            .transition(ThemeMotion.scaleFade(scale: 0.8, reduceMotion: reduceMotion))
     }
 
     // MARK: - Idle State (plain arrow)
@@ -107,11 +109,15 @@ struct JumpToBottomHintButton: View {
             .foregroundStyle(.themeFg)
             .frame(width: 34, height: 34)
             .background(.ultraThinMaterial, in: Circle())
-            .transition(.scale(scale: 0.8).combined(with: .opacity))
+            .transition(ThemeMotion.scaleFade(scale: 0.8, reduceMotion: reduceMotion))
     }
 
     private func startPulse() {
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+        guard !reduceMotion else {
+            pulse = false
+            return
+        }
+        withAnimation(ThemeMotion.pulse(reduceMotion: reduceMotion)) {
             pulse = true
         }
     }
@@ -166,7 +172,7 @@ struct SessionEndedFooter: View {
                         if isResuming {
                             ProgressView()
                                 .controlSize(.small)
-                                .tint(.themeBg)
+                                .tint(.themeOnGreen)
                         } else {
                             Image(systemName: "play.fill")
                                 .font(.subheadline)
@@ -177,7 +183,7 @@ struct SessionEndedFooter: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
                     .background(Color.themeGreen)
-                    .foregroundStyle(Color.themeBg)
+                    .foregroundStyle(Color.themeOnGreen)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .disabled(isResuming)

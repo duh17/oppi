@@ -54,7 +54,7 @@ struct ShareSessionRedactionSheet: View {
 
                     if let errorMessage, !errorMessage.isEmpty {
                         Text(errorMessage)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                             .font(.footnote)
                     }
 
@@ -90,7 +90,7 @@ struct ShareSessionRedactionSheet: View {
                         if preflight?.blocked == true {
                             Text("Sharing is currently blocked because residual secrets were detected.")
                                 .font(.footnote)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(.themeOrange)
                         }
                     }
 

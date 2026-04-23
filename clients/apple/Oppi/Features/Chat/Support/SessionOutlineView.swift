@@ -29,6 +29,7 @@ struct SessionOutlineView: View {
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var outlineTab: OutlineTab = .outline
     @State private var outlineLayout: OutlineLayout = .timeline
@@ -716,7 +717,7 @@ struct SessionOutlineView: View {
                     HStack(spacing: 8) {
                         ForEach(OutlineFilter.allCases, id: \.self) { f in
                             Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
+                                withAnimation(ThemeMotion.easeInOut(duration: 0.15, reduceMotion: reduceMotion)) {
                                     filter = f
                                 }
                             } label: {

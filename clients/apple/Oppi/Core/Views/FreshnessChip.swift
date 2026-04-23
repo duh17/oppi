@@ -48,7 +48,7 @@ struct FreshnessChip: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(.quaternary.opacity(0.45), in: Capsule())
+        .background(.themeChipSubtleBg, in: Capsule())
         .accessibilityLabel("\(state.accessibilityText). \(label)")
     }
 }

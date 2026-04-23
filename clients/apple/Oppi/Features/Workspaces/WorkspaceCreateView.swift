@@ -29,6 +29,7 @@ struct WorkspaceCreateView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var step: CreateStep = .pickProject
     @State private var directories: [HostDirectory] = []
@@ -249,7 +250,7 @@ struct WorkspaceCreateView: View {
                             .foregroundStyle(.themeComment)
                         Spacer()
                         Button("Change") {
-                            withAnimation { step = .pickProject }
+                            withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .pickProject }
                         }
                         .font(.caption)
                     }
@@ -318,7 +319,7 @@ struct WorkspaceCreateView: View {
             } else {
                 Section {
                     Button("Show advanced options") {
-                        withAnimation { showAdvanced = true }
+                        withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { showAdvanced = true }
                     }
                     .font(.subheadline)
                     .foregroundStyle(.themeBlue)
@@ -360,13 +361,13 @@ struct WorkspaceCreateView: View {
         hostMount = dir.path
         gitStatusEnabled = dir.isGitRepo
         requestDefaultSkillSelectionIfNeeded()
-        withAnimation { step = .configure }
+        withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func selectManual() {
         hostMount = ""
         requestDefaultSkillSelectionIfNeeded()
-        withAnimation { step = .configure }
+        withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func selectBlank() {
@@ -374,7 +375,7 @@ struct WorkspaceCreateView: View {
         hostMount = ""
         gitStatusEnabled = false
         requestDefaultSkillSelectionIfNeeded()
-        withAnimation { step = .configure }
+        withAnimation(ThemeMotion.standard(reduceMotion: reduceMotion)) { step = .configure }
     }
 
     private func requestDefaultSkillSelectionIfNeeded() {

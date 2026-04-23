@@ -289,8 +289,8 @@ struct ExpandedComposerView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.caption)
-                                .foregroundStyle(.white)
-                                .background(Circle().fill(.black.opacity(0.6)))
+                                .foregroundStyle(.themeFg)
+                                .background(Circle().fill(.themeScrim))
                         }
                         .offset(x: 4, y: -4)
                     }

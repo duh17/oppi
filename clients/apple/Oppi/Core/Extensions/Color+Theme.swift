@@ -1,4 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Static theme color accessors resolved from the active runtime theme.
 ///
@@ -24,6 +29,16 @@ extension Color {
     static var themePurple: Color { palette.purple }
     static var themeRed: Color { palette.red }
     static var themeYellow: Color { palette.yellow }
+
+    // MARK: - Semantic UI Helpers
+
+    static var themeChipSubtleBg: Color { palette.comment.opacity(0.16) }
+    static var themeScrim: Color { palette.bgDark.opacity(0.82) }
+    static var themeOnBlue: Color { ThemeColorContrast.foreground(for: palette.blue) }
+    static var themeOnGreen: Color { ThemeColorContrast.foreground(for: palette.green) }
+    static var themeOnOrange: Color { ThemeColorContrast.foreground(for: palette.orange) }
+    static var themeOnPurple: Color { ThemeColorContrast.foreground(for: palette.purple) }
+    static var themeOnRed: Color { ThemeColorContrast.foreground(for: palette.red) }
 
     // MARK: - User Message
 
@@ -85,6 +100,14 @@ extension ShapeStyle where Self == Color {
     static var themeRed: Color { Color.themeRed }
     static var themeYellow: Color { Color.themeYellow }
 
+    static var themeChipSubtleBg: Color { Color.themeChipSubtleBg }
+    static var themeScrim: Color { Color.themeScrim }
+    static var themeOnBlue: Color { Color.themeOnBlue }
+    static var themeOnGreen: Color { Color.themeOnGreen }
+    static var themeOnOrange: Color { Color.themeOnOrange }
+    static var themeOnPurple: Color { Color.themeOnPurple }
+    static var themeOnRed: Color { Color.themeOnRed }
+
     // Semantic
     static var themeSyntaxComment: Color { Color.themeSyntaxComment }
     static var themeSyntaxKeyword: Color { Color.themeSyntaxKeyword }
@@ -126,5 +149,96 @@ extension View {
     func themedScrollSurface() -> some View {
         self
             .background(Color.themeBg.ignoresSafeArea())
+    }
+}
+
+// MARK: - Theme Contrast Helpers
+
+enum ThemeColorContrast {
+    static func foreground(for fill: Color) -> Color {
+        guard let luminance = relativeLuminance(of: fill) else {
+            return .themeFg
+        }
+        return luminance > 0.55 ? .themeBgDark : .themeFg
+    }
+
+    private static func relativeLuminance(of color: Color) -> CGFloat? {
+        guard let (red, green, blue) = rgbComponents(for: color) else {
+            return nil
+        }
+        return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
+    }
+
+    private static func linearize(_ component: CGFloat) -> CGFloat {
+        if component <= 0.03928 {
+            return component / 12.92
+        }
+        return pow((component + 0.055) / 1.055, 2.4)
+    }
+
+    private static func rgbComponents(for color: Color) -> (CGFloat, CGFloat, CGFloat)? {
+        #if canImport(UIKit)
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+        return (red, green, blue)
+        #elseif canImport(AppKit)
+        let nsColor = NSColor(color)
+        guard let converted = nsColor.usingColorSpace(.sRGB) else {
+            return nil
+        }
+        return (converted.redComponent, converted.greenComponent, converted.blueComponent)
+        #else
+        return nil
+        #endif
+    }
+}
+
+// MARK: - Motion Helpers
+
+enum ThemeMotion {
+    static func animation(_ animation: Animation, reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : animation
+    }
+
+    static func standard(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .default
+    }
+
+    static func easeIn(duration: Double, reduceMotion: Bool) -> Animation? {
+        animation(.easeIn(duration: duration), reduceMotion: reduceMotion)
+    }
+
+    static func easeInOut(duration: Double, reduceMotion: Bool) -> Animation? {
+        animation(.easeInOut(duration: duration), reduceMotion: reduceMotion)
+    }
+
+    static func pulse(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
+    }
+
+    static func move(edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
+    }
+
+    static func scaleFade(
+        scale: CGFloat = 0.96,
+        anchor: UnitPoint = .center,
+        reduceMotion: Bool
+    ) -> AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: scale, anchor: anchor))
+    }
+
+    static func directionalPage(forward: Bool, reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: forward ? .trailing : .leading),
+            removal: .move(edge: forward ? .leading : .trailing)
+        )
     }
 }

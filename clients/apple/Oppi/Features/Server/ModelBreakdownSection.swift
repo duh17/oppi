@@ -39,6 +39,7 @@ struct ModelBreakdownSection: View {
     let breakdown: [StatsModelBreakdown]
 
     @State private var showAll = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Aggregation
 
@@ -166,7 +167,7 @@ struct ModelBreakdownSection: View {
 
             if !showAll, hiddenCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
                         showAll = true
                     }
                 } label: {
@@ -177,7 +178,7 @@ struct ModelBreakdownSection: View {
                 .padding(.top, 2)
             } else if showAll, hiddenCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
                         showAll = false
                     }
                 } label: {

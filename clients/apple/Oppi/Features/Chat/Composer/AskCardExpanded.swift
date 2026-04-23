@@ -23,6 +23,7 @@ struct AskCardExpanded: View {
     @State private var customTexts: [String: String] = [:]
     @FocusState private var focusedQuestionId: String?
     @State private var navigatingForward: Bool = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Question currently receiving custom dictation text.
     @State private var dictationQuestionId: String?
@@ -72,10 +73,7 @@ struct AskCardExpanded: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .id(currentPage)
-                .transition(.asymmetric(
-                    insertion: .move(edge: navigatingForward ? .trailing : .leading),
-                    removal: .move(edge: navigatingForward ? .leading : .trailing)
-                ))
+                .transition(ThemeMotion.directionalPage(forward: navigatingForward, reduceMotion: reduceMotion))
             }
             .clipped()
             .frame(maxHeight: .infinity)
@@ -355,7 +353,7 @@ struct AskCardExpanded: View {
                         } label: {
                             Text("Send")
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.themeOnBlue)
                                 .padding(.horizontal, 24)
                                 .padding(.vertical, 10)
                                 .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
@@ -373,7 +371,7 @@ struct AskCardExpanded: View {
                     } label: {
                         Text("Send")
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.themeOnBlue)
                             .padding(.horizontal, 24)
                             .padding(.vertical, 10)
                             .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
@@ -428,7 +426,7 @@ struct AskCardExpanded: View {
         focusedQuestionId = nil
         commitCustomTextIfNeeded()
         navigatingForward = true
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
             if currentPage < totalPages - 1 {
                 currentPage += 1
             }
@@ -438,7 +436,7 @@ struct AskCardExpanded: View {
     private func navigateBackWithoutDictation() {
         focusedQuestionId = nil
         navigatingForward = false
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
             if currentPage > 0 {
                 currentPage -= 1
             }

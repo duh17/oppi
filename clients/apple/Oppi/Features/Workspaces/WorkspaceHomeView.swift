@@ -33,6 +33,7 @@ struct WorkspaceHomeView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var createSheetContext: WorkspaceCreateSheetContext?
     @State private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
@@ -271,7 +272,7 @@ struct WorkspaceHomeView: View {
     }
 
     private func toggleServerExpansion(for serverId: String) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
             if collapsedServerIds.contains(serverId) {
                 collapsedServerIds.remove(serverId)
             } else {
@@ -351,6 +352,7 @@ private struct ServerSectionHeader: View {
     let freshnessState: FreshnessState
     let freshnessLabel: String
     let isCollapsed: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
@@ -358,7 +360,7 @@ private struct ServerSectionHeader: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.themeComment)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                .animation(.easeInOut(duration: 0.2), value: isCollapsed)
+                .animation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion), value: isCollapsed)
 
             HStack(spacing: 6) {
                 RuntimeBadge(

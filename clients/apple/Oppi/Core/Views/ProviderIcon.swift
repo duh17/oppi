@@ -53,23 +53,14 @@ struct ProviderIcon: View {
 
     /// Provider color mapped onto the active theme palette.
     static func brandColor(for provider: String) -> Color {
-        switch canonicalProviderKey(for: provider) {
-        case "anthropic":
-            return .themeOrange
-        case "openai", "azure-openai-responses", "github-copilot":
-            return .themeGreen
-        case "google", "google-vertex":
-            return .themeBlue
-        case "openrouter", "vercel-ai-gateway", "opencode":
-            return .themeCyan
-        case "amazon-bedrock":
-            return .themeYellow
-        case "lmstudio", "omlx", "ollama", "xai", "groq", "mistral", "cerebras", "huggingface",
-             "kimi-coding", "minimax", "zai", "fireworks":
-            return .themePurple
-        default:
+        let canonical = canonicalProviderKey(for: provider)
+        if knownDisplayNames[canonical] == nil {
             return .themeComment
         }
+        return ProviderColor.color(
+            forProvider: canonical,
+            palette: ThemeRuntimeState.currentPalette()
+        )
     }
 
     /// Single-character monogram mark for compact rendering.

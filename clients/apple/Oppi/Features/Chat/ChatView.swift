@@ -31,6 +31,7 @@ struct ChatView: View {
     @Environment(AppNavigation.self) private var appNavigation
     @Environment(PiQuickActionStore.self) private var piQuickActionStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
@@ -255,10 +256,10 @@ struct ChatView: View {
                     )
                     .padding(.trailing, 27)
                     .padding(.bottom, footerHeight + 10)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+                    .transition(ThemeMotion.scaleFade(scale: 0.96, anchor: .bottomTrailing, reduceMotion: reduceMotion))
                 }
             }
-            .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
+            .animation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion), value: scrollController.isJumpToBottomHintVisible)
             .onChange(of: scrollController.isJumpToBottomHintVisible) { _, visible in
                 if visible { contextBarCollapseToken &+= 1 }
             }

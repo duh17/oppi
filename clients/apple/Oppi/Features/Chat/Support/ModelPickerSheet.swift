@@ -11,6 +11,7 @@ struct ModelPickerSheet: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ChatSessionState.self) private var chatState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
@@ -171,7 +172,7 @@ struct ModelPickerSheet: View {
 
         return Button {
             guard !isSearchActive else { return }
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion)) {
                 toggleProviderCollapse(provider)
             }
         } label: {

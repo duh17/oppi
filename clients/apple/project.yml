@@ -282,6 +282,8 @@ targets:
         type: group
       - path: Shared
         type: group
+        excludes:
+          - "ModelColorHelpers.swift"
     entitlements:
       path: OppiActivityExtension/OppiActivityExtension.entitlements
       properties:
@@ -307,6 +309,8 @@ targets:
         type: group
       - path: Shared
         type: group
+        excludes:
+          - "ModelColorHelpers.swift"
     entitlements:
       path: OppiControlWidget/OppiControlWidget.entitlements
       properties:

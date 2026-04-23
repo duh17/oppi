@@ -71,6 +71,7 @@ struct AskCard: View {
     var voiceInputManager: VoiceInputManager? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var currentPage: Int = 0
     @State private var answers: [String: AskAnswer] = [:]
@@ -222,7 +223,7 @@ struct AskCard: View {
                 } else if !isLastQuestionPage {
                     Task {
                         try? await Task.sleep(for: autoAdvanceDelay)
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                             advanceToNextPage()
                         }
                     }
@@ -305,7 +306,7 @@ struct AskCard: View {
                 } label: {
                     Text("Send")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.themeOnBlue)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(.themeBlue, in: RoundedRectangle(cornerRadius: 8))
@@ -327,7 +328,7 @@ struct AskCard: View {
                             .fill(index == currentPage ? Color.themeBlue : Color.themeComment.opacity(0.3))
                             .frame(width: 6, height: 6)
                             .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
+                                withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
                                     currentPage = index
                                 }
                             }
@@ -346,7 +347,7 @@ struct AskCard: View {
 
     private func confirmMultiSelect(for question: AskQuestion) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
             advanceToNextPage()
         }
     }
@@ -363,7 +364,7 @@ struct AskCard: View {
             // Last question ignored — submit immediately with this answer omitted.
             onSubmit(answers)
         } else {
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                 advanceToNextPage()
             }
         }
