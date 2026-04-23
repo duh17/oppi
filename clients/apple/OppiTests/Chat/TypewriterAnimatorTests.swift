@@ -43,22 +43,32 @@ struct TypewriterAnimatorTests {
 
     // MARK: - Delta Computation
 
-    @Test func secondUpdateAnimatesOnlyDelta() {
+    @Test func smallSecondUpdateSnapsDelta() {
         let animator = TypewriterAnimator()
 
-        // First update: "Hello"
         animator.update(fullText: "Hello")
         animator.commitCurrentAnimation()
         #expect(animator.displayText == "Hello")
 
-        // Second update: "Hello world" — common prefix is "Hello", delta is " world"
+        // Second update adds only one short word — should snap to keep dictation immediate.
         animator.update(fullText: "Hello world")
+        #expect(!animator.isAnimating)
+        #expect(animator.displayText == "Hello world")
+    }
+
+    @Test func largeSecondUpdateAnimatesOnlyDelta() {
+        let animator = TypewriterAnimator()
+
+        animator.update(fullText: "Hello")
+        animator.commitCurrentAnimation()
+
+        let updated = "Hello beautiful world"
+        animator.update(fullText: updated)
         #expect(animator.isAnimating)
-        // Display should show the common prefix immediately
         #expect(animator.displayText == "Hello")
 
         animator.commitCurrentAnimation()
-        #expect(animator.displayText == "Hello world")
+        #expect(animator.displayText == updated)
     }
 
     @Test func shorterTextSnapsImmediately() {
@@ -108,10 +118,10 @@ struct TypewriterAnimatorTests {
         animator.commitCurrentAnimation()
         #expect(animator.displayText == "Hello.")
 
-        // Period removed, new text appended — should animate, NOT snap
+        // Period removed, new text appended — should be treated as append,
+        // but small deltas can still snap immediately.
         animator.update(fullText: "Hello world.")
-        #expect(animator.isAnimating, "Period-merge should animate, not snap")
-        animator.commitCurrentAnimation()
+        #expect(!animator.isAnimating, "Short period-merge deltas should snap")
         #expect(animator.displayText == "Hello world.")
     }
 
@@ -122,8 +132,7 @@ struct TypewriterAnimatorTests {
         animator.commitCurrentAnimation()
 
         animator.update(fullText: "\u{8BED}\u{97F3}\u{662F}\u{53EF}\u{4EE5}\u{3002}")
-        #expect(animator.isAnimating, "Chinese period merge should animate")
-        animator.commitCurrentAnimation()
+        #expect(!animator.isAnimating, "Short Chinese period-merge deltas should snap")
         #expect(animator.displayText == "\u{8BED}\u{97F3}\u{662F}\u{53EF}\u{4EE5}\u{3002}")
     }
 
@@ -153,18 +162,20 @@ struct TypewriterAnimatorTests {
     @Test func newUpdateSnapsCurrentAnimation() {
         let animator = TypewriterAnimator()
 
+        let first = "Hello beautiful"
+        let second = "Hello beautiful world again"
+
         // Start first animation
-        animator.update(fullText: "Hello")
+        animator.update(fullText: first)
         #expect(animator.isAnimating)
 
-        // Second update arrives mid-animation — should snap first, start new
-        animator.update(fullText: "Hello world")
-        // After commit of first ("Hello") + start of new, display = "Hello" (common prefix)
-        #expect(animator.displayText == "Hello")
+        // Second update arrives mid-animation — should snap first, start new.
+        animator.update(fullText: second)
+        #expect(animator.displayText == first)
         #expect(animator.isAnimating)
 
         animator.commitCurrentAnimation()
-        #expect(animator.displayText == "Hello world")
+        #expect(animator.displayText == second)
     }
 
     // MARK: - Common Prefix
@@ -199,36 +210,46 @@ struct TypewriterAnimatorTests {
 
     // MARK: - Animation Completion
 
-    @Test func animationCompletesNaturally() async throws {
+    @Test func smallDeltaSnapsImmediately() {
         let animator = TypewriterAnimator()
 
-        // Short text = fast animation
         animator.update(fullText: "Hi")
-        #expect(animator.isAnimating)
-
-        // Wait for animation to complete (1.5s + buffer)
-        try await Task.sleep(for: .seconds(2))
 
         #expect(!animator.isAnimating)
         #expect(animator.displayText == "Hi")
     }
 
-    @Test func animationRevealsCharactersProgressively() async throws {
+    @Test func animationCompletesNaturally() async throws {
         let animator = TypewriterAnimator()
 
-        animator.update(fullText: "ABCDE")
+        let longText = "Hello world"
+        animator.update(fullText: longText)
+        #expect(animator.isAnimating)
 
-        // Wait a short time — should have revealed some but not all
-        try await Task.sleep(for: .milliseconds(500))
+        // Bounded animation should complete well under half a second.
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(!animator.isAnimating)
+        #expect(animator.displayText == longText)
+    }
+
+    @Test func animationRevealsCharactersProgressively() async throws {
+        let animator = TypewriterAnimator()
+        let longText = "ABCDEFGHIJKL"
+
+        animator.update(fullText: longText)
+
+        // Wait a short time — should have revealed some but not all.
+        try await Task.sleep(for: .milliseconds(80))
 
         let partialLength = animator.displayText.count
         #expect(partialLength > 0, "Should have revealed at least one character")
-        #expect(partialLength < 5, "Should not have revealed all characters yet")
+        #expect(partialLength < longText.count, "Should not have revealed all characters yet")
         #expect(animator.isAnimating)
 
-        // Wait for completion
-        try await Task.sleep(for: .seconds(1.5))
-        #expect(animator.displayText == "ABCDE")
+        // Wait for completion.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(animator.displayText == longText)
     }
 
     @Test func rapidUpdatesConverge() async throws {

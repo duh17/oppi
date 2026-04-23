@@ -1,15 +1,20 @@
 import Foundation
 import OSLog
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Typewriter")
 
-/// Animates text appearing character-by-character when the server sends
-/// full-replacement transcript updates during dictation.
+/// Animates text appearing when the server sends full-replacement transcript
+/// updates during dictation.
 ///
-/// Server dictation sends the entire transcript every ~2s. Without animation,
-/// each update causes a jarring text jump. This class computes the delta
-/// (new characters appended since the last update) and reveals them gradually
-/// over ~1.5s, leaving a 0.5s buffer before the next server update.
+/// Server dictation sends the entire transcript every ~2s. Without some smoothing,
+/// each update can cause a jarring text jump. Small deltas snap immediately so
+/// dictation never feels sluggish; larger appended chunks reveal quickly with a
+/// bounded character animation.
 ///
 /// If a new update arrives mid-animation, the current animation snaps to
 /// completion and a new animation starts for the fresh delta.
@@ -35,13 +40,20 @@ final class TypewriterAnimator {
     /// The async task driving the character reveal loop.
     private var animationTask: Task<Void, Never>?
 
-    // MARK: - Animation duration
+    // MARK: - Animation tuning
 
-    /// Total time to reveal the delta characters (nanoseconds).
-    /// 1.5s leaves a 0.5s buffer before the next ~2s server update.
-    static let animationDurationNs: UInt64 = 1_500_000_000
+    /// Small deltas should appear immediately. Dictation is a high-frequency input
+    /// surface, so waiting for a single short word feels worse than a text jump.
+    static let instantDeltaThreshold = 8
 
-    /// Minimum interval between character reveals to avoid sub-frame flicker.
+    /// Target per-character budget for larger chunks.
+    static let perCharacterDurationNs: UInt64 = 22_000_000
+
+    /// Keep the total reveal short enough that dictation still feels immediate.
+    static let minimumAnimationDurationNs: UInt64 = 90_000_000
+    static let maximumAnimationDurationNs: UInt64 = 250_000_000
+
+    /// Minimum interval between reveal steps to avoid sub-frame flicker.
     static let minimumIntervalNs: UInt64 = 8_000_000 // ~8ms, roughly one frame at 120Hz
 
     // MARK: - Public API
@@ -97,9 +109,27 @@ final class TypewriterAnimator {
 
         let animateFrom = fullText.index(fullText.startIndex, offsetBy: displayText.count)
         let deltaCount = fullText.count - displayText.count
+
+        guard Self.shouldAnimate(deltaCount: deltaCount) else {
+            displayText = fullText
+            isAnimating = false
+            logger.debug("Typewriter: snapped \(deltaCount) chars")
+            return
+        }
+
+        let targetDurationNs = min(
+            Self.maximumAnimationDurationNs,
+            max(
+                Self.minimumAnimationDurationNs,
+                Self.perCharacterDurationNs * UInt64(max(1, deltaCount))
+            )
+        )
+        let maxStepCount = max(1, Int(targetDurationNs / Self.minimumIntervalNs))
+        let charsPerStep = max(1, Int(ceil(Double(deltaCount) / Double(maxStepCount))))
+        let stepCount = max(1, (deltaCount + charsPerStep - 1) / charsPerStep)
         let intervalNs = max(
             Self.minimumIntervalNs,
-            Self.animationDurationNs / UInt64(max(1, deltaCount))
+            targetDurationNs / UInt64(stepCount)
         )
 
         isAnimating = true
@@ -117,7 +147,10 @@ final class TypewriterAnimator {
                 guard !Task.isCancelled else { break }
                 guard let self else { break }
 
-                currentIndex = target.index(after: currentIndex)
+                for _ in 0 ..< charsPerStep {
+                    guard currentIndex < target.endIndex else { break }
+                    currentIndex = target.index(after: currentIndex)
+                }
                 self.displayText = String(target[..<currentIndex])
             }
 
@@ -127,7 +160,9 @@ final class TypewriterAnimator {
             }
         }
 
-        logger.debug("Typewriter: animating \(deltaCount) chars over \(deltaCount * Int(intervalNs / 1_000_000))ms")
+        logger.debug(
+            "Typewriter: animating \(deltaCount) chars in \(stepCount) steps over ~\(stepCount * Int(intervalNs / 1_000_000))ms"
+        )
     }
 
     /// Immediately finish any in-progress animation, snapping to the target text.
@@ -176,5 +211,21 @@ final class TypewriterAnimator {
             bi = b.index(after: bi)
         }
         return count
+    }
+
+    private static func shouldAnimate(deltaCount: Int) -> Bool {
+        guard deltaCount > instantDeltaThreshold else { return false }
+        guard !isReduceMotionEnabled else { return false }
+        return true
+    }
+
+    private static var isReduceMotionEnabled: Bool {
+        #if canImport(UIKit)
+        UIAccessibility.isReduceMotionEnabled
+        #elseif canImport(AppKit)
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #else
+        false
+        #endif
     }
 }
