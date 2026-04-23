@@ -10,7 +10,7 @@ import {
 } from "./session-protocol.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
-import type { Session, ServerMessage } from "./types.js";
+import type { AskQuestion, Session, ServerMessage } from "./types.js";
 
 /** Extension UI request from pi SDK (stdout) */
 export interface ExtensionUIRequest {
@@ -30,6 +30,8 @@ export interface ExtensionUIRequest {
   widgetPlacement?: string;
   text?: string;
   timeout?: number;
+  questions?: AskQuestion[];
+  allowCustom?: boolean;
 }
 
 /** Fire-and-forget UI methods (no response needed) */
@@ -41,25 +43,14 @@ const FIRE_AND_FORGET_METHODS = new Set([
   "set_editor_text",
 ]);
 
-/** Server-side state for ask tool interception. */
+/** Server-side state for a pending first-class ask request. */
 export interface PendingAskState {
-  /** ID of the synthetic ask request sent to iOS. */
   requestId: string;
-  /** Questions from tool args (ordered). */
-  questions: Array<{ id: string; question: string; multiSelect?: boolean }>;
-  /** Extension select/input requests deferred until iOS responds. */
-  deferred: Array<{ id: string; req: ExtensionUIRequest; questionIndex?: number }>;
+  questionCount: number;
   /** Full broadcast message — stored for re-sending on client reconnect. */
   broadcastMessage: ServerMessage;
   /** Timestamp when the ask flow was initiated (for round-trip timing). */
   initiatedAt: number;
-  /** iOS ask response once received (may arrive before deferred select() calls). */
-  response?: {
-    answers: Record<string, string | string[]>;
-    cancelled: boolean;
-  };
-  /** Number of deferred select/input requests already resolved. */
-  resolvedDeferredCount?: number;
 }
 
 export interface EventProcessorSessionState {
@@ -75,7 +66,7 @@ export interface EventProcessorSessionState {
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews. */
   streamingArgPreviews: Set<string>;
-  /** Active ask tool — defers extension select() calls until iOS responds. */
+  /** Pending first-class ask request awaiting a user response. */
   pendingAsk?: PendingAskState;
   /** Timestamp (ms) when the current turn started (agent_start). */
   turnStartedAt?: number;
@@ -85,14 +76,6 @@ export interface EventProcessorSessionState {
   turnToolCallCount?: number;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
-  /**
-   * Short-lived buffer for select dialogs that may belong to ask.
-   * Used to absorb ordering races where select() arrives slightly before
-   * tool_execution_start("ask").
-   */
-  bufferedSelectRequests?: ExtensionUIRequest[];
-  /** Flush timer for bufferedSelectRequests. */
-  bufferedSelectFlushTimer?: NodeJS.Timeout;
 }
 
 export interface SessionEventProcessorDeps {
@@ -101,7 +84,7 @@ export interface SessionEventProcessorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
-  /** Respond to a pending extension UI request (ask deferred resolution). */
+  /** Respond to a pending extension UI request. */
   respondToUIRequest: (
     key: string,
     response: { type: "extension_ui_response"; id: string; value?: string; cancelled?: boolean },
@@ -113,7 +96,6 @@ export interface SessionEventProcessorDeps {
 export class SessionEventProcessor {
   private gitStatusTimers: Map<string, NodeJS.Timeout> = new Map();
   private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
-  private static readonly ASK_SELECT_BUFFER_MS = 120;
 
   constructor(private readonly deps: SessionEventProcessorDeps) {}
 
@@ -137,8 +119,8 @@ export class SessionEventProcessor {
   /**
    * Handle extension_ui_request from pi.
    * Fire-and-forget methods are forwarded as notifications.
-   * Dialog methods (select, confirm, input, editor) are forwarded
-   * to the phone and held until respondToUIRequest() is called.
+   * Dialog methods are forwarded to the phone and held until
+   * respondToUIRequest() is called.
    */
   handleExtensionUIRequest(
     key: string,
@@ -162,34 +144,20 @@ export class SessionEventProcessor {
       return;
     }
 
-    // Ask interception: defer extension's select/input calls while the iOS
-    // AskCard is active. They'll be resolved when iOS responds to the ask.
-    if (active.pendingAsk && (req.method === "select" || req.method === "input")) {
-      active.pendingUIRequests.set(req.id, req);
-      const questionIndex =
-        (active.pendingAsk.resolvedDeferredCount ?? 0) + active.pendingAsk.deferred.length;
-      active.pendingAsk.deferred.push({ id: req.id, req, questionIndex });
-
-      // Race fix: the ask answer can arrive before these deferred select/input
-      // requests are emitted. If we already have the answer, resolve immediately
-      // instead of leaking into normal dialog flow (which can deadlock ask).
-      const response = active.pendingAsk.response;
-      if (response) {
-        this.resolveAskDeferred(key, active, response.answers, response.cancelled);
-      }
-      return;
-    }
-
-    // Ordering race guard: ask select() can arrive slightly before
-    // tool_execution_start("ask"). Buffer select dialogs briefly so ask can
-    // capture them into its deferred queue instead of showing generic sheets.
-    if (!active.pendingAsk && req.method === "select") {
-      this.bufferSelectRequest(key, active, req);
-      return;
-    }
-
-    // Normal dialog — track and forward to phone
     active.pendingUIRequests.set(req.id, req);
+
+    if (req.method === "ask") {
+      const broadcastMessage = this.buildAskBroadcastMessage(active.session.id, req);
+      active.pendingAsk = {
+        requestId: req.id,
+        questionCount: req.questions?.length ?? 0,
+        broadcastMessage,
+        initiatedAt: Date.now(),
+      };
+      this.deps.broadcast(key, broadcastMessage);
+      return;
+    }
+
     this.broadcastDialogRequest(key, active.session.id, req);
   }
 
@@ -221,13 +189,6 @@ export class SessionEventProcessor {
       case "agent_end":
         session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
         shouldFlushNow = true;
-
-        // Cancel any pending ask deferred selects so the SDK doesn't hang.
-        // This can happen when the agent loop ends (e.g. stop, error) before
-        // the user responded to the ask card on the phone.
-        if (active.pendingAsk && active.pendingAsk.deferred.length > 0) {
-          this.resolveAskDeferred(key, active, {}, true);
-        }
 
         // Turn duration
         if (metrics && active.turnStartedAt) {
@@ -275,17 +236,8 @@ export class SessionEventProcessor {
       case "tool_execution_start":
         updateSessionChangeStats(session, event.toolName, event.args);
         this.maybeEmitGitStatus(key, session, event.toolName);
-        if (event.toolName === "ask" && event.args?.questions) {
-          this.initiateAskFlow(key, active, event.args);
-        }
         if (active.turnToolCallCount !== undefined) {
           active.turnToolCallCount++;
-        }
-        break;
-
-      case "tool_execution_end":
-        if (event.toolName === "ask") {
-          active.pendingAsk = undefined;
         }
         break;
 
@@ -358,60 +310,19 @@ export class SessionEventProcessor {
     this.deps.markSessionDirty(key);
   }
 
-  /** Send structured ask request to iOS. Extension select() calls are deferred. */
-  private initiateAskFlow(
-    key: string,
-    active: EventProcessorSessionState,
-    args: Record<string, unknown>,
-  ): void {
-    const questions = args.questions as Array<{
-      id: string;
-      question: string;
-      options?: Array<{ value: string; label: string; description?: string }>;
-      multiSelect?: boolean;
-    }>;
-    if (!Array.isArray(questions) || questions.length === 0) return;
-
-    const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const broadcastMessage: ServerMessage = {
+  private buildAskBroadcastMessage(
+    sessionId: string,
+    req: Pick<ExtensionUIRequest, "id" | "method" | "questions" | "allowCustom" | "timeout">,
+  ): ServerMessage {
+    return {
       type: "extension_ui_request",
-      id: requestId,
-      sessionId: active.session.id,
-      method: "ask",
-      questions: questions.map((q) => ({
-        id: q.id,
-        question: q.question,
-        options: q.options ?? [],
-        multiSelect: q.multiSelect,
-      })),
-      allowCustom: (args.allowCustom as boolean) ?? true,
+      id: req.id,
+      sessionId,
+      method: req.method,
+      questions: req.questions,
+      allowCustom: req.allowCustom,
+      timeout: req.timeout,
     };
-
-    active.pendingAsk = {
-      requestId,
-      questions: questions.map((q) => ({
-        id: q.id,
-        question: q.question,
-        multiSelect: q.multiSelect,
-      })),
-      deferred: [],
-      broadcastMessage,
-      initiatedAt: Date.now(),
-      resolvedDeferredCount: 0,
-    };
-
-    // Register as pending so the iOS response is accepted.
-    active.pendingUIRequests.set(requestId, {
-      type: "extension_ui_request",
-      id: requestId,
-      method: "ask",
-    });
-
-    // Capture select requests that arrived just before ask start.
-    this.captureBufferedSelectRequestsForAsk(key, active);
-
-    this.deps.broadcast(key, broadcastMessage);
   }
 
   private broadcastDialogRequest(key: string, sessionId: string, req: ExtensionUIRequest): void {
@@ -429,200 +340,22 @@ export class SessionEventProcessor {
     });
   }
 
-  /**
-   * Buffer select dialogs briefly so ask can capture them if tool start is
-   * processed slightly later than the extension UI callback.
-   */
-  private bufferSelectRequest(
-    key: string,
-    active: EventProcessorSessionState,
-    req: ExtensionUIRequest,
-  ): void {
-    active.pendingUIRequests.set(req.id, req);
-
-    const buffered = active.bufferedSelectRequests ?? [];
-    if (!buffered.some((item) => item.id === req.id)) {
-      buffered.push(req);
-    }
-    active.bufferedSelectRequests = buffered;
-
-    if (active.bufferedSelectFlushTimer) {
-      return;
-    }
-
-    active.bufferedSelectFlushTimer = setTimeout(() => {
-      active.bufferedSelectFlushTimer = undefined;
-      this.flushBufferedSelectRequests(key, active);
-    }, SessionEventProcessor.ASK_SELECT_BUFFER_MS);
-  }
-
-  private flushBufferedSelectRequests(key: string, active: EventProcessorSessionState): void {
-    const buffered = active.bufferedSelectRequests;
-    if (!buffered || buffered.length === 0) {
-      return;
-    }
-
-    active.bufferedSelectRequests = [];
-
-    for (const req of buffered) {
-      if (!active.pendingUIRequests.has(req.id)) {
-        continue;
-      }
-      this.broadcastDialogRequest(key, active.session.id, req);
-    }
-  }
-
-  /**
-   * Move any buffered select dialogs that belong to this ask request into the
-   * deferred queue. Unmatched selects are flushed as normal dialogs.
-   */
-  private captureBufferedSelectRequestsForAsk(
-    key: string,
-    active: EventProcessorSessionState,
-  ): void {
-    const ask = active.pendingAsk;
-    const buffered = active.bufferedSelectRequests;
-    if (!ask || !buffered || buffered.length === 0) {
-      return;
-    }
-
-    const remaining: ExtensionUIRequest[] = [];
-
-    for (const req of buffered) {
-      const questionIndex = this.findAskQuestionIndex(req, ask.questions);
-      if (questionIndex === undefined) {
-        remaining.push(req);
-        continue;
-      }
-
-      ask.deferred.push({ id: req.id, req, questionIndex });
-    }
-
-    active.bufferedSelectRequests = remaining;
-
-    if (remaining.length === 0) {
-      if (active.bufferedSelectFlushTimer) {
-        clearTimeout(active.bufferedSelectFlushTimer);
-        active.bufferedSelectFlushTimer = undefined;
-      }
-    } else {
-      this.flushBufferedSelectRequests(key, active);
-    }
-
-    const response = ask.response;
-    if (response) {
-      this.resolveAskDeferred(key, active, response.answers, response.cancelled);
-    }
-  }
-
-  private findAskQuestionIndex(
-    req: ExtensionUIRequest,
-    questions: Array<{ id: string; question: string; multiSelect?: boolean }>,
-  ): number | undefined {
-    const title = this.normalizeAskText(req.title);
-    if (!title) {
-      return undefined;
-    }
-
-    const exactIndex = questions.findIndex(
-      (question) => this.normalizeAskText(question.question) === title,
-    );
-    if (exactIndex >= 0) {
-      return exactIndex;
-    }
-
-    const fuzzyMatches = questions
-      .map((question, index) => ({ index, text: this.normalizeAskText(question.question) }))
-      .filter(({ text }) => text.includes(title) || title.includes(text));
-
-    return fuzzyMatches.length === 1 ? fuzzyMatches[0].index : undefined;
-  }
-
-  private normalizeAskText(text: string | undefined): string {
-    return (text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-  }
-
-  /** Resolve deferred select/input requests using iOS ask answers. */
-  resolveAskDeferred(
-    key: string,
+  completeAskRequest(
     active: Pick<EventProcessorSessionState, "pendingAsk" | "session">,
-    answers: Record<string, string | string[]>,
     cancelled: boolean,
   ): void {
     const ask = active.pendingAsk;
-    if (!ask) return;
+    if (!ask) {
+      return;
+    }
 
-    // Record ask extension round-trip time
     const metrics = this.deps.metrics;
     if (metrics && ask.initiatedAt) {
       metrics.record("server.ask_round_trip_ms", Date.now() - ask.initiatedAt, {
         sessionId: active.session.id,
         cancelled: cancelled ? "true" : "false",
-        questionCount: String(ask.questions.length),
+        questionCount: String(ask.questionCount),
       });
-    }
-
-    const hadStoredResponse = Boolean(ask.response);
-
-    for (let i = 0; i < ask.deferred.length; i++) {
-      const { id, req, questionIndex } = ask.deferred[i];
-      const question = ask.questions[questionIndex ?? i];
-
-      if (cancelled) {
-        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
-        continue;
-      }
-
-      if (!question) {
-        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
-        continue;
-      }
-
-      const answer = answers[question.id];
-      if (answer === undefined) {
-        // Ignored — cancel this select so the extension skips it
-        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, cancelled: true });
-      } else if (req.method === "select" && req.options) {
-        if (question.multiSelect && Array.isArray(answer)) {
-          // Multi-select: map ALL values to labels and encode as JSON array.
-          // The ask extension decodes this back into individual option values.
-          const opts = req.options ?? [];
-          const labels = answer.map((v) => {
-            return (
-              opts.find((o) => o.toLowerCase().includes(v.toLowerCase())) ??
-              opts.find((o) => o === v) ??
-              v
-            );
-          });
-          this.deps.respondToUIRequest(key, {
-            type: "extension_ui_response",
-            id,
-            value: JSON.stringify(labels),
-          });
-        } else {
-          // Single-select: match answer value back to option label
-          const value = Array.isArray(answer) ? answer[0] : answer;
-          const label =
-            req.options.find((o) => o.toLowerCase().includes(value?.toLowerCase() ?? "")) ??
-            req.options.find((o) => o === value) ??
-            value;
-          this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, value: label });
-        }
-      } else {
-        const text = Array.isArray(answer) ? answer.join(", ") : answer;
-        this.deps.respondToUIRequest(key, { type: "extension_ui_response", id, value: text });
-      }
-    }
-
-    const resolvedNow = ask.deferred.length;
-    ask.deferred = [];
-    ask.resolvedDeferredCount = (ask.resolvedDeferredCount ?? 0) + resolvedNow;
-
-    // If iOS already answered, deferred select()/input requests may arrive late.
-    // Keep ask interception alive until we've resolved one deferred request per
-    // question so late arrivals don't leak into normal dialogs and hang ask.
-    if (hadStoredResponse && ask.resolvedDeferredCount < ask.questions.length) {
-      return;
     }
 
     active.pendingAsk = undefined;

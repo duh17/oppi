@@ -92,6 +92,7 @@ export class SessionManager extends EventEmitter {
   private mobileRenderersLoadStarted = false;
 
   private readonly broadcaster: SessionCoordinatorBundle["broadcaster"];
+  private readonly eventProcessor: SessionCoordinatorBundle["eventProcessor"];
   private readonly stateCoordinator: SessionCoordinatorBundle["stateCoordinator"];
   private readonly commandCoordinator: SessionCoordinatorBundle["commandCoordinator"];
   private readonly activationCoordinator: SessionCoordinatorBundle["activationCoordinator"];
@@ -152,6 +153,7 @@ export class SessionManager extends EventEmitter {
     });
 
     this.broadcaster = bundle.broadcaster;
+    this.eventProcessor = bundle.eventProcessor;
     this.stateCoordinator = bundle.stateCoordinator;
     this.commandCoordinator = bundle.commandCoordinator;
     this.activationCoordinator = bundle.activationCoordinator;
@@ -566,30 +568,16 @@ export class SessionManager extends EventEmitter {
 
   /** Return the stored ask broadcast message if this session has a pending ask. */
   getPendingAskMessage(sessionId: string): ServerMessage | undefined {
-    const ask = this.active.get(this.sessionKey(sessionId))?.pendingAsk;
-    if (!ask) {
-      return undefined;
-    }
-
-    // If iOS already answered, don't re-send the AskCard on reconnect.
-    if (ask.response) {
-      return undefined;
-    }
-
-    return ask.broadcastMessage;
+    return this.active.get(this.sessionKey(sessionId))?.pendingAsk?.broadcastMessage;
   }
 
-  /** Cancel pending ask and resolve all deferred selects as cancelled. */
+  /** Cancel a pending ask request. */
   cancelPendingAsk(sessionId: string): void {
     const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active?.pendingAsk) return;
 
     const ask = active.pendingAsk;
-
-    // Route cancellation through the synthetic ask request so late-arriving
-    // deferred select()/input calls are also cancelled instead of leaking into
-    // normal UI flow (which can deadlock stop/abort).
     const handled = this.respondToUIRequest(sessionId, {
       type: "extension_ui_response",
       id: ask.requestId,
@@ -599,17 +587,8 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    // Defensive fallback — should rarely happen.
-    for (const { id } of ask.deferred) {
-      this.respondToUIRequest(sessionId, {
-        type: "extension_ui_response",
-        id,
-        cancelled: true,
-      });
-    }
-
     active.pendingUIRequests.delete(ask.requestId);
-    active.pendingAsk = undefined;
+    this.eventProcessor.completeAskRequest(active, true);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

@@ -656,17 +656,390 @@ function mergeRedactionFinding(
   }
 }
 
-function defaultScanHtmlForSecrets(html: string): ShareSecretFinding[] {
+function mergeSecretFinding(
+  aggregate: Map<string, ShareSecretFinding>,
+  finding: ShareSecretFinding,
+): void {
+  const existing = aggregate.get(finding.kind);
+  if (!existing) {
+    aggregate.set(finding.kind, {
+      kind: finding.kind,
+      count: finding.count,
+    });
+    return;
+  }
+
+  existing.count += finding.count;
+}
+
+function scanTextForSecrets(text: string): ShareSecretFinding[] {
   const findings: ShareSecretFinding[] = [];
 
   for (const pattern of SECRET_PATTERNS) {
-    const matches = html.match(pattern.regex);
+    const matches = text.match(pattern.regex);
     const count = matches?.length ?? 0;
     if (count <= 0) continue;
     findings.push({ kind: pattern.kind, count });
   }
 
   return findings;
+}
+
+function visitStringValues(value: unknown, visitor: (text: string) => void): void {
+  if (typeof value === "string") {
+    visitor(value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      visitStringValues(item, visitor);
+    }
+    return;
+  }
+
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  for (const item of Object.values(value)) {
+    visitStringValues(item, visitor);
+  }
+}
+
+const EMBEDDED_SESSION_DATA_SCRIPT_REGEX =
+  /(<script id="session-data" type="application\/(?:json|octet-stream)">)([\s\S]*?)(<\/script>)/;
+
+function embeddedSessionDataDecodeError(message: string): ShareSessionError {
+  return shareError(
+    "share_export_failed",
+    `Failed to decode embedded session-data payload: ${message}`,
+  );
+}
+
+function extractEmbeddedSessionData(html: string):
+  | {
+      sessionData: Record<string, unknown>;
+      rewriteHtml: (sessionData: Record<string, unknown>) => string;
+    }
+  | undefined {
+  const match = EMBEDDED_SESSION_DATA_SCRIPT_REGEX.exec(html);
+  if (!match || typeof match.index !== "number") {
+    return undefined;
+  }
+
+  const openTag = match[1];
+  const encodedPayload = match[2].trim();
+  const contentStart = match.index + openTag.length;
+  const contentEnd = contentStart + match[2].length;
+
+  let json = "";
+  try {
+    json = Buffer.from(encodedPayload, "base64").toString("utf-8");
+  } catch (error) {
+    throw embeddedSessionDataDecodeError(error instanceof Error ? error.message : String(error));
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    throw embeddedSessionDataDecodeError(error instanceof Error ? error.message : String(error));
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw embeddedSessionDataDecodeError("expected a base64-encoded JSON object");
+  }
+
+  return {
+    sessionData: parsed as Record<string, unknown>,
+    rewriteHtml: (sessionData) => {
+      const nextPayload = Buffer.from(JSON.stringify(sessionData), "utf-8").toString("base64");
+      return `${html.slice(0, contentStart)}${nextPayload}${html.slice(contentEnd)}`;
+    },
+  };
+}
+
+function redactTextWithPatterns(
+  text: string,
+  patterns: ReadonlyArray<ShareRedactionPattern>,
+  findingsByKind: Map<string, ShareRedactionFinding>,
+): string {
+  let redacted = text;
+
+  for (const pattern of patterns) {
+    const result = applyRedactionPattern(redacted, pattern);
+    redacted = result.html;
+    if (!result.finding) continue;
+    mergeRedactionFinding(findingsByKind, result.finding);
+  }
+
+  return redacted;
+}
+
+function redactSessionDataStrings(
+  value: unknown,
+  patterns: ReadonlyArray<ShareRedactionPattern>,
+  findingsByKind: Map<string, ShareRedactionFinding>,
+): unknown {
+  if (typeof value === "string") {
+    return redactTextWithPatterns(value, patterns, findingsByKind);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSessionDataStrings(item, patterns, findingsByKind));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    next[key] = redactSessionDataStrings(item, patterns, findingsByKind);
+  }
+  return next;
+}
+
+function noteSystemPromptRemoval(
+  findingsByKind: Map<string, ShareRedactionFinding>,
+  systemPrompt: unknown,
+): void {
+  if (typeof systemPrompt !== "string" || systemPrompt.trim().length === 0) {
+    return;
+  }
+
+  mergeRedactionFinding(findingsByKind, {
+    kind: "system_prompt_removed",
+    count: 1,
+    replacement: "[REMOVED_SYSTEM_PROMPT]",
+    samples: ["[system prompt omitted]"],
+  });
+}
+
+function noteToolDefinitionsRemoval(
+  findingsByKind: Map<string, ShareRedactionFinding>,
+  tools: unknown,
+): void {
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return;
+  }
+
+  mergeRedactionFinding(findingsByKind, {
+    kind: "tool_definitions_removed",
+    count: tools.length,
+    replacement: "[REMOVED_TOOL_DEFINITIONS]",
+    samples: [`${tools.length} tool definitions omitted`],
+  });
+}
+
+function notePreUserEntriesRemoval(
+  findingsByKind: Map<string, ShareRedactionFinding>,
+  removedCount: number,
+): void {
+  if (removedCount <= 0) {
+    return;
+  }
+
+  mergeRedactionFinding(findingsByKind, {
+    kind: "pre_user_entries_removed",
+    count: removedCount,
+    replacement: "[REMOVED_PRE_USER_ENTRIES]",
+    samples: [`${removedCount} pre-user entries omitted`],
+  });
+}
+
+function isUserMessageEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return false;
+  }
+
+  if ((entry as Record<string, unknown>).type !== "message") {
+    return false;
+  }
+
+  const message = (entry as Record<string, unknown>).message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return false;
+  }
+
+  return (message as Record<string, unknown>).role === "user";
+}
+
+function trimSessionEntriesToFirstUser(entries: unknown): {
+  entries: unknown;
+  removedCount: number;
+  changed: boolean;
+} {
+  if (!Array.isArray(entries)) {
+    return { entries, removedCount: 0, changed: false };
+  }
+
+  const firstUserIndex = entries.findIndex((entry) => isUserMessageEntry(entry));
+  if (firstUserIndex < 0) {
+    return {
+      entries: [],
+      removedCount: entries.length,
+      changed: entries.length > 0,
+    };
+  }
+
+  if (firstUserIndex === 0) {
+    return {
+      entries,
+      removedCount: 0,
+      changed: false,
+    };
+  }
+
+  const trimmedEntries = entries.slice(firstUserIndex).map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry;
+    }
+    return { ...(entry as Record<string, unknown>) };
+  });
+
+  const retainedIds = new Set(
+    trimmedEntries.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return [];
+      }
+      const id = (entry as Record<string, unknown>).id;
+      return typeof id === "string" ? [id] : [];
+    }),
+  );
+
+  for (const entry of trimmedEntries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+
+    const record = entry as Record<string, unknown>;
+    const parentId = record.parentId;
+    if (parentId === null || parentId === undefined) {
+      continue;
+    }
+
+    if (typeof parentId !== "string" || !retainedIds.has(parentId)) {
+      record.parentId = null;
+    }
+  }
+
+  return {
+    entries: trimmedEntries,
+    removedCount: firstUserIndex,
+    changed: true,
+  };
+}
+
+function lastSessionEntryId(entries: unknown): string | null {
+  if (!Array.isArray(entries)) {
+    return null;
+  }
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+
+    const id = (entry as Record<string, unknown>).id;
+    if (typeof id === "string" && id.length > 0) {
+      return id;
+    }
+  }
+
+  return null;
+}
+
+function sanitizeSessionDataForShare(
+  sessionData: Record<string, unknown>,
+  findingsByKind?: Map<string, ShareRedactionFinding>,
+): { sessionData: Record<string, unknown>; changed: boolean } {
+  const nextSessionData = { ...sessionData };
+  let changed = false;
+
+  if ("systemPrompt" in nextSessionData) {
+    if (findingsByKind) {
+      noteSystemPromptRemoval(findingsByKind, nextSessionData.systemPrompt);
+    }
+    delete nextSessionData.systemPrompt;
+    changed = true;
+  }
+
+  if ("tools" in nextSessionData) {
+    if (findingsByKind) {
+      noteToolDefinitionsRemoval(findingsByKind, nextSessionData.tools);
+    }
+    delete nextSessionData.tools;
+    changed = true;
+  }
+
+  const trimmedEntries = trimSessionEntriesToFirstUser(nextSessionData.entries);
+  if (trimmedEntries.changed) {
+    nextSessionData.entries = trimmedEntries.entries;
+    if (findingsByKind) {
+      notePreUserEntriesRemoval(findingsByKind, trimmedEntries.removedCount);
+    }
+    changed = true;
+
+    const leafId = nextSessionData.leafId;
+    const lastEntryId = lastSessionEntryId(trimmedEntries.entries);
+    if (typeof leafId !== "string" || !Array.isArray(trimmedEntries.entries)) {
+      nextSessionData.leafId = lastEntryId;
+      changed = true;
+    } else {
+      const retainedLeaf = trimmedEntries.entries.some((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return false;
+        }
+        return (entry as Record<string, unknown>).id === leafId;
+      });
+
+      if (!retainedLeaf) {
+        nextSessionData.leafId = lastEntryId;
+        changed = true;
+      }
+    }
+  }
+
+  return {
+    sessionData: nextSessionData,
+    changed,
+  };
+}
+
+function defaultSanitizeHtmlForShare(html: string): string {
+  const embedded = extractEmbeddedSessionData(html);
+  if (!embedded) {
+    return html;
+  }
+
+  const sanitized = sanitizeSessionDataForShare(embedded.sessionData);
+  if (!sanitized.changed) {
+    return html;
+  }
+
+  return embedded.rewriteHtml(sanitized.sessionData);
+}
+
+function defaultScanHtmlForSecrets(html: string): ShareSecretFinding[] {
+  const findingsByKind = new Map<string, ShareSecretFinding>();
+
+  for (const finding of scanTextForSecrets(html)) {
+    mergeSecretFinding(findingsByKind, finding);
+  }
+
+  const embedded = extractEmbeddedSessionData(html);
+  if (embedded) {
+    visitStringValues(embedded.sessionData, (text) => {
+      for (const finding of scanTextForSecrets(text)) {
+        mergeSecretFinding(findingsByKind, finding);
+      }
+    });
+  }
+
+  return [...findingsByKind.values()].sort((lhs, rhs) => rhs.count - lhs.count);
 }
 
 function redactionPatternsForPolicy(policy: ShareSessionRedactionPolicy): ShareRedactionPattern[] {
@@ -706,14 +1079,28 @@ function defaultRedactHtmlForShare(
   html: string,
   policy: ShareSessionRedactionPolicy = normalizeRedactionPolicy(undefined),
 ): ShareHtmlRedactionResult {
+  const patterns = redactionPatternsForPolicy(policy);
   let redactedHtml = html;
   const findingsByKind = new Map<string, ShareRedactionFinding>();
 
-  for (const pattern of redactionPatternsForPolicy(policy)) {
+  for (const pattern of patterns) {
     const result = applyRedactionPattern(redactedHtml, pattern);
     redactedHtml = result.html;
     if (!result.finding) continue;
     mergeRedactionFinding(findingsByKind, result.finding);
+  }
+
+  const embedded = extractEmbeddedSessionData(redactedHtml);
+  if (embedded) {
+    const sanitized = sanitizeSessionDataForShare(embedded.sessionData, findingsByKind);
+
+    const redactedSessionData = redactSessionDataStrings(
+      sanitized.sessionData,
+      patterns,
+      findingsByKind,
+    ) as Record<string, unknown>;
+
+    redactedHtml = embedded.rewriteHtml(redactedSessionData);
   }
 
   const findings = [...findingsByKind.values()].sort((lhs, rhs) => rhs.count - lhs.count);
@@ -946,10 +1333,25 @@ export async function shareSession(
       );
     }
 
+    const redactionEnabled = isAutoRedactionEnabled();
+    if (!redactionEnabled) {
+      const sanitizedHtml = defaultSanitizeHtmlForShare(html);
+      if (sanitizedHtml !== html) {
+        html = sanitizedHtml;
+        try {
+          writeFileSync(tempHtmlPath, html, "utf-8");
+        } catch (error) {
+          throw shareError(
+            "share_export_failed",
+            `Failed to write sanitized share export: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    }
+
     const scanEnabled = isSecretScanEnabled();
     const preRedactionFindings = scanEnabled ? scanHtmlForSecrets(html) : [];
 
-    const redactionEnabled = isAutoRedactionEnabled();
     const redactionResult = redactionEnabled
       ? redactHtml(html, redactionPolicy)
       : {

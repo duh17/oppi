@@ -22,6 +22,15 @@ type RegisteredTool = {
     ctx?: {
       hasUI: boolean;
       ui: {
+        ask?: (
+          questions: Array<{
+            id: string;
+            question: string;
+            options: Array<{ value: string; label: string }>;
+            multiSelect?: boolean;
+          }>,
+          allowCustom?: boolean,
+        ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
         custom: (...args: unknown[]) => Promise<unknown>;
         select: (question: string, options: string[]) => Promise<string | undefined>;
       };
@@ -109,19 +118,32 @@ describe("createAskFactory", () => {
     expect(second.content[0]?.text).toContain("Defaults");
   });
 
-  it("returns all selected values for multi-select questions", async () => {
+  it("prefers direct ui.ask when available", async () => {
     const api = createMockAPI();
     createAskFactory()(api as never);
     const tool = api.tools.get("ask")!;
 
-    // Simulate server returning JSON-encoded array of labels for multi-select
+    let askCalls = 0;
+    let customCalls = 0;
+    let selectCalls = 0;
+
     const ctx = {
       hasUI: true,
       ui: {
-        custom: async () => undefined,
-        select: async (_question: string, _options: string[]) => {
-          // Server resolves multi-select as JSON array of labels
-          return JSON.stringify(["Ruff", "Mypy"]);
+        ask: async () => {
+          askCalls++;
+          return {
+            answers: { tools: ["ruff", "mypy"] },
+            allIgnored: false,
+          };
+        },
+        custom: async () => {
+          customCalls++;
+          return undefined;
+        },
+        select: async () => {
+          selectCalls++;
+          return undefined;
         },
       },
     };
@@ -144,30 +166,21 @@ describe("createAskFactory", () => {
     const result = await tool.execute("tc-multi", params, undefined, undefined, ctx);
     const details = result.details as { answers: Record<string, string | string[]> };
     expect(details.answers["tools"]).toEqual(["ruff", "mypy"]);
-    expect(result.content[0]?.text).toContain("ruff");
-    expect(result.content[0]?.text).toContain("mypy");
+    expect(askCalls).toBe(1);
+    expect(customCalls).toBe(0);
+    expect(selectCalls).toBe(0);
   });
 
-  it("handles single-select alongside multi-select questions", async () => {
+  it("throws when UI exists but the direct ask primitive is missing", async () => {
     const api = createMockAPI();
     createAskFactory()(api as never);
     const tool = api.tools.get("ask")!;
 
-    let callIndex = 0;
     const ctx = {
       hasUI: true,
       ui: {
         custom: async () => undefined,
-        select: async (_question: string, _options: string[]) => {
-          callIndex++;
-          if (callIndex === 1) {
-            // First question: single-select returns plain label
-            return "Unit tests";
-          } else {
-            // Second question: multi-select returns JSON array of labels
-            return JSON.stringify(["Jest", "Vitest"]);
-          }
-        },
+        select: async () => undefined,
       },
     };
 
@@ -181,56 +194,63 @@ describe("createAskFactory", () => {
             { value: "integration", label: "Integration tests" },
           ],
         },
-        {
-          id: "frameworks",
-          question: "Which frameworks?",
-          options: [
-            { value: "jest", label: "Jest" },
-            { value: "vitest", label: "Vitest" },
-            { value: "playwright", label: "Playwright" },
-          ],
-          multiSelect: true,
-        },
       ],
     };
 
-    const result = await tool.execute("tc-mixed", params, undefined, undefined, ctx);
-    const details = result.details as { answers: Record<string, string | string[]> };
-    expect(details.answers["approach"]).toBe("unit");
-    expect(details.answers["frameworks"]).toEqual(["jest", "vitest"]);
+    await expect(tool.execute("tc-missing-ask", params, undefined, undefined, ctx)).rejects.toThrow(
+      /ask UI primitive unavailable/,
+    );
   });
 
-  it("falls back to single value array when select returns non-JSON for multi-select", async () => {
+  it("rejects empty question lists without consuming the turn", async () => {
     const api = createMockAPI();
     createAskFactory()(api as never);
     const tool = api.tools.get("ask")!;
 
+    let askCalls = 0;
     const ctx = {
       hasUI: true,
       ui: {
+        ask: async () => {
+          askCalls++;
+          return {
+            answers: { scope: "small" },
+            allIgnored: false,
+          };
+        },
         custom: async () => undefined,
-        select: async () => "Ruff", // plain string, not JSON
+        select: async () => undefined,
       },
     };
 
-    const params = {
-      questions: [
-        {
-          id: "tools",
-          question: "Which tools?",
-          options: [
-            { value: "ruff", label: "Ruff" },
-            { value: "mypy", label: "Mypy" },
-          ],
-          multiSelect: true,
-        },
-      ],
-    };
+    await expect(
+      tool.execute("tc-empty", { questions: [] }, undefined, undefined, ctx),
+    ).rejects.toThrow(/ask requires at least one question/);
 
-    const result = await tool.execute("tc-fallback", params, undefined, undefined, ctx);
-    const details = result.details as { answers: Record<string, string | string[]> };
-    // Falls back to wrapping single value in array
-    expect(details.answers["tools"]).toEqual(["ruff"]);
+    const validResult = await tool.execute(
+      "tc-valid",
+      {
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope?",
+            options: [
+              { value: "small", label: "Small" },
+              { value: "large", label: "Large" },
+            ],
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(validResult.details).toMatchObject({
+      answers: { scope: "small" },
+      allIgnored: false,
+    });
+    expect(askCalls).toBe(1);
   });
 
   it("renders human-friendly question modes and answer labels in the TUI", () => {

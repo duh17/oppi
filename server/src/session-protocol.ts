@@ -986,8 +986,13 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
     session.cost += usage.cost;
   }
 
-  // Track context usage for status display (matches pi TUI calculation)
+  // Track context usage for status display (matches pi TUI calculation).
+  // Preserve the last non-zero snapshot when pi emits a synthetic aborted
+  // assistant message with empty/zero usage at the end of a stopped session.
   if (usage) {
-    session.contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+    const contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+    if (contextTokens > 0 || session.contextTokens === undefined) {
+      session.contextTokens = contextTokens;
+    }
   }
 }

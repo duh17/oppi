@@ -101,9 +101,7 @@ export async function ensureMLXServerReady(): Promise<boolean> {
     if (PREFERRED_MODEL_REGEX.test(modelId)) {
       console.log(`[e2e] OMLX server ready on :${OMLX_PORT}, using preferred model: ${modelId}`);
     } else {
-      console.warn(
-        `[e2e] Preferred model (Qwen3.6*) not found, falling back to: ${modelId}`,
-      );
+      console.warn(`[e2e] Preferred model (Qwen3.6*) not found, falling back to: ${modelId}`);
     }
 
     return true;
@@ -471,6 +469,7 @@ export interface StreamEvent {
   requestId?: string;
   command?: string;
   id?: string;
+  method?: string;
   tool?: string;
   clientTurnId?: string;
   stage?: string;
@@ -715,6 +714,7 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
   if (msg.requestId) event.requestId = msg.requestId as string;
   if (msg.command) event.command = msg.command as string;
   if (msg.id) event.id = msg.id as string;
+  if (msg.method) event.method = msg.method as string;
   if (msg.tool) event.tool = msg.tool as string;
   if (msg.clientTurnId) event.clientTurnId = msg.clientTurnId as string;
   if (msg.stage) event.stage = msg.stage as string;

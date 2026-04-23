@@ -1,5 +1,7 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
+import type { AskQuestion } from "./types.js";
+
 export interface PiMessageUsage {
   input?: number;
   output?: number;
@@ -33,6 +35,8 @@ export interface ExtensionUIRequestEvent {
   widgetPlacement?: string;
   text?: string;
   timeout?: number;
+  questions?: AskQuestion[];
+  allowCustom?: boolean;
 }
 
 export interface ExtensionErrorEvent {

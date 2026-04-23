@@ -45,7 +45,7 @@ import type {
 import { isManagedExtensionName } from "../extensions/first-party.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Storage } from "./storage.js";
-import type { Session, Workspace } from "./types.js";
+import type { AskQuestion, Session, Workspace } from "./types.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
 function parseModelId(modelId: string): { provider: string; model: string } | null {
@@ -140,6 +140,45 @@ interface ExtensionUIResponsePayload {
 interface PendingExtensionUIResponse {
   resolve: (response: ExtensionUIResponsePayload) => void;
   cancel: () => void;
+}
+
+interface AskUIResult {
+  answers: Record<string, string | string[]>;
+  allIgnored: boolean;
+}
+
+function invalidAskResponse(message: string): Error {
+  return new Error(`Malformed ask response: ${message}`);
+}
+
+function normalizeAskAnswers(value: string): Record<string, string | string[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw invalidAskResponse(error instanceof Error ? error.message : String(error));
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw invalidAskResponse("expected a JSON object");
+  }
+
+  const answers: Record<string, string | string[]> = {};
+  for (const [key, answer] of Object.entries(parsed)) {
+    if (typeof answer === "string") {
+      answers[key] = answer;
+      continue;
+    }
+
+    if (Array.isArray(answer) && answer.every((item) => typeof item === "string")) {
+      answers[key] = answer;
+      continue;
+    }
+
+    throw invalidAskResponse(`expected string or string[] for "${key}"`);
+  }
+
+  return answers;
 }
 
 interface CustomUIComponent {
@@ -663,7 +702,7 @@ export class SdkBackend {
 
     const id = randomUUID();
 
-    return new Promise<T>((resolve) => {
+    return new Promise<T>((resolve, reject) => {
       let timeoutId: NodeJS.Timeout | undefined;
 
       const cleanup = (): void => {
@@ -694,7 +733,11 @@ export class SdkBackend {
       this.pendingExtensionResponses.set(id, {
         resolve: (response) => {
           cleanup();
-          resolve(parseResponse(response));
+          try {
+            resolve(parseResponse(response));
+          } catch (error) {
+            reject(error);
+          }
         },
         cancel,
       });
@@ -812,6 +855,29 @@ export class SdkBackend {
 
   private createExtensionUIContext(): ExtensionUIContext {
     return {
+      ask: (questions: AskQuestion[], allowCustom = true, opts?: ExtensionUIDialogOptions) => {
+        if (!Array.isArray(questions) || questions.length === 0) {
+          return Promise.reject(new Error("ask UI requires at least one question"));
+        }
+
+        return this.createDialogPromise<AskUIResult>(
+          opts,
+          { answers: {}, allIgnored: true },
+          { method: "ask", questions, allowCustom },
+          (response) => {
+            if (response.cancelled || !response.value) {
+              return { answers: {}, allIgnored: true };
+            }
+
+            const answers = normalizeAskAnswers(response.value);
+            return {
+              answers,
+              allIgnored: Object.keys(answers).length === 0,
+            };
+          },
+        );
+      },
+
       select: (title, options, opts) =>
         this.createDialogPromise(
           opts,

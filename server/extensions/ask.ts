@@ -5,12 +5,11 @@ import { Type } from "@sinclair/typebox";
 import {
   buildAskToolResult,
   buildFallbackAnswers,
-  mapDeferredSelectResults,
   singleLine,
   type AskAnswer,
+  type AskDialogResult,
   type AskQuestion,
 } from "./ask-shared.js";
-import { runTerminalAskDialog, type AskCustomRunner } from "./ask-terminal.js";
 
 const AskOptionSchema = Type.Object({
   value: Type.String({ description: "Return value when selected" }),
@@ -31,6 +30,7 @@ const AskQuestionSchema = Type.Object({
 
 const AskParams = Type.Object({
   questions: Type.Array(AskQuestionSchema, {
+    minItems: 1,
     description: "One or more questions to ask. Presented as a horizontal pager on mobile.",
   }),
   allowCustom: Type.Optional(
@@ -117,6 +117,10 @@ export function createAskFactory(): ExtensionFactory {
       parameters: AskParams,
 
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        if (!Array.isArray(params.questions) || params.questions.length === 0) {
+          throw new Error("ask requires at least one question");
+        }
+
         if (askedThisTurn) {
           throw new Error("Only one ask call per turn. Bundle all questions into a single call.");
         }
@@ -135,26 +139,16 @@ export function createAskFactory(): ExtensionFactory {
           };
         }
 
-        const terminalResult = await runTerminalAskDialog(
-          ctx.ui.custom.bind(ctx.ui) as unknown as AskCustomRunner,
-          params.questions,
-          params.allowCustom ?? true,
-        );
-        if (terminalResult !== undefined) {
-          return buildAskToolResult(params.questions, terminalResult.answers);
+        const ui = ctx.ui as typeof ctx.ui & {
+          ask?: (questions: AskQuestion[], allowCustom?: boolean) => Promise<AskDialogResult>;
+        };
+
+        if (typeof ui.ask !== "function") {
+          throw new Error("ask UI primitive unavailable");
         }
 
-        // Oppi/iOS path: all selects must fire concurrently so the server can
-        // batch them into a single native ask card and resolve them together.
-        const selectResults = await Promise.all(
-          params.questions.map((question) => {
-            const options = question.options.map((option) => option.label);
-            return ctx.ui.select(question.question, options);
-          }),
-        );
-
-        const answers = mapDeferredSelectResults(params.questions, selectResults);
-        return buildAskToolResult(params.questions, answers);
+        const askResult = await ui.ask(params.questions, params.allowCustom ?? true);
+        return buildAskToolResult(params.questions, askResult.answers);
       },
 
       renderCall(args, theme) {

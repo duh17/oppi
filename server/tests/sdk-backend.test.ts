@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@mariozechner/pi-coding-agent";
 
 import { resolveSdkSessionCwd, SdkBackend } from "../src/sdk-backend.js";
-import type { Session, Workspace } from "../src/types.js";
+import type { AskQuestion, Session, Workspace } from "../src/types.js";
 
 describe("resolveSdkSessionCwd", () => {
   it("defaults to home dir when workspace is missing", () => {
@@ -170,6 +170,8 @@ describe("SdkBackend custom UI compatibility", () => {
     method: string;
     message?: string;
     options?: string[];
+    questions?: AskQuestion[];
+    allowCustom?: boolean;
     widgetLines?: string[];
   }
 
@@ -228,15 +230,22 @@ describe("SdkBackend custom UI compatibility", () => {
         return;
       }
 
+      const record = event as Record<string, unknown>;
       const request: CapturedRequest = {
         id: event.id,
         method: event.method,
         message: event.message,
         options: event.options,
+        questions:
+          Array.isArray(record.questions) &&
+          record.questions.every((value) => typeof value === "object" && value !== null)
+            ? (record.questions as AskQuestion[])
+            : undefined,
+        allowCustom: typeof record.allowCustom === "boolean" ? record.allowCustom : undefined,
         widgetLines:
-          Array.isArray((event as Record<string, unknown>).widgetLines) &&
-          (event as Record<string, unknown>).widgetLines.every((value) => typeof value === "string")
-            ? ((event as Record<string, unknown>).widgetLines as string[])
+          Array.isArray(record.widgetLines) &&
+          record.widgetLines.every((value) => typeof value === "string")
+            ? (record.widgetLines as string[])
             : undefined,
       };
       requests.push(request);
@@ -266,6 +275,104 @@ describe("SdkBackend custom UI compatibility", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].method).toBe("setWidget");
     expect(requests[0].widgetLines).toEqual(["Review session active"]);
+  });
+
+  it("emits a direct ask request and parses structured answers", async () => {
+    const answerPayload = { scope: "small", tools: ["jest", "vitest"] };
+    const { ui, requests } = makeCustomUIHarness((request) => {
+      if (request.method === "ask") {
+        return { value: JSON.stringify(answerPayload) };
+      }
+      return { cancelled: true };
+    });
+
+    const ask = (
+      ui as PiSdk.ExtensionUIContext & {
+        ask: (
+          questions: AskQuestion[],
+          allowCustom?: boolean,
+        ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
+      }
+    ).ask;
+
+    const result = await ask(
+      [
+        {
+          id: "scope",
+          question: "Which scope?",
+          options: [
+            { value: "small", label: "Small" },
+            { value: "large", label: "Large" },
+          ],
+        },
+        {
+          id: "tools",
+          question: "Which tools?",
+          options: [
+            { value: "jest", label: "Jest" },
+            { value: "vitest", label: "Vitest" },
+          ],
+          multiSelect: true,
+        },
+      ],
+      false,
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("ask");
+    expect(requests[0].questions?.map((question) => question.id)).toEqual(["scope", "tools"]);
+    expect(requests[0].allowCustom).toBe(false);
+    expect(result).toEqual({ answers: answerPayload, allIgnored: false });
+  });
+
+  it("rejects empty ask requests before emitting UI events", async () => {
+    const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
+
+    const ask = (
+      ui as PiSdk.ExtensionUIContext & {
+        ask: (
+          questions: AskQuestion[],
+          allowCustom?: boolean,
+        ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
+      }
+    ).ask;
+
+    await expect(ask([], true)).rejects.toThrow(/ask UI requires at least one question/);
+    expect(requests).toEqual([]);
+  });
+
+  it("rejects malformed ask responses instead of treating them as ignored", async () => {
+    const { ui } = makeCustomUIHarness((request) => {
+      if (request.method === "ask") {
+        return { value: "not-json" };
+      }
+      return { cancelled: true };
+    });
+
+    const ask = (
+      ui as PiSdk.ExtensionUIContext & {
+        ask: (
+          questions: AskQuestion[],
+          allowCustom?: boolean,
+        ) => Promise<{ answers: Record<string, string | string[]>; allIgnored: boolean }>;
+      }
+    ).ask;
+
+    await expect(
+      ask(
+        [
+          {
+            id: "scope",
+            question: "Which scope?",
+            options: [
+              { value: "small", label: "Small" },
+              { value: "large", label: "Large" },
+            ],
+          },
+        ],
+        true,
+      ),
+    ).rejects.toThrow(/Malformed ask response:/);
   });
 
   it("routes keyboard-only custom selectors through compatibility controls", async () => {

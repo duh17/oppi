@@ -17,6 +17,21 @@ function makeSession(sessionFile: string | undefined): AgentSession {
   } as unknown as AgentSession;
 }
 
+function buildExportHtmlWithSessionData(sessionData: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(sessionData), "utf-8").toString("base64");
+  return `<html><body><script id="session-data" type="application/json">${encoded}</script></body></html>`;
+}
+
+function decodeExportSessionData(html: string): Record<string, unknown> {
+  const match = html.match(
+    /<script id="session-data" type="application\/(?:json|octet-stream)">(.*?)<\/script>/s,
+  );
+  if (!match) {
+    throw new Error("Missing session-data payload");
+  }
+  return JSON.parse(Buffer.from(match[1]!.trim(), "base64").toString("utf-8"));
+}
+
 describe("shareSession", () => {
   it("fails when session has no persisted session file", async () => {
     await expect(
@@ -98,6 +113,332 @@ describe("shareSession", () => {
     );
 
     expect(exportSessionToHtml).toHaveBeenCalledTimes(1);
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("removes system prompt, tool definitions, and pre-user setup from embedded share payloads", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const openAiKey = `sk-${"B".repeat(24)}`;
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      const html = buildExportHtmlWithSessionData({
+        header: {
+          cwd: "/Users/alice/workspace/oppi",
+        },
+        entries: [
+          {
+            id: "entry-setup-model",
+            parentId: null,
+            type: "model_change",
+            timestamp: "2026-04-22T00:00:00.000Z",
+            provider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+          },
+          {
+            id: "entry-setup-thinking",
+            parentId: "entry-setup-model",
+            type: "thinking_level_change",
+            timestamp: "2026-04-22T00:00:01.000Z",
+            thinkingLevel: "high",
+          },
+          {
+            id: "entry-user",
+            parentId: "entry-setup-thinking",
+            type: "message",
+            timestamp: "2026-04-22T00:00:02.000Z",
+            message: {
+              role: "user",
+              content: `email alice@example.com key ${openAiKey}`,
+            },
+          },
+          {
+            id: "entry-assistant",
+            parentId: "entry-user",
+            type: "message",
+            timestamp: "2026-04-22T00:00:03.000Z",
+            message: {
+              role: "assistant",
+              content: "Working from /Users/alice/private/oppi",
+            },
+          },
+        ],
+        leafId: "entry-assistant",
+        systemPrompt: "You are an internal agent with hidden instructions.",
+        tools: [
+          {
+            name: "bash",
+            description: "Run shell commands",
+            parameters: {
+              type: "object",
+              properties: {
+                command: {
+                  type: "string",
+                  description: "Shell command to execute",
+                },
+              },
+              required: ["command"],
+            },
+          },
+        ],
+      });
+      writeFileSync(outputPath, html, "utf-8");
+    });
+
+    let uploadedHtml = "";
+    const result = await shareSession(makeSession("/tmp/session.jsonl"), {
+      ensureGhAuthenticated: () => {},
+      exportSessionToHtml,
+      createSecretGist: async (htmlPath) => {
+        uploadedHtml = readFileSync(htmlPath, "utf-8");
+        return {
+          stdout: "https://gist.github.com/demo-user/abc123\n",
+          stderr: "",
+          code: 0,
+        };
+      },
+      makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
+      makeTempPath: () => tempHtmlPath,
+    });
+
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    const payload = decodeExportSessionData(uploadedHtml);
+    const payloadText = JSON.stringify(payload);
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+
+    expect(payload.systemPrompt).toBeUndefined();
+    expect(payload.tools).toBeUndefined();
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "entry-user",
+      parentId: null,
+      type: "message",
+      message: { role: "user" },
+    });
+    expect(entries[1]).toMatchObject({
+      id: "entry-assistant",
+      parentId: "entry-user",
+      type: "message",
+      message: { role: "assistant" },
+    });
+    expect(payload.leafId).toBe("entry-assistant");
+
+    expect(payloadText).toContain("[REDACTED_OPENAI_API_KEY]");
+    expect(payloadText).toContain("[REDACTED_EMAIL]");
+    expect(payloadText).toContain("/Users/[REDACTED_USER]/workspace/oppi");
+    expect(payloadText).not.toContain("internal agent with hidden instructions");
+    expect(payloadText).not.toContain("Run shell commands");
+    expect(payloadText).not.toContain("entry-setup-model");
+    expect(payloadText).not.toContain("entry-setup-thinking");
+    expect(payloadText).not.toContain(openAiKey);
+    expect(payloadText).not.toContain("alice@example.com");
+    expect(payloadText).not.toContain("/Users/alice");
+
+    expect(result.scan.findings.some((finding) => finding.kind === "openai_api_key")).toBe(true);
+    expect(result.scan.residualFindings).toEqual([]);
+    expect(
+      result.redaction.findings.some((finding) => finding.kind === "system_prompt_removed"),
+    ).toBe(true);
+    expect(
+      result.redaction.findings.some((finding) => finding.kind === "tool_definitions_removed"),
+    ).toBe(true);
+    expect(
+      result.redaction.findings.some((finding) => finding.kind === "pre_user_entries_removed"),
+    ).toBe(true);
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("removes all embedded entries when the session has no user message", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      const html = buildExportHtmlWithSessionData({
+        entries: [
+          {
+            id: "entry-setup",
+            parentId: null,
+            type: "model_change",
+            timestamp: "2026-04-22T00:00:00.000Z",
+            provider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+          },
+          {
+            id: "entry-assistant",
+            parentId: "entry-setup",
+            type: "message",
+            timestamp: "2026-04-22T00:00:01.000Z",
+            message: {
+              role: "assistant",
+              content: "Ready when you are",
+            },
+          },
+        ],
+        leafId: "entry-assistant",
+        systemPrompt: "Hidden system prompt",
+        tools: [
+          {
+            name: "read",
+            description: "Read files",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      });
+      writeFileSync(outputPath, html, "utf-8");
+    });
+
+    let uploadedHtml = "";
+    const result = await shareSession(makeSession("/tmp/session.jsonl"), {
+      ensureGhAuthenticated: () => {},
+      exportSessionToHtml,
+      createSecretGist: async (htmlPath) => {
+        uploadedHtml = readFileSync(htmlPath, "utf-8");
+        return {
+          stdout: "https://gist.github.com/demo-user/abc123\n",
+          stderr: "",
+          code: 0,
+        };
+      },
+      makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
+      makeTempPath: () => tempHtmlPath,
+    });
+
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    const payload = decodeExportSessionData(uploadedHtml);
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+    const preUserRemoval = result.redaction.findings.find(
+      (finding) => finding.kind === "pre_user_entries_removed",
+    );
+
+    expect(payload.systemPrompt).toBeUndefined();
+    expect(payload.tools).toBeUndefined();
+    expect(entries).toEqual([]);
+    expect(payload.leafId).toBeNull();
+    expect(preUserRemoval?.count).toBe(2);
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("fails closed when embedded share payload cannot be decoded", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      writeFileSync(
+        outputPath,
+        '<html><body><script id="session-data" type="application/json">not-valid-json</script></body></html>',
+        "utf-8",
+      );
+    });
+    const createSecretGist = vi.fn(async () => ({
+      stdout: "https://gist.github.com/demo-user/abc123\n",
+      stderr: "",
+      code: 0,
+    }));
+
+    await expect(
+      shareSession(makeSession("/tmp/session.jsonl"), {
+        ensureGhAuthenticated: () => {},
+        exportSessionToHtml,
+        createSecretGist,
+        makeTempPath: () => tempHtmlPath,
+      }),
+    ).rejects.toThrow(
+      /\[share:share_export_failed\] Failed to decode embedded session-data payload:/,
+    );
+
+    expect(createSecretGist).not.toHaveBeenCalled();
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("still strips share-only structure when auto-redaction is disabled", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      const html = buildExportHtmlWithSessionData({
+        header: {
+          cwd: "/Users/alice/workspace/oppi",
+        },
+        entries: [
+          {
+            id: "entry-setup",
+            parentId: null,
+            type: "model_change",
+            timestamp: "2026-04-22T00:00:00.000Z",
+            provider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+          },
+          {
+            id: "entry-user",
+            parentId: "entry-setup",
+            type: "message",
+            timestamp: "2026-04-22T00:00:01.000Z",
+            message: {
+              role: "user",
+              content: "hello",
+            },
+          },
+          {
+            id: "entry-assistant",
+            parentId: "entry-user",
+            type: "message",
+            timestamp: "2026-04-22T00:00:02.000Z",
+            message: {
+              role: "assistant",
+              content: "hi",
+            },
+          },
+        ],
+        leafId: "entry-assistant",
+        systemPrompt: "Hidden system prompt",
+        tools: [
+          {
+            name: "read",
+            description: "Read files",
+            parameters: {
+              type: "object",
+              properties: {},
+            },
+          },
+        ],
+      });
+      writeFileSync(outputPath, html, "utf-8");
+    });
+
+    let uploadedHtml = "";
+    const result = await shareSession(makeSession("/tmp/session.jsonl"), {
+      ensureGhAuthenticated: () => {},
+      exportSessionToHtml,
+      createSecretGist: async (htmlPath) => {
+        uploadedHtml = readFileSync(htmlPath, "utf-8");
+        return {
+          stdout: "https://gist.github.com/demo-user/abc123\n",
+          stderr: "",
+          code: 0,
+        };
+      },
+      makeShareViewerUrl: (gistId) => `https://pi.dev/session/#${gistId}`,
+      makeTempPath: () => tempHtmlPath,
+      isAutoRedactionEnabled: () => false,
+    });
+
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    const payload = decodeExportSessionData(uploadedHtml);
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+
+    expect(payload.systemPrompt).toBeUndefined();
+    expect(payload.tools).toBeUndefined();
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ id: "entry-user", parentId: null });
+    expect(entries[1]).toMatchObject({ id: "entry-assistant", parentId: "entry-user" });
+    expect(payload.leafId).toBe("entry-assistant");
+
+    expect(result.redaction.enabled).toBe(false);
+    expect(result.redaction.totalReplacements).toBe(0);
     expect(existsSync(tempHtmlPath)).toBe(false);
   });
 

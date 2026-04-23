@@ -3,6 +3,7 @@ import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ServerMessage, Session } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import {
+  applyMessageEndToSession,
   translatePiEvent,
   normalizeCommandError,
   extractToolFullOutputPath,
@@ -1105,7 +1106,9 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(result).toHaveLength(1);
-      expect((result[0] as Extract<ServerMessage, { type: "tool_output" }>).toolCallId).toBeUndefined();
+      expect(
+        (result[0] as Extract<ServerMessage, { type: "tool_output" }>).toolCallId,
+      ).toBeUndefined();
     });
   });
 
@@ -1580,6 +1583,35 @@ describe("translatePiEvent", () => {
       >;
       expect(toolOutput.mode).toBe("replace");
       expect(toolOutput.truncated).toBe(true);
+    });
+  });
+
+  describe("applyMessageEndToSession", () => {
+    it("preserves the last non-zero context snapshot on aborted zero-usage messages", () => {
+      const session = makeSession({
+        contextTokens: 42_000,
+        tokens: { input: 1_200, output: 340, cacheRead: 9_000, cacheWrite: 0 },
+      });
+
+      applyMessageEndToSession(session, {
+        role: "assistant",
+        content: [],
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { total: 0 },
+        },
+      });
+
+      expect(session.contextTokens).toBe(42_000);
+      expect(session.tokens).toEqual({
+        input: 1_200,
+        output: 340,
+        cacheRead: 9_000,
+        cacheWrite: 0,
+      });
     });
   });
 

@@ -36,33 +36,13 @@ export class SessionUICoordinator {
       return false;
     }
 
-    // Ask interception: iOS responded to the synthetic ask request.
-    // Parse answers and resolve deferred extension select() calls.
-    if (active.pendingAsk?.requestId === response.id) {
-      active.pendingUIRequests.delete(response.id);
-
-      const cancelled = !!response.cancelled;
-      let answers: Record<string, string | string[]> = {};
-      if (!cancelled && response.value) {
-        try {
-          answers = JSON.parse(response.value);
-        } catch {
-          // Invalid JSON — treat as empty
-        }
-      }
-
-      // Store the response on pendingAsk before resolving deferred requests.
-      // This lets SessionEventProcessor keep interception active when the ask
-      // answer arrives before deferred select()/input requests are emitted.
-      active.pendingAsk.response = { answers, cancelled };
-
-      this.deps.eventProcessor.resolveAskDeferred(key, active, answers, cancelled);
-      return true;
-    }
-
     const req = active.pendingUIRequests.get(response.id);
     if (!req) {
       return false;
+    }
+
+    if (req.method === "ask") {
+      this.deps.eventProcessor.completeAskRequest(active, !!response.cancelled);
     }
 
     active.pendingUIRequests.delete(response.id);

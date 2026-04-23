@@ -186,7 +186,99 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 5. Tool use prompt → bash tool lifecycle (requires real LLM) ──
+  // ── 5. Ask flow → direct ask UI request only (requires real LLM) ──
+
+  it("uses direct ask UI without leaking generic select dialogs", async () => {
+    if (!lmsReady()) return;
+
+    const stream = await openStream(deviceToken);
+    const approver = autoApprovePermissions(stream, sessionId);
+
+    try {
+      await subscribeSession(stream, sessionId, "req-e2e-sub-ask");
+
+      const startIndex = stream.events.length;
+      const promptRequestId = "req-e2e-ask-prompt";
+
+      stream.send({
+        type: "prompt",
+        sessionId,
+        message:
+          "Use the ask tool exactly once with one question. " +
+          "Question id: target. Question text: Which target should I inspect? " +
+          "Options: value=source label=Source code; value=tests label=Tests. " +
+          "allowCustom: false. After the user answers, reply with exactly ASK_E2E_OK:<answer-value>. " +
+          "Do not use any other tools or ask any follow-up questions.",
+        requestId: promptRequestId,
+      });
+
+      const { event: promptAck } = await waitForEvent(
+        stream,
+        (e) =>
+          e.direction === "in" &&
+          (e.type === "command_result" || e.type === "rpc_result") &&
+          e.requestId === promptRequestId,
+        `prompt rpc_result (${promptRequestId})`,
+        { startIndex, timeoutMs: 300_000 },
+      );
+      expect(promptAck.success).toBe(true);
+
+      const { event: askEvent } = await waitForEvent(
+        stream,
+        (e) =>
+          e.direction === "in" &&
+          e.type === "extension_ui_request" &&
+          e.sessionId === sessionId &&
+          e.method === "ask",
+        "direct ask ui request",
+        { startIndex, timeoutMs: 300_000 },
+      );
+
+      expect(askEvent.id).toBeTruthy();
+
+      stream.send({
+        type: "extension_ui_response",
+        sessionId,
+        id: askEvent.id,
+        value: JSON.stringify({ target: "tests" }),
+        requestId: "req-e2e-ask-answer",
+      });
+
+      await waitForEvent(
+        stream,
+        (e) => e.direction === "in" && e.type === "agent_end" && e.sessionId === sessionId,
+        `agent_end (${promptRequestId})`,
+        { startIndex, timeoutMs: 300_000 },
+      );
+
+      const sessionEvents = stream.events
+        .slice(startIndex)
+        .filter((e) => e.direction === "in" && e.sessionId === sessionId);
+
+      const askRequests = sessionEvents.filter(
+        (e) => e.type === "extension_ui_request" && e.method === "ask",
+      );
+      const selectRequests = sessionEvents.filter(
+        (e) => e.type === "extension_ui_request" && e.method === "select",
+      );
+
+      expect(askRequests).toHaveLength(1);
+      expect(selectRequests).toHaveLength(0);
+
+      let assistantText = "";
+      for (const e of sessionEvents) {
+        if (e.type === "text_delta" && e.delta) assistantText += e.delta;
+        if (e.type === "message_end" && e.content) assistantText += e.content;
+      }
+
+      expect(assistantText).toContain("ASK_E2E_OK:tests");
+    } finally {
+      approver.stop();
+      await closeStream(stream);
+    }
+  });
+
+  // ── 6. Tool use prompt → bash tool lifecycle (requires real LLM) ──
 
   it("sends a prompt requiring bash tool and verifies tool lifecycle", async () => {
     if (!lmsReady()) return;
@@ -242,7 +334,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 6. Reconnect and catch-up replay (requires real LLM for events to exist) ──
+  // ── 7. Reconnect and catch-up replay (requires real LLM for events to exist) ──
 
   it("reconnects to /stream and replays missed events", async () => {
     if (!lmsReady()) return;
@@ -254,14 +346,11 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
       const sessionEvents = stream1.events.filter(
         (e) =>
-          e.direction === "in" &&
-          e.sessionId === sessionId &&
-          typeof e.sessionSeq === "number",
+          e.direction === "in" && e.sessionId === sessionId && typeof e.sessionSeq === "number",
       );
 
-      const baselineSeq = sessionEvents.length > 0
-        ? sessionEvents[sessionEvents.length - 1].sessionSeq!
-        : 0;
+      const baselineSeq =
+        sessionEvents.length > 0 ? sessionEvents[sessionEvents.length - 1].sessionSeq! : 0;
 
       expect(baselineSeq).toBeGreaterThan(0);
 
@@ -307,9 +396,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
         // Seqs should be strictly increasing
         for (let i = 1; i < catchupEvents.length; i++) {
-          expect(catchupEvents[i].sessionSeq!).toBeGreaterThan(
-            catchupEvents[i - 1].sessionSeq!,
-          );
+          expect(catchupEvents[i].sessionSeq!).toBeGreaterThan(catchupEvents[i - 1].sessionSeq!);
         }
       } finally {
         await closeStream(stream2);
@@ -321,7 +408,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 7. Session isolation ──
+  // ── 8. Session isolation ──
 
   it("cannot subscribe to session from wrong workspace", async () => {
     if (!lmsReady()) return;
@@ -334,11 +421,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const wrongWorkspaceId = (ws2.json?.workspace as Record<string, unknown>).id as string;
 
     // Try to access the session via the wrong workspace's sessions list
-    const sessionsRes = await api(
-      "GET",
-      `/workspaces/${wrongWorkspaceId}/sessions`,
-      deviceToken,
-    );
+    const sessionsRes = await api("GET", `/workspaces/${wrongWorkspaceId}/sessions`, deviceToken);
     expect(sessionsRes.status).toBe(200);
 
     const sessions = sessionsRes.json?.sessions as { id: string }[];
@@ -346,7 +429,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     expect(leaked).toBeUndefined();
   });
 
-  // ── 8. Workspace cleanup ──
+  // ── 9. Workspace cleanup ──
 
   it("deletes workspace", async () => {
     if (!lmsReady()) return;

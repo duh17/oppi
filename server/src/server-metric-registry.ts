@@ -179,7 +179,7 @@ export const SERVER_METRIC_REGISTRY = {
   "server.ask_round_trip_ms": {
     unit: "ms",
     description:
-      "Ask extension round-trip: server interception to iOS answer resolution. Tagged by cancelled, questionCount.",
+      "Ask extension round-trip: direct ask UI request to user answer resolution. Tagged by cancelled, questionCount.",
   },
 
   // ── Dictation Pipeline ──
