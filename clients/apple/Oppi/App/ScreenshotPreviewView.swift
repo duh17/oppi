@@ -60,17 +60,31 @@ struct ScreenshotPreviewView: View {
 // MARK: - Workspace Edit Preview
 
 private struct WorkspaceEditPreview: View {
-    @State private var connection = ServerConnection()
+    @State private var connection = Self.makePreviewConnection()
 
     private static let mockSkills: [SkillInfo] = [
-        SkillInfo(name: "search", description: "Private web search via SearXNG for research and documentation.", path: "/skills/search"),
-        SkillInfo(name: "web-fetch", description: "Fetch and extract readable content from web pages.", path: "/skills/web-fetch"),
-        SkillInfo(name: "web-browser", description: "Web browser automation via Chrome DevTools Protocol.", path: "/skills/web-browser"),
-        SkillInfo(name: "tmux", description: "Spawn and control tmux panes for interactive CLIs.", path: "/skills/tmux"),
-        SkillInfo(name: "sentry", description: "Fetch and analyze Sentry issues, events, and logs.", path: "/skills/sentry"),
-        SkillInfo(name: "youtube-transcript", description: "Fetch YouTube video transcripts for summarization.", path: "/skills/youtube-transcript"),
-        SkillInfo(name: "audio-transcribe", description: "Transcribe and summarize audio files using MLX Qwen-ASR.", path: "/skills/audio-transcribe"),
-        SkillInfo(name: "pi-remote-session", description: "Look up and inspect pi-remote sessions and traces.", path: "/skills/pi-remote-session"),
+        SkillInfo(name: "agents-md", description: "Manage global and project AGENTS.md files for coding agents.", path: "/skills/agents-md"),
+        SkillInfo(name: "audio-transcribe", description: "Transcribe local audio files or YouTube videos with Yuwp's canonical `yuwp-asr` CLI and helpers.", path: "/skills/audio-transcribe"),
+        SkillInfo(name: "autoresearch", description: "Set up and run an autonomous experiment loop for any optimization target.", path: "/skills/autoresearch"),
+        SkillInfo(name: "clanker-farm", description: "Design and build CLI tools and skills optimized for both human and AI agent consumption.", path: "/skills/clanker-farm"),
+        SkillInfo(name: "deep-research", description: "Conduct safe, evidence-first web research with iterative search and citation verification.", path: "/skills/deep-research"),
+        SkillInfo(name: "devdoc", description: "Look up third-party API docs, Apple docs, and RFC references.", path: "/skills/devdoc"),
+    ]
+
+    private static let mockExtensions: [ExtensionInfo] = [
+        ExtensionInfo(name: "workflow", path: "~/.pi/agent/extensions/workflow", kind: "file", source: "pi"),
+        ExtensionInfo(name: "index", path: "~/.pi/agent/git/index", kind: "file", source: "pi"),
+        ExtensionInfo(name: "pi-sessions", path: "~/.pi/agent/extensions/pi-sessions", kind: "file", source: "pi"),
+        ExtensionInfo(name: "review", path: "~/.pi/agent/git/review", kind: "file", source: "pi"),
+        ExtensionInfo(name: "simplify", path: "~/.pi/agent/extensions/simplify", kind: "file", source: "pi"),
+        ExtensionInfo(name: "theme-builder", path: "~/.pi/agent/extensions/theme-builder", kind: "file", source: "pi"),
+        ExtensionInfo(name: "todos", path: "~/.pi/agent/extensions/todos", kind: "file", source: "pi"),
+    ]
+
+    private static let mockModels: [ModelInfo] = [
+        ModelInfo(id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "Anthropic", contextWindow: 200_000),
+        ModelInfo(id: "openai/gpt-4.1", name: "GPT-4.1", provider: "OpenAI", contextWindow: 128_000),
+        ModelInfo(id: "openai/o4-mini", name: "o4-mini", provider: "OpenAI", contextWindow: 200_000),
     ]
 
     private static let mockWorkspace = Workspace(
@@ -78,31 +92,37 @@ private struct WorkspaceEditPreview: View {
         name: "oppi-dev",
         description: "iOS app development workspace",
         icon: "hammer",
-        skills: ["search", "web-fetch", "web-browser", "tmux", "sentry"],
+        skills: ["agents-md", "audio-transcribe", "autoresearch"],
         systemPrompt: nil,
         hostMount: "~/workspace/oppi",
-        extensions: nil,
+        extensions: ["index", "pi-sessions", "review", "simplify", "todos"],
         gitStatusEnabled: true,
-        defaultModel: nil,
+        defaultModel: "anthropic/claude-sonnet-4-5",
         createdAt: Date(),
         updatedAt: Date()
     )
 
     var body: some View {
         NavigationStack {
-            WorkspaceEditView(workspace: Self.mockWorkspace)
+            WorkspaceEditView(
+                workspace: Self.mockWorkspace,
+                previewAvailableExtensions: Self.mockExtensions,
+                previewAvailableModels: Self.mockModels
+            )
         }
         .environment(connection)
         .environment(connection.workspaceStore)
         .environment(\.apiClient, connection.apiClient)
-        .onAppear {
-            let serverId = "preview-server"
-            connection.workspaceStore.skillsByServer[serverId] = Self.mockSkills
-            connection.workspaceStore.workspacesByServer[serverId] = [Self.mockWorkspace]
-            // Set the active server ID so the view can find its data.
-            connection.setPreviewServerId(serverId)
-        }
         .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private static func makePreviewConnection() -> ServerConnection {
+        let connection = ServerConnection()
+        let serverId = "preview-server"
+        connection.workspaceStore.skillsByServer[serverId] = Self.mockSkills
+        connection.workspaceStore.workspacesByServer[serverId] = [Self.mockWorkspace]
+        connection.setPreviewServerId(serverId)
+        return connection
     }
 }
 

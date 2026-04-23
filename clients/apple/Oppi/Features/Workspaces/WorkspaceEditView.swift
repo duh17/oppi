@@ -2,7 +2,24 @@ import SwiftUI
 
 /// Edit an existing workspace's configuration.
 struct WorkspaceEditView: View {
+    private enum SelectableRowID: Hashable {
+        case skill(String)
+        case extensionName(String)
+    }
+
     let workspace: Workspace
+    private let previewAvailableExtensions: [ExtensionInfo]?
+    private let previewAvailableModels: [ModelInfo]?
+
+    init(
+        workspace: Workspace,
+        previewAvailableExtensions: [ExtensionInfo]? = nil,
+        previewAvailableModels: [ModelInfo]? = nil
+    ) {
+        self.workspace = workspace
+        self.previewAvailableExtensions = previewAvailableExtensions
+        self.previewAvailableModels = previewAvailableModels
+    }
 
     @Environment(\.apiClient) private var apiClient
     @Environment(WorkspaceStore.self) private var workspaceStore
@@ -84,12 +101,51 @@ struct WorkspaceEditView: View {
         Set(parseUniqueNames(extensionNames))
     }
 
+    private var availableExtensionNameSet: Set<String> {
+        Set(availableExtensions.map(\.name))
+    }
+
     private var oppiExtensions: [ExtensionInfo] {
         availableExtensions.filter(\.isOppi)
     }
 
     private var piExtensions: [ExtensionInfo] {
         availableExtensions.filter { !$0.isOppi }
+    }
+
+    private var selectableRowSelection: Binding<Set<SelectableRowID>> {
+        Binding(
+            get: {
+                let visibleSkillNames = selectedSkills.intersection(Set(skills.map(\.name)))
+                let visibleExtensionNames = selectedExtensionSet.intersection(availableExtensionNameSet)
+                return Set(visibleSkillNames.map { SelectableRowID.skill($0) })
+                    .union(visibleExtensionNames.map { SelectableRowID.extensionName($0) })
+            },
+            set: { newSelection in
+                let visibleSkillNames = Set(skills.map(\.name))
+                let hiddenSkillNames = selectedSkills.subtracting(visibleSkillNames)
+                let nextVisibleSkillNames = Set(newSelection.compactMap { row -> String? in
+                    if case let .skill(name) = row {
+                        return name
+                    }
+                    return nil
+                })
+                selectedSkills = hiddenSkillNames.union(nextVisibleSkillNames)
+
+                let currentExtensionNames = parseUniqueNames(extensionNames)
+                let hiddenExtensionNames = currentExtensionNames.filter { !availableExtensionNameSet.contains($0) }
+                let nextVisibleExtensionNames = Set(newSelection.compactMap { row -> String? in
+                    if case let .extensionName(name) = row {
+                        return name
+                    }
+                    return nil
+                })
+                let orderedVisibleExtensionNames = availableExtensions
+                    .map(\.name)
+                    .filter(nextVisibleExtensionNames.contains)
+                setSelectedExtensionNames(orderedVisibleExtensionNames + hiddenExtensionNames)
+            }
+        )
     }
 
     private var systemPromptEditorSummary: String {
@@ -110,7 +166,7 @@ struct WorkspaceEditView: View {
     }
 
     var body: some View {
-        Form {
+        List(selection: selectableRowSelection) {
             Section("System Prompt") {
                 Picker("Behavior", selection: $systemPromptMode) {
                     Text("Append").tag(WorkspaceSystemPromptMode.append)
@@ -152,6 +208,7 @@ struct WorkspaceEditView: View {
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
+            .selectionDisabled()
 
             Section("Identity") {
                 TextField("Name", text: $name)
@@ -161,6 +218,7 @@ struct WorkspaceEditView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             }
+            .selectionDisabled()
 
             extensionsSection
 
@@ -169,11 +227,13 @@ struct WorkspaceEditView: View {
                     Text("Loading skills…")
                         .foregroundStyle(.themeComment)
                 }
+                .selectionDisabled()
             } else {
                 Section("Enabled Skills") {
                     if enabledSkills.isEmpty {
                         Text("No skills enabled")
                             .foregroundStyle(.themeComment)
+                            .selectionDisabled()
                     } else {
                         ForEach(enabledSkills) { skill in
                             skillRow(skill)
@@ -185,6 +245,7 @@ struct WorkspaceEditView: View {
                     if disabledSkills.isEmpty {
                         Text("All skills enabled")
                             .foregroundStyle(.themeComment)
+                            .selectionDisabled()
                     } else {
                         ForEach(disabledSkills) { skill in
                             skillRow(skill)
@@ -205,6 +266,7 @@ struct WorkspaceEditView: View {
                         .foregroundStyle(.themeComment)
                 }
             }
+            .selectionDisabled()
 
             Section("Git Status") {
                 Toggle("Show git status bar", isOn: $gitStatusEnabled)
@@ -213,6 +275,7 @@ struct WorkspaceEditView: View {
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
+            .selectionDisabled()
 
             if runtime == .sandbox {
                 Section {
@@ -236,6 +299,7 @@ struct WorkspaceEditView: View {
                 } header: {
                     Text("Sandbox")
                 }
+                .selectionDisabled()
             }
 
             Section("Default Model") {
@@ -259,6 +323,7 @@ struct WorkspaceEditView: View {
                     .foregroundStyle(.themeFg)
                 }
             }
+            .selectionDisabled()
 
             if let error {
                 Section {
@@ -266,8 +331,11 @@ struct WorkspaceEditView: View {
                         .foregroundStyle(.themeRed)
                         .font(.caption)
                 }
+                .selectionDisabled()
             }
         }
+        .environment(\.editMode, .constant(.active))
+        .listStyle(.insetGrouped)
         .themedListSurface()
         .navigationTitle("Edit Workspace")
         .navigationBarTitleDisplayMode(.inline)
@@ -303,6 +371,7 @@ struct WorkspaceEditView: View {
                 Text("Loading extensions\u{2026}")
                     .foregroundStyle(.themeComment)
             }
+            .selectionDisabled()
         } else {
             if !oppiExtensions.isEmpty {
                 Section("Oppi Extensions") {
@@ -316,6 +385,7 @@ struct WorkspaceEditView: View {
                 if piExtensions.isEmpty {
                     Text("No pi extensions found.")
                         .foregroundStyle(.themeComment)
+                        .selectionDisabled()
                 } else {
                     ForEach(piExtensions) { ext in
                         extensionRow(ext)
@@ -326,6 +396,7 @@ struct WorkspaceEditView: View {
                     Text(extensionsError)
                         .font(.caption2)
                         .foregroundStyle(.themeOrange)
+                        .selectionDisabled()
                 }
             } header: {
                 Text("Pi Extensions")
@@ -337,44 +408,31 @@ struct WorkspaceEditView: View {
 
     @ViewBuilder
     private func extensionRow(_ ext: ExtensionInfo) -> some View {
-        Button {
-            toggleExtension(ext.name)
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(ext.name)
-                        .font(.body)
-                    Text(ext.subtitle)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.themeComment)
-                }
-
-                Spacer()
-
-                Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
-                    .imageScale(.large)
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ext.name)
+                    .font(.body)
+                    .foregroundStyle(.themeFg)
+                Text(ext.subtitle)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.themeComment)
             }
+
+            Spacer()
         }
-        .foregroundStyle(.themeFg)
+        .contentShape(Rectangle())
+        .tag(SelectableRowID.extensionName(ext.name))
     }
 
     @ViewBuilder
     private func skillRow(_ skill: SkillInfo) -> some View {
-        SkillToggleRow(
+        SkillSelectionRow(
             skill: skill,
-            isSelected: selectedSkills.contains(skill.name),
-            onToggle: { selected in
-                if selected {
-                    selectedSkills.insert(skill.name)
-                } else {
-                    selectedSkills.remove(skill.name)
-                }
-            },
             onShowDetail: {
                 selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
             }
         )
+        .tag(SelectableRowID.skill(skill.name))
     }
 
     private func parseUniqueNames(_ raw: String) -> [String] {
@@ -396,16 +454,6 @@ struct WorkspaceEditView: View {
 
     private func setSelectedExtensionNames(_ names: [String]) {
         extensionNames = names.joined(separator: ", ")
-    }
-
-    private func toggleExtension(_ name: String) {
-        var names = parseUniqueNames(extensionNames)
-        if let idx = names.firstIndex(of: name) {
-            names.remove(at: idx)
-        } else {
-            names.append(name)
-        }
-        setSelectedExtensionNames(names)
     }
 
     private func validSelectedSkillNames() -> [String] {
@@ -435,7 +483,13 @@ struct WorkspaceEditView: View {
     }
 
     private func loadModels() async {
-        guard let api = apiClient else { return }
+        guard let api = apiClient else {
+            if let previewAvailableModels {
+                availableModels = previewAvailableModels
+            }
+            return
+        }
+
         do {
             availableModels = try await api.listModels()
         } catch {
@@ -444,7 +498,12 @@ struct WorkspaceEditView: View {
     }
 
     private func loadExtensions() async {
-        guard let api = apiClient else { return }
+        guard let api = apiClient else {
+            if let previewAvailableExtensions {
+                availableExtensions = previewAvailableExtensions
+            }
+            return
+        }
 
         isLoadingExtensions = true
         extensionsError = nil
@@ -648,45 +707,30 @@ private struct WorkspaceSystemPromptEditorView: View {
     }
 }
 
-// MARK: - Skill Toggle Row
+// MARK: - Skill Selection Row
 
-private struct SkillToggleRow: View {
+private struct SkillSelectionRow: View {
     let skill: SkillInfo
-    let isSelected: Bool
-    let onToggle: (Bool) -> Void
     let onShowDetail: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Button {
-                onToggle(!isSelected)
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(skill.name)
-                            .font(.body)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(skill.name)
+                    .font(.body)
+                    .foregroundStyle(.themeFg)
 
-                        Text(skill.description)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                            .lineLimit(2)
-                    }
-
-                    Spacer()
-
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? .themeBlue : .themeComment)
-                        .imageScale(.large)
-                }
-                .contentShape(Rectangle())
+                Text(skill.description)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(2)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.themeFg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 12)
 
             Button(action: onShowDetail) {
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
+                Image(systemName: "info.circle")
+                    .font(.body)
                     .foregroundStyle(.themeComment)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -694,6 +738,7 @@ private struct SkillToggleRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("View \(skill.name) details")
         }
+        .contentShape(Rectangle())
     }
 }
 

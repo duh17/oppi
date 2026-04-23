@@ -19,19 +19,20 @@ final class ScreenshotPreviewUITests: XCTestCase {
     func testWorkspaceEditSkillGrouping() throws {
         launchPreview(screen: "workspace-edit")
 
-        // Wait for the form to populate — skills section should appear.
+        let extensionsHeader = app.staticTexts["Pi Extensions"]
+        XCTAssertTrue(extensionsHeader.waitForExistence(timeout: 5), "Pi Extensions header not found")
+        saveScreenshot(name: "workspace-edit-extensions")
+
         let enabledHeader = app.staticTexts["Enabled Skills"]
-        XCTAssertTrue(enabledHeader.waitForExistence(timeout: 5), "Enabled Skills header not found")
-
-        saveScreenshot(name: "workspace-edit-enabled")
-
-        // Scroll to show the boundary between enabled and disabled sections.
-        let lastEnabled = app.staticTexts["sentry"]
-        if lastEnabled.exists {
+        var foundEnabledHeader = enabledHeader.exists
+        for _ in 0..<2 where !foundEnabledHeader {
             app.swipeUp()
+            foundEnabledHeader = enabledHeader.waitForExistence(timeout: 2)
         }
+        XCTAssertTrue(foundEnabledHeader, "Enabled Skills header not found")
 
-        saveScreenshot(name: "workspace-edit-disabled")
+        sleep(1)
+        saveScreenshot(name: "workspace-edit-skills")
     }
 
     func testSessionTimelinePreview() throws {
