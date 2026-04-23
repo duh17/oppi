@@ -992,7 +992,10 @@ struct VoiceInputManagerTests {
         #expect(manager.currentTranscript.isEmpty)
     }
 
-    @Test func replaceTranscriptKeepsPostCommitTailVolatileUntilSnap() async throws {
+    /// When the server does NOT provide committedText/activeText, the manager
+    /// must infer the split from the previous committedText state using the
+    /// splitActiveText heuristic. This is the path non-Oppi providers use.
+    @Test func replaceTranscriptInfersSplitFromPreviousStateWithoutExplicitFields() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -1008,21 +1011,74 @@ struct VoiceInputManagerTests {
 
         try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
 
+        // First replace without explicit split — no prior committedText,
+        // so the entire text becomes volatile (heuristic else branch).
         session.yieldEvent(.replaceFinalTranscript("Hello world."))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world." })
+        manager.typewriterAnimator.commitCurrentAnimation()
+        #expect(manager.currentTranscriptVolatileSuffixLength == "Hello world.".count,
+                "Before any snap, the full visible transcript should stay volatile")
+
+        // Snap without explicit split — settles everything.
+        session.yieldEvent(.replaceFinalTranscript("Hello world.", snap: true))
+        #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 },
+                "A snap should settle the visible text immediately")
+
+        // Second replace without explicit split — heuristic should detect that
+        // "Hello world." is already committed and treat "testing now" as active.
+        session.yieldEvent(.replaceFinalTranscript("Hello world. testing now"))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world. testing now" })
+        manager.typewriterAnimator.commitCurrentAnimation()
+        #expect(manager.currentTranscriptVolatileSuffixLength == "testing now".count,
+                "Heuristic split should keep only the new tail volatile")
+
+        await manager.cancelRecording()
+    }
+
+    @Test func replaceTranscriptUsesExplicitCommittedAndActiveSplitFromProxy() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello world.",
+            committedText: "",
+            activeText: "Hello world."
+        ))
         #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world." })
         manager.typewriterAnimator.commitCurrentAnimation()
         #expect(manager.currentTranscriptVolatileSuffixLength == "Hello world.".count,
                 "Before the first segment commit, the full visible transcript should stay volatile")
 
-        session.yieldEvent(.replaceFinalTranscript("Hello world.", snap: true))
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello world.",
+            snap: true,
+            committedText: "Hello world.",
+            activeText: ""
+        ))
         #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 },
                 "A snap/segment commit should settle the visible text immediately")
 
-        session.yieldEvent(.replaceFinalTranscript("Hello world. testing now"))
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello world. testing now",
+            committedText: "Hello world.",
+            activeText: "testing now"
+        ))
         #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world. testing now" })
         manager.typewriterAnimator.commitCurrentAnimation()
         #expect(manager.currentTranscriptVolatileSuffixLength == "testing now".count,
-                "After a segment commit, only the active tail should stay volatile")
+                "With an explicit proxy split, only the active tail should stay volatile")
 
         await manager.cancelRecording()
     }
