@@ -909,6 +909,15 @@ actor APIClient {
         return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
     }
 
+    // periphery:ignore - used by RemoteFileView (transitively unused)
+    /// Download a session file to a local temporary file for AV playback.
+    func downloadSessionFileToTemporaryURL(workspaceId: String, sessionId: String, path: String) async throws -> URL {
+        try await downloadToTemporaryFile(
+            "/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))",
+            suggestedFilename: (path as NSString).lastPathComponent
+        )
+    }
+
     /// Fetch a workspace file by path (images, etc.) from the workspace file endpoint.
     ///
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
@@ -947,6 +956,21 @@ actor APIClient {
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
     func browseWorkspaceFile(workspaceId: String, path: String) async throws -> Data {
         return try await get("/workspaces/\(workspaceId)/files/\(path)?mode=browse")
+    }
+
+    /// Download a workspace file in browse mode to a local temporary file.
+    ///
+    /// Unlike `browseWorkspaceFile`, this streams the response to disk first so
+    /// large audio/video files do not need to be buffered fully in memory.
+    func downloadWorkspaceFileToTemporaryURL(
+        workspaceId: String,
+        path: String,
+        suggestedFilename: String? = nil
+    ) async throws -> URL {
+        try await downloadToTemporaryFile(
+            "/workspaces/\(workspaceId)/files/\(path)?mode=browse",
+            suggestedFilename: suggestedFilename ?? (path as NSString).lastPathComponent
+        )
     }
 
     /// Build an authenticated URL for streaming media via AVPlayer.
@@ -1033,6 +1057,13 @@ actor APIClient {
         return data
     }
 
+    private static let mediaDownloadDirectoryName = "oppi-media-downloads"
+
+    private static var mediaDownloadDirectoryURL: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(mediaDownloadDirectoryName, isDirectory: true)
+    }
+
     private func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
         var req = URLRequest(url: try makeURL(path: path))
         req.httpMethod = method
@@ -1058,6 +1089,60 @@ actor APIClient {
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path) [no-auth]")
         return try await session.data(for: req)
+    }
+
+    private func downloadToTemporaryFile(_ path: String, suggestedFilename: String?) async throws -> URL {
+        var req = URLRequest(url: try makeURL(path: path))
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        logger.debug("DOWNLOAD \(path)")
+
+        let (temporaryURL, response) = try await session.download(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(http.statusCode) else {
+            let data = (try? Data(contentsOf: temporaryURL)) ?? Data()
+            try? FileManager.default.removeItem(at: temporaryURL)
+            try checkStatus(response, data: data)
+            throw APIError.invalidResponse
+        }
+
+        return try Self.moveDownloadedFile(from: temporaryURL, suggestedFilename: suggestedFilename)
+    }
+
+    private static func moveDownloadedFile(from temporaryURL: URL, suggestedFilename: String?) throws -> URL {
+        let directory = mediaDownloadDirectoryURL
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let filename = makeDownloadedFilename(suggestedFilename)
+        let destinationURL = directory.appendingPathComponent(filename, isDirectory: false)
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try? FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+        return destinationURL
+    }
+
+    private static func makeDownloadedFilename(_ suggestedFilename: String?) -> String {
+        let rawFilename = ((suggestedFilename ?? "media") as NSString).lastPathComponent
+        let rawExtension = (rawFilename as NSString).pathExtension
+        let rawStem = (rawFilename as NSString).deletingPathExtension
+
+        let sanitizedStem = rawStem
+            .replacingOccurrences(of: "[^A-Za-z0-9_-]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let fallbackStem = sanitizedStem.isEmpty ? "media" : sanitizedStem
+        let sanitizedExtension = rawExtension
+            .replacingOccurrences(of: "[^A-Za-z0-9]+", with: "", options: .regularExpression)
+            .lowercased()
+        let suffix = UUID().uuidString.lowercased()
+
+        if sanitizedExtension.isEmpty {
+            return "\(fallbackStem)-\(suffix)"
+        }
+        return "\(fallbackStem)-\(suffix).\(sanitizedExtension)"
     }
 
     private func encodeQueryPath(_ path: String) throws -> String {

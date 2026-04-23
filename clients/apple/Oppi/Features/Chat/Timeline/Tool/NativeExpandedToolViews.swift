@@ -1,3 +1,4 @@
+import AVFoundation
 import UIKit
 import SwiftUI
 
@@ -65,7 +66,7 @@ final class NativeExpandedReadMediaView: UIView {
 
             for image in parsed.images.prefix(6) {
                 let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
-                imageView.apply(base64: image.base64)
+                imageView.apply(base64: image.base64, mimeType: image.mimeType)
                 rootStack.addArrangedSubview(imageView)
             }
             if parsed.images.count > 6 {
@@ -73,6 +74,27 @@ final class NativeExpandedReadMediaView: UIView {
                 more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(parsed.images.count - 6) more image attachment(s)"
+                rootStack.addArrangedSubview(more)
+            }
+        }
+
+        if !parsed.videos.isEmpty {
+            let countLabel = UILabel()
+            countLabel.font = ToolFont.smallBold
+            countLabel.textColor = UIColor(palette.comment)
+            countLabel.text = parsed.videos.count == 1 ? "Video" : "Videos (\(parsed.videos.count))"
+            rootStack.addArrangedSubview(countLabel)
+
+            for video in parsed.videos.prefix(4) {
+                let videoView = NativeExpandedInlineVideoView()
+                videoView.apply(base64: video.base64, mimeType: video.mimeType)
+                rootStack.addArrangedSubview(videoView)
+            }
+            if parsed.videos.count > 4 {
+                let more = UILabel()
+                more.font = ToolFont.small
+                more.textColor = UIColor(palette.comment)
+                more.text = "+\(parsed.videos.count - 4) more video attachment(s)"
                 rootStack.addArrangedSubview(more)
             }
         }
@@ -102,7 +124,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.audio.isEmpty {
+        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.videos.isEmpty && parsed.audio.isEmpty {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
@@ -179,18 +201,41 @@ final class NativeExpandedInlineImageView: UIView {
         decodeTask?.cancel()
     }
 
-    func apply(base64: String) {
+    private let animatedImageView = AnimatedImageWebContainerView()
+
+    func apply(base64: String, mimeType: String?) {
         let key = ImageDecodeCache.decodeKey(for: base64, maxPixelSize: maxPixelSize)
         guard key != decodedKey else { return }
         decodedKey = key
 
         decodeTask?.cancel()
         imageView.image = nil
+        imageView.isHidden = false
+        animatedImageView.isHidden = true
         placeholder.isHidden = false
         placeholder.startAnimating()
 
         let maxPixelSize = self.maxPixelSize
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                await MainActor.run { [weak self] in
+                    guard let self, self.decodedKey == key else { return }
+                    self.applyDecodedImage(nil)
+                }
+                return
+            }
+
+            let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+            if info.prefersWebRenderer {
+                let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
+                let dataURLString = "data:\(normalizedMimeType);base64,\(base64)"
+                await MainActor.run { [weak self] in
+                    guard let self, self.decodedKey == key else { return }
+                    self.applyAnimatedImage(dataURLString: dataURLString, pixelSize: info.pixelSize)
+                }
+                return
+            }
+
             let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: maxPixelSize)
             await MainActor.run { [weak self] in
                 guard let self, self.decodedKey == key else { return }
@@ -210,6 +255,10 @@ final class NativeExpandedInlineImageView: UIView {
         imageView.isUserInteractionEnabled = true
         addSubview(imageView)
 
+        animatedImageView.translatesAutoresizingMaskIntoConstraints = false
+        animatedImageView.isHidden = true
+        addSubview(animatedImageView)
+
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(placeholder)
 
@@ -218,6 +267,10 @@ final class NativeExpandedInlineImageView: UIView {
             imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            animatedImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            animatedImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            animatedImageView.topAnchor.constraint(equalTo: topAnchor),
+            animatedImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
@@ -229,6 +282,8 @@ final class NativeExpandedInlineImageView: UIView {
 
     private func applyDecodedImage(_ image: UIImage?) {
         imageView.image = image
+        imageView.isHidden = false
+        animatedImageView.isHidden = true
         placeholder.stopAnimating()
         placeholder.isHidden = image != nil
 
@@ -243,29 +298,151 @@ final class NativeExpandedInlineImageView: UIView {
         aspectRatioConstraint = constraint
     }
 
+    private func applyAnimatedImage(dataURLString: String, pixelSize: CGSize?) {
+        imageView.image = nil
+        imageView.isHidden = true
+        animatedImageView.isHidden = false
+        animatedImageView.apply(dataURLString: dataURLString)
+        placeholder.stopAnimating()
+        placeholder.isHidden = true
+
+        aspectRatioConstraint?.isActive = false
+        aspectRatioConstraint = nil
+
+        guard let pixelSize, pixelSize.width > 0, pixelSize.height > 0 else { return }
+        let aspectRatio = pixelSize.height / pixelSize.width
+        let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: aspectRatio)
+        constraint.priority = .required
+        constraint.isActive = true
+        aspectRatioConstraint = constraint
+    }
+
     @objc private func handleTap() {
         guard let image = imageView.image else { return }
         FullScreenImageViewController.present(image: image)
     }
 }
 
+final class NativeExpandedInlineVideoView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    private let placeholder = UIActivityIndicatorView(style: .medium)
+    private var decodeTask: Task<Void, Never>?
+    private var decodedKey: String?
+    private var playbackObserver: NSObjectProtocol?
+
+    private var playerLayer: AVPlayerLayer? {
+        layer as? AVPlayerLayer
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        decodeTask?.cancel()
+        teardownPlayer()
+    }
+
+    func apply(base64: String, mimeType: String?) {
+        let key = "video-\(base64.count)-\(base64.prefix(64))-\(base64.suffix(64))"
+        guard key != decodedKey else { return }
+        decodedKey = key
+
+        decodeTask?.cancel()
+        teardownPlayer()
+        placeholder.isHidden = false
+        placeholder.startAnimating()
+
+        decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                await MainActor.run { [weak self] in
+                    self?.placeholder.stopAnimating()
+                    self?.placeholder.isHidden = true
+                }
+                return
+            }
+
+            do {
+                let ext = MediaMimeType.preferredFileExtension(forVideo: mimeType)
+                let url = try MediaTempFileStore.fileURL(for: data, preferredExtension: ext)
+                await MainActor.run { [weak self] in
+                    guard let self, self.decodedKey == key else { return }
+                    let player = AVPlayer(url: url)
+                    player.isMuted = true
+                    player.actionAtItemEnd = .none
+                    self.playerLayer?.player = player
+                    self.playerLayer?.videoGravity = .resizeAspect
+                    self.playbackObserver = NotificationCenter.default.addObserver(
+                        forName: .AVPlayerItemDidPlayToEndTime,
+                        object: player.currentItem,
+                        queue: .main
+                    ) { _ in
+                        player.seek(to: .zero)
+                        player.play()
+                    }
+                    self.placeholder.stopAnimating()
+                    self.placeholder.isHidden = true
+                    player.play()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.placeholder.stopAnimating()
+                    self?.placeholder.isHidden = true
+                }
+            }
+        }
+    }
+
+    private func setupViews() {
+        translatesAutoresizingMaskIntoConstraints = false
+        clipsToBounds = true
+        backgroundColor = .clear
+        playerLayer?.backgroundColor = UIColor.clear.cgColor
+
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(placeholder)
+
+        NSLayoutConstraint.activate([
+            placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalTo: widthAnchor, multiplier: 9.0 / 16.0),
+        ])
+    }
+
+    private func teardownPlayer() {
+        if let playbackObserver {
+            NotificationCenter.default.removeObserver(playbackObserver)
+            self.playbackObserver = nil
+        }
+        playerLayer?.player?.pause()
+        playerLayer?.player = nil
+    }
+}
+
 private struct NativeExpandedReadMediaParsed {
     let strippedText: String
     let images: [ImageExtractor.ExtractedImage]
+    let videos: [VideoExtractor.ExtractedVideo]
     let audio: [AudioExtractor.ExtractedAudio]
 }
 
 private enum NativeExpandedReadMediaParser {
     static func parse(_ output: String) -> NativeExpandedReadMediaParsed {
         let images = ImageExtractor.extract(from: output)
+        let videos = VideoExtractor.extract(from: output)
         let audio = AudioExtractor.extract(from: output)
 
         let strippedText: String
-        if images.isEmpty && audio.isEmpty {
+        if images.isEmpty && videos.isEmpty && audio.isEmpty {
             strippedText = output.trimmingCharacters(in: .whitespacesAndNewlines)
         } else {
             var text = output
-            let ranges = (images.map(\.range) + audio.map(\.range))
+            let ranges = (images.map(\.range) + videos.map(\.range) + audio.map(\.range))
                 .sorted { $0.lowerBound > $1.lowerBound }
             for range in ranges {
                 text.removeSubrange(range)
@@ -276,6 +453,7 @@ private enum NativeExpandedReadMediaParser {
         return NativeExpandedReadMediaParsed(
             strippedText: strippedText,
             images: images,
+            videos: videos,
             audio: audio
         )
     }

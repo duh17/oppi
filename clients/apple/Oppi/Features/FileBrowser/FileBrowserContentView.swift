@@ -2,6 +2,7 @@ import AVKit
 import Network
 import PDFKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Displays the content of a workspace file in browse mode.
 ///
@@ -39,20 +40,39 @@ struct FileBrowserContentView: View {
         fileName.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
     }
 
+    private var fileType: UTType? {
+        guard !fileExtension.isEmpty else { return nil }
+        return UTType(filenameExtension: fileExtension)
+    }
+
     /// Determine the media category for this file extension.
     private var mediaCategory: MediaCategory {
-        switch fileExtension {
-        case "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff":
-            return .image
-        case "mp4", "mov", "m4v", "avi", "webm":
-            return .video
-        case "mp3", "m4a", "wav", "aac", "ogg", "flac", "opus":
-            return .audio
-        case "pdf":
-            return .pdf
-        default:
-            return .text
+        if let fileType {
+            if fileType.conforms(to: .image) {
+                return .image
+            }
+            if fileType.conforms(to: .movie) || fileType.conforms(to: .video) {
+                return .video
+            }
+            if fileType.conforms(to: .audio) {
+                return .audio
+            }
+            if fileType == .pdf {
+                return .pdf
+            }
         }
+
+        // Fallbacks for uncommon or older UTType mappings.
+        if fileExtension == "svg" {
+            return .image
+        }
+        if MediaMimeType.videoMimeType(forPathExtension: fileExtension) != nil {
+            return .video
+        }
+        if MediaMimeType.audioMimeType(forPathExtension: fileExtension) != nil {
+            return .audio
+        }
+        return .text
     }
 
     /// Whether the UIKit file viewer is active (text content loaded).
@@ -84,10 +104,10 @@ struct FileBrowserContentView: View {
                 .ignoresSafeArea(edges: .top)
             case .image(let data):
                 imageView(data)
-            case .video(let url):
-                VideoBrowserView(url: url)
-            case .audio(let url):
-                AudioBrowserView(url: url, fileName: fileName)
+            case .video(let fileURL):
+                VideoFileBrowserView(fileURL: fileURL)
+            case .audio(let fileURL):
+                AudioFileBrowserView(fileURL: fileURL, fileName: fileName)
             case .pdf(let data):
                 PDFBrowserView(data: data)
             case .binary:
@@ -113,6 +133,9 @@ struct FileBrowserContentView: View {
         }
         .task { await loadContent() }
         .task { await checkNetworkCost() }
+        .onDisappear {
+            cleanupLoadedMediaFile()
+        }
     }
 
     // MARK: - Size Warning
@@ -170,19 +193,14 @@ struct FileBrowserContentView: View {
 
     @ViewBuilder
     private func imageView(_ data: Data) -> some View {
-        if let uiImage = UIImage(data: data) {
-            ScrollView {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
-            }
-        } else {
-            ContentUnavailableView(
-                "Invalid Image",
-                systemImage: "photo.badge.exclamationmark",
-                description: Text("Could not decode image data.")
+        ScrollView {
+            DataImagePreviewView(
+                data: data,
+                mimeType: MediaMimeType.imageMimeType(forPathExtension: fileExtension),
+                maxPixelSize: 2_400,
+                maxHeight: nil
             )
+            .padding()
         }
     }
 
@@ -213,11 +231,19 @@ struct FileBrowserContentView: View {
 
             switch category {
             case .video:
-                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
-                content = .video(url)
+                let fileURL = try await api.downloadWorkspaceFileToTemporaryURL(
+                    workspaceId: workspaceId,
+                    path: filePath,
+                    suggestedFilename: fileName
+                )
+                content = .video(fileURL)
             case .audio:
-                let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
-                content = .audio(url)
+                let fileURL = try await api.downloadWorkspaceFileToTemporaryURL(
+                    workspaceId: workspaceId,
+                    path: filePath,
+                    suggestedFilename: fileName
+                )
+                content = .audio(fileURL)
             case .image, .pdf, .text:
                 let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
                 switch category {
@@ -264,6 +290,15 @@ struct FileBrowserContentView: View {
         )
     }
 
+    private func cleanupLoadedMediaFile() {
+        switch content {
+        case .video(let fileURL), .audio(let fileURL):
+            try? FileManager.default.removeItem(at: fileURL)
+        default:
+            break
+        }
+    }
+
     // MARK: - Share
 
     /// Build shareable content from the current loaded phase.
@@ -298,44 +333,33 @@ struct FileBrowserContentView: View {
 
 // MARK: - Video View
 
-/// Full-featured video player with native AVKit controls.
-/// Streams directly from the server URL — no download or temp files.
-private struct VideoBrowserView: View {
-    let url: URL
-    @State private var player: AVPlayer?
+/// Video player backed by a locally downloaded temp file.
+/// This avoids buffering the full asset into memory before playback starts.
+private struct VideoFileBrowserView: View {
+    let fileURL: URL
 
     var body: some View {
-        VideoPlayer(player: player)
-            .ignoresSafeArea(edges: .bottom)
-            .onAppear {
-                player = AVPlayer(url: url)
-            }
-            .onDisappear {
-                player?.pause()
-                player = nil
-            }
+        FileURLVideoPlayerView(
+            fileURL: fileURL,
+            height: 260,
+            autoplay: false,
+            loops: false,
+            cleanupOnDisappear: false
+        )
+        .padding()
     }
 }
 
 // MARK: - Audio View
 
-/// Audio player with playback controls, centered in the view.
-private struct AudioBrowserView: View {
-    let url: URL
+private struct AudioFileBrowserView: View {
+    let fileURL: URL
     let fileName: String
-    @State private var player: AVPlayer?
-    @State private var isPlaying = false
-    @State private var currentTime: TimeInterval = 0
-    @State private var duration: TimeInterval = 0
-    @State private var timeObserver: Any?
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // Album art placeholder
+        VStack(spacing: 16) {
             Image(systemName: "waveform")
-                .font(.system(size: 60))
+                .font(.system(size: 40))
                 .foregroundStyle(.themeComment)
 
             Text(fileName)
@@ -344,90 +368,14 @@ private struct AudioBrowserView: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
 
-            // Progress bar
-            VStack(spacing: 4) {
-                ProgressView(value: duration > 0 ? currentTime / duration : 0)
-                    .tint(.themeSyntaxKeyword)
-
-                HStack {
-                    Text(formatTime(currentTime))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                    Spacer()
-                    Text(formatTime(duration))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                }
-            }
-            .padding(.horizontal, 40)
-
-            // Play/pause button
-            Button {
-                togglePlayback()
-            } label: {
-                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.themeSyntaxKeyword)
-            }
-
-            Spacer()
+            FileURLAudioPlayerView(
+                fileURL: fileURL,
+                height: 120,
+                autoplay: false,
+                cleanupOnDisappear: false
+            )
         }
         .padding()
-        .onAppear { setupPlayer() }
-        .onDisappear { teardownPlayer() }
-    }
-
-    private func setupPlayer() {
-        let avPlayer = AVPlayer(url: url)
-        player = avPlayer
-
-        // Observe playback time at 10Hz
-        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            currentTime = time.seconds
-            if let item = avPlayer.currentItem {
-                let dur = item.duration.seconds
-                if dur.isFinite { duration = dur }
-            }
-        }
-
-        // Observe when playback ends
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: avPlayer.currentItem,
-            queue: .main
-        ) { _ in
-            isPlaying = false
-        }
-    }
-
-    private func teardownPlayer() {
-        if let observer = timeObserver {
-            player?.removeTimeObserver(observer)
-        }
-        player?.pause()
-        player = nil
-    }
-
-    private func togglePlayback() {
-        guard let player else { return }
-        if isPlaying {
-            player.pause()
-        } else {
-            // If at end, seek to start
-            if currentTime >= duration - 0.1, duration > 0 {
-                player.seek(to: .zero)
-            }
-            player.play()
-        }
-        isPlaying.toggle()
-    }
-
-    private func formatTime(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return "\(mins):\(String(format: "%02d", secs))"
     }
 }
 

@@ -32,9 +32,9 @@ import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
   getContentType,
+  isBrowseMediaContentType,
   isSensitivePath,
-  STREAMING_EXTENSIONS,
-  MEDIA_EXTENSIONS,
+  isStreamingMediaContentType,
 } from "./workspace-files.js";
 
 const LOCAL_SESSION_META_READ_BYTES = 16_384;
@@ -684,10 +684,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    // Size limits: streaming media no limit, images/PDF 50MB, text 1MB
+    // Size limits: streaming media no limit, images/PDF 50MB, text 10MB
     const ext = extname(resolvedPath).toLowerCase();
-    if (!STREAMING_EXTENSIONS.has(ext)) {
-      const isMedia = MEDIA_EXTENSIONS.has(ext);
+    const filename = resolvedPath.split("/").pop() ?? resolvedPath;
+    const contentType = getContentType(ext, filename);
+    if (!isStreamingMediaContentType(contentType)) {
+      const isMedia = isBrowseMediaContentType(contentType);
       const maxSize = isMedia ? MAX_TOUCHED_IMAGE_SIZE : MAX_TOUCHED_TEXT_SIZE;
       if (fileStat.size > maxSize) {
         const limitMB = Math.round(maxSize / (1024 * 1024));
@@ -697,8 +699,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     // Serve the file
-    const filename = resolvedPath.split("/").pop() ?? resolvedPath;
-    const contentType = getContentType(ext, filename);
     res.writeHead(200, {
       "Content-Type": contentType,
       "Content-Length": fileStat.size.toString(),

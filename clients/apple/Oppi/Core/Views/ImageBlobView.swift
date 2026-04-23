@@ -5,32 +5,55 @@ import SwiftUI
 /// Decodes the image off the main thread to prevent base64 decode + UIImage
 /// init (~5-30ms for typical images) from blocking scrolling.
 struct ImageBlobView: View {
+    private enum Phase {
+        case loading
+        case staticImage(UIImage)
+        case animated(Data, String?)
+        case failure
+    }
+
     let base64: String
     let mimeType: String?
 
-    @State private var decoded: UIImage?
-    @State private var decodeFailed = false
+    @State private var phase: Phase = .loading
 
     var body: some View {
         Group {
-            if let decoded {
-                Image(uiImage: decoded)
+            switch phase {
+            case .loading:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.themeBgHighlight)
+                    .frame(height: 100)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+            case .staticImage(let image):
+                Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onTapGesture { FullScreenImageViewController.present(image: decoded) }
+                    .onTapGesture { FullScreenImageViewController.present(image: image) }
                     .contextMenu {
                         Button("Copy", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.image = decoded
+                            UIPasteboard.general.image = image
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {
-                            PhotoLibrarySaver.save(decoded)
+                            PhotoLibrarySaver.save(image)
                         }
                         // ShareLink for simple Transferable image share; FileSharePresenter is for file export flows.
-                        ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
+                        ShareLink(item: Image(uiImage: image), preview: SharePreview("Image"))
                     }
-            } else if decodeFailed {
+            case .animated(let data, let mimeType):
+                DataImagePreviewView(
+                    data: data,
+                    mimeType: mimeType,
+                    maxPixelSize: 1_600,
+                    maxHeight: 300,
+                    allowsFullscreenStaticImage: false
+                )
+            case .failure:
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.themeBgHighlight)
                     .frame(height: 100)
@@ -49,24 +72,30 @@ struct ImageBlobView: View {
                             }
                         }
                     }
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: 100)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
             }
         }
         .task(id: ImageDecodeCache.decodeKey(for: base64, maxPixelSize: 1600)) {
-            decodeFailed = false
-            decoded = await Task.detached(priority: .userInitiated) {
-                ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600)
+            phase = await Task.detached(priority: .userInitiated) {
+                guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                    return .failure
+                }
+
+                let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+                if info.prefersWebRenderer {
+                    return .animated(data, mimeType)
+                }
+
+                if let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600) {
+                    return .staticImage(image)
+                }
+
+                if let normalizedMimeType = info.normalizedMimeType,
+                   normalizedMimeType.hasPrefix("image/") {
+                    return .animated(data, mimeType)
+                }
+
+                return .failure
             }.value
-            if decoded == nil {
-                decodeFailed = true
-            }
         }
     }
 }

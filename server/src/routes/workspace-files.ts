@@ -6,6 +6,8 @@ import { join, extname, relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { contentType as formatContentType, lookup as lookupMimeType } from "mime-types";
+
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
   DirectoryListingResponse,
@@ -27,24 +29,7 @@ const WALK_MAX_DEPTH = 12;
 
 export const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 
-/** Streaming media extensions — video/audio that AVPlayer streams progressively. */
-export const STREAMING_EXTENSIONS = new Set([
-  ".mp4",
-  ".mov",
-  ".m4v",
-  ".avi",
-  ".webm",
-  ".mp3",
-  ".m4a",
-  ".wav",
-  ".aac",
-  ".ogg",
-  ".flac",
-  ".opus",
-]);
-
-/** All binary media extensions (streaming + images + PDF) for browse-mode size gating. */
-export const MEDIA_EXTENSIONS = new Set([...STREAMING_EXTENSIONS, ".pdf", ...ALLOWED_EXTENSIONS]);
+const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application/x-mpegurl"]);
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -63,16 +48,6 @@ const SPECIAL_CONTENT_TYPES: Record<string, string> = {
   ".xml": "text/xml; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
   ".pdf": "application/pdf",
-  ".mp4": "video/mp4",
-  ".mov": "video/quicktime",
-  ".m4v": "video/x-m4v",
-  ".avi": "video/x-msvideo",
-  ".webm": "video/webm",
-  ".mp3": "audio/mpeg",
-  ".m4a": "audio/mp4",
-  ".wav": "audio/wav",
-  ".aac": "audio/aac",
-  ".ogg": "audio/ogg",
   ".flac": "audio/flac",
   ".opus": "audio/opus",
 };
@@ -231,6 +206,44 @@ export function isSensitivePath(requestedPath: string): boolean {
   return SENSITIVE_FILE_PATTERNS.some((p) => p.test(filename));
 }
 
+function normalizeContentType(contentType: string): string {
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? contentType.trim().toLowerCase();
+}
+
+function inferMimeType(ext: string, filename: string): string | null {
+  const byFilename = lookupMimeType(filename);
+  if (typeof byFilename === "string") {
+    return byFilename;
+  }
+
+  if (ext.length > 0) {
+    const byExtension = lookupMimeType(ext);
+    if (typeof byExtension === "string") {
+      return byExtension;
+    }
+  }
+
+  return null;
+}
+
+export function isStreamingMediaContentType(contentType: string): boolean {
+  const normalized = normalizeContentType(contentType);
+  return (
+    normalized.startsWith("audio/") ||
+    normalized.startsWith("video/") ||
+    HLS_CONTENT_TYPES.has(normalized)
+  );
+}
+
+export function isBrowseMediaContentType(contentType: string): boolean {
+  const normalized = normalizeContentType(contentType);
+  return (
+    normalized.startsWith("image/") ||
+    normalized === "application/pdf" ||
+    isStreamingMediaContentType(normalized)
+  );
+}
+
 export function getContentType(ext: string, filename: string): string {
   const imageType = IMAGE_CONTENT_TYPES[ext];
   if (imageType) return imageType;
@@ -241,6 +254,11 @@ export function getContentType(ext: string, filename: string): string {
   if (TEXT_EXTENSIONS.has(ext)) return "text/plain; charset=utf-8";
 
   if (TEXT_FILENAMES.has(filename.toLowerCase())) return "text/plain; charset=utf-8";
+
+  const inferred = inferMimeType(ext, filename);
+  if (inferred && isBrowseMediaContentType(inferred)) {
+    return formatContentType(inferred) || inferred;
+  }
 
   return "application/octet-stream";
 }
@@ -540,11 +558,13 @@ export function createWorkspaceFileRoutes(
     }
 
     const ext = extname(requestedPath).toLowerCase();
+    const filename = requestedPath.split("/").pop() ?? requestedPath;
+    const contentType = getContentType(ext, filename);
 
-    // Streaming media (video/audio) has no size limit — served via createReadStream
-    // with no memory buffering. Images/PDF capped at 50MB, text at 1MB.
-    if (!STREAMING_EXTENSIONS.has(ext)) {
-      const isMedia = MEDIA_EXTENSIONS.has(ext);
+    // Streaming media (video/audio/HLS) has no size limit — served via createReadStream
+    // with no memory buffering. Images/PDF capped at 50MB, text at 10MB.
+    if (!isStreamingMediaContentType(contentType)) {
+      const isMedia = isBrowseMediaContentType(contentType);
       const maxSize = isMedia ? MAX_IMAGE_FILE_SIZE : MAX_TEXT_FILE_SIZE;
       if (fileStat.size > maxSize) {
         const limitMB = Math.round(maxSize / (1024 * 1024));
@@ -553,8 +573,6 @@ export function createWorkspaceFileRoutes(
       }
     }
 
-    const filename = requestedPath.split("/").pop() ?? requestedPath;
-    const contentType = getContentType(ext, filename);
     res.writeHead(200, {
       "Content-Type": contentType,
       "Content-Length": fileStat.size.toString(),

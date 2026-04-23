@@ -77,7 +77,7 @@ struct FileContentView: View {
         case .audio:
             AudioOutputView(content: content)
         case .video:
-            VideoFileView(content: content)
+            VideoOutputView(content: content)
         case .pdf:
             PDFFileView(content: content)
         case .binary:

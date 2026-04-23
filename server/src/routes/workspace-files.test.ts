@@ -11,6 +11,8 @@ import {
   resolveWorkspaceFilePath,
   isSensitivePath,
   getContentType,
+  isBrowseMediaContentType,
+  isStreamingMediaContentType,
   listDirectoryEntries,
   searchWorkspaceFiles,
   getFileIndex,
@@ -273,6 +275,14 @@ describe("getContentType", () => {
     expect(getContentType(".opus", "voice.opus")).toBe("audio/opus");
   });
 
+  test("infers additional audio and video content types from filename", () => {
+    expect(getContentType(".aiff", "clip.aiff")).toBe("audio/x-aiff");
+    expect(getContentType(".caf", "recording.caf")).toBe("audio/x-caf");
+    expect(getContentType(".mkv", "movie.mkv")).toBe("video/x-matroska");
+    expect(getContentType(".m3u8", "stream.m3u8")).toBe("application/vnd.apple.mpegurl");
+    expect(getContentType(".oga", "voice.oga")).toBe("audio/ogg");
+  });
+
   test("returns text/plain for code files", () => {
     expect(getContentType(".ts", "index.ts")).toBe("text/plain; charset=utf-8");
     expect(getContentType(".py", "script.py")).toBe("text/plain; charset=utf-8");
@@ -301,6 +311,24 @@ describe("getContentType", () => {
     expect(getContentType(".bin", "data.bin")).toBe("application/octet-stream");
     expect(getContentType(".wasm", "module.wasm")).toBe("application/octet-stream");
     expect(getContentType("", "unknownfile")).toBe("application/octet-stream");
+  });
+});
+
+// MARK: - media content helpers
+
+describe("media content helpers", () => {
+  test("recognizes streaming media content types", () => {
+    expect(isStreamingMediaContentType("video/x-matroska")).toBe(true);
+    expect(isStreamingMediaContentType("audio/x-caf")).toBe(true);
+    expect(isStreamingMediaContentType("application/vnd.apple.mpegurl")).toBe(true);
+    expect(isStreamingMediaContentType("text/plain; charset=utf-8")).toBe(false);
+  });
+
+  test("recognizes browse media content types", () => {
+    expect(isBrowseMediaContentType("image/png")).toBe(true);
+    expect(isBrowseMediaContentType("application/pdf")).toBe(true);
+    expect(isBrowseMediaContentType("video/mp4")).toBe(true);
+    expect(isBrowseMediaContentType("application/octet-stream")).toBe(false);
   });
 });
 

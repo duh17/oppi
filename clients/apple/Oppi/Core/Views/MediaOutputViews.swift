@@ -82,3 +82,41 @@ struct AudioOutputView: View {
         }
     }
 }
+
+// MARK: - VideoOutputView
+
+/// Renders video content via VideoExtractor.
+struct VideoOutputView: View {
+    let content: String
+
+    @State private var videos: [VideoExtractor.ExtractedVideo]?
+
+    var body: some View {
+        if let videos {
+            if videos.isEmpty {
+                Text("Video file (binary content not displayable)")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .italic()
+                    .padding(8)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(videos) { video in
+                        Base64VideoBlobView(base64: video.base64, mimeType: video.mimeType)
+                    }
+                }
+                .padding(8)
+            }
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .padding(8)
+                .task {
+                    let text = content
+                    videos = await Task.detached(priority: .userInitiated) {
+                        VideoExtractor.extract(from: text)
+                    }.value
+                }
+        }
+    }
+}

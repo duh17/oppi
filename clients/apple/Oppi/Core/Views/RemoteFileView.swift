@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import UniformTypeIdentifiers
 
 // periphery:ignore
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
@@ -22,6 +23,7 @@ struct RemoteFileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
+    @State private var downloadedMediaURL: URL?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadedServerBaseURL: URL?
@@ -36,9 +38,34 @@ struct RemoteFileView: View {
         navigation.makeQuickSessionPiRouter()
     }
 
+    private var pathExtension: String {
+        (path as NSString).pathExtension.lowercased()
+    }
+
+    private var pathType: UTType? {
+        guard !pathExtension.isEmpty else { return nil }
+        return UTType(filenameExtension: pathExtension)
+    }
+
     private var isImagePath: Bool {
-        let ext = (path as NSString).pathExtension.lowercased()
-        return ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].contains(ext)
+        if let pathType {
+            return pathType.conforms(to: .image)
+        }
+        return pathExtension == "svg"
+    }
+
+    private var isVideoPath: Bool {
+        if let pathType {
+            return pathType.conforms(to: .movie) || pathType.conforms(to: .video)
+        }
+        return MediaMimeType.videoMimeType(forPathExtension: pathExtension) != nil
+    }
+
+    private var isAudioPath: Bool {
+        if let pathType {
+            return pathType.conforms(to: .audio)
+        }
+        return MediaMimeType.audioMimeType(forPathExtension: pathExtension) != nil
     }
 
     private var currentWorkspaceHostMount: String? {
@@ -84,14 +111,66 @@ struct RemoteFileView: View {
                     content: fullScreenContent(text: content),
                     selectedTextPiRouter: piRouter
                 )
-            } else if let imageData, let uiImage = UIImage(data: imageData) {
+            } else if let imageData, isImagePath {
                 NavigationStack {
                     ScrollView {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFit()
-                            .padding()
+                        DataImagePreviewView(
+                            data: imageData,
+                            mimeType: MediaMimeType.imageMimeType(forPathExtension: pathExtension),
+                            maxPixelSize: 2_400,
+                            maxHeight: nil
+                        )
+                        .padding()
                     }
+                    .background(Color.themeBg)
+                    .navigationTitle(filename)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Done") { dismiss() }
+                        }
+                    }
+                }
+            } else if let downloadedMediaURL, isVideoPath {
+                NavigationStack {
+                    FileURLVideoPlayerView(
+                        fileURL: downloadedMediaURL,
+                        height: 260,
+                        autoplay: false,
+                        loops: false,
+                        cleanupOnDisappear: false
+                    )
+                    .padding()
+                    .background(Color.themeBg)
+                    .navigationTitle(filename)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Done") { dismiss() }
+                        }
+                    }
+                }
+            } else if let downloadedMediaURL, isAudioPath {
+                NavigationStack {
+                    VStack(spacing: 16) {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.themeComment)
+
+                        Text(filename)
+                            .font(.headline)
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+
+                        FileURLAudioPlayerView(
+                            fileURL: downloadedMediaURL,
+                            height: 120,
+                            autoplay: false,
+                            cleanupOnDisappear: false
+                        )
+                    }
+                    .padding()
                     .background(Color.themeBg)
                     .navigationTitle(filename)
                     .navigationBarTitleDisplayMode(.inline)
@@ -135,6 +214,14 @@ struct RemoteFileView: View {
         .task {
             await loadFile()
         }
+        .onDisappear {
+            cleanupDownloadedMediaFile()
+        }
+    }
+
+    private func cleanupDownloadedMediaFile() {
+        guard let downloadedMediaURL else { return }
+        try? FileManager.default.removeItem(at: downloadedMediaURL)
     }
 
     private func loadFile() async {
@@ -174,6 +261,13 @@ struct RemoteFileView: View {
                     path: path
                 )
                 self.imageData = data
+            } else if isVideoPath || isAudioPath {
+                let fileURL = try await api.downloadSessionFileToTemporaryURL(
+                    workspaceId: resolvedWorkspaceId,
+                    sessionId: sessionId,
+                    path: path
+                )
+                self.downloadedMediaURL = fileURL
             } else {
                 let text = try await api.getSessionFile(
                     workspaceId: resolvedWorkspaceId,
