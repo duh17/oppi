@@ -2,32 +2,28 @@ import SwiftUI
 
 /// Status pill variants for session rows.
 ///
-/// Provides text + color status indication alongside the dot,
-/// satisfying HIG accessibility (status must not rely on color alone).
+/// Provides text + color status indication alongside the session title,
+/// keeping the list scannable even when section headers are off-screen.
 enum SessionPillVariant: Equatable {
     case waiting
-    case asking
-    case idle
+    case question
     case working
     case done
+    case stopped
     case error
 
-    /// Derive the pill variant from session state.
-    ///
-    /// Priority: permission (waiting) > ask (asking) > status-based.
+    /// Priority: permission (waiting) > ask (question) > status-based.
     static func from(status: SessionStatus, pendingCount: Int, pendingAskCount: Int = 0) -> SessionPillVariant {
         if pendingCount > 0 { return .waiting }
-        if pendingAskCount > 0 { return .asking }
+        if pendingAskCount > 0 { return .question }
 
         switch status {
-        case .busy, .starting:
-            return .working
-        case .stopping:
+        case .busy, .starting, .stopping:
             return .working
         case .ready:
-            return .idle
-        case .stopped:
             return .done
+        case .stopped:
+            return .stopped
         case .error:
             return .error
         }
@@ -36,32 +32,28 @@ enum SessionPillVariant: Equatable {
     var label: String {
         switch self {
         case .waiting: "Waiting"
-        case .asking: "Question"
-        case .idle: "Idle"
+        case .question: "Question"
         case .working: "Working"
         case .done: "Done"
+        case .stopped: "Stopped"
         case .error: "Error"
         }
     }
 
     var foregroundColor: Color {
         switch self {
-        case .waiting: .themeOrange
-        case .asking: .themeBlue
-        case .idle: .themeComment
-        case .working: .themeCyan
-        case .done: .themeGreen
+        case .waiting, .done: .themeGreen
+        case .question, .working: .themeBlue
+        case .stopped: .themeComment
         case .error: .themeRed
         }
     }
 
     var backgroundColor: Color {
         switch self {
-        case .waiting: .themeOrange.opacity(0.12)
-        case .asking: .themeBlue.opacity(0.12)
-        case .idle: .themeComment.opacity(0.1)
-        case .working: .themeCyan.opacity(0.12)
-        case .done: .themeGreen.opacity(0.12)
+        case .waiting, .done: .themeGreen.opacity(0.12)
+        case .question, .working: .themeBlue.opacity(0.12)
+        case .stopped: .themeComment.opacity(0.1)
         case .error: .themeRed.opacity(0.12)
         }
     }

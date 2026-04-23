@@ -262,6 +262,13 @@ struct WorkspaceHomeView: View {
         }
         if hasPermission { return true }
 
+        // Ask requests also require user input, so treat them as attention at the
+        // workspace level even when the pending question belongs to a child session.
+        let hasAsk = allSessions.contains { session in
+            conn?.askRequestStore.hasPending(for: session.id) == true
+        }
+        if hasAsk { return true }
+
         // Error status: check root sessions only. Error children of stopped
         // parents are unactionable and shouldn't flag the workspace.
         return rootSessionsFor(workspaceId, serverId: serverId).contains { $0.status == .error }

@@ -37,14 +37,14 @@ struct SessionStatusPillTests {
         #expect(variant == .working)
     }
 
-    @Test func idleWhenReady() {
+    @Test func doneWhenReady() {
         let variant = SessionPillVariant.from(status: .ready, pendingCount: 0)
-        #expect(variant == .idle)
+        #expect(variant == .done)
     }
 
-    @Test func doneWhenStopped() {
+    @Test func stoppedWhenStopped() {
         let variant = SessionPillVariant.from(status: .stopped, pendingCount: 0)
-        #expect(variant == .done)
+        #expect(variant == .stopped)
     }
 
     @Test func errorWhenError() {
@@ -54,25 +54,24 @@ struct SessionStatusPillTests {
 
     // MARK: - Ask variants
 
-    @Test func askingWhenPendingAsk() {
+    @Test func questionWhenPendingAsk() {
         let variant = SessionPillVariant.from(status: .busy, pendingCount: 0, pendingAskCount: 1)
-        #expect(variant == .asking)
+        #expect(variant == .question)
     }
 
-    @Test func askingOverridesReadyStatus() {
+    @Test func questionOverridesReadyStatus() {
         let variant = SessionPillVariant.from(status: .ready, pendingCount: 0, pendingAskCount: 1)
-        #expect(variant == .asking)
+        #expect(variant == .question)
     }
 
-    @Test func waitingTakesPriorityOverAsking() {
-        // Permission requests take priority over ask questions
+    @Test func waitingTakesPriorityOverQuestion() {
         let variant = SessionPillVariant.from(status: .busy, pendingCount: 1, pendingAskCount: 1)
         #expect(variant == .waiting)
     }
 
-    @Test func askingOverridesWorkingStatus() {
+    @Test func questionOverridesWorkingStatus() {
         let variant = SessionPillVariant.from(status: .busy, pendingCount: 0, pendingAskCount: 1)
-        #expect(variant == .asking)
+        #expect(variant == .question)
     }
 
     // MARK: - Backward compatibility (pendingAskCount defaults to 0)
@@ -91,10 +90,10 @@ struct SessionStatusPillTests {
 
     @Test func labels() {
         #expect(SessionPillVariant.waiting.label == "Waiting")
-        #expect(SessionPillVariant.asking.label == "Question")
-        #expect(SessionPillVariant.idle.label == "Idle")
+        #expect(SessionPillVariant.question.label == "Question")
         #expect(SessionPillVariant.working.label == "Working")
         #expect(SessionPillVariant.done.label == "Done")
+        #expect(SessionPillVariant.stopped.label == "Stopped")
         #expect(SessionPillVariant.error.label == "Error")
     }
 }

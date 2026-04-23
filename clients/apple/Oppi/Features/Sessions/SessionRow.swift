@@ -58,9 +58,9 @@ enum SessionModelSummaryBuilder {
 ///
 /// Three-line layout:
 /// ```
-/// [dot] Title (bold if needs attention)          [time]
-///       [StatusPill] activity summary text
-///       3 files · ▬ 25% · $27.45    [child badge if any]
+/// Title (bold if needs attention)                [time]
+/// model summary activity
+/// 3 files · ▬ 25% · $27.45  [status pill] [child badge if any]
 /// ```
 ///
 /// Activity summary is passed in by the caller (computed from
@@ -126,97 +126,73 @@ struct SessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Status dot — leading visual accent
-            Circle()
-                .fill(session.status.color)
-                .frame(width: 10, height: 10)
-                .opacity(session.status == .busy || session.status == .stopping ? 0.8 : 1)
-                .animation(
-                    session.status == .busy || session.status == .stopping
-                        ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                        : .default,
-                    value: session.status
-                )
-
-            // Content
-            VStack(alignment: .leading, spacing: 3) {
-                // Row 1: title
+        VStack(alignment: .leading, spacing: 3) {
+            // Row 1: title + time
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.body)
                     .fontWeight((pendingCount > 0 || pendingAskCount > 0) ? .semibold : .regular)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
+                    .layoutPriority(1)
 
-                // Row 1.5: lineage hint (stopped sessions only)
-                if let lineageHint, !lineageHint.isEmpty {
-                    Text(lineageHint)
-                        .font(.caption)
-                        .foregroundStyle(.themeFgDim)
-                        .lineLimit(1)
-                }
+                Spacer(minLength: 4)
 
-                // Row 1.75: search snippet (when searching)
-                if let searchSnippet {
-                    Text(searchSnippet)
-                        .font(.caption)
-                        .foregroundStyle(.themeFgDim)
-                        .lineLimit(2)
-                }
-
-                // Row 2: status pill + activity summary
-                HStack(spacing: 6) {
-                    SessionStatusPill(pillVariant)
-
-                    if let firstModel = visibleModelSummaries.first {
-                        modelSummaryView(firstModel, additionalCount: max(0, visibleModelSummaries.count - 1))
-                            .layoutPriority(1)
-                    }
-
-                    if let activitySummary, !activitySummary.isEmpty {
-                        Text(activitySummary)
-                            .font(.caption2)
-                            .foregroundStyle(.themeFgDim)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-
-                // Row 3: files + context gauge + cost + child badge
-                HStack(spacing: 6) {
-                    if let stats = session.changeStats, stats.filesChanged > 0 {
-                        Text(filesTouchedSummary(stats.filesChanged))
-                            .foregroundStyle(changeSummaryColor(stats))
-                    }
-
-                    if let pct = contextPercent {
-                        NativeContextGauge(percent: pct)
-                    }
-
-                    let displayCost = children?.aggregateCost ?? session.cost
-                    if displayCost > 0 {
-                        Text(costString(displayCost))
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if let children {
-                        childBadge(children: children)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.themeFgDim)
-                .lineLimit(1)
-            }
-            .padding(.leading, 8)
-
-            Spacer(minLength: 4)
-
-            // Trailing: time + pending badge
-            VStack(alignment: .trailing, spacing: 4) {
                 Text(session.lastActivity.relativeString())
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
+                    .fixedSize()
+            }
+
+            // Row 1.5: lineage hint (stopped sessions only)
+            if let lineageHint, !lineageHint.isEmpty {
+                Text(lineageHint)
+                    .font(.caption)
+                    .foregroundStyle(.themeFgDim)
+                    .lineLimit(1)
+            }
+
+            // Row 1.75: search snippet (when searching)
+            if let searchSnippet {
+                Text(searchSnippet)
+                    .font(.caption)
+                    .foregroundStyle(.themeFgDim)
+                    .lineLimit(2)
+            }
+
+            // Row 2: model + activity summary
+            HStack(spacing: 6) {
+                if let firstModel = visibleModelSummaries.first {
+                    modelSummaryView(firstModel, additionalCount: max(0, visibleModelSummaries.count - 1))
+                        .layoutPriority(1)
+                }
+
+                if let activitySummary, !activitySummary.isEmpty {
+                    Text(activitySummary)
+                        .font(.caption2)
+                        .foregroundStyle(.themeFgDim)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            // Row 3: files + context gauge + cost + trailing badges
+            HStack(spacing: 6) {
+                if let stats = session.changeStats, stats.filesChanged > 0 {
+                    Text(filesTouchedSummary(stats.filesChanged))
+                        .foregroundStyle(changeSummaryColor(stats))
+                }
+
+                if let pct = contextPercent {
+                    NativeContextGauge(percent: pct)
+                }
+
+                let displayCost = children?.aggregateCost ?? session.cost
+                if displayCost > 0 {
+                    Text(costString(displayCost))
+                }
+
+                Spacer(minLength: 8)
 
                 if pendingCount > 0 {
                     Text("\(pendingCount)")
@@ -224,14 +200,26 @@ struct SessionRow: View {
                         .foregroundStyle(.themeBg)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.themeOrange, in: Capsule())
+                        .background(.themeGreen, in: Capsule())
                 } else if pendingAskCount > 0 {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.themeBlue)
                 }
+
+                SessionStatusPill(pillVariant)
+                    .fixedSize()
+
+                if let children {
+                    childBadge(children: children)
+                }
             }
+            .font(.caption)
+            .foregroundStyle(.themeFgDim)
+            .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 4)
         .padding(.vertical, 2)
     }
 
@@ -341,7 +329,7 @@ enum SessionActivitySummary {
             return nil
         }
 
-        // Idle: turn ended
+        // Ready: turn ended
         if session.status == .ready {
             return "turn ended"
         }

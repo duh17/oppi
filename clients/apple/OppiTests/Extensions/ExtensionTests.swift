@@ -147,10 +147,11 @@ struct SessionStatusColorTests {
         }
     }
 
-    @Test func distinctStatusColors() {
-        #expect(SessionStatus.ready.color != SessionStatus.error.color)
-        #expect(SessionStatus.busy.color != SessionStatus.stopping.color)
-        #expect(SessionStatus.busy.color != SessionStatus.stopped.color)
-        #expect(SessionStatus.starting.color != SessionStatus.ready.color)
+    @Test func semanticStatusColors() {
+        #expect(SessionStatus.starting.color == SessionStatus.busy.color)
+        #expect(SessionStatus.busy.color == SessionStatus.stopping.color)
+        #expect(SessionStatus.ready.color != SessionStatus.busy.color)
+        #expect(SessionStatus.stopped.color != SessionStatus.ready.color)
+        #expect(SessionStatus.error.color != SessionStatus.ready.color)
     }
 }

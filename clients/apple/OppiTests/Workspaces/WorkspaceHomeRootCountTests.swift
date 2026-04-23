@@ -146,12 +146,40 @@ struct WorkspaceHomeRootCountTests {
         #expect(activeCount(from: sessions) == 2)
     }
 
-    // MARK: - Attention (error status)
+    // MARK: - Attention
+
+    /// Reimplements the ask/permission portion of WorkspaceHomeView.hasAttention.
+    /// Any root or child session with pending user input should flag the workspace.
+    private func hasPendingInputAttention(
+        from sessions: [Session],
+        pendingSessionIds: Set<String>
+    ) -> Bool {
+        sessions.contains { pendingSessionIds.contains($0.id) }
+    }
 
     /// Reimplements WorkspaceHomeView.hasAttention error-status check.
     /// Only root sessions with .error status trigger attention.
     private func hasErrorAttention(from sessions: [Session]) -> Bool {
         rootSessions(from: sessions).contains { $0.status == .error }
+    }
+
+    @Test func askRootTriggersAttention() {
+        let sessions = [
+            makeTestSession(id: "r1", status: .ready),
+        ]
+        #expect(hasPendingInputAttention(from: sessions, pendingSessionIds: ["r1"]) == true)
+    }
+
+    @Test func askChildTriggersAttention() {
+        var child = makeTestSession(id: "c1", status: .ready)
+        child.parentSessionId = "parent"
+
+        let sessions = [
+            makeTestSession(id: "parent", status: .ready),
+            child,
+        ]
+
+        #expect(hasPendingInputAttention(from: sessions, pendingSessionIds: ["c1"]) == true)
     }
 
     @Test func errorRootTriggersAttention() {

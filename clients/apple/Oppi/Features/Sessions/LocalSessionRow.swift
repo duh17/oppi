@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Row for a local pi TUI session, visually matching SessionRow.
 ///
-/// Uses the same layout as SessionRow (dot + content + trailing time)
-/// but with a gray dot and a small "Terminal" badge in the subtitle.
+/// Uses the same layout as SessionRow (content + trailing time)
+/// with a small "Terminal" badge in the subtitle.
 struct LocalSessionRow: View {
     let session: LocalSession
 
@@ -12,13 +12,7 @@ struct LocalSessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Gray dot — matches SessionRow's status dot position
-            Circle()
-                .fill(Color.themeComment.opacity(0.5))
-                .frame(width: 10, height: 10)
-
-            // Content — same VStack structure as SessionRow
+        HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 // Row 1: name
                 Text(session.displayTitle)

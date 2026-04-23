@@ -1,13 +1,11 @@
 import SwiftUI
 
 extension SessionStatus {
-    /// Status indicator color (tokyo night palette).
+    /// Status indicator color for the session list's semantic state language.
     var color: Color {
         switch self {
-        case .starting: return .themeBlue
+        case .starting, .busy, .stopping: return .themeBlue
         case .ready: return .themeGreen
-        case .busy: return .themeYellow
-        case .stopping: return .themeOrange
         case .stopped: return .themeComment
         case .error: return .themeRed
         }
