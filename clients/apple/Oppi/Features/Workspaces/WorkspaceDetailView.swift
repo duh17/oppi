@@ -363,7 +363,12 @@ struct WorkspaceDetailView: View {
                 isImportingLocal: isImportingLocal,
                 lineageHint: { _ in nil },
                 childSummary: { session in
-                    childSummary(for: session.id, using: data.childIndex)
+                    let descendants = data.childIndex.allDescendants(of: session.id)
+                    return childSummary(for: session, descendants: descendants)
+                },
+                modelSummaries: { session in
+                    let descendants = data.childIndex.allDescendants(of: session.id)
+                    return modelSummaries(for: session, descendants: descendants)
                 },
                 searchSnippet: { searchStore.snippetsBySessionId[$0] },
                 onResumeSession: { session in
@@ -551,7 +556,9 @@ struct WorkspaceDetailView: View {
             pendingAsk: askRequestStore.pending(for: session.id),
             activity: activityStore.lastActivity(for: session.id)
         )
-        let children = childSummary(for: session.id, using: childIndex)
+        let descendants = childIndex.allDescendants(of: session.id)
+        let children = childSummary(for: session, descendants: descendants)
+        let models = modelSummaries(for: session, descendants: descendants)
         let rowMs = Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000)
         let _ = SessionListPerf.recordRowCompute(
             durationMs: rowMs,
@@ -564,20 +571,27 @@ struct WorkspaceDetailView: View {
             pendingAskCount: askPending,
             activitySummary: summary,
             children: children,
+            modelSummaries: models,
             searchSnippet: searchStore.snippetsBySessionId[session.id]
         )
     }
 
-    /// Compute child summary for a root session using pre-built child index.
+    private func modelSummaries(for session: Session, descendants: [Session]) -> [SessionModelSummary] {
+        SessionModelSummaryBuilder.summaries(
+            primaryModel: session.model,
+            descendantModels: descendants.compactMap(\.model)
+        )
+    }
+
+    /// Compute child summary for a root session using pre-built descendant list.
     private func childSummary(
-        for sessionId: String,
-        using childIndex: SessionTreeHelper.ChildIndex
+        for session: Session,
+        descendants: [Session]
     ) -> SessionRow.ChildSummary? {
-        let descendants = childIndex.allDescendants(of: sessionId)
         guard !descendants.isEmpty else { return nil }
 
         var counts = SessionTreeHelper.StatusCounts()
-        var totalCost = workspaceSessions.first { $0.id == sessionId }?.cost ?? 0
+        var totalCost = session.cost
         for desc in descendants {
             counts.total += 1
             switch desc.status {

@@ -7,6 +7,10 @@ import SwiftUI
 struct LocalSessionRow: View {
     let session: LocalSession
 
+    private var modelSummary: SessionModelSummary? {
+        SessionModelSummaryBuilder.summaries(primaryModel: session.model).first
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // Gray dot — matches SessionRow's status dot position
@@ -34,8 +38,12 @@ struct LocalSessionRow: View {
                                 .fill(Color.themeComment.opacity(0.15))
                         )
 
-                    if let model = session.modelShort {
-                        Text(model)
+                    if let modelSummary {
+                        if !modelSummary.provider.isEmpty {
+                            ProviderIcon(provider: modelSummary.provider, size: 11)
+                        }
+                        Text(modelSummary.label)
+                            .truncationMode(.middle)
                     }
 
                     if session.messageCount > 0 {

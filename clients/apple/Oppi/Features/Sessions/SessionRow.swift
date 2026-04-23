@@ -1,5 +1,57 @@
 import SwiftUI
 
+struct SessionModelSummary: Identifiable, Equatable, Sendable {
+    let rawModel: String
+    let provider: String
+    let label: String
+
+    var id: String { rawModel }
+}
+
+enum SessionModelSummaryBuilder {
+    static func summaries(primaryModel: String?, descendantModels: [String] = []) -> [SessionModelSummary] {
+        let candidates = [primaryModel] + descendantModels.map(Optional.some)
+        var seen: Set<String> = []
+        var result: [SessionModelSummary] = []
+
+        for candidate in candidates {
+            guard let normalized = normalize(candidate), seen.insert(normalized).inserted else {
+                continue
+            }
+
+            result.append(
+                SessionModelSummary(
+                    rawModel: normalized,
+                    provider: providerFromModel(normalized) ?? "",
+                    label: displayLabel(for: normalized)
+                )
+            )
+        }
+
+        return result
+    }
+
+    static func displayLabel(for rawModel: String) -> String {
+        let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "unknown" }
+
+        if let slashIndex = trimmed.firstIndex(of: "/") {
+            let remainder = String(trimmed[trimmed.index(after: slashIndex)...])
+            if !remainder.isEmpty {
+                return remainder
+            }
+        }
+
+        return trimmed
+    }
+
+    private static func normalize(_ rawModel: String?) -> String? {
+        guard let rawModel else { return nil }
+        let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 // MARK: - Session Row
 
 /// Unified session row used in both active and stopped sections.
@@ -21,6 +73,7 @@ struct SessionRow: View {
     let activitySummary: String?
     let lineageHint: String?
     let children: ChildSummary?
+    let modelSummaries: [SessionModelSummary]
     let searchSnippet: AttributedString?
 
     /// Summary of spawned child sessions, shown as a badge on parent rows.
@@ -37,6 +90,7 @@ struct SessionRow: View {
         activitySummary: String? = nil,
         lineageHint: String? = nil,
         children: ChildSummary? = nil,
+        modelSummaries: [SessionModelSummary] = [],
         searchSnippet: AttributedString? = nil
     ) {
         self.session = session
@@ -45,6 +99,7 @@ struct SessionRow: View {
         self.activitySummary = activitySummary
         self.lineageHint = lineageHint
         self.children = children
+        self.modelSummaries = modelSummaries
         self.searchSnippet = searchSnippet
     }
 
@@ -61,6 +116,13 @@ struct SessionRow: View {
 
     private var pillVariant: SessionPillVariant {
         .from(status: session.status, pendingCount: pendingCount, pendingAskCount: pendingAskCount)
+    }
+
+    private var visibleModelSummaries: [SessionModelSummary] {
+        if !modelSummaries.isEmpty {
+            return modelSummaries
+        }
+        return SessionModelSummaryBuilder.summaries(primaryModel: session.model)
     }
 
     var body: some View {
@@ -105,6 +167,11 @@ struct SessionRow: View {
                 // Row 2: status pill + activity summary
                 HStack(spacing: 6) {
                     SessionStatusPill(pillVariant)
+
+                    if let firstModel = visibleModelSummaries.first {
+                        modelSummaryView(firstModel, additionalCount: max(0, visibleModelSummaries.count - 1))
+                            .layoutPriority(1)
+                    }
 
                     if let activitySummary, !activitySummary.isEmpty {
                         Text(activitySummary)
@@ -166,6 +233,32 @@ struct SessionRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    // MARK: - Child Badge
+
+    @ViewBuilder
+    private func modelSummaryView(_ model: SessionModelSummary, additionalCount: Int) -> some View {
+        HStack(spacing: 4) {
+            if !model.provider.isEmpty {
+                ProviderIcon(provider: model.provider, size: 11)
+            }
+
+            Text(model.label)
+                .font(.caption2)
+                .foregroundStyle(.themeFgDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            if additionalCount > 0 {
+                Text("+\(additionalCount)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.themeComment)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.themeBgHighlight, in: Capsule())
+            }
+        }
     }
 
     // MARK: - Child Badge
