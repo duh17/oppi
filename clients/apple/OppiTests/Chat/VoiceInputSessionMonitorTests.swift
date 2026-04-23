@@ -211,7 +211,7 @@ private func eventText(_ event: VoiceSessionEvent, expecting kind: EventKind) ->
         return text
     case (.appendFinalTranscript(let text), .appendFinalTranscript):
         return text
-    case (.replaceFinalTranscript(let text, _), .replaceFinalTranscript):
+    case (.replaceFinalTranscript(let text, _, _, _), .replaceFinalTranscript):
         return text
     default:
         return nil

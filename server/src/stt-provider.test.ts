@@ -97,7 +97,7 @@ describe("StreamingSttProvider", () => {
     expect(calls.filter((c) => c.method === "POST" && c.url === STREAM_URL)).toHaveLength(1);
 
     const tokens: string[] = [];
-    provider.onToken((t) => tokens.push(t));
+    provider.onToken((update) => tokens.push(update.text));
     await provider.start();
 
     // Warm session was consumed — verify call was made (may include a verify POST)
@@ -117,11 +117,64 @@ describe("StreamingSttProvider", () => {
 
     // Stop
     const result = await provider.stop();
-    expect(result).toBe("hello world final");
+    expect(result.text).toBe("hello world final");
 
     // DELETE was sent
     const deleteCalls = calls.filter((c) => isDelete(c.url, c.method));
     expect(deleteCalls.some((c) => c.url === `${STREAM_URL}/s1`)).toBe(true);
+  });
+
+  it("emits a segment commit even when the visible text does not change", async () => {
+    let feedCount = 0;
+    const { fetchFn } = createMockFetch([
+      { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+      {
+        match: isFeed,
+        response: () => {
+          feedCount += 1;
+          if (feedCount === 1) {
+            // Warm-session verify probe sent by start().
+            return jsonResponse({ text: "" })();
+          }
+          if (feedCount === 2) {
+            return jsonResponse({
+              text: "hello world",
+              committed_text: "",
+              active_text: "hello world",
+            })();
+          }
+          return jsonResponse({
+            text: "hello world",
+            committed_text: "hello world",
+            active_text: "",
+            batch_corrected: true,
+          })();
+        },
+      },
+      { match: isDelete, response: jsonResponse({ text: "hello world" }) },
+    ]);
+
+    const provider = makeProvider(fetchFn);
+    await flush();
+
+    const updates: Array<{ text: string; snap: boolean }> = [];
+    provider.onToken((update) => updates.push({ text: update.text, snap: update.snap === true }));
+    await provider.start();
+
+    provider.feedAudio(Buffer.from([1, 2]));
+    vi.advanceTimersByTime(100);
+    await flush();
+
+    provider.feedAudio(Buffer.from([3, 4]));
+    vi.advanceTimersByTime(100);
+    await flush();
+
+    expect(updates).toEqual([
+      { text: "hello world", snap: false },
+      { text: "hello world", snap: true },
+    ]);
+
+    await provider.stop();
   });
 
   // 2. Warm session reuse — no extra createSession on start
@@ -183,7 +236,7 @@ describe("StreamingSttProvider", () => {
 
     // stop() before any start() — should return "" and not throw
     const result = await provider.stop();
-    expect(result).toBe("");
+    expect(result.text).toBe("");
   });
 
   // 5. warmUpSession replaces existing warm — old one DELETE'd
@@ -201,7 +254,7 @@ describe("StreamingSttProvider", () => {
     // Need to give it a session to stop — use start+stop cycle
     // Actually, stop() without start() also calls warmUpSession().
     const result = await provider.stop();
-    expect(result).toBe("");
+    expect(result.text).toBe("");
     await flush(); // let warmUpSession complete → warm = w2
 
     // w1 should have been DELETE'd during the second warmUpSession
@@ -235,7 +288,7 @@ describe("StreamingSttProvider", () => {
     await flush(); // warm = s1
 
     const tokens: string[] = [];
-    provider.onToken((t) => tokens.push(t));
+    provider.onToken((update) => tokens.push(update.text));
     await provider.start(); // active = s1
 
     // Queue audio and flush — should succeed
@@ -281,7 +334,7 @@ describe("StreamingSttProvider", () => {
 
     const stopResult = await provider.stop(); // DELETEs s1, warms up s2
     await flush();
-    expect(stopResult).toBe("");
+    expect(stopResult.text).toBe("");
 
     // Now start again — active = s2 (from warm)
     await provider.start();
@@ -466,7 +519,7 @@ describe("StreamingSttProvider", () => {
     await flush();
 
     const tokens: string[] = [];
-    provider.onToken((t) => tokens.push(t));
+    provider.onToken((update) => tokens.push(update.text));
     await provider.start();
 
     // First feed succeeds
@@ -533,7 +586,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2, 3]));
@@ -559,7 +612,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2]));
@@ -582,7 +635,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2]));
@@ -607,7 +660,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2]));
@@ -633,7 +686,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2]));
@@ -657,7 +710,7 @@ describe("StreamingSttProvider", () => {
       await flush();
 
       const tokens: string[] = [];
-      provider.onToken((t) => tokens.push(t));
+      provider.onToken((update) => tokens.push(update.text));
       await provider.start();
 
       provider.feedAudio(Buffer.from([1, 2]));
@@ -694,6 +747,6 @@ describe("StreamingSttProvider", () => {
     await flush();
 
     const result = await provider.stop();
-    expect(result).toBe("partial");
+    expect(result.text).toBe("partial");
   });
 });

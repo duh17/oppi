@@ -52,6 +52,10 @@ export interface DictationReadyMessage {
 export interface DictationResultMessage {
   type: "dictation_result";
   text: string;
+  /** STT-settled prefix already committed by the backend. */
+  committedText?: string;
+  /** In-flight tail still subject to correction. */
+  activeText?: string;
   /** When true, the text is a batch-corrected replacement. Client should snap (no animation). */
   snap?: boolean;
 }
@@ -59,6 +63,10 @@ export interface DictationResultMessage {
 export interface DictationFinalMessage {
   type: "dictation_final";
   text: string;
+  /** Final committed transcript from the backend, if provided. */
+  committedText?: string;
+  /** Final active tail from the backend, usually empty on completion. */
+  activeText?: string;
 }
 
 export interface DictationErrorMessage {

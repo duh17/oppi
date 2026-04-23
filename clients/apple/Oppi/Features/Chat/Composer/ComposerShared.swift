@@ -130,6 +130,17 @@ enum ComposerShared {
 
     // MARK: - Keyboard / Voice
 
+    static func currentComposerText(
+        storedText: String,
+        textBeforeRecording: String?,
+        liveTranscript: String?
+    ) -> String {
+        guard let prefix = textBeforeRecording, let liveTranscript else {
+            return storedText
+        }
+        return prefix + liveTranscript
+    }
+
     static func handleKeyboardRestore(
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,

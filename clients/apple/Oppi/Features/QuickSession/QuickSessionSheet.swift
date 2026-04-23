@@ -22,6 +22,7 @@ struct QuickSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var text = ""
+    @State private var composerTextBeforeRecording: String?
     @State private var pendingImages: [PendingImage] = []
     @State private var pendingFiles: [PendingFileReference] = []
     @State private var selectedWorkspace: Workspace?
@@ -127,6 +128,7 @@ struct QuickSessionSheet: View {
 
             ChatInputBar(
             text: $text,
+            textBeforeRecording: $composerTextBeforeRecording,
             pendingImages: $pendingImages,
             pendingFiles: $pendingFiles,
             isBusy: false,
@@ -178,6 +180,7 @@ struct QuickSessionSheet: View {
         .fullScreenCover(isPresented: $showExpandedComposer) {
             ExpandedComposerView(
                 text: $text,
+                textBeforeRecording: $composerTextBeforeRecording,
                 pendingImages: $pendingImages,
                 pendingFiles: $pendingFiles,
                 isBusy: false,

@@ -87,6 +87,10 @@ final class VoiceInputManager {
     private struct ReplaceTranscriptState {
         var committedText = ""
         var activeText = ""
+        /// Best-known settled prefix carried across later corrections.
+        /// Stored as text, not a raw count, so boundary protection survives
+        /// word merges/splits and other length-changing corrections.
+        private var protectedCommittedText = ""
 
         var isTracking: Bool {
             !committedText.isEmpty || !activeText.isEmpty
@@ -95,9 +99,15 @@ final class VoiceInputManager {
         mutating func reset() {
             committedText = ""
             activeText = ""
+            protectedCommittedText = ""
         }
 
-        mutating func applyReplacement(fullText: String, snap: Bool) {
+        mutating func applyReplacement(
+            fullText: String,
+            snap: Bool,
+            explicitCommittedText: String? = nil,
+            explicitActiveText: String? = nil
+        ) {
             let trimmedFullText = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedFullText.isEmpty else {
                 reset()
@@ -107,15 +117,44 @@ final class VoiceInputManager {
             if snap {
                 committedText = trimmedFullText
                 activeText = ""
+                protectedCommittedText = trimmedFullText
                 return
             }
 
-            if let active = Self.splitActiveText(from: trimmedFullText, committedText: committedText) {
-                activeText = active
-            } else {
-                committedText = ""
-                activeText = trimmedFullText
+            let trimmedCommitted = explicitCommittedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedActive = explicitActiveText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let protectedBoundary = Self.inferredProtectedBoundary(
+                in: trimmedFullText,
+                protectedText: protectedCommittedText
+            )
+
+            if explicitCommittedText != nil || explicitActiveText != nil,
+               let boundary = Self.boundaryFromExplicitSplit(
+                    in: trimmedFullText,
+                    explicitCommittedText: trimmedCommitted,
+                    explicitActiveText: trimmedActive,
+                    protectedBoundary: protectedBoundary
+               ) {
+                applyBoundary(boundary, in: trimmedFullText)
+                return
             }
+
+            if let boundary = Self.boundaryFromCommittedPrefix(
+                in: trimmedFullText,
+                committedText: committedText,
+                protectedBoundary: protectedBoundary
+            ) {
+                applyBoundary(boundary, in: trimmedFullText)
+                return
+            }
+
+            if let boundary = protectedBoundary {
+                applyBoundary(boundary, in: trimmedFullText)
+                return
+            }
+
+            committedText = ""
+            activeText = trimmedFullText
         }
 
         func visibleActiveSuffixLength(in displayText: String) -> Int {
@@ -127,29 +166,224 @@ final class VoiceInputManager {
             return max(0, trimmedDisplayText.count - committedPrefixLength)
         }
 
-        private func committedVisiblePrefixLength(in displayText: String) -> Int {
+        func committedVisiblePrefixLength(in displayText: String) -> Int {
             guard !displayText.isEmpty, !committedText.isEmpty else { return 0 }
-            let shared = Self.commonPrefixCount(displayText, committedText)
+            var boundary = min(displayText.count, Self.commonPrefixCount(displayText, committedText))
 
             if !activeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               shared < displayText.count {
-                let index = displayText.index(displayText.startIndex, offsetBy: shared)
-                if displayText[index] == " " {
-                    return min(displayText.count, shared + 1)
+               boundary < displayText.count {
+                let index = displayText.index(displayText.startIndex, offsetBy: boundary)
+                if Self.isWhitespace(displayText[index]) {
+                    boundary = min(displayText.count, boundary + 1)
                 }
             }
 
-            return min(displayText.count, shared)
+            return boundary
         }
 
-        private static func splitActiveText(from fullText: String, committedText: String) -> String? {
-            let trimmedCommitted = committedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedCommitted.isEmpty else { return fullText }
-            if fullText == trimmedCommitted { return "" }
+        private mutating func applyBoundary(_ boundary: Int, in fullText: String) {
+            let clampedBoundary = max(0, min(boundary, fullText.count))
+            let boundaryIndex = fullText.index(fullText.startIndex, offsetBy: clampedBoundary)
+            committedText = String(fullText[..<boundaryIndex])
 
-            let separator = trimmedCommitted + " "
-            guard fullText.hasPrefix(separator) else { return nil }
-            return String(fullText.dropFirst(separator.count))
+            var activeStart = boundaryIndex
+            if activeStart < fullText.endIndex, Self.isWhitespace(fullText[activeStart]) {
+                activeStart = fullText.index(after: activeStart)
+            }
+            activeText = String(fullText[activeStart...])
+
+            if !committedText.isEmpty {
+                protectedCommittedText = committedText
+            }
+        }
+
+        private static func boundaryFromExplicitSplit(
+            in fullText: String,
+            explicitCommittedText: String?,
+            explicitActiveText: String?,
+            protectedBoundary: Int?
+        ) -> Int? {
+            let minimumBoundary = protectedBoundary ?? 0
+
+            if let activeText = explicitActiveText,
+               !activeText.isEmpty,
+               let activeBoundary = boundaryFromActiveSuffix(in: fullText, activeText: activeText) {
+                return max(minimumBoundary, activeBoundary)
+            }
+
+            if let committedText = explicitCommittedText,
+               !committedText.isEmpty,
+               let committedBoundary = bestPrefixBoundary(for: committedText, in: fullText) {
+                return max(minimumBoundary, committedBoundary)
+            }
+
+            if minimumBoundary > 0 {
+                return minimumBoundary
+            }
+
+            return nil
+        }
+
+        private static func boundaryFromCommittedPrefix(
+            in fullText: String,
+            committedText: String,
+            protectedBoundary: Int?
+        ) -> Int? {
+            let trimmedCommitted = committedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedCommitted.isEmpty else { return protectedBoundary }
+            guard let boundary = bestPrefixBoundary(for: trimmedCommitted, in: fullText) else {
+                return protectedBoundary
+            }
+            if let protectedBoundary {
+                return max(boundary, protectedBoundary)
+            }
+            return boundary
+        }
+
+        private static func boundaryFromActiveSuffix(in fullText: String, activeText: String) -> Int? {
+            guard !activeText.isEmpty, fullText.hasSuffix(activeText) else { return nil }
+            let activeStart = fullText.index(fullText.endIndex, offsetBy: -activeText.count)
+            if activeStart > fullText.startIndex {
+                let previous = fullText.index(before: activeStart)
+                if isWhitespace(fullText[previous]) {
+                    return fullText.distance(from: fullText.startIndex, to: previous)
+                }
+            }
+            return fullText.distance(from: fullText.startIndex, to: activeStart)
+        }
+
+        private static func inferredProtectedBoundary(in fullText: String, protectedText: String) -> Int? {
+            let trimmedProtected = protectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedProtected.isEmpty else { return nil }
+            return bestPrefixBoundary(for: trimmedProtected, in: fullText)
+        }
+
+        private static func bestPrefixBoundary(for targetText: String, in fullText: String) -> Int? {
+            guard !targetText.isEmpty, !fullText.isEmpty else { return nil }
+
+            if fullText == targetText {
+                return fullText.count
+            }
+
+            let separator = targetText + " "
+            if fullText.hasPrefix(separator) {
+                return targetText.count
+            }
+
+            if let tokenBoundary = bestTokenPrefixBoundary(for: targetText, in: fullText) {
+                return tokenBoundary
+            }
+
+            return bestCharacterPrefixBoundary(for: targetText, in: fullText)
+        }
+
+        private static func bestCharacterPrefixBoundary(for targetText: String, in fullText: String) -> Int? {
+            let target = Array(targetText)
+            let full = Array(fullText)
+            var previous = Array(0...full.count)
+            var current = Array(repeating: 0, count: full.count + 1)
+
+            for (i, targetCharacter) in target.enumerated() {
+                current[0] = i + 1
+                for (j, fullCharacter) in full.enumerated() {
+                    let substitutionCost = targetCharacter == fullCharacter ? 0 : 1
+                    current[j + 1] = min(
+                        previous[j + 1] + 1,
+                        current[j] + 1,
+                        previous[j] + substitutionCost
+                    )
+                }
+                swap(&previous, &current)
+            }
+
+            var bestBoundary: Int?
+            var bestDistance = Int.max
+            var bestSimilarity = -Double.infinity
+
+            for boundary in 0...full.count {
+                let distance = previous[boundary]
+                let denominator = max(target.count, boundary, 1)
+                let similarity = 1 - (Double(distance) / Double(denominator))
+                let isBetter = distance < bestDistance
+                    || (distance == bestDistance && similarity > bestSimilarity)
+                    || (distance == bestDistance && similarity == bestSimilarity
+                        && boundary > (bestBoundary ?? 0))
+                if isBetter {
+                    bestBoundary = boundary
+                    bestDistance = distance
+                    bestSimilarity = similarity
+                }
+            }
+
+            guard let bestBoundary, bestSimilarity >= 0.6 else { return nil }
+            return bestBoundary
+        }
+
+        private struct WordToken {
+            let text: String
+            let boundary: Int
+        }
+
+        private static func bestTokenPrefixBoundary(for targetText: String, in fullText: String) -> Int? {
+            let targetTokens = wordTokens(in: targetText)
+            let fullTokens = wordTokens(in: fullText)
+            guard !targetTokens.isEmpty, !fullTokens.isEmpty else { return nil }
+
+            var previous = Array(0...fullTokens.count)
+            var current = Array(repeating: 0, count: fullTokens.count + 1)
+
+            for (i, targetToken) in targetTokens.enumerated() {
+                current[0] = i + 1
+                for (j, fullToken) in fullTokens.enumerated() {
+                    let substitutionCost = targetToken.text == fullToken.text ? 0 : 1
+                    current[j + 1] = min(
+                        previous[j + 1] + 1,
+                        current[j] + 1,
+                        previous[j] + substitutionCost
+                    )
+                }
+                swap(&previous, &current)
+            }
+
+            var bestBoundary: Int?
+            var bestDistance = Int.max
+            var bestSimilarity = -Double.infinity
+
+            for tokenCount in 1...fullTokens.count {
+                let distance = previous[tokenCount]
+                let denominator = max(targetTokens.count, tokenCount, 1)
+                let similarity = 1 - (Double(distance) / Double(denominator))
+                let boundary = fullTokens[tokenCount - 1].boundary
+                let isBetter = distance < bestDistance
+                    || (distance == bestDistance && similarity > bestSimilarity)
+                    || (distance == bestDistance && similarity == bestSimilarity
+                        && boundary > (bestBoundary ?? 0))
+                if isBetter {
+                    bestBoundary = boundary
+                    bestDistance = distance
+                    bestSimilarity = similarity
+                }
+            }
+
+            guard let bestBoundary, bestSimilarity >= 0.65 else { return nil }
+            return bestBoundary
+        }
+
+        private static func wordTokens(in text: String) -> [WordToken] {
+            let nsText = text as NSString
+            var tokens: [WordToken] = []
+
+            text.enumerateSubstrings(
+                in: text.startIndex..<text.endIndex,
+                options: [.byWords, .substringNotRequired]
+            ) { _, substringRange, _, _ in
+                let nsRange = NSRange(substringRange, in: text)
+                let tokenText = nsText.substring(with: nsRange).lowercased()
+                let boundary = nsRange.location + nsRange.length
+                tokens.append(WordToken(text: tokenText, boundary: boundary))
+            }
+
+            return tokens
         }
 
         private static func commonPrefixCount(_ lhs: String, _ rhs: String) -> Int {
@@ -167,6 +401,10 @@ final class VoiceInputManager {
 
             return count
         }
+
+        private static func isWhitespace(_ character: Character) -> Bool {
+            character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+        }
     }
 
     // MARK: - Published State
@@ -174,6 +412,15 @@ final class VoiceInputManager {
     private(set) var state: State = .idle
     private(set) var finalizedTranscript = ""
     private(set) var volatileTranscript = ""
+    /// Monotonic revision for composer presentation updates.
+    ///
+    /// Some dictation events change only certainty state (volatile → settled)
+    /// while leaving the visible transcript string unchanged. The composer uses
+    /// this revision to refresh styling for same-text segment commits.
+    private(set) var transcriptPresentationRevision = 0
+    private var correctionHighlightText = ""
+    private var correctionHighlightRanges: [NSRange] = []
+    private var correctionHighlightTask: Task<Void, Never>?
     private(set) var audioLevel: Float = 0
 
     /// Short language code for the active recording session (e.g. "EN", "中").
@@ -208,6 +455,14 @@ final class VoiceInputManager {
 
         guard !volatileTranscript.isEmpty else { return 0 }
         return min(currentTranscript.count, volatileTranscript.count)
+    }
+
+    /// Word ranges that were corrected during the most recent settle/commit.
+    /// Ranges are relative to the dictated transcript (not any typed prefix).
+    var currentTranscriptCorrectionRanges: [NSRange] {
+        let referenceText = finalizedTranscript + volatileTranscript
+        guard !referenceText.isEmpty, correctionHighlightText == referenceText else { return [] }
+        return correctionHighlightRanges
     }
 
     var isRecording: Bool { state == .recording }
@@ -268,6 +523,8 @@ final class VoiceInputManager {
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
     private var replaceTranscriptState = ReplaceTranscriptState()
+
+    private static let correctionHighlightDuration: Duration = .milliseconds(600)
 
     // MARK: - Server Configuration
 
@@ -814,16 +1071,30 @@ final class VoiceInputManager {
         case .partialTranscript(let text):
             replaceTranscriptState.reset()
             volatileTranscript = text
+            _ = clearCorrectionHighlight()
             resultUpdateCount += 1
+            markTranscriptPresentationChanged()
             logger.debug("Volatile: \(text.count) chars")
         case .appendFinalTranscript(let text):
             replaceTranscriptState.reset()
             finalizedTranscript += text
             volatileTranscript = ""
+            _ = clearCorrectionHighlight()
             resultUpdateCount += 1
+            markTranscriptPresentationChanged()
             logger.debug("Finalized append: \(text.count) chars")
-        case .replaceFinalTranscript(let text, let snap):
-            replaceTranscriptState.applyReplacement(fullText: text, snap: snap)
+        case .replaceFinalTranscript(let text, let snap, let committedText, let activeText):
+            let previousDisplayText = finalizedTranscript + volatileTranscript
+            let previousCommittedPrefixLength = replaceTranscriptState.committedVisiblePrefixLength(
+                in: previousDisplayText
+            )
+
+            replaceTranscriptState.applyReplacement(
+                fullText: text,
+                snap: snap,
+                explicitCommittedText: committedText,
+                explicitActiveText: activeText
+            )
             finalizedTranscript = text
             volatileTranscript = ""
             resultUpdateCount += 1
@@ -836,6 +1107,21 @@ final class VoiceInputManager {
                     typewriterAnimator.update(fullText: text)
                 }
             }
+
+            let newCommittedPrefixLength = replaceTranscriptState.committedVisiblePrefixLength(in: text)
+            let settledPrefixAdvanced = newCommittedPrefixLength > previousCommittedPrefixLength
+            let correctionRanges = correctionWordHighlightRanges(
+                old: previousDisplayText,
+                new: text,
+                committedPrefixLength: newCommittedPrefixLength
+            )
+            if settledPrefixAdvanced, !correctionRanges.isEmpty {
+                setCorrectionHighlight(text: text, ranges: correctionRanges)
+            } else if correctionHighlightText != text {
+                _ = clearCorrectionHighlight()
+            }
+
+            markTranscriptPresentationChanged()
             logger.debug("Finalized replace: \(text.count) chars\(snap ? " (snap)" : "")")
 
         case .remoteChunkTelemetry(let chunk):
@@ -858,6 +1144,7 @@ final class VoiceInputManager {
         finalizedTranscript = ""
         volatileTranscript = ""
         replaceTranscriptState.reset()
+        _ = clearCorrectionHighlight()
         audioLevel = 0
         activeLanguageLabel = nil
         activeEngine = nil
@@ -907,6 +1194,131 @@ final class VoiceInputManager {
     }
 
     // MARK: - Helpers
+
+    private func markTranscriptPresentationChanged() {
+        transcriptPresentationRevision &+= 1
+    }
+
+    @discardableResult
+    private func clearCorrectionHighlight(cancelTask: Bool = true) -> Bool {
+        if cancelTask {
+            correctionHighlightTask?.cancel()
+            correctionHighlightTask = nil
+        }
+        guard !correctionHighlightText.isEmpty || !correctionHighlightRanges.isEmpty else {
+            return false
+        }
+        correctionHighlightText = ""
+        correctionHighlightRanges = []
+        return true
+    }
+
+    private func setCorrectionHighlight(text: String, ranges: [NSRange]) {
+        _ = clearCorrectionHighlight()
+        correctionHighlightText = text
+        correctionHighlightRanges = ranges
+        correctionHighlightTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.correctionHighlightDuration)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.correctionHighlightTask = nil
+            if self.clearCorrectionHighlight(cancelTask: false) {
+                self.markTranscriptPresentationChanged()
+            }
+        }
+    }
+
+    private func correctionWordHighlightRanges(
+        old oldText: String,
+        new newText: String,
+        committedPrefixLength: Int
+    ) -> [NSRange] {
+        guard !oldText.isEmpty, !newText.isEmpty, committedPrefixLength > 0 else { return [] }
+
+        let committedEnd = newText.index(
+            newText.startIndex,
+            offsetBy: min(committedPrefixLength, newText.count)
+        )
+        let committedBounds = NSRange(newText.startIndex..<committedEnd, in: newText)
+
+        return Self.correctionWordRanges(old: oldText, new: newText).compactMap { range in
+            let visibleRange = NSIntersectionRange(range, committedBounds)
+            return visibleRange.length > 0 ? visibleRange : nil
+        }
+    }
+
+    private struct CorrectionWordToken {
+        let text: String
+        let range: NSRange
+    }
+
+    private static func correctionWordRanges(old: String, new: String) -> [NSRange] {
+        guard !old.isEmpty, !new.isEmpty else { return [] }
+
+        let oldTokens = correctionWordTokens(in: old)
+        let newTokens = correctionWordTokens(in: new)
+        guard !oldTokens.isEmpty, !newTokens.isEmpty else { return [] }
+
+        var prefix = 0
+        while prefix < oldTokens.count,
+              prefix < newTokens.count,
+              oldTokens[prefix].text == newTokens[prefix].text {
+            prefix += 1
+        }
+
+        // Pure append should not flash correction underline.
+        if prefix == oldTokens.count, newTokens.count >= oldTokens.count {
+            return []
+        }
+
+        var suffix = 0
+        while oldTokens.count - suffix - 1 >= prefix,
+              newTokens.count - suffix - 1 >= prefix,
+              oldTokens[oldTokens.count - suffix - 1].text
+                == newTokens[newTokens.count - suffix - 1].text {
+            suffix += 1
+        }
+
+        let start = prefix
+        let end = newTokens.count - suffix
+        guard end > start else { return [] }
+
+        return newTokens[start..<end].map(\.range)
+    }
+
+    private static func correctionWordTokens(in text: String) -> [CorrectionWordToken] {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var tokens: [CorrectionWordToken] = []
+
+        text.enumerateSubstrings(
+            in: text.startIndex..<text.endIndex,
+            options: [.byWords, .substringNotRequired]
+        ) { _, substringRange, _, _ in
+            let nsRange = NSRange(substringRange, in: text)
+            let tokenText = nsText.substring(with: nsRange)
+            tokens.append(CorrectionWordToken(text: tokenText, range: nsRange))
+        }
+
+        // Fallback for scripts where .byWords returns nothing.
+        if tokens.isEmpty {
+            nsText.enumerateSubstrings(
+                in: fullRange,
+                options: [.byComposedCharacterSequences]
+            ) { substring, range, _, _ in
+                guard let substring else { return }
+                if substring.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return
+                }
+                tokens.append(CorrectionWordToken(text: substring, range: range))
+            }
+        }
+
+        return tokens
+    }
 
     private func userFacingErrorMessage(for error: Error) -> String {
         VoiceInputTelemetry.userFacingMessage(for: error)

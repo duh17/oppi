@@ -10,7 +10,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Dict
 ///
 /// Streams raw PCM continuously — no client-side chunk timing.
 /// Binary frames carry audio; dictation results arrive as `ServerMessage` text frames.
-/// - `dictation_result` maps to `.replaceFinalTranscript`
+/// - `dictation_result` maps to `.replaceFinalTranscript`, forwarding the
+///   backend's committed/active split when available
 /// - `dictation_final` maps to a settled `.replaceFinalTranscript(..., snap: true)`
 ///   when needed, then completes the stream
 ///
@@ -40,10 +41,17 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     private var audioConverter: AVAudioConverter?
     private var targetFormat: AVAudioFormat?
     private var stopped = false
-    /// Last transcript replacement yielded to the UI. Includes the settle bit
-    /// so an identical final/snap update can still clear the volatile styling
-    /// after a matching streaming preview.
-    private var lastTranscriptUpdate: (text: String, snap: Bool)?
+    private struct TranscriptUpdate: Equatable {
+        let text: String
+        let snap: Bool
+        let committedText: String?
+        let activeText: String?
+    }
+
+    /// Last transcript replacement yielded to the UI. Includes settle state and
+    /// the backend committed/active split so same-text updates still propagate
+    /// when their semantic split changes.
+    private var lastTranscriptUpdate: TranscriptUpdate?
 
     init(
         connection: ServerConnection,
@@ -263,13 +271,23 @@ final class OppiDictationSession: VoiceTranscriptionSession {
                 case .dictationReady:
                     logger.debug("dictation_ready received (recording started)")
 
-                case .dictationResult(let text, let snap):
+                case .dictationResult(let text, let snap, let split):
                     logger.debug("Dictation result: \(text.count) chars\(snap ? " (snap)" : "")")
-                    yieldTranscriptIfChanged(text, snap: snap)
+                    yieldTranscriptIfChanged(
+                        text,
+                        snap: snap,
+                        committedText: split?.committedText,
+                        activeText: split?.activeText
+                    )
 
-                case .dictationFinal(let text):
+                case .dictationFinal(let text, let split):
                     logger.info("Dictation final: \(text.count) chars")
-                    yieldTranscriptIfChanged(text, snap: true)
+                    yieldTranscriptIfChanged(
+                        text,
+                        snap: true,
+                        committedText: split?.committedText,
+                        activeText: split?.activeText
+                    )
                     eventContinuation.finish()
                     return
 
@@ -298,15 +316,34 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         }
     }
 
-    private func yieldTranscriptIfChanged(_ text: String, snap: Bool = false) {
+    private func yieldTranscriptIfChanged(
+        _ text: String,
+        snap: Bool = false,
+        committedText: String? = nil,
+        activeText: String? = nil
+    ) {
         guard !text.isEmpty else { return }
         if let lastTranscriptUpdate,
            lastTranscriptUpdate.text == text,
-           lastTranscriptUpdate.snap == snap {
+           lastTranscriptUpdate.snap == snap,
+           lastTranscriptUpdate.committedText == committedText,
+           lastTranscriptUpdate.activeText == activeText {
             return
         }
-        lastTranscriptUpdate = (text, snap)
-        eventContinuation.yield(.replaceFinalTranscript(text, snap: snap))
+        lastTranscriptUpdate = TranscriptUpdate(
+            text: text,
+            snap: snap,
+            committedText: committedText,
+            activeText: activeText
+        )
+        eventContinuation.yield(
+            .replaceFinalTranscript(
+                text,
+                snap: snap,
+                committedText: committedText,
+                activeText: activeText
+            )
+        )
     }
 
     private nonisolated static func disconnectError() -> VoiceInputError {

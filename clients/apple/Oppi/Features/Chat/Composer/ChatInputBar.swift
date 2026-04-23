@@ -20,6 +20,7 @@ import UIKit
 /// - Expand stays on the trailing side without taking text width.
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
+    @Binding var textBeforeRecording: String?
     @Binding var pendingImages: [PendingImage]
     @Binding var pendingFiles: [PendingFileReference]
 
@@ -53,10 +54,6 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var inlineVisualLineCount = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Text in the field before voice recording started.
-    /// Used to prepend existing text when streaming transcription.
-    @State private var textBeforeRecording: String?
-
     /// Bumped to programmatically focus the text field.
     @State private var focusRequestID = 0
 
@@ -86,10 +83,18 @@ struct ChatInputBar<ActionRow: View>: View {
     private var composerPlaceholderFont: Font { .body }
     private var composerAutocorrectionEnabled: Bool { true }
 
+    private var composerDisplayText: String {
+        ComposerShared.currentComposerText(
+            storedText: text,
+            textBeforeRecording: textBeforeRecording,
+            liveTranscript: voiceInputManager?.currentTranscript
+        )
+    }
+
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
         let hasFiles = !pendingFiles.isEmpty
-        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages || hasFiles
     }
 
@@ -158,10 +163,7 @@ struct ChatInputBar<ActionRow: View>: View {
     private var textFieldBinding: Binding<String> {
         Binding(
             get: {
-                if text.hasPrefix("$ ") {
-                    return String(text.dropFirst(2))
-                }
-                return text
+                Self.visibleComposerText(composerDisplayText)
             },
             set: { newValue in
                 if text.hasPrefix("$ ") {
@@ -171,6 +173,22 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
             }
         )
+    }
+
+    private var correctionRangesForDisplay: [NSRange] {
+        guard let manager = voiceInputManager,
+              let prefix = textBeforeRecording else { return [] }
+        let offset = (Self.visibleComposerText(prefix) as NSString).length
+        return manager.currentTranscriptCorrectionRanges.map { range in
+            NSRange(location: range.location + offset, length: range.length)
+        }
+    }
+
+    private static func visibleComposerText(_ text: String) -> String {
+        if text.hasPrefix("$ ") {
+            return String(text.dropFirst(2))
+        }
+        return text
     }
 
     var body: some View {
@@ -229,9 +247,9 @@ struct ChatInputBar<ActionRow: View>: View {
             suppressKeyboard = false
             focusRequestID += 1
         }
-        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
-            guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
-            text = prefix + transcript
+        .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
+            guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
+            text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
             guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
@@ -304,6 +322,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
                         volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
+                        correctionRanges: correctionRangesForDisplay,
                         maxLines: effectiveMaxLines,
                         autocorrectionEnabled: composerAutocorrectionEnabled,
                         onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },

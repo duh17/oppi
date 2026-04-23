@@ -26,6 +26,7 @@ import UIKit
 /// ```
 struct ExpandedComposerView: View {
     @Binding var text: String
+    @Binding var textBeforeRecording: String?
     @Binding var pendingImages: [PendingImage]
     @Binding var pendingFiles: [PendingFileReference]
     let isBusy: Bool
@@ -51,9 +52,6 @@ struct ExpandedComposerView: View {
     /// Updated by FullSizeTextView while editing.
     @State private var keyboardLanguage: String?
 
-    /// Text in the field before voice recording started.
-    @State private var textBeforeRecording: String?
-
     /// Bumped to programmatically focus the text view for voice mode.
     @State private var focusRequestID = 0
 
@@ -61,10 +59,18 @@ struct ExpandedComposerView: View {
     /// capture while hiding the keyboard until the user taps back into typing.
     @State private var suppressKeyboard = false
 
+    private var composerDisplayText: String {
+        ComposerShared.currentComposerText(
+            storedText: text,
+            textBeforeRecording: textBeforeRecording,
+            liveTranscript: voiceInputManager?.currentTranscript
+        )
+    }
+
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
         let hasFiles = !pendingFiles.isEmpty
-        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages || hasFiles
     }
 
@@ -87,10 +93,7 @@ struct ExpandedComposerView: View {
     private var textFieldBinding: Binding<String> {
         Binding(
             get: {
-                if text.hasPrefix("$ ") {
-                    return String(text.dropFirst(2))
-                }
-                return text
+                Self.visibleComposerText(composerDisplayText)
             },
             set: { newValue in
                 if text.hasPrefix("$ ") {
@@ -100,6 +103,22 @@ struct ExpandedComposerView: View {
                 }
             }
         )
+    }
+
+    private var correctionRangesForDisplay: [NSRange] {
+        guard let manager = voiceInputManager,
+              let prefix = textBeforeRecording else { return [] }
+        let offset = (Self.visibleComposerText(prefix) as NSString).length
+        return manager.currentTranscriptCorrectionRanges.map { range in
+            NSRange(location: range.location + offset, length: range.length)
+        }
+    }
+
+    private static func visibleComposerText(_ text: String) -> String {
+        if text.hasPrefix("$ ") {
+            return String(text.dropFirst(2))
+        }
+        return text
     }
 
     private var wordCount: Int {
@@ -128,6 +147,7 @@ struct ExpandedComposerView: View {
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
                     volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
+                    correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },
                     onCommandEnter: handleSend,
@@ -201,9 +221,9 @@ struct ExpandedComposerView: View {
             ComposerShared.loadSelectedPhotos(items, into: $pendingImages)
             photoSelection = []
         }
-        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
-            guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
-            text = prefix + transcript
+        .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
+            guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
+            text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
             guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }

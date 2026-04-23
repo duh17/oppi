@@ -1083,6 +1083,111 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
+    @Test func replaceTranscriptDoesNotBleedCommittedTextWhenHeuristicSplitFailsAfterChunkCommit() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello wurld.",
+            snap: true,
+            committedText: "Hello wurld.",
+            activeText: ""
+        ))
+        #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 })
+
+        session.yieldEvent(.replaceFinalTranscript("Hello world. testing now"))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world. testing now" })
+        manager.typewriterAnimator.commitCurrentAnimation()
+        #expect(manager.currentTranscriptVolatileSuffixLength == "testing now".count,
+                "A corrected committed chunk must stay settled when the heuristic split fails")
+
+        await manager.cancelRecording()
+    }
+
+    @Test func replaceTranscriptDoesNotBleedCommittedTextWhenExplicitSplitRetreats() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello world.",
+            snap: true,
+            committedText: "Hello world.",
+            activeText: ""
+        ))
+        #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 })
+
+        session.yieldEvent(.replaceFinalTranscript(
+            "Hello world. testing now",
+            committedText: "Hello",
+            activeText: "world. testing now"
+        ))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript == "Hello world. testing now" })
+        manager.typewriterAnimator.commitCurrentAnimation()
+        #expect(manager.currentTranscriptVolatileSuffixLength == "testing now".count,
+                "Once a chunk is committed, later proxy splits must not repaint it as volatile")
+
+        await manager.cancelRecording()
+    }
+
+    @Test func replaceTranscriptDoesNotBleedCommittedTextWhenCorrectionChangesCommittedPrefixLength() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        session.yieldEvent(.replaceFinalTranscript(
+            "screen recording stopped",
+            snap: true,
+            committedText: "screen recording stopped",
+            activeText: ""
+        ))
+        #expect(await waitForMainActorCondition { manager.currentTranscriptVolatileSuffixLength == 0 })
+
+        session.yieldEvent(.replaceFinalTranscript("screen recording randomly stopped testing now"))
+        #expect(await waitForMainActorCondition {
+            manager.finalizedTranscript == "screen recording randomly stopped testing now"
+        })
+        manager.typewriterAnimator.commitCurrentAnimation()
+        #expect(manager.currentTranscriptVolatileSuffixLength == "testing now".count,
+                "Committed text that is corrected to a different length must stay settled")
+
+        await manager.cancelRecording()
+    }
+
     private func resetVoicePreferences() {
         VoiceInputPreferences.setEngineMode(.auto)
     }

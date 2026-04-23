@@ -36,19 +36,49 @@ function messagesOfType<T extends DictationServerMessage["type"]>(
  */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function mockSttProvider(tokens: string[]) {
-  let tokenCb: ((text: string) => void) | null = null;
+  let tokenCb:
+    | ((update: {
+        text: string;
+        snap?: boolean;
+        committedText?: string;
+        activeText?: string;
+      }) => void)
+    | null = null;
   const accumulated = tokens.join(" ");
 
   const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
-  const stopFn = vi.fn<() => Promise<string>>().mockResolvedValue(accumulated);
+  const stopFn = vi
+    .fn<
+      () => Promise<{
+        text: string;
+        committedText?: string;
+        activeText?: string;
+      }>
+    >()
+    .mockResolvedValue({ text: accumulated });
 
-  const provider: SttProvider & { _fireTokens: () => void } = {
+  const provider: SttProvider & {
+    _fireTokens: () => void;
+    _fireUpdate: (update: {
+      text: string;
+      snap?: boolean;
+      committedText?: string;
+      activeText?: string;
+    }) => void;
+  } = {
     name: "mock",
     model: "mock-model",
     start: startFn,
     feedAudio: feedAudioFn,
-    onToken(cb: (text: string) => void) {
+    onToken(
+      cb: (update: {
+        text: string;
+        snap?: boolean;
+        committedText?: string;
+        activeText?: string;
+      }) => void,
+    ) {
       tokenCb = cb;
     },
     stop: stopFn,
@@ -56,8 +86,11 @@ function mockSttProvider(tokens: string[]) {
       let running = "";
       for (const t of tokens) {
         running += (running.length > 0 ? " " : "") + t;
-        tokenCb?.(running);
+        tokenCb?.({ text: running });
       }
+    },
+    _fireUpdate(update) {
+      tokenCb?.(update);
     },
   };
   return Object.assign(provider, { start: startFn, feedAudio: feedAudioFn, stop: stopFn });
@@ -68,7 +101,7 @@ function mockSttProvider(tokens: string[]) {
 function failingSttProvider(error: string) {
   const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
-  const stopFn = vi.fn<() => Promise<string>>().mockRejectedValue(new Error(error));
+  const stopFn = vi.fn<() => Promise<{ text: string }>>().mockRejectedValue(new Error(error));
 
   const provider: SttProvider = {
     name: "mock",
@@ -248,6 +281,26 @@ describe("DictationManager", () => {
       expect(results[1].text).toBe("hello world");
     });
 
+    it("forwards committed and active transcript split unchanged", async () => {
+      manager.handleControlMessage({ type: "dictation_start" }, sendFn);
+      await drain();
+
+      provider._fireUpdate({
+        text: "hello world",
+        committedText: "hello",
+        activeText: "world",
+      });
+
+      const results = messagesOfType(sent, "dictation_result");
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        type: "dictation_result",
+        text: "hello world",
+        committedText: "hello",
+        activeText: "world",
+      });
+    });
+
     it("ignores audio data before dictation_start", () => {
       manager.handleAudioData(silencePcm(500));
       expect(messagesOfType(sent, "dictation_error")).toHaveLength(0);
@@ -303,6 +356,33 @@ describe("DictationManager", () => {
       const finals = messagesOfType(sent, "dictation_final");
       expect(finals).toHaveLength(1);
       expect(finals[0].text).toBe("hello world");
+    });
+
+    it("forwards final committed and active split unchanged", async () => {
+      const splitProvider = mockSttProvider(["hello", "world"]);
+      splitProvider.stop.mockResolvedValue({
+        text: "hello world",
+        committedText: "hello world",
+        activeText: "",
+      });
+      const mgr = new DictationManager(splitProvider);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (msg) => mgrSent.push(msg));
+      await drain();
+      mgr.handleAudioData(silencePcm(1000));
+      mgr.handleControlMessage({ type: "dictation_stop" }, (msg) => mgrSent.push(msg));
+      vi.advanceTimersByTime(10);
+      await drain();
+
+      const finals = messagesOfType(mgrSent, "dictation_final");
+      expect(finals).toHaveLength(1);
+      expect(finals[0]).toEqual({
+        type: "dictation_final",
+        text: "hello world",
+        committedText: "hello world",
+        activeText: "",
+      });
     });
   });
 });

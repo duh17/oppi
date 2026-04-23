@@ -14,6 +14,27 @@ import { createLogger } from "./logger.js";
 // ─── Interface ───
 
 /**
+ * Streaming transcript update forwarded from the upstream STT backend.
+ *
+ * `text` is the full visible transcript. When available, `committedText` and
+ * `activeText` preserve Yuwp's segment-commit split so downstream clients can
+ * render settled vs. volatile text without guessing.
+ */
+export interface SttTranscriptUpdate {
+  text: string;
+  snap?: boolean;
+  committedText?: string;
+  activeText?: string;
+}
+
+/** Final transcript payload returned when the backend session is closed. */
+export interface SttFinalTranscript {
+  text: string;
+  committedText?: string;
+  activeText?: string;
+}
+
+/**
  * Streaming STT provider. Audio is piped incrementally and transcript
  * updates arrive via callback as they're produced.
  *
@@ -29,9 +50,9 @@ export interface SttProvider {
   /** Write raw PCM audio (s16le, 16kHz, mono). */
   feedAudio(pcm: Buffer): void;
   /** Register callback for transcript updates (full replacement text each time). */
-  onToken(cb: (text: string, opts?: { snap?: boolean }) => void): void;
+  onToken(cb: (update: SttTranscriptUpdate) => void): void;
   /** Close audio input, wait for completion, return full final text. */
-  stop(): Promise<string>;
+  stop(): Promise<SttFinalTranscript>;
   /** Clean up provider resources (e.g. remote sessions). Call on shutdown. */
   dispose?(): Promise<void>;
   /** Update the ASR system prompt (e.g. domain term sheet). */
@@ -62,6 +83,10 @@ export interface StreamingSttOptions {
  */
 const log = createLogger({ base: { component: "stt_provider" } });
 
+// Keep the server proxy behaviorally close to direct Yuwp usage.
+// Large batching here adds noticeable pause-to-commit lag even on localhost.
+const DEFAULT_FEED_INTERVAL_MS = 200;
+
 export class StreamingSttProvider implements SttProvider {
   readonly name: string;
   readonly model: string;
@@ -69,13 +94,19 @@ export class StreamingSttProvider implements SttProvider {
   private fetchFn: typeof globalThis.fetch;
   private sessionId: string | null = null;
   private warmSessionId: string | null = null;
-  private tokenCb: ((text: string, opts?: { snap?: boolean }) => void) | null = null;
+  private tokenCb: ((update: SttTranscriptUpdate) => void) | null = null;
   private lastText = "";
+  /**
+   * Last preview signature emitted to the client.
+   * Includes committed/active split when the backend provides it so a
+   * segment-commit can still surface even when the visible text is unchanged.
+   */
+  private lastPreviewSignature: string | null = null;
   private audioQueue: Buffer[] = [];
   private feeding = false;
   private stopped = false;
   private feedTimer: ReturnType<typeof setInterval> | null = null;
-  /** How often to flush accumulated audio to the session (ms). */
+  /** Max time audio may sit in the proxy queue before forwarding upstream. */
   private feedIntervalMs: number;
   /** ASR system prompt (domain term sheet). Injected into every session. */
   private systemPrompt: string | undefined;
@@ -83,7 +114,7 @@ export class StreamingSttProvider implements SttProvider {
   constructor(
     opts: StreamingSttOptions,
     fetchFn: typeof globalThis.fetch = globalThis.fetch,
-    feedIntervalMs = 1000,
+    feedIntervalMs = DEFAULT_FEED_INTERVAL_MS,
   ) {
     this.endpoint = opts.endpoint;
     this.model = opts.model;
@@ -118,6 +149,7 @@ export class StreamingSttProvider implements SttProvider {
     }
 
     this.lastText = "";
+    this.lastPreviewSignature = null;
     this.audioQueue = [];
     this.feeding = false;
     this.stopped = false;
@@ -153,11 +185,11 @@ export class StreamingSttProvider implements SttProvider {
     this.audioQueue.push(pcm);
   }
 
-  onToken(cb: (text: string, opts?: { snap?: boolean }) => void): void {
+  onToken(cb: (update: SttTranscriptUpdate) => void): void {
     this.tokenCb = cb;
   }
 
-  async stop(): Promise<string> {
+  async stop(): Promise<SttFinalTranscript> {
     this.stopped = true;
     if (this.feedTimer) {
       clearInterval(this.feedTimer);
@@ -182,8 +214,18 @@ export class StreamingSttProvider implements SttProvider {
           signal: AbortSignal.timeout(10_000),
         });
         if (res.ok) {
-          const data = (await res.json()) as { text?: string };
+          const data = (await res.json()) as {
+            text?: string;
+            committed_text?: string;
+            active_text?: string;
+          };
           this.lastText = data.text ?? this.lastText;
+          const result: SttFinalTranscript = { text: this.lastText };
+          if (data.committed_text !== undefined) result.committedText = data.committed_text;
+          if (data.active_text !== undefined) result.activeText = data.active_text;
+          this.sessionId = null;
+          void this.warmUpSession();
+          return result;
         }
       } catch {
         // Return whatever we had
@@ -194,7 +236,7 @@ export class StreamingSttProvider implements SttProvider {
     // Pre-warm next session so next mic tap is instant
     void this.warmUpSession();
 
-    return this.lastText;
+    return { text: this.lastText };
   }
 
   /** Cleanup all sessions. Call on server shutdown. */
@@ -327,11 +369,30 @@ export class StreamingSttProvider implements SttProvider {
       });
 
       if (res.ok) {
-        const data = (await res.json()) as { text?: string; batch_corrected?: boolean };
+        const data = (await res.json()) as {
+          text?: string;
+          batch_corrected?: boolean;
+          committed_text?: string;
+          active_text?: string;
+        };
         const text = (data.text ?? "").trim();
-        if (text && text !== this.lastText && !this.isPromptLeak(text)) {
+        const snap = data.batch_corrected === true;
+        const committedText = data.committed_text?.trim();
+        const activeText = data.active_text?.trim();
+        const signature =
+          committedText !== undefined || activeText !== undefined
+            ? JSON.stringify([text, committedText ?? "", activeText ?? ""])
+            : JSON.stringify([text, snap]);
+
+        if (text && signature !== this.lastPreviewSignature && !this.isPromptLeak(text)) {
           this.lastText = text;
-          this.tokenCb?.(text, data.batch_corrected ? { snap: true } : undefined);
+          this.lastPreviewSignature = signature;
+          this.tokenCb?.({
+            text,
+            ...(snap ? { snap: true } : {}),
+            ...(committedText !== undefined ? { committedText } : {}),
+            ...(activeText !== undefined ? { activeText } : {}),
+          });
         }
       } else if (res.status === 404) {
         // Stale session — server likely restarted

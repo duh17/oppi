@@ -52,4 +52,37 @@ struct ChatInputBarTests {
         #expect(idleSuppressed)
         #expect(!processingUnsuppressed)
     }
+
+    @Test("ComposerShared prefers live transcript over stale stored text during dictation")
+    func currentComposerTextPrefersLiveTranscript() {
+        let displayText = ComposerShared.currentComposerText(
+            storedText: "Yep, I think we should allow.",
+            textBeforeRecording: "",
+            liveTranscript: "Yep, I think we should allow. Dictation without."
+        )
+
+        #expect(displayText == "Yep, I think we should allow. Dictation without.")
+    }
+
+    @Test("ComposerShared preserves typed prefix across composer handoff")
+    func currentComposerTextPreservesTypedPrefixAcrossComposerHandoff() {
+        let displayText = ComposerShared.currentComposerText(
+            storedText: "stale snapshot",
+            textBeforeRecording: "Already typed. ",
+            liveTranscript: "When I expand to full screen, it should stay blue only at the end."
+        )
+
+        #expect(displayText == "Already typed. When I expand to full screen, it should stay blue only at the end.")
+    }
+
+    @Test("ComposerShared falls back to stored text when not dictating")
+    func currentComposerTextFallsBackToStoredText() {
+        let displayText = ComposerShared.currentComposerText(
+            storedText: "existing typed text",
+            textBeforeRecording: nil,
+            liveTranscript: "should not be used"
+        )
+
+        #expect(displayText == "existing typed text")
+    }
 }

@@ -171,13 +171,17 @@ export class DictationManager {
       sttModel: this.sttProvider.model,
     });
 
-    // Forward transcript updates to the client
-    this.sttProvider.onToken((text: string, opts?: { snap?: boolean }) => {
+    // Forward transcript updates to the client.
+    // Keep this as a thin proxy for the upstream STT semantics so iOS can
+    // render committed vs. active text like Yuwp without inferring splits.
+    this.sttProvider.onToken((update) => {
       if (!this.session || this.session.stopping) return;
       this.send({
         type: "dictation_result",
-        text,
-        ...(opts?.snap ? { snap: true } : {}),
+        text: update.text,
+        ...(update.snap ? { snap: true } : {}),
+        ...(update.committedText !== undefined ? { committedText: update.committedText } : {}),
+        ...(update.activeText !== undefined ? { activeText: update.activeText } : {}),
       });
     });
   }
@@ -214,11 +218,11 @@ export class DictationManager {
 
     // Final STT — close audio stream, get final text
     const audioSeconds = session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS);
-    let text: string;
+    let finalTranscript;
     let finalSttMs = 0;
     const sttT0 = performance.now();
     try {
-      text = await this.sttProvider.stop();
+      finalTranscript = await this.sttProvider.stop();
       finalSttMs = Math.round(performance.now() - sttT0);
       this.metrics?.record(
         "server.dictation_stt_ms",
@@ -254,7 +258,16 @@ export class DictationManager {
       this.metricTags({ language: langTag }),
     );
 
-    this.send({ type: "dictation_final", text });
+    this.send({
+      type: "dictation_final",
+      text: finalTranscript.text,
+      ...(finalTranscript.committedText !== undefined
+        ? { committedText: finalTranscript.committedText }
+        : {}),
+      ...(finalTranscript.activeText !== undefined
+        ? { activeText: finalTranscript.activeText }
+        : {}),
+    });
   }
 
   // ─── Metrics ───

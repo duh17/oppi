@@ -39,6 +39,7 @@ struct ChatView: View {
     @State private var voiceInputManager = VoiceInputManager()
 
     @State private var inputText = ""
+    @State private var composerTextBeforeRecording: String?
     @State private var pendingImages: [PendingImage] = []
     @State private var pendingFiles: [PendingFileReference] = []
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
@@ -545,6 +546,7 @@ struct ChatView: View {
 
                 ChatInputBar(
                     text: $inputText,
+                    textBeforeRecording: $composerTextBeforeRecording,
                     pendingImages: $pendingImages,
                     pendingFiles: $pendingFiles,
 
@@ -1149,6 +1151,7 @@ struct ChatView: View {
     private var composerSheet: some View {
         ExpandedComposerView(
             text: $inputText,
+            textBeforeRecording: $composerTextBeforeRecording,
             pendingImages: $pendingImages,
             pendingFiles: $pendingFiles,
             isBusy: isBusy,

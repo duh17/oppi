@@ -36,6 +36,16 @@ struct DictationServerMessageDecodingTests {
         #expect(message == .dictationResult(text: "Hello world", snap: false))
     }
 
+    @Test func decodesResultWithCommittedAndActiveSplit() throws {
+        let json = #"{"type":"dictation_result","text":"Hello world","committedText":"Hello","activeText":"world"}"#
+        let message = try decode(json)
+        #expect(message == .dictationResult(
+            text: "Hello world",
+            snap: false,
+            split: DictationTranscriptSplit(committedText: "Hello", activeText: "world")
+        ))
+    }
+
     @Test func decodesFinal() throws {
         let json = #"{"type":"dictation_final","text":"Hello world how are you"}"#
         let message = try decode(json)
@@ -182,6 +192,22 @@ struct DictationEventMappingTests {
         #expect(event == .replaceFinalTranscript("Hello world"))
     }
 
+    @Test func resultMapsCommittedAndActiveSplit() {
+        let event = mapServerMessage(
+            .dictationResult(
+                text: "Hello world",
+                snap: false,
+                split: DictationTranscriptSplit(committedText: "Hello", activeText: "world")
+            )
+        )
+        #expect(event == .replaceFinalTranscript(
+            "Hello world",
+            snap: false,
+            committedText: "Hello",
+            activeText: "world"
+        ))
+    }
+
     @Test func finalMapsToSettledReplaceFinalTranscript() {
         let event = mapServerMessage(.dictationFinal(text: "Complete transcript"))
         #expect(event == .replaceFinalTranscript("Complete transcript", snap: true))
@@ -203,10 +229,20 @@ struct DictationEventMappingTests {
         switch message {
         case .dictationReady:
             return nil
-        case .dictationResult(let text, let snap):
-            return .replaceFinalTranscript(text, snap: snap)
-        case .dictationFinal(let text):
-            return text.isEmpty ? nil : .replaceFinalTranscript(text, snap: true)
+        case .dictationResult(let text, let snap, let split):
+            return .replaceFinalTranscript(
+                text,
+                snap: snap,
+                committedText: split?.committedText,
+                activeText: split?.activeText
+            )
+        case .dictationFinal(let text, let split):
+            return text.isEmpty ? nil : .replaceFinalTranscript(
+                text,
+                snap: true,
+                committedText: split?.committedText,
+                activeText: split?.activeText
+            )
         case .dictationError(_, let fatal):
             return fatal ? nil : nil
         default:
@@ -765,7 +801,7 @@ struct OppiDictationSessionMessageListenerTests {
         let (events, _) = await collectTask.value
         // dictationReady should not produce any VoiceSessionEvent transcript
         let transcriptEvents = events.filter {
-            if case .replaceFinalTranscript("Done", _) = $0 { return false }
+            if case .replaceFinalTranscript("Done", _, _, _) = $0 { return false }
             if case .providerMetricTags = $0 { return false }
             return true
         }
@@ -1379,8 +1415,14 @@ extension VoiceSessionEvent: @retroactive Equatable {
             return a == b
         case (.appendFinalTranscript(let a), .appendFinalTranscript(let b)):
             return a == b
-        case (.replaceFinalTranscript(let a, let snapA), .replaceFinalTranscript(let b, let snapB)):
-            return a == b && snapA == snapB
+        case (
+            .replaceFinalTranscript(let a, let snapA, let committedA, let activeA),
+            .replaceFinalTranscript(let b, let snapB, let committedB, let activeB)
+        ):
+            return a == b
+                && snapA == snapB
+                && committedA == committedB
+                && activeA == activeB
         case (.remoteChunkTelemetry, .remoteChunkTelemetry):
             return true
         case (.providerMetricTags(let a), .providerMetricTags(let b)):

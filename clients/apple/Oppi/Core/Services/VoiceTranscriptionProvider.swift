@@ -65,7 +65,12 @@ struct VoiceRemoteChunkTelemetry: Sendable {
 enum VoiceSessionEvent: Sendable {
     case partialTranscript(String)
     case appendFinalTranscript(String)
-    case replaceFinalTranscript(String, snap: Bool = false)
+    case replaceFinalTranscript(
+        String,
+        snap: Bool = false,
+        committedText: String? = nil,
+        activeText: String? = nil
+    )
     case remoteChunkTelemetry(VoiceRemoteChunkTelemetry)
     /// Backend metadata resolved after async readiness. Used to update
     /// metric tags that were unknown at setup time (stt_backend, model).

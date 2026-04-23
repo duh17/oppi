@@ -11,6 +11,11 @@ struct DictationProviderInfo: Sendable, Equatable {
     let sttModel: String
 }
 
+struct DictationTranscriptSplit: Sendable, Equatable {
+    let committedText: String?
+    let activeText: String?
+}
+
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
     case streamConnected(userName: String, asrAvailable: Bool)
@@ -66,8 +71,8 @@ enum ServerMessage: Sendable, Equatable {
 
     // Dictation (multiplexed over /stream)
     case dictationReady(provider: DictationProviderInfo?)
-    case dictationResult(text: String, snap: Bool)
-    case dictationFinal(text: String)
+    case dictationResult(text: String, snap: Bool, split: DictationTranscriptSplit? = nil)
+    case dictationFinal(text: String, split: DictationTranscriptSplit? = nil)
     case dictationError(error: String, fatal: Bool)
 
     // Errors
@@ -176,7 +181,7 @@ extension ServerMessage: Decodable {
         case workspaceId, status
         // dictation
         case sttProvider, sttModel
-        case text, snap
+        case text, snap, committedText, activeText
     }
 
     init(from decoder: Decoder) throws {
@@ -414,11 +419,26 @@ extension ServerMessage: Decodable {
         case "dictation_result":
             let text = try c.decode(String.self, forKey: .text)
             let snap = try c.decodeIfPresent(Bool.self, forKey: .snap) ?? false
-            self = .dictationResult(text: text, snap: snap)
+            let split = DictationTranscriptSplit(
+                committedText: try c.decodeIfPresent(String.self, forKey: .committedText),
+                activeText: try c.decodeIfPresent(String.self, forKey: .activeText)
+            )
+            self = .dictationResult(
+                text: text,
+                snap: snap,
+                split: split.committedText == nil && split.activeText == nil ? nil : split
+            )
 
         case "dictation_final":
             let text = try c.decode(String.self, forKey: .text)
-            self = .dictationFinal(text: text)
+            let split = DictationTranscriptSplit(
+                committedText: try c.decodeIfPresent(String.self, forKey: .committedText),
+                activeText: try c.decodeIfPresent(String.self, forKey: .activeText)
+            )
+            self = .dictationFinal(
+                text: text,
+                split: split.committedText == nil && split.activeText == nil ? nil : split
+            )
 
         case "dictation_error":
             let errorMsg = try c.decode(String.self, forKey: .error)

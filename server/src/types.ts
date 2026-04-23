@@ -1281,8 +1281,19 @@ export type ServerMessage = // ── Connection ──
         sttProvider?: string;
         sttModel?: string;
       }
-    | { type: "dictation_result"; text: string; snap?: boolean }
-    | { type: "dictation_final"; text: string }
+    | {
+        type: "dictation_result";
+        text: string;
+        committedText?: string;
+        activeText?: string;
+        snap?: boolean;
+      }
+    | {
+        type: "dictation_final";
+        text: string;
+        committedText?: string;
+        activeText?: string;
+      }
     | { type: "dictation_error"; error: string; fatal: boolean }
   ) & {
     seq?: number;

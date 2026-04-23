@@ -47,6 +47,10 @@ private func requestSystemDictation(for textView: UITextView) {
     textView.reloadInputViews()
 }
 
+private func volatileTranscriptBackgroundColor() -> UIColor {
+    UIColor(Color.themeBlue.opacity(0.14))
+}
+
 /// Clamp raw inline composer content height to min/max line bounds.
 ///
 /// - Parameters:
@@ -121,6 +125,7 @@ struct PastableTextView: UIViewRepresentable {
     let textColor: UIColor
     let tintColor: UIColor
     let volatileSuffixLength: Int
+    let correctionRanges: [NSRange]
     let maxLines: Int
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
@@ -193,7 +198,10 @@ struct PastableTextView: UIViewRepresentable {
             font: font,
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
-            volatileColor: UIColor(Color.themeBlue)
+            volatileColor: UIColor(Color.themeBlue),
+            volatileBackgroundColor: volatileTranscriptBackgroundColor(),
+            correctionRanges: correctionRanges,
+            correctionUnderlineColor: UIColor(Color.themeOrange)
         )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
@@ -496,6 +504,7 @@ struct FullSizeTextView: UIViewRepresentable {
     let textColor: UIColor
     let tintColor: UIColor
     let volatileSuffixLength: Int
+    let correctionRanges: [NSRange]
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
@@ -557,7 +566,10 @@ struct FullSizeTextView: UIViewRepresentable {
             font: font,
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
-            volatileColor: UIColor(Color.themeBlue)
+            volatileColor: UIColor(Color.themeBlue),
+            volatileBackgroundColor: volatileTranscriptBackgroundColor(),
+            correctionRanges: correctionRanges,
+            correctionUnderlineColor: UIColor(Color.themeOrange)
         )
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
@@ -665,9 +677,12 @@ final class PastableUITextView: UITextView {
 
     private var renderedTextCache = ""
     private var renderedVolatileSuffixLengthCache = -1
+    private var renderedCorrectionRangesCache: [NSRange] = []
     private var renderedFontCache: UIFont?
     private var renderedBaseColorCache: UIColor?
     private var renderedVolatileColorCache: UIColor?
+    private var renderedVolatileBackgroundColorCache: UIColor?
+    private var renderedCorrectionUnderlineColorCache: UIColor?
 
     /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
     private(set) var isKeyboardSuppressed = false
@@ -694,14 +709,25 @@ final class PastableUITextView: UITextView {
         font: UIFont,
         baseColor: UIColor,
         volatileSuffixLength: Int,
-        volatileColor: UIColor
+        volatileColor: UIColor,
+        volatileBackgroundColor: UIColor = .clear,
+        correctionRanges: [NSRange] = [],
+        correctionUnderlineColor: UIColor = .clear
     ) {
         let clampedVolatileSuffixLength = max(0, min(volatileSuffixLength, text.count))
+        let totalLength = (text as NSString).length
+        let clampedCorrectionRanges = correctionRanges.compactMap { range in
+            let clampedRange = NSIntersectionRange(range, NSRange(location: 0, length: totalLength))
+            return clampedRange.length > 0 ? clampedRange : nil
+        }
         let styleUnchanged = renderedTextCache == text
             && renderedVolatileSuffixLengthCache == clampedVolatileSuffixLength
+            && renderedCorrectionRangesCache == clampedCorrectionRanges
             && (renderedFontCache?.isEqual(font) ?? false)
             && (renderedBaseColorCache?.isEqual(baseColor) ?? false)
             && (renderedVolatileColorCache?.isEqual(volatileColor) ?? false)
+            && (renderedVolatileBackgroundColorCache?.isEqual(volatileBackgroundColor) ?? false)
+            && (renderedCorrectionUnderlineColorCache?.isEqual(correctionUnderlineColor) ?? false)
 
         guard !styleUnchanged else { return }
 
@@ -722,8 +748,19 @@ final class PastableUITextView: UITextView {
             attributed.addAttributes(
                 [
                     .foregroundColor: volatileColor,
+                    .backgroundColor: volatileBackgroundColor,
                 ],
                 range: volatileRange
+            )
+        }
+
+        for range in clampedCorrectionRanges {
+            attributed.addAttributes(
+                [
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .underlineColor: correctionUnderlineColor,
+                ],
+                range: range
             )
         }
 
@@ -733,7 +770,7 @@ final class PastableUITextView: UITextView {
             .foregroundColor: baseColor,
         ]
 
-        let maxSelectionLocation = (text as NSString).length
+        let maxSelectionLocation = totalLength
         let restoredSelection: NSRange
         if keepCaretPinnedToEnd {
             restoredSelection = NSRange(location: maxSelectionLocation, length: 0)
@@ -749,9 +786,12 @@ final class PastableUITextView: UITextView {
 
         renderedTextCache = text
         renderedVolatileSuffixLengthCache = clampedVolatileSuffixLength
+        renderedCorrectionRangesCache = clampedCorrectionRanges
         renderedFontCache = font
         renderedBaseColorCache = baseColor
         renderedVolatileColorCache = volatileColor
+        renderedVolatileBackgroundColorCache = volatileBackgroundColor
+        renderedCorrectionUnderlineColorCache = correctionUnderlineColor
     }
 
     override var intrinsicContentSize: CGSize {

@@ -329,6 +329,32 @@ struct KeyboardSuppressionTests {
         #expect(volatileColorAtEnd?.isEqual(volatileColor) == true)
     }
 
+    @Test("Programmatic transcript updates add a subtle background to the volatile suffix")
+    func programmaticUpdatesAddVolatileSuffixBackground() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let baseColor = UIColor.label
+        let volatileColor = UIColor.systemBlue
+        let volatileBackgroundColor = UIColor.systemBlue.withAlphaComponent(0.14)
+        let text = "Hello there"
+
+        textView.applyStyledText(
+            text,
+            font: font,
+            baseColor: baseColor,
+            volatileSuffixLength: 5,
+            volatileColor: volatileColor,
+            volatileBackgroundColor: volatileBackgroundColor
+        )
+
+        let attributed = textView.attributedText ?? NSAttributedString()
+        let stableBackground = attributed.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? UIColor
+        let volatileBackground = attributed.attribute(.backgroundColor, at: text.count - 1, effectiveRange: nil) as? UIColor
+
+        #expect(stableBackground == nil)
+        #expect(volatileBackground?.isEqual(volatileBackgroundColor) == true)
+    }
+
     // MARK: - Keyboard Shortcuts
 
     @Test("Key commands expose Command+Enter and Alt+Enter")
