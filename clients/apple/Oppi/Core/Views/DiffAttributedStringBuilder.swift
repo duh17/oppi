@@ -112,7 +112,8 @@ enum DiffAttributedStringBuilder {
     /// Per-line metadata tracked during assembly.
     private struct LineInfo {
         let gutterStart: Int
-        let numStart: Int   // start of old+new line number block
+        let numStart: Int   // start of the single displayed line number block
+        let markerStart: Int
         let codeStart: Int
         let codeLen: Int
         let rowEnd: Int
@@ -149,8 +150,7 @@ enum DiffAttributedStringBuilder {
         for hunk in hunks {
             totalLines += hunk.lines.count
             for line in hunk.lines {
-                if let n = line.oldLine { maxLineNum = max(maxLineNum, n) }
-                if let n = line.newLine { maxLineNum = max(maxLineNum, n) }
+                if let n = displayedLineNumber(for: line) { maxLineNum = max(maxLineNum, n) }
                 switch line.kind {
                 case .added: totalAdded += 1
                 case .removed: totalRemoved += 1
@@ -160,12 +160,12 @@ enum DiffAttributedStringBuilder {
         }
         let numDigits = max(3, String(maxLineNum).count)
 
-        // Pre-compute padded number strings with trailing space.
+        // Pre-compute padded single-column number strings.
         // Index 0 = blank (for nil line numbers).
         var paddedNums = [String](repeating: "", count: maxLineNum + 1)
-        paddedNums[0] = String(repeating: " ", count: numDigits) + " "
+        paddedNums[0] = String(repeating: " ", count: numDigits)
         for i in 1...maxLineNum {
-            paddedNums[i] = paddedNumber(i, digits: numDigits) + " "
+            paddedNums[i] = paddedNumber(i, digits: numDigits)
         }
 
         // --- Phase 1: Build entire text + batch syntax scan in one pass ---
@@ -229,16 +229,20 @@ enum DiffAttributedStringBuilder {
             headers.append(HeaderInfo(start: headerStart, length: text.length - headerStart))
 
             for line in hunk.lines {
+                let displayLineNumber = displayedLineNumber(for: line)
+
                 let gutterStart = text.length
+                text.append(" ")
+
+                let numStart = text.length
+                text.append(paddedNums[displayLineNumber ?? 0])
+
+                let markerStart = text.length
                 switch line.kind {
                 case .added: text.append(" + ")
                 case .removed: text.append(" - ")
                 case .context: text.append("   ")
                 }
-
-                let numStart = text.length
-                text.append(paddedNums[line.oldLine ?? 0])
-                text.append(paddedNums[line.newLine ?? 0])
 
                 let codeStart = text.length
                 let codeText = line.text.isEmpty ? " " : line.text
@@ -261,6 +265,7 @@ enum DiffAttributedStringBuilder {
                 lineInfos.append(LineInfo(
                     gutterStart: gutterStart,
                     numStart: numStart,
+                    markerStart: markerStart,
                     codeStart: codeStart,
                     codeLen: codeLen,
                     rowEnd: rowEnd,
@@ -298,7 +303,7 @@ enum DiffAttributedStringBuilder {
             result.addAttribute(.font, value: AppFont.systemSmall, range: stats.totalRange)
         }
 
-        // Per-line segments: gutter, line numbers, code
+        // Per-line segments: leading gutter, line number, marker, code
         for info in lineInfos {
             let gutterAttrs: [NSAttributedString.Key: Any]
             let numAttrs: [NSAttributedString.Key: Any]
@@ -320,7 +325,8 @@ enum DiffAttributedStringBuilder {
             }
 
             result.setAttributes(gutterAttrs, range: NSRange(location: info.gutterStart, length: info.numStart - info.gutterStart))
-            result.setAttributes(numAttrs, range: NSRange(location: info.numStart, length: info.codeStart - info.numStart))
+            result.setAttributes(numAttrs, range: NSRange(location: info.numStart, length: info.markerStart - info.numStart))
+            result.setAttributes(gutterAttrs, range: NSRange(location: info.markerStart, length: info.codeStart - info.markerStart))
 
             // Context: code + newline share the same dim attrs → one call.
             // Non-context: newline keeps default attrs (no bg leak).
@@ -380,6 +386,17 @@ enum DiffAttributedStringBuilder {
 
         result.endEditing()
         return result
+    }
+
+    private static func displayedLineNumber(for line: WorkspaceReviewDiffLine) -> Int? {
+        switch line.kind {
+        case .context:
+            line.newLine ?? line.oldLine
+        case .removed:
+            line.oldLine
+        case .added:
+            line.newLine
+        }
     }
 
     /// Pad a number to the given digit width. Uses a fixed padding table

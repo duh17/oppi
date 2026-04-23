@@ -166,8 +166,12 @@ struct ToolPresentationConfigTests {
         harness.toolArgsStore.set(["path": .string("src/main.swift")], for: "write-1")
         harness.toolArgsStore.set([
             "path": .string("src/main.swift"),
-            "oldText": .string("let value = 1\n"),
-            "newText": .string("let value = 2\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("let value = 1\n"),
+                    "newText": .string("let value = 2\n"),
+                ]),
+            ]),
         ], for: "edit-1")
         harness.toolArgsStore.set(["command": .string("echo hi")], for: "bash-1")
 
@@ -210,8 +214,12 @@ struct ToolPresentationConfigTests {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("edit-diff")
         harness.toolArgsStore.set([
-            "oldText": .string("let value = 1\nlet unchanged = true\n"),
-            "newText": .string("let value = 2\nlet unchanged = true\nlet added = true\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("let value = 1\nlet unchanged = true\n"),
+                    "newText": .string("let value = 2\nlet unchanged = true\nlet added = true\n"),
+                ]),
+            ]),
             "path": .string("src/main.swift"),
         ], for: "edit-diff")
 
@@ -248,8 +256,12 @@ struct ToolPresentationConfigTests {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("edit-streaming")
         harness.toolArgsStore.set([
-            "oldText": .string("let value = 1\n"),
-            "newText": .string("let value = 2\nlet added = true\n"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("let value = 1\n"),
+                    "newText": .string("let value = 2\nlet added = true\n"),
+                ]),
+            ]),
             "path": .string("src/main.swift"),
         ], for: "edit-streaming")
 
@@ -922,7 +934,11 @@ private func seedCollapsedParityToolArgs(in harness: TimelineTestHarness) {
     harness.toolArgsStore.set(["path": .string("src/main.swift")], for: "parity-write-1")
     harness.toolArgsStore.set([
         "path": .string("src/main.swift"),
-        "oldText": .string("let value = 1\n"),
-        "newText": .string("let value = 2\n"),
+        "edits": .array([
+            .object([
+                "oldText": .string("let value = 1\n"),
+                "newText": .string("let value = 2\n"),
+            ]),
+        ]),
     ], for: "parity-edit-1")
 }

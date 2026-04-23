@@ -88,38 +88,38 @@ struct DiffGutterAttributeTests {
         #expect(bg != nil, "Removed gutter ' - ' must have a .backgroundColor attribute for non-layout-manager contexts")
     }
 
-    /// Context lines use "   " (no gutter bar) — they must NOT have a background.
+    /// Context lines keep the compact single-number gutter, but the gutter area
+    /// must remain un-tinted so unchanged rows read as neutral context.
     @Test func contextGutterHasNoBackgroundColor() throws {
         let result = DiffAttributedStringBuilder.build(
             hunks: makeHunks(), filePath: "test.swift"
         )
         let text = result.string as NSString
 
-        // Find context lines by looking for "   " followed by line number
-        // Context gutter is 3 spaces. Find the first line of text that starts with spaces.
-        // We need the position right after a newline that starts with "   "
-        let lines = (text as String).components(separatedBy: "\n")
-        var offset = 0
-        var contextGutterStart: Int?
-        for line in lines {
-            if line.hasPrefix("   ") && !line.trimmingCharacters(in: .whitespaces).isEmpty {
-                // Check it's not a header line
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if !trimmed.hasPrefix("@@") {
-                    contextGutterStart = offset
-                    break
-                }
-            }
-            offset += (line as NSString).length + 1 // +1 for newline
-        }
-
-        guard let start = contextGutterStart else {
-            Issue.record("Expected a context line with '   ' gutter")
+        let contextCodeRange = text.range(of: "let x = 1")
+        guard contextCodeRange.location != NSNotFound else {
+            Issue.record("Expected 'let x = 1' in diff output")
             return
         }
 
-        let bg = result.attribute(.backgroundColor, at: start, effectiveRange: nil)
-        #expect(bg == nil, "Context gutter '   ' should NOT have a background color")
+        let lineStart = text.lineRange(for: contextCodeRange).location
+        let bg = result.attribute(.backgroundColor, at: lineStart, effectiveRange: nil)
+        #expect(bg == nil, "Context line prefix should NOT have a background color")
+    }
+
+    @Test func diffUsesSingleDisplayedLineNumberColumn() throws {
+        let result = DiffAttributedStringBuilder.build(
+            hunks: makeHunks(), filePath: "test.swift"
+        )
+        let lines = result.string.components(separatedBy: "\n")
+
+        let removedLine = try #require(lines.first { $0.contains("let y = 2") })
+        let addedLine = try #require(lines.first { $0.contains("let y = 3") })
+        let contextLine = try #require(lines.first { $0.contains("let x = 1") })
+
+        #expect(removedLine.hasPrefix("   2 - "), "Removed lines should show only the old-side line number in the compact gutter")
+        #expect(addedLine.hasPrefix("   2 + "), "Added lines should show only the new-side line number in the compact gutter")
+        #expect(contextLine.hasPrefix("   1   "), "Context lines should keep one line-number column with a blank marker slot")
     }
 
     // MARK: - Gutter background matches line background
