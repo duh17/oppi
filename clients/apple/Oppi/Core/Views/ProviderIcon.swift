@@ -6,8 +6,9 @@ import SwiftUI
 /// monogram mark when we don't have a vetted local asset yet.
 struct ProviderIcon: View {
     let provider: String
+    var size: CGFloat = Self.defaultIconSize
 
-    private static let iconSize: CGFloat = 11
+    private static let defaultIconSize: CGFloat = 11
 
     var body: some View {
         Group {
@@ -19,11 +20,11 @@ struct ProviderIcon: View {
                     .foregroundStyle(Self.brandColor(for: provider))
             } else {
                 Text(Self.mark(for: provider))
-                    .font(.system(.caption2, design: .rounded, weight: .heavy))
+                    .font(.system(size: max(8, size * 0.8), weight: .heavy, design: .rounded))
                     .foregroundStyle(Self.brandColor(for: provider))
             }
         }
-        .frame(width: Self.iconSize, height: Self.iconSize, alignment: .center)
+        .frame(width: size, height: size, alignment: .center)
     }
 
     /// Human-friendly label for provider IDs used by pi/SDK.
@@ -64,7 +65,7 @@ struct ProviderIcon: View {
         case "amazon-bedrock":
             return .themeYellow
         case "lmstudio", "omlx", "ollama", "xai", "groq", "mistral", "cerebras", "huggingface",
-             "kimi-coding", "minimax", "zai":
+             "kimi-coding", "minimax", "zai", "fireworks":
             return .themePurple
         default:
             return .themeComment
@@ -102,13 +103,21 @@ struct ProviderIcon: View {
         "opencode-go": "opencode",
     ]
 
-    /// Providers that passed explicit logo usage audit for in-app display.
+    /// Providers with local official-source logo assets enabled for in-app display.
     private static let providersWithLogoAsset: Set<String> = [
+        "anthropic",
+        "cerebras",
+        "fireworks",
         "github-copilot",
         "huggingface",
+        "kimi-coding",
+        "minimax",
         "mistral",
         "openai",
+        "openrouter",
         "vercel-ai-gateway",
+        "xai",
+        "zai",
     ]
 
     private static let knownDisplayNames: [String: String] = [

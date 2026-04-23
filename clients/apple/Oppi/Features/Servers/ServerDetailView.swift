@@ -94,9 +94,13 @@ struct ServerDetailView: View {
                             .foregroundStyle(.themeComment)
                     } else {
                         ForEach(connectedProviders.prefix(3)) { provider in
-                            HStack(alignment: .firstTextBaseline) {
+                            HStack(alignment: .top, spacing: 12) {
+                                ProviderIcon(provider: provider.id, size: 16)
+                                    .padding(.top, 3)
+
                                 Text(provider.name)
-                                Spacer()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
                                 Text(providerStatusText(provider))
                                     .font(.caption)
                                     .foregroundStyle(providerStatusColor(provider))
@@ -325,15 +329,17 @@ struct ServerDetailView: View {
 
     @ViewBuilder
     private func providerManagerRow(_ provider: ProviderAuthProviderStatus) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
+            ProviderIcon(provider: provider.id, size: 16)
+                .padding(.top, 3)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.name)
                 Text(providerStatusText(provider))
                     .font(.caption)
                     .foregroundStyle(providerStatusColor(provider))
             }
-
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if providerActionInFlightId == provider.id {
                 ProgressView()
@@ -499,7 +505,10 @@ struct ServerDetailView: View {
         NavigationStack {
             Form {
                 Section("Provider") {
-                    Text(provider.name)
+                    HStack(spacing: 12) {
+                        ProviderIcon(provider: provider.id, size: 16)
+                        Text(provider.name)
+                    }
                 }
 
                 Section("API Key") {

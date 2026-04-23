@@ -110,6 +110,8 @@ Run `bash clients/apple/scripts/check-duplication.sh` before finishing Apple UI 
 - Share views when they are pure SwiftUI. Fork views when rendering is platform-specific.
 - `ServerMessage` decoding is forward-compatible. Unknown server message types must be logged and skipped.
 
+- Keep repo-private working artifacts in `.pi/` (`reports/`, `research/`, `diagrams/`) and reserve `docs/` for curated public docs.
+
 ## Style
 
 - No emojis in commits or code.
