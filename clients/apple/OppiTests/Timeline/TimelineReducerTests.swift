@@ -253,17 +253,31 @@ struct TimelineReducerTests {
         #expect(tool == "bash")
     }
 
-    @Test func retryStartRendersAsSystemEvent() {
+    @Test func retryStartRendersAsError() {
         let reducer = TimelineReducer()
         reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))
 
         #expect(reducer.items.count == 1)
-        guard case .systemEvent(_, let msg) = reducer.items[0] else {
-            Issue.record("Expected systemEvent for retry, got \(reducer.items[0])")
+        guard case .error(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected error for retry, got \(reducer.items[0])")
             return
         }
         #expect(msg.contains("Retrying"))
         #expect(msg.contains("1/3"))
+    }
+
+    @Test func retryStartReusesPreviousErrorRow() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.error(sessionId: "s1", message: "rate limit"))
+        reducer.process(.retryStart(sessionId: "s1", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "rate limit"))
+
+        #expect(reducer.items.count == 1)
+        guard case .error(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected merged retry error row, got \(reducer.items[0])")
+            return
+        }
+        #expect(msg == "Retrying (1/3): rate limit")
     }
 
     @Test func realErrorRendersAsError() {

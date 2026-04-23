@@ -93,6 +93,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// converted to user messages when tool_end arrives with structured answers.
     private var askToolEventIDs: Set<String> = []
 
+    /// Most recent provider error row that can be rewritten into a retry notice.
+    ///
+    /// The protocol currently delivers a provider failure as `.error`, then emits
+    /// `.retryStart` when auto-retry kicks in. We keep the last error row ID/message
+    /// so the retry event can rewrite that row instead of appending a duplicate.
+    private var retryMergeCandidate: (itemID: String, message: String)?
+
     /// Start time recorded when a tool call began (running tools only).
     func toolStartTime(for id: String) -> Date? {
         toolStartTimes[id]
@@ -193,6 +200,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolStartTimes.removeAll()
         toolElapsedSeconds.removeAll()
         askToolEventIDs.removeAll()
+        retryMergeCandidate = nil
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
@@ -827,7 +835,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .error(_, let message):
-            items.append(.error(id: UUID().uuidString, message: message))
+            let itemID = UUID().uuidString
+            items.append(.error(id: itemID, message: message))
+            retryMergeCandidate = (itemID: itemID, message: message)
             return true
 
         case .compactionStart(_, let reason):
@@ -837,8 +847,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return handleCompactionEnd(aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore)
 
         case .retryStart(_, let attempt, let maxAttempts, _, let errorMessage):
-            items.append(.systemEvent(id: UUID().uuidString, message: "Retrying (\(attempt)/\(maxAttempts)): \(errorMessage)"))
-            return true
+            return handleRetryStart(
+                attempt: attempt,
+                maxAttempts: maxAttempts,
+                errorMessage: errorMessage
+            )
 
         case .retryEnd(_, let success, _, let finalError):
             if !success, let err = finalError {
@@ -981,6 +994,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return renderMutationCheckpoint() != before ||
             toolDetailsStore.details(for: toolEventId) != previousDetails ||
             toolSegmentStore.resultSegments(for: toolEventId) != previousResultSegments
+    }
+
+    private func handleRetryStart(attempt: Int, maxAttempts: Int, errorMessage: String) -> Bool {
+        let retryMessage = "Retrying (\(attempt)/\(maxAttempts)): \(errorMessage)"
+        defer { retryMergeCandidate = nil }
+
+        if let candidate = retryMergeCandidate,
+           let lastIndex = items.indices.last,
+           items[lastIndex].id == candidate.itemID,
+           case .error(let id, _) = items[lastIndex],
+           candidate.message == errorMessage {
+            items[lastIndex] = .error(id: id, message: retryMessage)
+            bumpItemsMutationSeq()
+            return true
+        }
+
+        items.append(.error(id: UUID().uuidString, message: retryMessage))
+        return true
     }
 
     // Compaction
