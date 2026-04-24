@@ -1497,7 +1497,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Format ask tool details into a user-readable answer summary.
     ///
     /// Input: `{ questions: [...], answers: { id: value }, allIgnored: bool }`
-    /// Output: `"approach → Full rewrite\nscope → (skipped)"` or empty if all ignored.
+    /// Output: `"> Which approach?\nFull rewrite\n\n> Scope?\n(skipped)"` or empty if all ignored.
     static func formatAskAnswers(details: JSONValue?) -> String {
         guard case .object(let payload) = details else { return "" }
 
@@ -1507,37 +1507,38 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         guard case .object(let answers) = payload["answers"] else { return "" }
         guard case .array(let questions) = payload["questions"] else {
-            // No questions array — fall back to answers keys
-            return answers.map { key, val in
-                "\(key) → \(val.displayString)"
+            // No questions array — fall back to answers keys.
+            return answers.keys.sorted().compactMap { key in
+                guard let value = answers[key] else { return nil }
+                return "\(key) → \(value.displayString)"
             }.joined(separator: "\n")
         }
 
-        // Single question: compact format — just the answer(s)
-        if questions.count == 1,
-           case .object(let qObj) = questions[0],
-           case .string(let qId) = qObj["id"],
-           let answer = answers[qId] {
-            return answer.displayString
-        }
-
-        // Multiple questions: quote the question, answer below
+        var seenQuestionIDs = Set<String>()
         var lines: [String] = []
+
         for q in questions {
             guard case .object(let qObj) = q,
                   case .string(let qId) = qObj["id"] else { continue }
+
+            seenQuestionIDs.insert(qId)
+
             let label: String
             if case .string(let questionText) = qObj["question"] {
                 label = questionText
             } else {
                 label = qId
             }
-            if let answer = answers[qId] {
-                lines.append("> \(label)\n\(answer.displayString)")
-            } else {
-                lines.append("> \(label)\n(skipped)")
-            }
+
+            let answerText = answers[qId]?.displayString ?? "(skipped)"
+            lines.append("> \(label)\n\(answerText)")
         }
+
+        for key in answers.keys.sorted() where !seenQuestionIDs.contains(key) {
+            guard let value = answers[key] else { continue }
+            lines.append("> \(key)\n\(value.displayString)")
+        }
+
         return lines.joined(separator: "\n\n")
     }
 }

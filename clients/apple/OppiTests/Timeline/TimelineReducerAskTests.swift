@@ -38,7 +38,7 @@ struct TimelineReducerAskTests {
         #expect(TimelineReducer.formatAskAnswers(details: details) == "> Pick a color\nred\n\n> Pick a size\n(skipped)")
     }
 
-    @Test("formatAskAnswers single question uses compact format")
+    @Test("formatAskAnswers single question keeps full question and answer")
     func formatAskAnswersSingleQuestion() {
         let details: JSONValue = .object([
             "questions": .array([
@@ -47,10 +47,10 @@ struct TimelineReducerAskTests {
             "answers": .object(["threads": .string("47618223")]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "47618223")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Which threads?\n47618223")
     }
 
-    @Test("formatAskAnswers single question multi-select compact")
+    @Test("formatAskAnswers single question multi-select keeps full question and answer")
     func formatAskAnswersSingleQuestionMultiSelect() {
         let details: JSONValue = .object([
             "questions": .array([
@@ -59,7 +59,7 @@ struct TimelineReducerAskTests {
             "answers": .object(["threads": .array([.string("123"), .string("456")])]),
             "allIgnored": .bool(false),
         ])
-        #expect(TimelineReducer.formatAskAnswers(details: details) == "123, 456")
+        #expect(TimelineReducer.formatAskAnswers(details: details) == "> Which threads?\n123, 456")
     }
 
     @Test("formatAskAnswers falls back to id when question text missing")
@@ -125,7 +125,7 @@ struct TimelineReducerAskTests {
         }))
     }
 
-    @Test("ask toolEnd injects user message with answers (single question compact)")
+    @Test("ask toolEnd injects user message with full question and answer")
     func askToolEndInjectsUserMessage() {
         let reducer = TimelineReducer()
         reducer.process(.toolStart(
@@ -134,7 +134,10 @@ struct TimelineReducerAskTests {
         reducer.process(.toolEnd(
             sessionId: "s1", toolEventId: "ask-evt-1",
             details: .object([
-                "questions": .array([.object(["id": .string("approach")])]),
+                "questions": .array([.object([
+                    "id": .string("approach"),
+                    "question": .string("Which approach?")
+                ])]),
                 "answers": .object(["approach": .string("full_rewrite")]),
                 "allIgnored": .bool(false),
             ])
@@ -145,7 +148,7 @@ struct TimelineReducerAskTests {
                 foundText = text
             }
         }
-        #expect(foundText == "full_rewrite")
+        #expect(foundText == "> Which approach?\nfull_rewrite")
     }
 
     @Test("ask toolEnd clears any leaked output from tool row")

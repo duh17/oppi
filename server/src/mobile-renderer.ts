@@ -399,15 +399,16 @@ const ask: MobileToolRenderer = {
     const segs: StyledSegment[] = [];
     for (const q of questions) {
       const qId = str(q?.id);
+      const label = firstLine(str(q?.question) || qId, 120);
       const a = answers[qId];
       if (a === undefined) {
-        segs.push({ text: qId, style: "dim" }, { text: ": skipped\n", style: "dim" });
+        segs.push({ text: label, style: "dim" }, { text: ": skipped\n", style: "dim" });
         continue;
       }
       const display = Array.isArray(a) ? (a as string[]).join(", ") : str(a);
       segs.push(
         { text: "\u2713 ", style: "success" },
-        { text: qId, style: "muted" },
+        { text: label, style: "muted" },
         { text: ": ", style: "dim" },
         { text: display, style: "accent" },
         { text: "\n", style: "dim" },

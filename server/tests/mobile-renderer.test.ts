@@ -15,7 +15,7 @@ function styleOf(segs: StyledSegment[] | undefined, index: number): string | und
 describe("MobileRendererRegistry", () => {
   it("has built-in renderers for all standard tools", () => {
     const reg = new MobileRendererRegistry();
-    for (const tool of ["bash", "read", "edit", "write", "grep", "find", "ls", "todo"]) {
+    for (const tool of ["ask", "bash", "read", "edit", "write", "grep", "find", "ls", "todo"]) {
       expect(reg.has(tool), `missing renderer for ${tool}`).toBe(true);
     }
   });
@@ -56,6 +56,37 @@ describe("MobileRendererRegistry", () => {
       bad2: null as any,
     });
     expect(reg.size).toBe(before);
+  });
+});
+
+describe("ask renderer", () => {
+  const reg = new MobileRendererRegistry();
+
+  it("renderCall shows question text", () => {
+    const segs = reg.renderCall("ask", {
+      questions: [{ id: "install", question: "Where should I install it?" }],
+    });
+    expect(textOf(segs)).toBe("Where should I install it?");
+    expect(styleOf(segs, 0)).toBe("muted");
+  });
+
+  it("renderResult uses question text and joins multi-select answers", () => {
+    const segs = reg.renderResult("ask", {
+      questions: [{ id: "targets", question: "Which targets?" }],
+      answers: { targets: ["ios", "mac"] },
+      allIgnored: false,
+    }, false);
+    expect(textOf(segs)).toBe("✓ Which targets?: ios, mac");
+    expect(styleOf(segs, 0)).toBe("success");
+  });
+
+  it("renderResult falls back to id when question text is missing", () => {
+    const segs = reg.renderResult("ask", {
+      questions: [{ id: "targets" }],
+      answers: { targets: "ios" },
+      allIgnored: false,
+    }, false);
+    expect(textOf(segs)).toBe("✓ targets: ios");
   });
 });
 
