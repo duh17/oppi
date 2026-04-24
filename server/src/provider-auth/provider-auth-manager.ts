@@ -25,6 +25,7 @@ const PROVIDER_NAME_OVERRIDES: Record<string, string> = {
   "google-antigravity": "Google Antigravity",
   openai: "OpenAI",
   google: "Google",
+  deepseek: "DeepSeek",
   mistral: "Mistral",
   groq: "Groq",
   xai: "xAI",

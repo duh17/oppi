@@ -369,6 +369,7 @@ export class Server {
           "anthropic",
           "openai",
           "google",
+          "deepseek",
           "mistral",
           "groq",
           "xai",

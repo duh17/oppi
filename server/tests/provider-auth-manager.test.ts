@@ -98,6 +98,23 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
 }
 
 describe("ProviderAuthManager", () => {
+  it("lists DeepSeek as a known API-key provider", () => {
+    const storage = new FakeAuthStorage([], {});
+    const manager = new ProviderAuthManager({
+      authStorage: storage,
+      getKnownApiKeyProviderIds: () => ["deepseek"],
+    });
+
+    const providers = manager.listProviders();
+
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toMatchObject({
+      id: "deepseek",
+      name: "DeepSeek",
+      supportsApiKey: true,
+    });
+  });
+
   it("completes callback flow with manual code input", async () => {
     const providers = [makeProvider("openai-codex", "ChatGPT (Codex)", true)];
     const storage = new FakeAuthStorage(providers, {
