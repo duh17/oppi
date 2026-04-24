@@ -7,21 +7,15 @@
  *   2. Can the VM write to readonlyMounts? → NO (ReadonlyProvider blocks)
  *   3. Can the VM read host paths outside of mounts? → NO (VFS boundary)
  *   4. Env var leakage? → STRIP_ENV strips HOME/USER/PATH; others pass through
- *   5. Network egress with empty allowedHosts? → STILL WORKS (known Gondolin behavior)
+ *   5. Network egress with empty allowedHosts? → NO (deny-all)
  *
  * Requires QEMU installed. Skipped automatically if not available.
- *
- * REMAINING KNOWN ISSUE:
- * - allowedHosts: [] does not block network egress (Gondolin SDK behavior)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import {
-  isQemuAvailable,
-  GondolinManager,
-} from "../src/gondolin-manager.js";
+import { isQemuAvailable, GondolinManager } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { createGondolinBashOps } from "../src/gondolin-ops.js";
 
@@ -74,10 +68,7 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
 
     // Mount only what production mounts: specific subdirs, NOT agentDir root.
     // This matches the fixed sdk-backend.ts: skillPaths + extensions/ only.
-    const readonlyMounts = [
-      join(fakeAgentDir, "skills"),
-      join(fakeAgentDir, "extensions"),
-    ];
+    const readonlyMounts = [join(fakeAgentDir, "skills"), join(fakeAgentDir, "extensions")];
     vm = await manager.ensureWorkspaceVm(workspace, hostDir, undefined, readonlyMounts);
   }, 90_000);
 
@@ -187,18 +178,18 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
 
   // ─── Attack Vector 6: Network egress ───
 
-  it("ATTACK: network egress works even with allowedHosts: []", async () => {
+  it("SAFE: network egress is blocked when allowedHosts is empty", async () => {
     if (!qemuAvailable) return;
 
-    // PROVEN: allowedHosts: [] does NOT block outbound HTTP.
-    // Gondolin's createHttpHooks apparently treats empty array differently
-    // from what you'd expect — it does not deny all traffic.
+    // Use a stable hostname, but assert on the sandbox block itself rather than
+    // a successful upstream response so the test stays deterministic offline.
     const result = await vm.exec(
-      `curl -s --max-time 5 https://httpbin.org/get 2>&1 || echo "CURL_FAILED:$?"`,
+      `curl -sv --max-time 5 https://example.com/ -o /dev/null 2>&1 || true`,
     );
 
-    // The request succeeds — httpbin returns a JSON response with "origin"
-    expect(result.stdout).toContain('"origin"');
+    expect(result.stdout).toMatch(/blocked by policy|Could not resolve host|Forbidden/i);
+    expect(result.stdout).not.toContain("HTTP/1.1 200 OK");
+    expect(result.stdout).not.toContain("HTTP/2 200");
   });
 
   // ─── Workspace isolation ───

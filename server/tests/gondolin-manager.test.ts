@@ -1,5 +1,11 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { GondolinManager, isQemuAvailable, type VmFactory, type VmFactoryOptions } from "../src/gondolin-manager.js";
+import {
+  buildVmHttpHooks,
+  GondolinManager,
+  isQemuAvailable,
+  type VmFactory,
+  type VmFactoryOptions,
+} from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import type { Workspace } from "../src/types.js";
 
@@ -244,6 +250,60 @@ describe("isRunning / getVm", () => {
     expect(manager.getVm("w1")).toBe(vms[0]);
 
     await manager.stopAll();
+  });
+});
+
+describe("buildVmHttpHooks", () => {
+  it("treats an empty allowedHosts list as deny-all", async () => {
+    const { httpHooks } = buildVmHttpHooks(
+      () => ({
+        httpHooks: {
+          isIpAllowed: () => true,
+        },
+        env: {},
+      }),
+      {
+        allowedHosts: [],
+      },
+    );
+
+    await expect(
+      httpHooks.isIpAllowed?.({
+        hostname: "example.com",
+        ip: "93.184.216.34",
+        family: 4,
+        port: 443,
+        protocol: "https",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("preserves Gondolin host allowlists when allowedHosts is non-empty", async () => {
+    const baseIsIpAllowed = vi.fn(() => true);
+    const { httpHooks } = buildVmHttpHooks(
+      () => ({
+        httpHooks: {
+          isIpAllowed: baseIsIpAllowed,
+        },
+        env: {},
+      }),
+      {
+        allowedHosts: ["api.example.com"],
+      },
+    );
+
+    await expect(
+      Promise.resolve(
+        httpHooks.isIpAllowed?.({
+          hostname: "api.example.com",
+          ip: "93.184.216.34",
+          family: 4,
+          port: 443,
+          protocol: "https",
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(baseIsIpAllowed).toHaveBeenCalledOnce();
   });
 });
 

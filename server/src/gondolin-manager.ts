@@ -6,6 +6,7 @@
  * teardown or server shutdown.
  */
 
+import type { CreateHttpHooksOptions, CreateHttpHooksResult } from "@earendil-works/gondolin";
 import type { Workspace } from "./types.js";
 import type { GondolinVm } from "./gondolin-ops.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -38,13 +39,10 @@ export interface VmFactoryOptions {
  * Dynamically imports `@earendil-works/gondolin` so the module is
  * only required at runtime when sandbox mode is actually used.
  */
-export async function defaultVmFactory(
-  options: VmFactoryOptions,
-): Promise<GondolinVm & { close(): Promise<void> }> {
-  // Dynamic import — only loaded when sandbox mode is used.
-  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } =
-    await import("@earendil-works/gondolin");
-
+export function buildVmHttpHooks(
+  createHttpHooks: (options?: CreateHttpHooksOptions) => CreateHttpHooksResult,
+  options: Pick<VmFactoryOptions, "allowedHosts" | "secrets">,
+): Pick<CreateHttpHooksResult, "httpHooks" | "env"> {
   // Transform secrets to Gondolin SDK format (hosts + value per key)
   const gondolinSecrets = options.secrets
     ? Object.fromEntries(
@@ -55,10 +53,35 @@ export async function defaultVmFactory(
       )
     : undefined;
 
-  const { httpHooks, env } = createHttpHooks({
+  const { httpHooks: baseHttpHooks, env } = createHttpHooks({
     allowedHosts: options.allowedHosts,
     secrets: gondolinSecrets,
   });
+
+  // Gondolin interprets an empty allowlist as "allow all". Our workspace
+  // contract treats [] as "deny all network egress", so wrap the generated
+  // policy to enforce that behavior explicitly.
+  if (options.allowedHosts.length === 0) {
+    return {
+      httpHooks: {
+        ...baseHttpHooks,
+        isIpAllowed: async () => false,
+      },
+      env,
+    };
+  }
+
+  return { httpHooks: baseHttpHooks, env };
+}
+
+export async function defaultVmFactory(
+  options: VmFactoryOptions,
+): Promise<GondolinVm & { close(): Promise<void> }> {
+  // Dynamic import — only loaded when sandbox mode is used.
+  const { VM, RealFSProvider, ReadonlyProvider, createHttpHooks } =
+    await import("@earendil-works/gondolin");
+
+  const { httpHooks, env } = buildVmHttpHooks(createHttpHooks, options);
 
   // Build VFS mounts: workspace + any read-only paths (skills, agent config)
   const mounts: Record<
