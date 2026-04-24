@@ -42,7 +42,8 @@ enum SessionPillVariant: Equatable {
 
     var foregroundColor: Color {
         switch self {
-        case .waiting, .done: .themeGreen
+        case .waiting: .themeOrange
+        case .idle, .done: .themeGreen
         case .question, .working: .themeBlue
         case .stopped: .themeComment
         case .error: .themeRed
@@ -51,7 +52,8 @@ enum SessionPillVariant: Equatable {
 
     var backgroundColor: Color {
         switch self {
-        case .waiting, .done: .themeGreen.opacity(0.12)
+        case .waiting: .themeOrange.opacity(0.12)
+        case .idle, .done: .themeGreen.opacity(0.12)
         case .question, .working: .themeBlue.opacity(0.12)
         case .stopped: .themeComment.opacity(0.1)
         case .error: .themeRed.opacity(0.12)

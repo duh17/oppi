@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("SessionStatusPill")
@@ -95,5 +97,15 @@ struct SessionStatusPillTests {
         #expect(SessionPillVariant.done.label == "Done")
         #expect(SessionPillVariant.stopped.label == "Stopped")
         #expect(SessionPillVariant.error.label == "Error")
+    }
+
+    @Test func waitingUsesOrangeWarningColors() {
+        #expect(UIColor(SessionPillVariant.waiting.foregroundColor) == UIColor(Color.themeOrange))
+        #expect(UIColor(SessionPillVariant.waiting.backgroundColor) == UIColor(Color.themeOrange.opacity(0.12)))
+    }
+
+    @Test func doneAndIdleStayGreen() {
+        #expect(UIColor(SessionPillVariant.done.foregroundColor) == UIColor(Color.themeGreen))
+        #expect(UIColor(SessionPillVariant.idle.foregroundColor) == UIColor(Color.themeGreen))
     }
 }

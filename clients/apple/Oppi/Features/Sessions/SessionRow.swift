@@ -200,11 +200,11 @@ struct SessionRow: View {
                         .foregroundStyle(.themeBg)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.themeGreen, in: Capsule())
+                        .background(pillVariant.foregroundColor, in: Capsule())
                 } else if pendingAskCount > 0 {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(.themeBlue)
+                        .foregroundStyle(pillVariant.foregroundColor)
                 }
 
                 SessionStatusPill(pillVariant)
