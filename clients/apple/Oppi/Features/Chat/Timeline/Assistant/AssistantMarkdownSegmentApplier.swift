@@ -31,6 +31,9 @@ final class AssistantMarkdownSegmentApplier {
     /// where it's available so view-layer files stay decoupled from `APIClient`.
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
 
+    /// Closure for fetching files from the active session working directory.
+    var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+
     init(stackView: UIStackView, textViewDelegate: any UITextViewDelegate) {
         self.stackView = stackView
         self.textViewDelegate = textViewDelegate
@@ -134,7 +137,13 @@ final class AssistantMarkdownSegmentApplier {
 
             case .image(let alt, let url):
                 let imageView = NativeMarkdownImageView()
-                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
+                imageView.apply(
+                    url: url,
+                    alt: alt,
+                    fetchWorkspaceFile: fetchWorkspaceFile,
+                    fetchSessionFile: fetchSessionFile,
+                    renderingMode: config.renderingMode
+                )
                 stackView.addArrangedSubview(imageView)
                 imageViews[index] = imageView
 
@@ -280,7 +289,13 @@ final class AssistantMarkdownSegmentApplier {
 
             case .image(let alt, let url):
                 let imageView = NativeMarkdownImageView()
-                imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
+                imageView.apply(
+                    url: url,
+                    alt: alt,
+                    fetchWorkspaceFile: fetchWorkspaceFile,
+                    fetchSessionFile: fetchSessionFile,
+                    renderingMode: config.renderingMode
+                )
                 stackView.addArrangedSubview(imageView)
                 imageViews[index] = imageView
 
@@ -468,7 +483,13 @@ final class AssistantMarkdownSegmentApplier {
             case .image(let alt, let url):
                 // Image views manage their own load lifecycle — nothing to diff in-place.
                 if let imageView = imageViews[index] {
-                    imageView.apply(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, renderingMode: config.renderingMode)
+                    imageView.apply(
+                        url: url,
+                        alt: alt,
+                        fetchWorkspaceFile: fetchWorkspaceFile,
+                        fetchSessionFile: fetchSessionFile,
+                        renderingMode: config.renderingMode
+                    )
                 }
 
             case .mermaidDiagram(let code):

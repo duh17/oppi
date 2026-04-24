@@ -24,6 +24,11 @@ extension ChatTimelineCollectionHost.Controller {
                 { workspaceID, path in
                     try await client.fetchWorkspaceFile(workspaceID: workspaceID, path: path)
                 }
+            },
+            fetchSessionFile: connection?.apiClient.map { client in
+                { workspaceID, sessionID, path in
+                    try await client.getSessionFileData(workspaceId: workspaceID, sessionId: sessionID, path: path)
+                }
             }
         )
     }

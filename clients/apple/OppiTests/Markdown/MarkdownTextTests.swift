@@ -627,10 +627,10 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
-        if case .image(_, let url) = segments[0] {
-            // Should NOT have double slash from the leading /
-            #expect(!url.absoluteString.contains("//absolute"))
-            #expect(url.absoluteString.contains("/files/absolute/path/image.png"))
+        if case .text = segments[0] {
+            // Without session context, absolute filesystem paths cannot be resolved safely.
+        } else {
+            Issue.record("Expected fallback to text without session context")
         }
     }
 
@@ -697,20 +697,24 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func absolutePathIgnoresSourceDirectory() {
+    @Test func absolutePathWithSessionContextUsesSessionFileURL() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Fig", source: "/absolute/image.png")])
         ]
         let segments = FlatSegment.build(
             from: blocks,
             workspaceID: workspaceID,
+            sessionID: "sess-123",
             serverBaseURL: baseURL,
             sourceDirectory: "docs"
         )
         if case .image(_, let url) = segments[0] {
-            // Absolute paths should NOT be prefixed with sourceDirectory
-            #expect(url.absoluteString.contains("/files/absolute/image.png"))
-            #expect(!url.absoluteString.contains("docs/absolute"))
+            let components = SessionFileURL.parse(url)
+            #expect(components?.workspaceID == workspaceID)
+            #expect(components?.sessionID == "sess-123")
+            #expect(components?.filePath == "/absolute/image.png")
+        } else {
+            Issue.record("Expected session-scoped .image segment")
         }
     }
 
@@ -983,7 +987,7 @@ struct NativeMarkdownImageViewTests {
     @Test func loadsHTTPSImageFromURL() async throws {
         let view = NativeMarkdownImageView()
         let url = URL(string: "https://avatars.githubusercontent.com/u/1?v=4")!
-        view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil)
+        view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
         // Wait for async load (up to 10 seconds)
         var loaded = false
@@ -1006,7 +1010,7 @@ struct NativeMarkdownImageViewTests {
         view.layoutIfNeeded()
 
         let url = URL(string: "https://example.com/test.png")!
-        view.apply(url: url, alt: "Loading test", fetchWorkspaceFile: nil)
+        view.apply(url: url, alt: "Loading test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
         // The view should have a height constraint of 80 (loading placeholder)
         let heightConstraints = view.constraints.filter { $0.firstAttribute == .height }

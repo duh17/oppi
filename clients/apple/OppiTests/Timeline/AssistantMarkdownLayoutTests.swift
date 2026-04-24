@@ -92,6 +92,100 @@ struct AssistantMarkdownLayoutTests {
         }
     }
 
+    /// Regression: inline markdown images render asynchronously after the
+    /// assistant row is first measured. If the enclosing collection view layout
+    /// is not invalidated when the image appears, following rows can overlap it.
+    @Test func asyncSVGImageRenderReflowsTimelineWithoutUserTouch() async throws {
+        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let collectionView = UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 393, height: 852),
+            collectionViewLayout: layout
+        )
+
+        let items: [(String, AssistantTimelineRowConfiguration)] = [
+            (
+                "msg-svg",
+                AssistantTimelineRowConfiguration(
+                    text: """
+                    SVG async reflow regression fixture.
+
+                    ![Donkey](fixtures/test.svg)
+
+                    Tail prose under the image.
+                    """,
+                    isStreaming: false,
+                    canFork: false,
+                    onFork: nil,
+                    sessionId: "assistant-svg-async-relayout",
+                    workspaceID: "ws-svg",
+                    serverBaseURL: URL(string: "https://server.example.com")!,
+                    fetchWorkspaceFile: { _, _ in
+                        try await Task.sleep(for: .milliseconds(50))
+                        return Data("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>".utf8)
+                    }
+                )
+            ),
+            (
+                "msg-after",
+                AssistantTimelineRowConfiguration(
+                    text: "This row must move down after image render.",
+                    isStreaming: false,
+                    canFork: false,
+                    onFork: nil,
+                    sessionId: "assistant-svg-async-relayout"
+                )
+            ),
+        ]
+
+        let reg = UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, itemID in
+            guard let config = items.first(where: { $0.0 == itemID })?.1 else { return }
+            cell.contentConfiguration = config
+        }
+
+        let ds = UICollectionViewDiffableDataSource<Int, String>(collectionView: collectionView) { cv, ip, id in
+            cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: id)
+        }
+
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(items.map(\.0))
+        await ds.apply(snapshot, animatingDifferences: false)
+        collectionView.layoutIfNeeded()
+
+        let firstIP = IndexPath(item: 0, section: 0)
+        let secondIP = IndexPath(item: 1, section: 0)
+        let initialSecondMinY = try #require(collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
+
+        let imageRendered = await waitForTimelineCondition(timeoutMs: 2_500) {
+            await MainActor.run {
+                guard let firstCell = collectionView.cellForItem(at: firstIP),
+                      let imageView = timelineFirstView(ofType: NativeMarkdownImageView.self, in: firstCell.contentView) else {
+                    return false
+                }
+                return timelineAllViews(in: imageView).contains {
+                    String(describing: type(of: $0)).contains("PiWKWebView") && !$0.isHidden
+                }
+            }
+        }
+
+        #expect(imageRendered, "SVG fixture did not render in time")
+
+        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                guard let firstFrame = collectionView.layoutAttributesForItem(at: firstIP)?.frame,
+                      let secondFrame = collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
+                    return false
+                }
+
+                let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
+                let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 20
+                return rowsSeparated && secondRowMovedDown
+            }
+        }
+
+        #expect(layoutReflowedWithoutTouch, "Timeline did not reflow after async SVG render")
+    }
+
     /// Regression: mermaid renders asynchronously after the assistant row is
     /// first measured. If the enclosing collection view layout is not
     /// invalidated when the diagram appears, the row keeps its old height until

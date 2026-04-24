@@ -22,6 +22,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     /// Closure for fetching a workspace file by path. Wraps `APIClient.fetchWorkspaceFile`
     /// at the caller site so view-layer files stay decoupled from `APIClient` directly.
     let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    /// Closure for fetching a file from the active session working directory.
+    let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
     init(
         text: String,
@@ -32,7 +34,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         interactionContext: TimelineInteractionContext? = nil,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -43,6 +46,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
+        self.fetchSessionFile = fetchSessionFile
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -199,6 +203,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // applier does structural diffing and only updates the growing tail.
         // Text appears immediately on each coalescer flush (no reveal animation).
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
+        markdownView.fetchSessionFile = configuration.fetchSessionFile
         markdownView.apply(configuration: .make(
             content: trimmedText,
             isStreaming: configuration.isStreaming,
@@ -208,6 +213,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
                 surface: .assistantProse
             ),
             workspaceID: configuration.workspaceID,
+            sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,
             perfSurface: .inlineAssistant
         ))

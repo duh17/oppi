@@ -510,6 +510,48 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedReadMediaPromotesRawSVGSourceToInlinePreview() {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: svg, filePath: "fixtures/image.svg", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let hasInlineImageView = timelineAllViews(in: view).contains {
+            $0 is NativeExpandedInlineImageView
+        }
+        #expect(hasInlineImageView)
+
+        let renderedText = timelineAllLabels(in: view).map(timelineRenderedText(of:)).joined(separator: "\n")
+        #expect(!renderedText.contains("<svg"))
+    }
+
+    @MainActor
+    @Test func inlineSVGPreviewAppliesAspectRatioConstraintAfterAsyncDecode() async throws {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let view = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 80)
+        view.apply(base64: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
+
+        let appliedConstraint = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                view.constraints.contains {
+                    $0.firstAttribute == .height
+                        && $0.secondItem === view
+                        && $0.secondAttribute == .width
+                        && abs($0.multiplier - (180.0 / 320.0)) < 0.001
+                }
+            }
+        }
+
+        #expect(appliedConstraint, "Expected SVG preview height to track the viewBox aspect ratio")
+    }
+
+    @MainActor
     @Test func repeatedExpandedExtensionTextReconfigureStaysWithinBudget() {
         let output = """
         EXT-a27df231

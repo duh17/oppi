@@ -173,6 +173,40 @@ enum WorkspaceFileURL {
     }
 }
 
+enum SessionFileURL {
+    private static let scheme = "oppi-session-file"
+
+    /// Build a client-local URL that encodes a session-scoped file fetch.
+    static func make(workspaceID: String, sessionID: String, filePath: String) -> URL? {
+        guard !workspaceID.isEmpty, !sessionID.isEmpty, !filePath.isEmpty else { return nil }
+
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = "session-file"
+        components.path = "/\(workspaceID)/\(sessionID)"
+        components.queryItems = [
+            URLQueryItem(name: "path", value: filePath),
+        ]
+        return components.url
+    }
+
+    /// Parse a client-local `oppi-session-file://...` URL.
+    static func parse(_ url: URL) -> (workspaceID: String, sessionID: String, filePath: String)? {
+        guard url.scheme == scheme else { return nil }
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count >= 2 else { return nil }
+        let workspaceID = components[0]
+        let sessionID = components[1]
+        guard !workspaceID.isEmpty, !sessionID.isEmpty,
+              let query = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let filePath = query.queryItems?.first(where: { $0.name == "path" })?.value,
+              !filePath.isEmpty else {
+            return nil
+        }
+        return (workspaceID: workspaceID, sessionID: sessionID, filePath: filePath)
+    }
+}
+
 /// Segment types for the flat renderer.
 ///
 /// Built once from `[MarkdownBlock]` via `build(from:)`, then cached in `@State`.
@@ -209,6 +243,7 @@ enum FlatSegment: Sendable {
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
         workspaceID: String? = nil,
+        sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         /// Directory path of the source markdown file (e.g. "docs/").
         /// Used to resolve relative image paths like `images/foo.png`
@@ -362,6 +397,7 @@ enum FlatSegment: Sendable {
                 } else if let imageURL = resolveStandaloneImage(
                     inlines: inlines,
                     workspaceID: workspaceID,
+                    sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
                     sourceDirectory: sourceDirectory
                 ) {
@@ -550,6 +586,7 @@ enum FlatSegment: Sendable {
     private static func resolveStandaloneImage(
         inlines: [MarkdownInline],
         workspaceID: String?,
+        sessionID: String?,
         serverBaseURL: URL?,
         sourceDirectory: String? = nil
     ) -> URL? {
@@ -582,6 +619,17 @@ enum FlatSegment: Sendable {
             return url
         }
 
+        // Absolute filesystem path — fetch through the session-scoped file API
+        // so assistant messages can display freshly written files like
+        // `/Users/.../pelican-bike.svg`.
+        if source.hasPrefix("/") || source.hasPrefix("~") {
+            guard let workspaceID, !workspaceID.isEmpty,
+                  let sessionID, !sessionID.isEmpty else {
+                return nil
+            }
+            return SessionFileURL.make(workspaceID: workspaceID, sessionID: sessionID, filePath: source)
+        }
+
         // Relative path — resolve against workspace file API.
         guard let workspaceID, !workspaceID.isEmpty,
               let baseURL = serverBaseURL else {
@@ -591,7 +639,7 @@ enum FlatSegment: Sendable {
         // Resolve relative path against the markdown file's directory.
         // e.g. sourceDirectory="docs/", source="images/foo.png" → "docs/images/foo.png"
         var resolvedPath = source
-        if !source.hasPrefix("/"), let dir = sourceDirectory, !dir.isEmpty {
+        if let dir = sourceDirectory, !dir.isEmpty {
             resolvedPath = (dir as NSString).appendingPathComponent(source)
         }
 

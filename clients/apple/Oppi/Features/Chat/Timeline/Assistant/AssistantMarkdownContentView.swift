@@ -41,6 +41,8 @@ final class AssistantMarkdownContentView: UIView {
         let selectedTextSourceContext: SelectedTextSourceContext?
         /// Workspace context for resolving inline image paths.
         let workspaceID: String?
+        /// Session context for resolving absolute file paths in assistant markdown.
+        let sessionID: String?
         let serverBaseURL: URL?
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
         /// Used to resolve relative image paths against the file's directory.
@@ -71,6 +73,7 @@ final class AssistantMarkdownContentView: UIView {
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil,
             workspaceID: String? = nil,
+            sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
@@ -84,6 +87,7 @@ final class AssistantMarkdownContentView: UIView {
             self.selectedTextPiRouter = selectedTextPiRouter
             self.selectedTextSourceContext = selectedTextSourceContext
             self.workspaceID = workspaceID
+            self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
             self.perfSurface = perfSurface
@@ -99,6 +103,7 @@ final class AssistantMarkdownContentView: UIView {
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             selectedTextSourceContext: SelectedTextSourceContext? = nil,
             workspaceID: String? = nil,
+            sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
@@ -113,6 +118,7 @@ final class AssistantMarkdownContentView: UIView {
                 selectedTextPiRouter: selectedTextPiRouter,
                 selectedTextSourceContext: selectedTextSourceContext,
                 workspaceID: workspaceID,
+                sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
                 perfSurface: perfSurface,
@@ -129,6 +135,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.selectedTextPiRouter === rhs.selectedTextPiRouter
                 && lhs.selectedTextSourceContext == rhs.selectedTextSourceContext
                 && lhs.workspaceID == rhs.workspaceID
+                && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.perfSurface == rhs.perfSurface
@@ -158,6 +165,12 @@ final class AssistantMarkdownContentView: UIView {
     /// view file decoupled from `APIClient` directly.
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? {
         didSet { segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile }
+    }
+
+    /// Closure for fetching files from the active session working directory.
+    /// Used for absolute assistant markdown image paths.
+    var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? {
+        didSet { segmentApplier.fetchSessionFile = fetchSessionFile }
     }
 
     override init(frame: CGRect) {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -82,5 +83,22 @@ struct MediaMimeTypeTests {
     @Test func recognizesAdditionalAudioExtensions() {
         #expect(MediaMimeType.audioMimeType(forPathExtension: "oga") == "audio/ogg")
         #expect(MediaMimeType.audioMimeType(forPathExtension: "aifc") == "audio/aiff")
+    }
+
+    @Test func detectsSVGDataWithLeadingWhitespaceAndXMLPreamble() {
+        let inlineSVG = Data("  \n\t<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)
+        let xmlSVG = Data("<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)
+        let plainXML = Data("<?xml version=\"1.0\"?><note>Hello</note>".utf8)
+
+        #expect(MediaMimeType.isSVGData(inlineSVG))
+        #expect(MediaMimeType.isSVGData(xmlSVG))
+        #expect(!MediaMimeType.isSVGData(plainXML))
+    }
+
+    @Test func extractsSVGAspectRatioFromViewBox() {
+        let svg = Data("<svg viewBox=\"0 0 320 180\" xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)
+        let ratio = MediaMimeType.extractSVGViewBoxAspectRatio(svg)
+        #expect(ratio != nil)
+        #expect(abs((ratio ?? 0) - (320.0 / 180.0)) < 0.0001)
     }
 }

@@ -18,6 +18,35 @@ enum MediaMimeType {
         return trimmed.split(separator: ";", maxSplits: 1).first.map(String.init)
     }
 
+    /// Detect SVG content by checking the first non-whitespace bytes for an
+    /// `<svg` tag, with or without an XML preamble.
+    static func isSVGData(_ data: Data) -> Bool {
+        guard !data.isEmpty else { return false }
+        let prefix = data.prefix(4096)
+        guard let start = String(data: prefix, encoding: .utf8)?.lowercased() else { return false }
+        let trimmed = start.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("<svg") {
+            return true
+        }
+        if trimmed.hasPrefix("<?xml") {
+            return trimmed.contains("<svg")
+        }
+        return false
+    }
+
+    /// Extract the `viewBox` from SVG data to compute aspect ratio.
+    /// Returns width/height if viewBox is present and valid, nil otherwise.
+    static func extractSVGViewBoxAspectRatio(_ data: Data) -> CGFloat? {
+        guard let content = String(data: data.prefix(4096), encoding: .utf8) else { return nil }
+        let pattern = /viewBox\s*=\s*["']?[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+)/
+        guard let match = content.firstMatch(of: pattern),
+              let width = Double(match.output.1), width > 0,
+              let height = Double(match.output.2), height > 0 else {
+            return nil
+        }
+        return CGFloat(width / height)
+    }
+
     static func imageMimeType(forPathExtension pathExtension: String?) -> String? {
         switch (pathExtension ?? "").lowercased() {
         case "png": return "image/png"
@@ -126,7 +155,14 @@ enum ImageMediaInspector {
     static func inspect(data: Data, mimeType: String?) -> Info {
         let normalizedMimeType = MediaMimeType.normalized(mimeType)
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            return Info(normalizedMimeType: normalizedMimeType, isAnimated: false, pixelSize: nil)
+            // CoreGraphics doesn't understand this format. Check whether it's
+            // SVG (which needs a WebKit renderer) or truly undecodable.
+            let isSVG = MediaMimeType.isSVGData(data)
+            return Info(
+                normalizedMimeType: isSVG ? "image/svg+xml" : normalizedMimeType,
+                isAnimated: false,
+                pixelSize: nil
+            )
         }
 
         let frameCount = CGImageSourceGetCount(source)
