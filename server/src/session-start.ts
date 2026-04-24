@@ -93,9 +93,13 @@ export class SessionStartCoordinator {
     }
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
+    const previousStatus = session.status === "starting" ? "ready" : session.status;
 
     return this.deps.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
       this.deps.runtimeManager.reserveSessionStart(identity);
+      session.status = "starting";
+      session.lastActivity = Date.now();
+      this.deps.persistSessionNow(key, session);
 
       try {
         const useGate = this.deps.config.permissionGate !== false;
@@ -204,6 +208,9 @@ export class SessionStartCoordinator {
 
         return session;
       } catch (err) {
+        session.status = previousStatus;
+        session.lastActivity = Date.now();
+        this.deps.persistSessionNow(key, session);
         this.deps.gate.destroySessionGuard(sessionId);
         this.deps.runtimeManager.releaseSession(identity);
         throw err;

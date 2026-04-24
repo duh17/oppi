@@ -26,6 +26,7 @@ describe("storage session metadata format", () => {
     };
 
     expect(payload.session?.id).toBe(session.id);
+    expect(payload.session?.status).toBe("ready");
     expect("messages" in payload).toBe(false);
   });
 

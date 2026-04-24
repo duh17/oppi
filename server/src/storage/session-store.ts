@@ -287,7 +287,9 @@ export class SessionStore {
     const session: Session = {
       id,
       name,
-      status: "starting",
+      // A freshly created session with no prompt is idle, not mid-startup.
+      // `starting` is reserved for actual SDK startup in SessionStartCoordinator.
+      status: "ready",
       createdAt: Date.now(),
       lastActivity: Date.now(),
       model: model || this.configStore.getConfig().defaultModel,
