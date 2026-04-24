@@ -37,6 +37,19 @@ final class NativeExpandedReadMediaView: UIView {
         let palette = themeID.palette
         let parsed = NativeExpandedReadMediaParser.parse(output)
 
+        var displayText = parsed.strippedText
+        var displayImages = parsed.images
+        if displayImages.isEmpty,
+           let rawSVG = displayText.data(using: .utf8),
+           MediaMimeType.isSVGData(rawSVG) {
+            displayImages = [ImageExtractor.ExtractedImage(
+                base64: rawSVG.base64EncodedString(),
+                mimeType: "image/svg+xml",
+                range: displayText.startIndex..<displayText.endIndex
+            )]
+            displayText = ""
+        }
+
         if let filePath, !filePath.isEmpty {
             let pathLabel = UILabel()
             pathLabel.font = ToolFont.small
@@ -47,32 +60,32 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.addArrangedSubview(pathLabel)
         }
 
-        if !parsed.strippedText.isEmpty {
+        if !displayText.isEmpty {
             let textLabel = UILabel()
             textLabel.font = ToolFont.regular
             textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
             textLabel.numberOfLines = 0
-            textLabel.text = String(parsed.strippedText.prefix(3_000))
+            textLabel.text = String(displayText.prefix(3_000))
             rootStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
         }
 
-        if !parsed.images.isEmpty {
+        if !displayImages.isEmpty {
             let countLabel = UILabel()
             countLabel.font = ToolFont.smallBold
             countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = parsed.images.count == 1 ? "Image" : "Images (\(parsed.images.count))"
+            countLabel.text = displayImages.count == 1 ? "Image" : "Images (\(displayImages.count))"
             rootStack.addArrangedSubview(countLabel)
 
-            for image in parsed.images.prefix(6) {
+            for image in displayImages.prefix(6) {
                 let imageView = NativeExpandedInlineImageView(maxPixelSize: maxInlineImagePixelSize)
                 imageView.apply(base64: image.base64, mimeType: image.mimeType)
                 rootStack.addArrangedSubview(imageView)
             }
-            if parsed.images.count > 6 {
+            if displayImages.count > 6 {
                 let more = UILabel()
                 more.font = ToolFont.small
                 more.textColor = UIColor(palette.comment)
-                more.text = "+\(parsed.images.count - 6) more image attachment(s)"
+                more.text = "+\(displayImages.count - 6) more image attachment(s)"
                 rootStack.addArrangedSubview(more)
             }
         }
@@ -102,7 +115,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
         }
 
-        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.audio.isEmpty {
+        if displayText.isEmpty && displayImages.isEmpty && parsed.audio.isEmpty {
             let empty = UILabel()
             empty.font = ToolFont.regular
             empty.textColor = UIColor(palette.comment)
@@ -165,6 +178,8 @@ final class NativeExpandedInlineImageView: UIView {
     private var decodeTask: Task<Void, Never>?
     private var decodedKey: String?
     private let maxPixelSize: CGFloat
+    private var previewData: Data?
+    private var previewMimeType: String?
 
     init(maxPixelSize: CGFloat) {
         self.maxPixelSize = maxPixelSize
@@ -207,9 +222,15 @@ final class NativeExpandedInlineImageView: UIView {
             if info.prefersWebRenderer {
                 let normalizedMimeType = info.normalizedMimeType ?? "image/gif"
                 let dataURLString = "data:\(normalizedMimeType);base64,\(base64)"
+                let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
                 await MainActor.run { [weak self] in
                     guard let self, self.decodedKey == key else { return }
-                    self.applyAnimatedImage(dataURLString: dataURLString, pixelSize: info.pixelSize)
+                    self.applyAnimatedImage(
+                        dataURLString: dataURLString,
+                        aspectRatio: aspectRatio,
+                        data: data,
+                        mimeType: normalizedMimeType
+                    )
                 }
                 return
             }
@@ -256,6 +277,11 @@ final class NativeExpandedInlineImageView: UIView {
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         imageView.addGestureRecognizer(tap)
+
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        animatedImageView.addGestureRecognizer(doubleTap)
+        animatedImageView.isUserInteractionEnabled = true
     }
 
     private func applyDecodedImage(_ image: UIImage?) {
@@ -265,18 +291,30 @@ final class NativeExpandedInlineImageView: UIView {
         placeholder.stopAnimating()
         placeholder.isHidden = image != nil
 
+        previewMimeType = nil
+        previewData = nil
+
         aspectRatioConstraint?.isActive = false
         aspectRatioConstraint = nil
 
-        guard let image, image.size.width > 0, image.size.height > 0 else { return }
+        guard let image, image.size.width > 0, image.size.height > 0 else {
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            return
+        }
         let aspectRatio = image.size.height / image.size.width
         let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: aspectRatio)
         constraint.priority = .required
         constraint.isActive = true
         aspectRatioConstraint = constraint
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
-    private func applyAnimatedImage(dataURLString: String, pixelSize: CGSize?) {
+    private func applyAnimatedImage(
+        dataURLString: String,
+        aspectRatio: CGFloat?,
+        data: Data,
+        mimeType: String
+    ) {
         imageView.image = nil
         imageView.isHidden = true
         animatedImageView.isHidden = false
@@ -284,20 +322,69 @@ final class NativeExpandedInlineImageView: UIView {
         placeholder.stopAnimating()
         placeholder.isHidden = true
 
+        previewData = data
+        previewMimeType = mimeType
+
         aspectRatioConstraint?.isActive = false
         aspectRatioConstraint = nil
 
-        guard let pixelSize, pixelSize.width > 0, pixelSize.height > 0 else { return }
-        let aspectRatio = pixelSize.height / pixelSize.width
-        let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: aspectRatio)
-        constraint.priority = .required
-        constraint.isActive = true
-        aspectRatioConstraint = constraint
+        if let aspectRatio, aspectRatio > 0 {
+            let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: 1 / aspectRatio)
+            constraint.priority = .required
+            constraint.isActive = true
+            aspectRatioConstraint = constraint
+        }
+
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     @objc private func handleTap() {
         guard let image = imageView.image else { return }
         FullScreenImageViewController.present(image: image)
+    }
+
+    @objc private func handleDoubleTap() {
+        guard let data = previewData,
+              let mimeType = previewMimeType,
+              let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
+
+        let rootView = FullScreenMediaPreview(data: data, mimeType: mimeType)
+        let controller = UIHostingController(rootView: rootView)
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        presenter.present(controller, animated: true)
+    }
+}
+
+private struct FullScreenMediaPreview: View {
+    let data: Data
+    let mimeType: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.vertical, .horizontal]) {
+                DataImagePreviewView(
+                    data: data,
+                    mimeType: mimeType,
+                    maxPixelSize: 2_400,
+                    maxHeight: nil,
+                    allowsFullscreenStaticImage: true
+                )
+                .padding()
+            }
+            .background(Color.themeBg)
+            .navigationTitle("Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 
