@@ -1031,6 +1031,10 @@ export class SdkBackend {
           (response) => (response.cancelled ? undefined : response.value),
         ),
 
+      addAutocompleteProvider: (_factory) => {
+        // Autocomplete provider stacking requires TUI access; unsupported in Oppi sessions.
+      },
+
       setEditorComponent: (_factory) => {
         // Custom editor components require TUI access; unsupported in Oppi sessions.
       },

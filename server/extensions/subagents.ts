@@ -13,7 +13,7 @@
 
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import type { ServerMessage, Session, SubagentConfig } from "../src/types.js";
 import { defaultSubagentConfig } from "../src/storage/config-store.js";
 
