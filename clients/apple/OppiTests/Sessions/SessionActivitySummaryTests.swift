@@ -10,6 +10,8 @@ struct SessionActivitySummaryTests {
     private func makeSession(
         id: String = "s1",
         status: SessionStatus = .busy,
+        messageCount: Int = 5,
+        firstMessage: String? = "hello",
         changeStats: SessionChangeStats? = nil
     ) -> Session {
         Session(
@@ -21,10 +23,15 @@ struct SessionActivitySummaryTests {
             createdAt: Date(),
             lastActivity: Date(),
             model: "test/model",
-            messageCount: 5,
+            messageCount: messageCount,
             tokens: TokenUsage(input: 100, output: 50),
             cost: 1.50,
-            changeStats: changeStats
+            changeStats: changeStats,
+            contextTokens: nil,
+            contextWindow: nil,
+            firstMessage: firstMessage,
+            lastMessage: nil,
+            thinkingLevel: nil
         )
     }
 
@@ -157,6 +164,17 @@ struct SessionActivitySummaryTests {
             activity: nil
         )
         #expect(result == "turn ended")
+    }
+
+    @Test func blankDraftReady_returnsNil() {
+        let session = makeSession(status: .ready, messageCount: 0, firstMessage: nil)
+        let result = SessionActivitySummary.text(
+            session: session,
+            pendingCount: 0,
+            pendingPermissions: [],
+            activity: nil
+        )
+        #expect(result == nil)
     }
 
     // MARK: - Stopped sessions

@@ -115,7 +115,7 @@ struct SessionRow: View {
     }
 
     private var pillVariant: SessionPillVariant {
-        .from(status: session.status, pendingCount: pendingCount, pendingAskCount: pendingAskCount)
+        .from(session: session, pendingCount: pendingCount, pendingAskCount: pendingAskCount)
     }
 
     private var visibleModelSummaries: [SessionModelSummary] {
@@ -319,6 +319,10 @@ enum SessionActivitySummary {
         // Pending ask questions (after permissions)
         if let ask = pendingAsk, let first = ask.questions.first {
             return askDescription(first)
+        }
+
+        if session.isAwaitingFirstPrompt {
+            return nil
         }
 
         // Working: show current tool

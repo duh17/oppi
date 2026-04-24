@@ -7,6 +7,7 @@ import SwiftUI
 enum SessionPillVariant: Equatable {
     case waiting
     case question
+    case idle
     case working
     case done
     case stopped
@@ -29,10 +30,18 @@ enum SessionPillVariant: Equatable {
         }
     }
 
+    static func from(session: Session, pendingCount: Int, pendingAskCount: Int = 0) -> SessionPillVariant {
+        if pendingCount > 0 { return .waiting }
+        if pendingAskCount > 0 { return .question }
+        if session.isAwaitingFirstPrompt { return .idle }
+        return from(status: session.status, pendingCount: 0, pendingAskCount: 0)
+    }
+
     var label: String {
         switch self {
         case .waiting: "Waiting"
         case .question: "Question"
+        case .idle: "Idle"
         case .working: "Working"
         case .done: "Done"
         case .stopped: "Stopped"

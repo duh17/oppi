@@ -66,6 +66,28 @@ struct Session: Identifiable, Sendable, Equatable {
         }
         return "Session \(String(id.prefix(8)))"
     }
+
+    /// Newly created draft session with no prompt sent yet.
+    ///
+    /// Older servers persisted these as `.starting`, while newer ones return
+    /// `.ready`. In both cases the user-facing state is idle / awaiting input,
+    /// not actively working.
+    var isAwaitingFirstPrompt: Bool {
+        guard messageCount == 0 else { return false }
+        guard firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true else {
+            return false
+        }
+        guard lastMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true else {
+            return false
+        }
+
+        switch status {
+        case .starting, .ready:
+            return true
+        case .busy, .stopping, .stopped, .error:
+            return false
+        }
+    }
 }
 
 struct TokenUsage: Codable, Sendable, Equatable {

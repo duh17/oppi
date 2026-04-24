@@ -147,7 +147,7 @@ struct APIClientTests {
             case "/workspaces/w1/sessions":
                 #expect(request.httpMethod == "POST")
                 return self.mockResponse(json: """
-                {"session":{"id":"new","workspaceId":"w1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+                {"session":{"id":"new","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
                 """)
 
             default:
@@ -158,7 +158,7 @@ struct APIClientTests {
 
         let session = try await client.createSession(name: "Test", model: "claude-sonnet-4-20250514")
         #expect(session.id == "new")
-        #expect(session.status == .starting)
+        #expect(session.status == .ready)
         #expect(session.workspaceId == "w1")
     }
 
@@ -178,7 +178,7 @@ struct APIClientTests {
             }
 
             return self.mockResponse(json: """
-            {"session":{"id":"new","workspaceId":"w1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"ephemeral":true}}
+            {"session":{"id":"new","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"ephemeral":true}}
             """)
         }
 

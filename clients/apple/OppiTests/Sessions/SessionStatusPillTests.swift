@@ -44,6 +44,24 @@ struct SessionStatusPillTests {
         #expect(variant == .done)
     }
 
+    @Test func idleWhenBlankDraftReadySession() {
+        let session = makeTestSession(status: .ready, messageCount: 0, firstMessage: nil)
+        let variant = SessionPillVariant.from(session: session, pendingCount: 0)
+        #expect(variant == .idle)
+    }
+
+    @Test func idleWhenBlankDraftStartingSession() {
+        let session = makeTestSession(status: .starting, messageCount: 0, firstMessage: nil)
+        let variant = SessionPillVariant.from(session: session, pendingCount: 0)
+        #expect(variant == .idle)
+    }
+
+    @Test func nonBlankReadySessionStaysDone() {
+        let session = makeTestSession(status: .ready, messageCount: 1, firstMessage: "Hello")
+        let variant = SessionPillVariant.from(session: session, pendingCount: 0)
+        #expect(variant == .done)
+    }
+
     @Test func stoppedWhenStopped() {
         let variant = SessionPillVariant.from(status: .stopped, pendingCount: 0)
         #expect(variant == .stopped)
@@ -93,6 +111,7 @@ struct SessionStatusPillTests {
     @Test func labels() {
         #expect(SessionPillVariant.waiting.label == "Waiting")
         #expect(SessionPillVariant.question.label == "Question")
+        #expect(SessionPillVariant.idle.label == "Idle")
         #expect(SessionPillVariant.working.label == "Working")
         #expect(SessionPillVariant.done.label == "Done")
         #expect(SessionPillVariant.stopped.label == "Stopped")
