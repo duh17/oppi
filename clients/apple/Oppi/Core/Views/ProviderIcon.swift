@@ -69,6 +69,7 @@ struct ProviderIcon: View {
         case "anthropic": return "A"
         case "openai", "azure-openai-responses": return "O"
         case "google", "google-vertex": return "G"
+        case "deepseek": return "D"
         case "openrouter": return "R"
         case "amazon-bedrock": return "B"
         case "mistral", "minimax": return "M"
@@ -98,6 +99,7 @@ struct ProviderIcon: View {
     private static let providersWithLogoAsset: Set<String> = [
         "anthropic",
         "cerebras",
+        "deepseek",
         "fireworks",
         "github-copilot",
         "huggingface",
@@ -116,6 +118,7 @@ struct ProviderIcon: View {
         "anthropic": "Anthropic",
         "azure-openai-responses": "Azure OpenAI",
         "cerebras": "Cerebras",
+        "deepseek": "DeepSeek",
         "github-copilot": "GitHub Copilot",
         "google": "Google",
         "google-antigravity": "Google Antigravity",

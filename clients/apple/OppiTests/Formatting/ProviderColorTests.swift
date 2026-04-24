@@ -22,6 +22,12 @@ struct ProviderColorTests {
         expectColor("OPENAI/gpt-4o", equals: palette.green)
     }
 
+    @Test func resolvesDeepSeekProviderDisplayMetadata() {
+        #expect(ProviderIcon.displayName(for: "deepseek") == "DeepSeek")
+        #expect(ProviderIcon.mark(for: "deepseek") == "D")
+        #expect(ProviderIcon.logoAssetName(for: "deepseek") == "provider-deepseek")
+    }
+
     @Test func fallsBackToPurpleForMissingMalformedOrUnknownModel() {
         expectColor(nil, equals: palette.purple)
         expectColor("", equals: palette.purple)
