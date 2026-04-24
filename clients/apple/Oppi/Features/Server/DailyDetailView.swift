@@ -47,16 +47,18 @@ struct DailyDetailView: View {
         var result: [HourlyCost] = []
         for entry in detail.hourly {
             if let byModel = entry.byModel, !byModel.isEmpty {
-                var byDisplay: [String: (raw: String, cost: Double)] = [:]
+                var byIdentity: [String: (raw: String, sortKey: String, cost: Double)] = [:]
                 for (model, data) in byModel where data.cost > 0 {
-                    let name = displayModelName(model)
-                    if let existing = byDisplay[name] {
-                        byDisplay[name] = (existing.raw, existing.cost + data.cost)
+                    let identity = modelDisplayIdentity(model)
+                    let key = identity.aggregationKey
+                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
+                    if let existing = byIdentity[key] {
+                        byIdentity[key] = (existing.raw, existing.sortKey, existing.cost + data.cost)
                     } else {
-                        byDisplay[name] = (model, data.cost)
+                        byIdentity[key] = (model, sortKey, data.cost)
                     }
                 }
-                for (_, value) in byDisplay.sorted(by: { $0.key < $1.key }) {
+                for (_, value) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
                     result.append(HourlyCost(hour: entry.hour, model: value.raw, cost: value.cost))
                 }
             } else if entry.cost > 0 {
@@ -77,7 +79,6 @@ struct DailyDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(dayTitle)
@@ -98,12 +99,10 @@ struct DailyDetailView: View {
                 .buttonStyle(.plain)
             }
 
-            // Hourly chart
             if !chartData.isEmpty {
                 hourlyChart
             }
 
-            // Session list
             if !detail.sessions.isEmpty {
                 sessionList
             }
@@ -176,21 +175,28 @@ struct DailyDetailView: View {
     }
 
     private func sessionRow(_ session: StatsDailySession) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(modelColor(session.model ?? ""))
-                .frame(width: 6, height: 6)
+        let model = session.model ?? "unknown"
 
-            VStack(alignment: .leading, spacing: 1) {
+        return HStack(spacing: 8) {
+            ProviderGlyph(provider: modelProviderKey(model), size: 11, color: .themeComment)
+
+            VStack(alignment: .leading, spacing: 2) {
                 Text(session.name ?? "Session \(String(session.id.prefix(8)))")
                     .font(.caption)
                     .foregroundStyle(.themeFg)
                     .lineLimit(1)
 
+                Text(displayModelName(model))
+                    .font(.caption2)
+                    .foregroundStyle(modelColor(model))
+                    .lineLimit(1)
+
                 HStack(spacing: 6) {
-                    Text(displayModelName(session.model ?? "unknown"))
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
+                    if let provider = modelProviderLabel(model) {
+                        Text(provider)
+                            .font(.caption2)
+                            .foregroundStyle(.themeComment)
+                    }
 
                     if let ws = session.workspaceName {
                         Text(ws)

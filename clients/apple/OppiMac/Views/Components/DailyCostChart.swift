@@ -65,25 +65,26 @@ struct DailyCostChart: View {
         for entry in daily {
             guard let date = Self.dateParser.date(from: entry.date) else { continue }
             if let byModel = entry.byModel, !byModel.isEmpty {
-                // Aggregate by display name so duplicates merge
-                var byDisplay: [String: (raw: String, value: Double)] = [:]
+                var byIdentity: [String: (raw: String, sortKey: String, value: Double)] = [:]
                 for (model, data) in byModel {
-                    let v = metricValue(from: data)
-                    guard v > 0 else { continue }
-                    let name = displayModelName(model)
-                    if let existing = byDisplay[name] {
-                        byDisplay[name] = (existing.raw, existing.value + v)
+                    let value = metricValue(from: data)
+                    guard value > 0 else { continue }
+                    let identity = modelDisplayIdentity(model)
+                    let key = identity.aggregationKey
+                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
+                    if let existing = byIdentity[key] {
+                        byIdentity[key] = (existing.raw, existing.sortKey, existing.value + value)
                     } else {
-                        byDisplay[name] = (model, v)
+                        byIdentity[key] = (model, sortKey, value)
                     }
                 }
-                for (_, item) in byDisplay.sorted(by: { $0.key < $1.key }) {
+                for (_, item) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
                     result.append(ModelDayValue(date: date, model: item.raw, value: item.value))
                 }
             } else {
-                let v = metricValue(from: entry)
-                if v > 0 {
-                    result.append(ModelDayValue(date: date, model: "other", value: v))
+                let value = metricValue(from: entry)
+                if value > 0 {
+                    result.append(ModelDayValue(date: date, model: "other", value: value))
                 }
             }
         }
@@ -205,30 +206,45 @@ struct DailyCostChart: View {
     }
 
     private var tooltipView: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             if let first = selectedDayData.first {
                 Text(Self.axisFormatter.string(from: first.date))
                     .font(.caption2)
                     .fontWeight(.semibold)
             }
             ForEach(selectedDayData) { entry in
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(modelColor(entry.model))
-                        .frame(width: 6, height: 6)
-                    Text(displayModelName(entry.model))
-                        .font(.caption2)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(formatValue(entry.value))
-                        .font(.caption2)
-                        .monospacedDigit()
-                }
+                tooltipRow(for: entry)
             }
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func tooltipRow(for entry: ModelDayValue) -> some View {
+        HStack(spacing: 6) {
+            ProviderGlyph(provider: modelProviderKey(entry.model), size: 10, color: .secondary)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(displayModelName(entry.model))
+                    .font(.caption2)
+                    .foregroundStyle(modelColor(entry.model))
+                    .lineLimit(1)
+
+                if let provider = modelProviderLabel(entry.model) {
+                    Text(provider)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(formatValue(entry.value))
+                .font(.caption2)
+                .monospacedDigit()
+        }
     }
 
     // MARK: - Metric helpers

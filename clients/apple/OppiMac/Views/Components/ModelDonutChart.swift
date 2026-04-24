@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Compact donut chart showing model share by cost.
 ///
-/// Aggregates by display name so duplicate raw model names merge into
-/// one sector per logical model.
+/// Aggregates by provider + stable model id so timestamp-only variants merge
+/// while different providers stay distinct.
 struct ModelDonutChart: View {
 
     let modelBreakdown: [StatsModelBreakdown]
@@ -12,31 +12,42 @@ struct ModelDonutChart: View {
     // MARK: - Aggregation
 
     private struct DonutSlice: Identifiable {
+        let aggregationKey: String
         let displayName: String
+        let provider: String?
+        let providerDisplayName: String?
         let representativeModel: String
         let cost: Double
-        var id: String { displayName }
+
+        var id: String { aggregationKey }
     }
 
     private var slices: [DonutSlice] {
-        var byName: [String: DonutSlice] = [:]
+        var byKey: [String: DonutSlice] = [:]
         for item in modelBreakdown {
-            let name = displayModelName(item.model)
-            if let existing = byName[name] {
-                byName[name] = DonutSlice(
-                    displayName: name,
+            let identity = modelDisplayIdentity(item.model)
+            let key = identity.aggregationKey
+            if let existing = byKey[key] {
+                byKey[key] = DonutSlice(
+                    aggregationKey: key,
+                    displayName: existing.displayName,
+                    provider: existing.provider,
+                    providerDisplayName: existing.providerDisplayName,
                     representativeModel: existing.representativeModel,
                     cost: existing.cost + item.cost
                 )
             } else {
-                byName[name] = DonutSlice(
-                    displayName: name,
+                byKey[key] = DonutSlice(
+                    aggregationKey: key,
+                    displayName: identity.displayName,
+                    provider: identity.provider,
+                    providerDisplayName: identity.providerDisplayName,
                     representativeModel: item.model,
                     cost: item.cost
                 )
             }
         }
-        return byName.values
+        return byKey.values
             .filter { $0.cost > 0.005 }
             .sorted { $0.cost > $1.cost }
     }

@@ -47,32 +47,32 @@ struct DailyCostChartView: View {
 
     // MARK: - Derived data
 
-    /// Aggregate by display name per day so duplicate raw model names merge.
+    /// Aggregate by provider + stable model id so timestamp-only variants merge.
     private var chartData: [ModelDayCost] {
         var result: [ModelDayCost] = []
         for entry in daily {
             guard let date = Self.dateParser.date(from: entry.date) else { continue }
             if let byModel = entry.byModel, !byModel.isEmpty {
-                var byDisplay: [String: (raw: String, value: Double)] = [:]
+                var byIdentity: [String: (raw: String, sortKey: String, value: Double)] = [:]
                 for (model, data) in byModel {
-                    let v = metricValue(from: data)
-                    guard v > 0 else { continue }
-                    let name = displayModelName(model)
-                    if let existing = byDisplay[name] {
-                        byDisplay[name] = (existing.raw, existing.value + v)
+                    let value = metricValue(from: data)
+                    guard value > 0 else { continue }
+                    let identity = modelDisplayIdentity(model)
+                    let key = identity.aggregationKey
+                    let sortKey = "\(identity.displayName)|\(identity.providerDisplayName ?? "")"
+                    if let existing = byIdentity[key] {
+                        byIdentity[key] = (existing.raw, existing.sortKey, existing.value + value)
                     } else {
-                        byDisplay[name] = (model, v)
+                        byIdentity[key] = (model, sortKey, value)
                     }
                 }
-                // Sort by display name so bar segment stacking order
-                // is consistent across days (prevents color shuffling).
-                for (_, item) in byDisplay.sorted(by: { $0.key < $1.key }) {
+                for (_, item) in byIdentity.sorted(by: { $0.value.sortKey < $1.value.sortKey }) {
                     result.append(ModelDayCost(date: date, model: item.raw, value: item.value))
                 }
             } else {
-                let v = metricValue(from: entry)
-                if v > 0 {
-                    result.append(ModelDayCost(date: date, model: "other", value: v))
+                let value = metricValue(from: entry)
+                if value > 0 {
+                    result.append(ModelDayCost(date: date, model: "other", value: value))
                 }
             }
         }
@@ -143,7 +143,6 @@ struct DailyCostChartView: View {
                 y: .value(metric.chartTitle, entry.value)
             )
             .foregroundStyle(modelColor(entry.model))
-            // Dim non-selected bars when a day is selected (Screen Time style)
             .opacity(selectedDate == nil || isSelected(entry) ? 1.0 : 0.3)
         }
         .chartOverlay { proxy in
@@ -158,7 +157,6 @@ struct DailyCostChartView: View {
                         guard let tappedDate: Date = proxy.value(atX: x) else { return }
 
                         let cal = Calendar.current
-                        // Toggle: tap same day again → deselect
                         if let current = selectedDate,
                            cal.isDate(current, inSameDayAs: tappedDate) {
                             selectedDate = nil
@@ -208,32 +206,46 @@ struct DailyCostChartView: View {
     }
 
     private var tooltipView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let first = selectedDayData.first {
                 Text(Self.axisFormatter.string(from: first.date))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeFg)
             }
             ForEach(selectedDayData) { entry in
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(modelColor(entry.model))
-                        .frame(width: 7, height: 7)
-                    Text(displayModelName(entry.model))
-                        .font(.caption)
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(formatValue(entry.value))
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.themeComment)
-                }
+                tooltipRow(for: entry)
             }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.themeComment.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func tooltipRow(for entry: ModelDayCost) -> some View {
+        HStack(spacing: 8) {
+            ProviderGlyph(provider: modelProviderKey(entry.model), size: 11, color: .themeComment)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(displayModelName(entry.model))
+                    .font(.caption)
+                    .foregroundStyle(modelColor(entry.model))
+                    .lineLimit(1)
+
+                if let provider = modelProviderLabel(entry.model) {
+                    Text(provider)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(formatValue(entry.value))
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.themeComment)
+        }
     }
 
     // MARK: - Metric helpers

@@ -1,13 +1,13 @@
 import Charts
 import SwiftUI
 
-// MARK: - Aggregated model (deduped by display name)
+// MARK: - Aggregated model (deduped by provider + stable model id)
 
-/// Multiple raw model names (e.g. "anthropic/claude-opus-4-6-20250514",
-/// "anthropic/claude-opus-4-6") map to the same display name ("opus-4-6").
-/// This struct merges them so the UI shows one row per logical model.
 private struct AggregatedModel: Identifiable {
+    let aggregationKey: String
     let displayName: String
+    let provider: String?
+    let providerDisplayName: String?
     /// Any raw model name from this group (for color lookup).
     let representativeModel: String
     let sessions: Int
@@ -18,7 +18,7 @@ private struct AggregatedModel: Identifiable {
     let cacheWrite: Int
     var share: Double
 
-    var id: String { displayName }
+    var id: String { aggregationKey }
 
     /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
     /// Excludes output tokens, but counts cache writes against the total.
@@ -44,17 +44,21 @@ struct ModelBreakdownSection: View {
     // MARK: - Aggregation
 
     private var aggregated: [AggregatedModel] {
-        var byName: [String: AggregatedModel] = [:]
+        var byKey: [String: AggregatedModel] = [:]
 
         for item in breakdown {
-            let name = displayModelName(item.model)
+            let identity = modelDisplayIdentity(item.model)
+            let key = identity.aggregationKey
             let cacheRead = item.cacheRead ?? 0
             let cacheWrite = item.cacheWrite ?? 0
             let inputTokens = item.inputTokens
 
-            if var existing = byName[name] {
+            if var existing = byKey[key] {
                 existing = AggregatedModel(
-                    displayName: name,
+                    aggregationKey: key,
+                    displayName: existing.displayName,
+                    provider: existing.provider,
+                    providerDisplayName: existing.providerDisplayName,
                     representativeModel: existing.representativeModel,
                     sessions: existing.sessions + item.sessions,
                     cost: existing.cost + item.cost,
@@ -64,10 +68,13 @@ struct ModelBreakdownSection: View {
                     cacheWrite: existing.cacheWrite + cacheWrite,
                     share: existing.share + item.share
                 )
-                byName[name] = existing
+                byKey[key] = existing
             } else {
-                byName[name] = AggregatedModel(
-                    displayName: name,
+                byKey[key] = AggregatedModel(
+                    aggregationKey: key,
+                    displayName: identity.displayName,
+                    provider: identity.provider,
+                    providerDisplayName: identity.providerDisplayName,
                     representativeModel: item.model,
                     sessions: item.sessions,
                     cost: item.cost,
@@ -80,7 +87,15 @@ struct ModelBreakdownSection: View {
             }
         }
 
-        return byName.values.sorted { $0.cost > $1.cost }
+        return byKey.values.sorted {
+            if $0.cost != $1.cost {
+                return $0.cost > $1.cost
+            }
+            if $0.displayName != $1.displayName {
+                return $0.displayName < $1.displayName
+            }
+            return ($0.providerDisplayName ?? "") < ($1.providerDisplayName ?? "")
+        }
     }
 
     /// Models with non-zero cost, sorted by cost descending.
@@ -192,17 +207,10 @@ struct ModelBreakdownSection: View {
     }
 
     private func modelRow(_ item: AggregatedModel) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(modelColor(item.representativeModel))
-                    .frame(width: 8, height: 8)
-
-                Text(item.displayName)
-                    .font(.caption)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .frame(width: 100, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                leadingIdentity(item)
+                    .frame(width: 126, alignment: .leading)
 
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -228,11 +236,9 @@ struct ModelBreakdownSection: View {
                     .frame(width: 30, alignment: .trailing)
             }
 
-            // Cache stats (only show if model uses caching)
             if item.cacheRead > 0 || item.cacheWrite > 0 {
                 HStack(spacing: 8) {
-                    // Indent to align with model name
-                    Color.clear.frame(width: 8)
+                    Color.clear.frame(width: 18)
 
                     if let cacheRate = item.cacheRate {
                         Text("cache \(Int((cacheRate * 100).rounded()))%")
@@ -253,7 +259,23 @@ struct ModelBreakdownSection: View {
         }
     }
 
-    // MARK: - Formatting
+    private func leadingIdentity(_ item: AggregatedModel) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            ProviderGlyph(provider: item.provider, size: 12, color: .themeComment)
 
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.displayName)
+                    .font(.caption)
+                    .foregroundStyle(modelColor(item.representativeModel))
+                    .lineLimit(1)
 
+                if let providerDisplayName = item.providerDisplayName {
+                    Text(providerDisplayName)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
 }
