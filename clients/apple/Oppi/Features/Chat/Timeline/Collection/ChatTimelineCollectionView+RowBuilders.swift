@@ -122,6 +122,13 @@ extension ChatTimelineCollectionHost.Controller {
             )
         }
 
+        if let subagentCompletion = SubagentCompletionPresentation.parse(from: message) {
+            return SubagentCompletionTimelineRowConfiguration(
+                presentation: subagentCompletion,
+                rawMessage: message
+            )
+        }
+
         return SystemTimelineRowConfiguration(message: message)
     }
 
