@@ -93,7 +93,7 @@ struct ServerDetailView: View {
                             .font(.footnote)
                             .foregroundStyle(.themeComment)
                     } else {
-                        ForEach(connectedProviders.prefix(3)) { provider in
+                        ForEach(connectedProviders) { provider in
                             HStack(alignment: .top, spacing: 12) {
                                 ProviderIcon(provider: provider.id, size: 16)
                                     .padding(.top, 3)
@@ -106,12 +106,6 @@ struct ServerDetailView: View {
                                     .foregroundStyle(providerStatusColor(provider))
                                     .multilineTextAlignment(.trailing)
                             }
-                        }
-
-                        if connectedProviders.count > 3 {
-                            Text("+\(connectedProviders.count - 3) more connected")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
                         }
                     }
 
