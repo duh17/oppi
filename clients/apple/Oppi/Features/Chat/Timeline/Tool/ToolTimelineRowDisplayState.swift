@@ -17,8 +17,14 @@ enum ToolTimelineRowDisplayState {
             )
         }
 
-        titleLabel.lineBreakMode = configuration.titleLineBreakMode
-        titleLabel.numberOfLines = 1
+        let prefix = configuration.toolNamePrefix ?? ""
+        let isFileTool = ToolCallFormatting.isReadTool(prefix)
+            || ToolCallFormatting.isWriteTool(prefix)
+            || ToolCallFormatting.isEditTool(prefix)
+        let shouldWrapExpandedPath = configuration.isExpanded && isFileTool
+
+        titleLabel.lineBreakMode = shouldWrapExpandedPath ? .byCharWrapping : configuration.titleLineBreakMode
+        titleLabel.numberOfLines = shouldWrapExpandedPath ? 0 : 1
     }
 
     static func applyLanguageBadge(

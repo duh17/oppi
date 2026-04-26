@@ -3,6 +3,8 @@ import UIKit
 
 /// Attribute key for tagging diff line kind (added/removed/header) for full-width background rendering.
 let diffLineKindAttributeKey = NSAttributedString.Key("unifiedDiffLineKind")
+/// Attribute key for resolving selected diff text back to source line numbers.
+let reviewLineNumberAttributeKey = NSAttributedString.Key("oppiReviewLineNumber")
 
 /// Builds the attributed string for a unified diff from structured hunks.
 ///
@@ -117,6 +119,7 @@ enum DiffAttributedStringBuilder {
         let codeStart: Int
         let codeLen: Int
         let rowEnd: Int
+        let lineNumber: Int?
         let kind: WorkspaceReviewDiffLine.Kind
         let spans: [WorkspaceReviewDiffSpan]?
     }
@@ -269,6 +272,7 @@ enum DiffAttributedStringBuilder {
                     codeStart: codeStart,
                     codeLen: codeLen,
                     rowEnd: rowEnd,
+                    lineNumber: displayLineNumber,
                     kind: line.kind,
                     spans: line.spans
                 ))
@@ -324,6 +328,8 @@ enum DiffAttributedStringBuilder {
                 codeAttrs = style.codeDimAttrs
             }
 
+            let rowRange = NSRange(location: info.gutterStart, length: info.rowEnd - info.gutterStart)
+
             result.setAttributes(gutterAttrs, range: NSRange(location: info.gutterStart, length: info.numStart - info.gutterStart))
             result.setAttributes(numAttrs, range: NSRange(location: info.numStart, length: info.markerStart - info.numStart))
             result.setAttributes(gutterAttrs, range: NSRange(location: info.markerStart, length: info.codeStart - info.markerStart))
@@ -334,6 +340,10 @@ enum DiffAttributedStringBuilder {
                 result.setAttributes(codeAttrs, range: NSRange(location: info.codeStart, length: info.codeLen + 1))
             } else {
                 result.setAttributes(codeAttrs, range: NSRange(location: info.codeStart, length: info.codeLen))
+            }
+
+            if let lineNumber = info.lineNumber {
+                result.addAttribute(reviewLineNumberAttributeKey, value: lineNumber, range: rowRange)
             }
         }
 

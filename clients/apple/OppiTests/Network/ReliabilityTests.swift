@@ -212,6 +212,37 @@ struct ReliabilityTests {
         #expect(conn.activeExtensionDialog?.id == "ext2", "New request should replace old")
     }
 
+    @Test func extensionDialogTimeoutUsesMilliseconds() async throws {
+        let (conn, pipe) = makeTestConnection()
+
+        let request = ExtensionUIRequest(
+            id: "ext1", sessionId: "s1", method: "confirm", title: "Confirm?", timeout: 25
+        )
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
+        #expect(conn.activeExtensionDialog?.id == "ext1")
+
+        try await Task.sleep(for: .milliseconds(150))
+
+        #expect(conn.activeExtensionDialog == nil, "Extension timeout should use server milliseconds")
+        #expect(conn.extensionToast == "Extension request timed out")
+    }
+
+    @Test func extensionDialogRestoredAfterFocusRoundTrip() {
+        let (conn, pipe) = makeTestConnection()
+
+        let request = ExtensionUIRequest(
+            id: "ext1", sessionId: "s1", method: "input", title: "Test"
+        )
+        pipe.handle(.extensionUIRequest(request), sessionId: "s1")
+        #expect(conn.activeExtensionDialog?.id == "ext1")
+
+        conn.focusSession("s2")
+        #expect(conn.activeExtensionDialog == nil)
+
+        conn.focusSession("s1")
+        #expect(conn.activeExtensionDialog?.id == "ext1")
+    }
+
     // MARK: - Fix 3: Extension Dialog Cleared on Disconnect
 
     @Test func extensionDialogClearedOnDisconnect() {

@@ -59,7 +59,7 @@ struct AskOppiIntent: AppIntent {
                     return .result(dialog: "No workspaces configured on the server.")
                 }
 
-                if let lastId = QuickSessionDefaults.lastWorkspaceId,
+                if let lastId = AppPreferences.QuickSession.lastWorkspaceId,
                    workspaces.contains(where: { $0.id == lastId }) {
                     targetWorkspaceId = lastId
                 } else {

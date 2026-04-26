@@ -20,6 +20,14 @@ private struct AggregatedModel: Identifiable {
 
     var id: String { aggregationKey }
 
+    func value(for metric: StatsMetric) -> Double {
+        switch metric {
+        case .sessions: return Double(sessions)
+        case .cost: return cost
+        case .tokens: return Double(tokens)
+        }
+    }
+
     /// Prompt-cache effectiveness: cacheRead / (cacheRead + uncachedInput + cacheWrite).
     /// Excludes output tokens, but counts cache writes against the total.
     var cacheRate: Double? {
@@ -37,6 +45,7 @@ private let topModelCount = 5
 struct ModelBreakdownSection: View {
 
     let breakdown: [StatsModelBreakdown]
+    let metric: StatsMetric
 
     @State private var showAll = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -87,24 +96,34 @@ struct ModelBreakdownSection: View {
             }
         }
 
-        return byKey.values.sorted {
-            if $0.cost != $1.cost {
-                return $0.cost > $1.cost
+        return byKey.values.sorted { lhs, rhs in
+            let lhsValue = lhs.value(for: metric)
+            let rhsValue = rhs.value(for: metric)
+            if lhsValue != rhsValue {
+                return lhsValue > rhsValue
             }
-            if $0.displayName != $1.displayName {
-                return $0.displayName < $1.displayName
+            if lhs.cost != rhs.cost {
+                return lhs.cost > rhs.cost
             }
-            return ($0.providerDisplayName ?? "") < ($1.providerDisplayName ?? "")
+            if lhs.displayName != rhs.displayName {
+                return lhs.displayName < rhs.displayName
+            }
+            return (lhs.providerDisplayName ?? "") < (rhs.providerDisplayName ?? "")
         }
     }
 
-    /// Models with non-zero cost, sorted by cost descending.
+    /// Models with non-zero usage for the selected metric, sorted by that metric descending.
     private var nonZeroModels: [AggregatedModel] {
-        aggregated.filter { $0.cost > 0.005 }
+        aggregated.filter { item in
+            switch metric {
+            case .cost: return item.cost > 0.005
+            case .sessions, .tokens: return item.value(for: metric) > 0
+            }
+        }
     }
 
-    private var totalCost: Double {
-        aggregated.reduce(0) { $0 + $1.cost }
+    private var totalMetricValue: Double {
+        aggregated.reduce(0) { $0 + $1.value(for: metric) }
     }
 
     private var visibleModels: [AggregatedModel] {
@@ -140,13 +159,13 @@ struct ModelBreakdownSection: View {
 
     @ViewBuilder
     private func donutChart(_ models: [AggregatedModel]) -> some View {
-        if totalCost <= 0 {
+        if totalMetricValue <= 0 {
             EmptyView()
         } else {
             ZStack {
                 Chart(models) { item in
                     SectorMark(
-                        angle: .value("Cost", item.cost),
+                        angle: .value(metric.chartTitle, item.value(for: metric)),
                         innerRadius: .ratio(0.6),
                         angularInset: 1.5
                     )
@@ -156,7 +175,7 @@ struct ModelBreakdownSection: View {
                 .frame(width: 140, height: 140)
 
                 VStack(spacing: 2) {
-                    Text(SessionFormatting.costString(totalCost))
+                    Text(formatMetricValue(totalMetricValue))
                         .font(.caption.weight(.semibold))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -213,24 +232,25 @@ struct ModelBreakdownSection: View {
                     .frame(width: 126, alignment: .leading)
 
                 GeometryReader { geo in
+                    let share = metricShare(for: item)
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(Color.themeComment.opacity(0.12))
                             .frame(height: 5)
                         Capsule()
                             .fill(modelColor(item.representativeModel).opacity(0.55))
-                            .frame(width: max(2, geo.size.width * item.share), height: 5)
+                            .frame(width: max(2, geo.size.width * share), height: 5)
                     }
                 }
                 .frame(height: 5)
 
-                Text(SessionFormatting.costString(item.cost))
+                Text(formatMetricValue(item.value(for: metric)))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.themeComment)
-                    .frame(width: 56, alignment: .trailing)
+                    .frame(width: metricValueWidth, alignment: .trailing)
 
-                Text("\(Int((item.share * 100).rounded()))%")
+                Text("\(Int((metricShare(for: item) * 100).rounded()))%")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                     .frame(width: 30, alignment: .trailing)
@@ -256,6 +276,30 @@ struct ModelBreakdownSection: View {
                 .font(.caption2)
                 .padding(.leading, 6)
             }
+        }
+    }
+
+    private var metricValueWidth: CGFloat {
+        switch metric {
+        case .sessions: return 44
+        case .cost: return 56
+        case .tokens: return 58
+        }
+    }
+
+    private func metricShare(for item: AggregatedModel) -> Double {
+        guard totalMetricValue > 0 else { return 0 }
+        return max(0, item.value(for: metric) / totalMetricValue)
+    }
+
+    private func formatMetricValue(_ value: Double) -> String {
+        switch metric {
+        case .sessions:
+            return String(format: "%.0f", value)
+        case .cost:
+            return SessionFormatting.costString(value)
+        case .tokens:
+            return Int(value.rounded()).formattedTokenCount()
         }
     }
 

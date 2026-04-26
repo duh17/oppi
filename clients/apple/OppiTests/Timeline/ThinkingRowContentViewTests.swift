@@ -132,7 +132,7 @@ struct ThinkingRowContentViewTests {
 
         let piMenu = try #require(menu.children.first as? UIMenu)
         #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
         let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
         #expect(copyMenuAction.title == "Copy")
     }

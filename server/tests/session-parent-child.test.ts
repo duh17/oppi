@@ -108,6 +108,7 @@ function makeInMemoryStorage(): Storage & {
     saveWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
     createWorkspace: vi.fn(),
+    getDataDir: () => TEST_DATA_DIR,
     getSessionsDir: () => join(TEST_DATA_DIR, "sessions"),
     getWorkspacesDir: () => join(TEST_DATA_DIR, "workspaces"),
     saveConfig: vi.fn(),

@@ -15,7 +15,7 @@ struct ModelPickerSheet: View {
 
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
-    private var recentIds: [String] { RecentModels.load() }
+    private var recentIds: [String] { AppPreferences.RecentModels.load() }
 
     private var models: [ModelInfo] { chatState.cachedModels }
 

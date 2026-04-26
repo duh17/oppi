@@ -89,9 +89,11 @@ struct ServerDetailView: View {
                     LabeledContent("Connected", value: String(connectedProviders.count))
 
                     if connectedProviders.isEmpty {
-                        Text("No providers connected yet.")
-                            .font(.footnote)
-                            .foregroundStyle(.themeComment)
+                        providerOnboardingCard
+
+                        ForEach(availableProviders.prefix(3)) { provider in
+                            providerQuickConnectRow(provider)
+                        }
                     } else {
                         ForEach(connectedProviders) { provider in
                             HStack(alignment: .top, spacing: 12) {
@@ -113,7 +115,7 @@ struct ServerDetailView: View {
                         isProviderManagerPresented = true
                     } label: {
                         HStack {
-                            Label("Configure Providers", systemImage: "plus.circle")
+                            Label(connectedProviders.isEmpty ? "Show All Providers" : "Configure Providers", systemImage: "plus.circle")
                             Spacer()
                             Text("\(providerStatuses.count) available")
                                 .font(.caption)
@@ -128,6 +130,8 @@ struct ServerDetailView: View {
                 if let providerError {
                     Text(providerError)
                         .foregroundStyle(.themeRed)
+                } else if connectedProviders.isEmpty {
+                    Text("Oppi needs at least one model provider before new sessions can run. Connect one here, or open the full provider list for more options.")
                 } else {
                     Text("Connected providers are shown here. Use Configure Providers to add or manage all providers.")
                 }
@@ -260,6 +264,48 @@ struct ServerDetailView: View {
     }
 
     @ViewBuilder
+    private var providerOnboardingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Connect a model provider", systemImage: "key.fill")
+                .font(.headline)
+                .foregroundStyle(.themeFg)
+
+            Text("Finish setup by signing in or adding an API key. This unlocks model selection for sessions on this server.")
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func providerQuickConnectRow(_ provider: ProviderAuthProviderStatus) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                ProviderIcon(provider: provider.id, size: 16)
+                    .padding(.top, 3)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name)
+                    Text(providerStatusText(provider))
+                        .font(.caption)
+                        .foregroundStyle(providerStatusColor(provider))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if providerActionInFlightId == provider.id {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if providerActionInFlightId != provider.id {
+                providerConnectButtons(provider, dismissManagerBeforeAction: false)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
     private var providerManagerSheet: some View {
         NavigationStack {
             List {
@@ -338,39 +384,113 @@ struct ServerDetailView: View {
             if providerActionInFlightId == provider.id {
                 ProgressView()
                     .controlSize(.small)
+            } else if provider.authenticated {
+                providerManageMenu(provider)
             } else {
-                Menu {
-                    if let oauth = provider.oauth {
-                        Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
-                            isProviderManagerPresented = false
-                            DispatchQueue.main.async {
-                                startProviderFlow(provider: provider, oauth: oauth)
-                            }
-                        }
-                    }
-
-                    if provider.supportsApiKey {
-                        Button(apiKeyButtonTitle(provider)) {
-                            isProviderManagerPresented = false
-                            DispatchQueue.main.async {
-                                beginApiKeyEntry(for: provider)
-                            }
-                        }
-                    }
-
-                    if provider.authenticated {
-                        Button("Disconnect", role: .destructive) {
-                            disconnectProvider(provider)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                        .foregroundStyle(.themeComment)
-                }
+                providerConnectButtons(provider, dismissManagerBeforeAction: true)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func providerConnectButtons(
+        _ provider: ProviderAuthProviderStatus,
+        dismissManagerBeforeAction: Bool
+    ) -> some View {
+        if let oauth = provider.oauth, provider.supportsApiKey {
+            Menu {
+                Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
+                    startProviderOAuthAction(provider: provider, oauth: oauth, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                }
+
+                Button(apiKeyButtonTitle(provider)) {
+                    startProviderAPIKeyAction(provider: provider, dismissManagerBeforeAction: dismissManagerBeforeAction)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Connect")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .font(.subheadline)
+            .disabled(providerActionInFlightId != nil)
+        } else if let oauth = provider.oauth {
+            Button(provider.authenticated ? "Reauthenticate" : "Sign In") {
+                startProviderOAuthAction(provider: provider, oauth: oauth, dismissManagerBeforeAction: dismissManagerBeforeAction)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .font(.subheadline)
+            .disabled(providerActionInFlightId != nil)
+        } else if provider.supportsApiKey {
+            Button(apiKeyButtonTitle(provider)) {
+                startProviderAPIKeyAction(provider: provider, dismissManagerBeforeAction: dismissManagerBeforeAction)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .font(.subheadline)
+            .disabled(providerActionInFlightId != nil)
+        }
+    }
+
+    private func startProviderOAuthAction(
+        provider: ProviderAuthProviderStatus,
+        oauth: ProviderAuthOAuthCapabilities,
+        dismissManagerBeforeAction: Bool
+    ) {
+        if dismissManagerBeforeAction {
+            isProviderManagerPresented = false
+        }
+        DispatchQueue.main.async {
+            startProviderFlow(provider: provider, oauth: oauth)
+        }
+    }
+
+    private func startProviderAPIKeyAction(
+        provider: ProviderAuthProviderStatus,
+        dismissManagerBeforeAction: Bool
+    ) {
+        if dismissManagerBeforeAction {
+            isProviderManagerPresented = false
+        }
+        DispatchQueue.main.async {
+            beginApiKeyEntry(for: provider)
+        }
+    }
+
+    @ViewBuilder
+    private func providerManageMenu(_ provider: ProviderAuthProviderStatus) -> some View {
+        Menu {
+            if let oauth = provider.oauth {
+                Button("Reauthenticate") {
+                    isProviderManagerPresented = false
+                    DispatchQueue.main.async {
+                        startProviderFlow(provider: provider, oauth: oauth)
+                    }
+                }
+            }
+
+            if provider.supportsApiKey {
+                Button(apiKeyButtonTitle(provider)) {
+                    isProviderManagerPresented = false
+                    DispatchQueue.main.async {
+                        beginApiKeyEntry(for: provider)
+                    }
+                }
+            }
+
+            Button("Disconnect", role: .destructive) {
+                disconnectProvider(provider)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundStyle(.themeComment)
+        }
     }
 
     @ViewBuilder

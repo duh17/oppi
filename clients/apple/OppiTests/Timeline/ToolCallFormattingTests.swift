@@ -118,10 +118,10 @@ struct ToolCallFormattingTests {
 
     // MARK: - Display File Path
 
-    @Test func displayFilePathShowsTailComponents() {
+    @Test func displayFilePathKeepsFullShortenedPath() {
         let args: [String: JSONValue] = ["path": .string("/Users/dev/workspace/project/src/main.swift")]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result == "src/main.swift")
+        #expect(result == "~/workspace/project/src/main.swift")
     }
 
     @Test func displayFilePathWithLineRange() {
@@ -144,14 +144,14 @@ struct ToolCallFormattingTests {
         #expect(result.contains(":5-7"))
     }
 
-    @Test func displayFilePathShowsTailAndLineRangeForAbsolutePath() {
+    @Test func displayFilePathShowsFullPathAndLineRangeForAbsolutePath() {
         let args: [String: JSONValue] = [
             "path": .string("/Users/dev/workspace/myproject/ios/Oppi/Features/Chat/ToolTimelineRowContent.swift"),
             "offset": .number(1),
             "limit": .number(120),
         ]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result == "Chat/ToolTimelineRowContent.swift:1-120")
+        #expect(result == "~/workspace/myproject/ios/Oppi/Features/Chat/ToolTimelineRowContent.swift:1-120")
     }
 
     @Test func displayFilePathOffsetOnly() {

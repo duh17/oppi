@@ -8,12 +8,12 @@ struct SettingsView: View {
     @State private var showAvatarPicker = false
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
-    @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
+    @State private var screenAwakePreset = AppPreferences.ScreenAwake.timeoutPreset
     @State private var cacheSizeText: String?
     @State private var telemetryEnabled = AppPreferences.Telemetry.isEnabled
     @State private var selectedCodeFont = FontPreferences.codeFont
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
-    @State private var voiceEngineMode = VoiceInputPreferences.engineMode
+    @State private var voiceEngineMode = AppPreferences.Voice.engineMode
 
     var body: some View {
         List {
@@ -114,12 +114,12 @@ struct SettingsView: View {
                 }
 
                 Picker("Keep screen awake", selection: $screenAwakePreset) {
-                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
+                    ForEach(AppPreferences.ScreenAwake.TimeoutPreset.allCases) { preset in
                         Text(preset.label).tag(preset)
                     }
                 }
                 .onChange(of: screenAwakePreset) { _, newValue in
-                    ScreenAwakePreferences.setTimeoutPreset(newValue)
+                    AppPreferences.ScreenAwake.setTimeoutPreset(newValue)
                     ScreenAwakeController.shared.refreshFromPreferences()
                 }
             } header: {
@@ -147,7 +147,7 @@ struct SettingsView: View {
                     }
                 }
                 .onChange(of: voiceEngineMode) { _, newValue in
-                    VoiceInputPreferences.setEngineMode(newValue)
+                    AppPreferences.Voice.setEngineMode(newValue)
                 }
             } header: {
                 Text("Voice Input")
@@ -200,10 +200,10 @@ struct SettingsView: View {
 
     private var liveActivityToggle: Binding<Bool> {
         Binding(
-            get: { LiveActivityPreferences.isEnabled },
+            get: { AppPreferences.LiveActivity.isEnabled },
             set: { newValue in
-                guard newValue != LiveActivityPreferences.isEnabled else { return }
-                LiveActivityPreferences.setEnabled(newValue)
+                guard newValue != AppPreferences.LiveActivity.isEnabled else { return }
+                AppPreferences.LiveActivity.setEnabled(newValue)
                 if newValue {
                     _ = KeychainService.migrateLegacyServersToSharedGroup()
                 }

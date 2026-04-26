@@ -31,6 +31,7 @@ extension ServerConnection {
             if session.status.isTerminal {
                 silenceWatchdog.stop()
                 clearAskState(for: sessionId)
+                clearExtensionDialog(for: sessionId)
             }
 
         case .queueState(let queue):
@@ -48,10 +49,7 @@ extension ServerConnection {
             if let ask = askRequest(from: request) {
                 presentAskRequest(ask, for: sessionId)
             } else {
-                // Existing generic dialog path
-                extensionTimeoutTask?.cancel()
-                activeExtensionDialog = request
-                scheduleExtensionTimeout(request)
+                presentExtensionDialog(request, for: sessionId)
             }
 
         case .extensionUINotification(let notification):
@@ -121,6 +119,8 @@ extension ServerConnection {
         case .extensionUIRequest(let request):
             if let ask = askRequest(from: request) {
                 stashPendingAskRequest(ask, for: sessionId)
+            } else {
+                stashPendingExtensionDialog(request, for: sessionId)
             }
 
         case .extensionUINotification(let notification):
@@ -142,6 +142,7 @@ extension ServerConnection {
         case .state(let session):
             if session.status.isTerminal {
                 clearAskState(for: sessionId)
+                clearExtensionDialog(for: sessionId)
             }
 
         case .sessionEnded:
@@ -242,6 +243,7 @@ extension ServerConnection {
 
     func clearExtensionSurface(for sessionId: String) {
         extensionSurfaceBySession.removeValue(forKey: sessionId)
+        clearExtensionDialog(for: sessionId)
     }
 
     // MARK: - Connected / State
@@ -614,9 +616,21 @@ extension ServerConnection {
     /// Auto-dismiss extension dialog after its timeout expires.
     /// The server has already given up waiting — we just clean up the UI.
     func scheduleExtensionTimeout(_ request: ExtensionUIRequest) {
-        guard let timeout = request.timeout, timeout > 0 else { return }
+        let remainingMs: Int
+        if let timeoutAt = request.timeoutAt {
+            remainingMs = max(0, Int(timeoutAt.timeIntervalSinceNow * 1000))
+        } else if let timeout = request.timeout, timeout > 0 {
+            remainingMs = timeout
+        } else {
+            return
+        }
+        guard remainingMs > 0 else {
+            activeExtensionDialog = nil
+            extensionToast = "Extension request timed out"
+            return
+        }
         extensionTimeoutTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
+            try? await Task.sleep(for: .milliseconds(remainingMs))
             guard !Task.isCancelled else { return }
             guard let self, self.activeExtensionDialog?.id == request.id else { return }
             self.activeExtensionDialog = nil

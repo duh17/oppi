@@ -392,11 +392,13 @@ struct ANSIParserTests {
         var input = ""
         input.reserveCapacity(40_000)
 
-        for i in 0..<700 {
+        var i = 0
+        while input.utf8.count < 32 * 1024 {
             // Include a standalone ESC periodically to cover the
             // boundary-recovery branch in the hot path.
             let strayEscape = (i % 37 == 0) ? "\u{1B}" : ""
             input += "\u{1B}[32m\u{2713}\u{1B}[0m step_\(i) \(strayEscape)done in \u{1B}[2m\(i % 13)ms\u{1B}[22m\n"
+            i += 1
         }
 
         #expect(input.utf8.count >= 32 * 1024)

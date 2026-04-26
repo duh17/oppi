@@ -36,6 +36,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let segmentAttributedTitle: NSAttributedString?
     /// Pre-rendered attributed trailing from server result segments.
     let segmentAttributedTrailing: NSAttributedString?
+    var audioPlayer: AudioPlayerService? = nil
+    var sessionAttachmentFetcher: ((String) async throws -> Data)? = nil
     var selectedTextPiRouter: SelectedTextPiActionRouter? = nil
     var selectedTextSessionId: String? = nil
 
@@ -51,6 +53,18 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         var copy = self
         copy.selectedTextPiRouter = router
         copy.selectedTextSessionId = sessionId
+        return copy
+    }
+
+    func withAudioPlayer(_ audioPlayer: AudioPlayerService?) -> Self {
+        var copy = self
+        copy.audioPlayer = audioPlayer
+        return copy
+    }
+
+    func withSessionAttachmentFetcher(_ fetcher: ((String) async throws -> Data)?) -> Self {
+        var copy = self
+        copy.sessionAttachmentFetcher = fetcher
         return copy
     }
 }
@@ -100,6 +114,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let titleLabel = UILabel()
     private let trailingStack = UIStackView()
     private let languageBadgeIconView = UIImageView()
+    private let audioPlaybackButton = UIButton(type: .system)
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
     private let trailingLabel = UILabel()
@@ -110,6 +125,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     let expandedContainer = UIView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
+    private let compactHostedSurfaceHostView = ToolExpandedSurfaceHostView()
     let expandedLabel = UITextView()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
@@ -129,6 +145,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
+    private var collapsedAudioDecodeTask: Task<Void, Never>?
+    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
@@ -216,6 +234,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     deinit {
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
+        collapsedAudioDecodeTask?.cancel()
+        if let audioStateObserver {
+            NotificationCenter.default.removeObserver(audioStateObserver)
+        }
     }
 
     var configuration: UIContentConfiguration {
@@ -317,6 +339,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if expandedUsesViewport,
            let expandedViewportHeightConstraint {
+            if isVoiceMessageExpandedContent(currentConfiguration), expandedUsesReadMediaLayout {
+                let width = max(100, expandedContainer.bounds.width - 12)
+                let measurementView = expandedReadMediaContentView ?? expandedReadMediaContainer
+                let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
+                    for: measurementView,
+                    width: width
+                )
+                expandedViewportHeightConstraint.constant = min(150, max(72, measured))
+                return
+            }
+
             let mode: ViewportMode = switch expandedViewportMode {
             case .diff: .expandedDiff
             case .code: .expandedCode
@@ -461,6 +494,31 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return CGSize(width: width, height: height)
     }
 
+    private func installExpandedVoiceMessageView(
+        text: String,
+        attachmentId: String,
+        mimeType: String
+    ) {
+        let native: NativeVoiceMessageView
+        if let existing = expandedReadMediaContentView as? NativeVoiceMessageView {
+            native = existing
+        } else {
+            clearExpandedReadMediaView()
+            native = NativeVoiceMessageView()
+            installExpandedEmbeddedView(native)
+        }
+
+        native.apply(
+            id: "expanded-voice-\(attachmentId)",
+            message: text,
+            attachmentId: attachmentId,
+            mimeType: mimeType,
+            audioPlayer: currentConfiguration.audioPlayer,
+            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+            palette: ThemeRuntimeState.currentPalette()
+        )
+    }
+
     private func installExpandedReadMediaView(
         output: String,
         isError: Bool,
@@ -481,7 +539,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isError: isError,
             filePath: filePath,
             startLine: startLine,
-            themeID: ThemeRuntimeState.currentThemeID()
+            themeID: ThemeRuntimeState.currentThemeID(),
+            audioPlayer: currentConfiguration.audioPlayer
         )
     }
 
@@ -644,6 +703,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Prepare for embedded expanded content.
     private func showExpandedHostedView() {
+        compactHostedSurfaceHostView.clearActiveSurface()
+        compactHostedSurfaceHostView.isHidden = true
+        expandedScrollView.isHidden = false
         expandedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
@@ -661,6 +723,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         setExpandedContainerGestureInterceptionEnabled(false)
     }
 
+    private func showCompactHostedView() {
+        expandedSurfaceHostView.clearActiveSurface()
+        expandedScrollView.isHidden = true
+        compactHostedSurfaceHostView.isHidden = false
+        compactHostedSurfaceHostView.activateSurfaceView(expandedReadMediaContainer)
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = true
+        expandedReadMediaContainer.isHidden = false
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = true
+        clearExpandedMarkdownContent()
+        expandedLabelWidthConstraint?.priority = .defaultHigh
+        expandedLabelWidthConstraint?.constant = -12
+        setExpandedContainerGestureInterceptionEnabled(false)
+    }
+
     /// Activate the expanded viewport height constraint.
     func showExpandedViewport() {
         expandedViewportHeightConstraint?.isActive = true
@@ -671,6 +751,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func hideExpandedContainer(outputColor: UIColor) {
         cancelDeferredCodeHighlight()
         expandedSurfaceHostView.clearActiveSurface()
+        compactHostedSurfaceHostView.clearActiveSurface()
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.textColor = outputColor
@@ -681,6 +762,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
+        expandedScrollView.isHidden = false
+        compactHostedSurfaceHostView.isHidden = true
         expandedScrollView.alwaysBounceHorizontal = false
         expandedScrollView.showsHorizontalScrollIndicator = false
         expandedScrollView.isScrollEnabled = false
@@ -741,23 +824,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
+        audioPlaybackButton.translatesAutoresizingMaskIntoConstraints = false
+        audioPlaybackButton.addTarget(self, action: #selector(toggleCollapsedAudioPlayback), for: .touchUpInside)
+        trailingStack.addArrangedSubview(audioPlaybackButton)
         trailingStack.addArrangedSubview(elapsedLabel)
         trailingStack.addArrangedSubview(addedLabel)
         trailingStack.addArrangedSubview(removedLabel)
         trailingStack.addArrangedSubview(trailingLabel)
         trailingStack.addArrangedSubview(languageBadgeIconView)
 
+        expandedContainer.addSubview(expandedScrollView)
+        expandedContainer.addSubview(compactHostedSurfaceHostView)
+
         NSLayoutConstraint.activate(
             ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints(
                 languageBadgeIconView: languageBadgeIconView
-            )
+            ) + [
+                audioPlaybackButton.widthAnchor.constraint(equalToConstant: 32),
+                audioPlaybackButton.heightAnchor.constraint(equalToConstant: 32),
+                compactHostedSurfaceHostView.leadingAnchor.constraint(equalTo: expandedContainer.leadingAnchor),
+                compactHostedSurfaceHostView.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor),
+                compactHostedSurfaceHostView.topAnchor.constraint(equalTo: expandedContainer.topAnchor),
+                compactHostedSurfaceHostView.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor),
+            ]
         )
 
-        expandedContainer.addSubview(expandedScrollView)
         expandedScrollView.addSubview(expandedSurfaceHostView)
         expandedSurfaceHostView.prepareSurfaceView(expandedLabel)
         expandedSurfaceHostView.prepareSurfaceView(expandedMarkdownView)
         expandedSurfaceHostView.prepareSurfaceView(expandedReadMediaContainer)
+        compactHostedSurfaceHostView.isHidden = true
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(bashToolRowView)
@@ -973,6 +1069,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isDone: configuration.isDone,
             elapsedLabel: elapsedLabel
         )
+        applyCollapsedAudioPlaybackButton(configuration: configuration)
+
         ToolTimelineRowDisplayState.updateTrailingVisibility(
             trailingStack: trailingStack,
             languageBadgeIconView: languageBadgeIconView,
@@ -981,11 +1079,136 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             trailingLabel: trailingLabel,
             elapsedLabel: elapsedLabel
         )
+        if !audioPlaybackButton.isHidden {
+            trailingStack.isHidden = false
+        }
 
         return ToolTimelineRowDisplayState.applyPreview(
             configuration: configuration,
             previewLabel: previewLabel
         )
+    }
+
+    private func applyCollapsedAudioPlaybackButton(configuration: ToolTimelineRowConfiguration) {
+        if configuration.isExpanded && isVoiceMessageExpandedContent(configuration) {
+            audioPlaybackButton.isHidden = true
+            return
+        }
+
+        guard collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil else {
+            audioPlaybackButton.isHidden = true
+            return
+        }
+
+        bindAudioStateObservationIfNeeded()
+        audioPlaybackButton.isHidden = false
+        audioPlaybackButton.tintColor = UIColor(Color.themePurple)
+        audioPlaybackButton.accessibilityLabel = isCollapsedVoiceAudioPlaying(configuration: configuration)
+            ? "Stop voice message"
+            : "Play voice message"
+        updateCollapsedAudioPlaybackButtonImage(configuration: configuration)
+    }
+
+    private func bindAudioStateObservationIfNeeded() {
+        guard audioStateObserver == nil else { return }
+        audioStateObserver = NotificationCenter.default.addObserver(
+            forName: AudioPlayerService.stateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.updateCollapsedAudioPlaybackButtonImage(configuration: self.currentConfiguration)
+        }
+    }
+
+    private func updateCollapsedAudioPlaybackButtonImage(configuration: ToolTimelineRowConfiguration) {
+        let isPlaying = isCollapsedVoiceAudioPlaying(configuration: configuration)
+        let imageName = isPlaying ? "stop.fill" : "play.fill"
+        let image = UIImage(systemName: imageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        audioPlaybackButton.setImage(image, for: .normal)
+    }
+
+    private func isCollapsedVoiceAudioPlaying(configuration: ToolTimelineRowConfiguration) -> Bool {
+        guard let itemID = collapsedVoiceAudioItemID(in: configuration) else { return false }
+        return configuration.audioPlayer?.playingItemID == itemID || configuration.audioPlayer?.loadingItemID == itemID
+    }
+
+    private func isVoiceMessageExpandedContent(_ configuration: ToolTimelineRowConfiguration) -> Bool {
+        switch configuration.expandedContent {
+        case .voiceMessage:
+            return true
+        case .readMedia(_, let filePath, _):
+            return configuration.toolNamePrefix == "voice_speak" || filePath == "Voice message"
+        case .bash, .diff, .code, .markdown, .status, .text, .none:
+            return false
+        }
+    }
+
+    private func collapsedVoiceAudioBase64(in configuration: ToolTimelineRowConfiguration) -> String? {
+        guard configuration.toolNamePrefix == "voice_speak",
+              case .readMedia(let output, _, _) = configuration.expandedContent,
+              let clip = AudioExtractor.extract(from: output).first else {
+            return nil
+        }
+        return clip.base64
+    }
+
+    private func collapsedVoiceAudioAttachment(in configuration: ToolTimelineRowConfiguration) -> String? {
+        guard case .voiceMessage(_, let attachmentId, _, _) = configuration.expandedContent else {
+            return nil
+        }
+        return attachmentId
+    }
+
+    private func collapsedVoiceAudioItemID(in configuration: ToolTimelineRowConfiguration) -> String? {
+        if let attachmentId = collapsedVoiceAudioAttachment(in: configuration) {
+            return "collapsed-voice-\(attachmentId)"
+        }
+        guard let base64 = collapsedVoiceAudioBase64(in: configuration) else { return nil }
+        return "collapsed-voice-\(base64.prefix(24))"
+    }
+
+    @objc
+    private func toggleCollapsedAudioPlayback() {
+        guard let audioPlayer = currentConfiguration.audioPlayer,
+              let itemID = collapsedVoiceAudioItemID(in: currentConfiguration) else {
+            return
+        }
+
+        if audioPlayer.playingItemID == itemID || audioPlayer.loadingItemID == itemID {
+            audioPlayer.stop()
+            updateCollapsedAudioPlaybackButtonImage(configuration: currentConfiguration)
+            return
+        }
+
+        if let attachmentId = collapsedVoiceAudioAttachment(in: currentConfiguration),
+           let fetcher = currentConfiguration.sessionAttachmentFetcher {
+            collapsedAudioDecodeTask?.cancel()
+            collapsedAudioDecodeTask = Task { [attachmentId, itemID, weak audioPlayer] in
+                do {
+                    let data = try await fetcher(attachmentId)
+                    await MainActor.run {
+                        guard let audioPlayer else { return }
+                        audioPlayer.toggleDataPlayback(data: data, itemID: itemID)
+                    }
+                } catch {
+                    await MainActor.run {
+                        updateCollapsedAudioPlaybackButtonImage(configuration: currentConfiguration)
+                    }
+                }
+            }
+            return
+        }
+
+        guard let base64 = collapsedVoiceAudioBase64(in: currentConfiguration) else { return }
+        collapsedAudioDecodeTask?.cancel()
+        collapsedAudioDecodeTask = Task.detached(priority: .userInitiated) { [base64, itemID, weak audioPlayer] in
+            let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
+            await MainActor.run {
+                guard let data, let audioPlayer else { return }
+                audioPlayer.toggleDataPlayback(data: data, itemID: itemID)
+            }
+        }
     }
 
     /// Show/hide containers based on which content is active.
@@ -1191,6 +1414,26 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
             )
 
+        case .voiceMessage(let text, let attachmentId, let mimeType, _):
+            var hasher = Hasher()
+            hasher.combine(text)
+            hasher.combine(attachmentId)
+            hasher.combine(mimeType)
+            return ExpandedRenderOutput(
+                renderSignature: hasher.finalize(),
+                renderedText: text,
+                shouldAutoFollow: false,
+                surface: .compactHostedView,
+                viewportMode: .text,
+                verticalLock: false,
+                scrollBehavior: .preserve,
+                lineBreakMode: .byWordWrapping,
+                horizontalScroll: false,
+                deferredHighlight: nil,
+                invalidateLayout: true,
+                installAction: .voiceMessage(text: text, attachmentId: attachmentId, mimeType: mimeType)
+            )
+
         case .status(let message):
             return ToolRowTextRenderStrategy.render(
                 text: message,
@@ -1239,12 +1482,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             break
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
+        case .voiceMessage(let text, let attachmentId, let mimeType):
+            installExpandedVoiceMessageView(text: text, attachmentId: attachmentId, mimeType: mimeType)
         }
 
         switch output.surface {
-        case .label:     showExpandedLabel()
-        case .markdown:  showExpandedMarkdown()
+        case .label: showExpandedLabel()
+        case .markdown: showExpandedMarkdown()
         case .hostedView: showExpandedHostedView()
+        case .compactHostedView: showCompactHostedView()
         }
 
         expandedRenderSignature = output.renderSignature
@@ -1258,7 +1504,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         setExpandedVerticalLockEnabled(output.verticalLock)
         updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
+        if output.surface == .compactHostedView {
+            expandedViewportHeightConstraint?.isActive = false
+            expandedUsesViewport = false
+        } else {
+            showExpandedViewport()
+        }
 
         if let deferred = output.deferredHighlight {
             scheduleDeferredCodeHighlightIfNeeded(deferred, sessionId: perfSessionId)

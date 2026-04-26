@@ -81,6 +81,7 @@ function makeStorageHarness(): Storage & {
     deleteWorkspace: vi.fn(),
     createWorkspace: vi.fn(),
     saveConfig: vi.fn(),
+    getDataDir: vi.fn(() => "/tmp/oppi-session-spawn-state-tests"),
     getSessionsDir: vi.fn(() => "/tmp"),
     getWorkspacesDir: vi.fn(() => "/tmp"),
   } as unknown as Storage & {

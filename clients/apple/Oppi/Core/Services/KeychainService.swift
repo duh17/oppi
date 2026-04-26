@@ -64,7 +64,7 @@ enum KeychainService {
     ///    Activities are enabled.
     static func loadServers() -> [PairedServer] {
         syncUserDefaultsIndex()
-        let shouldMigrateLegacyItems = LiveActivityPreferences.isEnabled
+        let shouldMigrateLegacyItems = AppPreferences.LiveActivity.isEnabled
 
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
@@ -145,7 +145,7 @@ enum KeychainService {
 
         // Any-group fallback (legacy items)
         if let server = loadServerFromGroup(account: account, accessGroup: nil) {
-            if LiveActivityPreferences.isEnabled,
+            if AppPreferences.LiveActivity.isEnabled,
                migrateToSharedGroupIfNeeded(server) {
                 logger.error("Found server \(id.prefix(8), privacy: .public) in legacy group, re-saving to shared")
             }

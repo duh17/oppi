@@ -29,6 +29,11 @@ import { type Session } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import {
+  deleteSessionAttachments,
+  getSessionAttachment,
+  streamSessionAttachment,
+} from "../session-attachments.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
   getContentType,
@@ -173,8 +178,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
       }
 
-      const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
-      const session = ctx.storage.createSession(sessionName, model);
+      const session = ctx.storage.createSession(sessionName, body.model);
 
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;
@@ -192,8 +196,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     // ── Standard new session ──
-    const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
-    const session = ctx.storage.createSession(body.name, model);
+    const session = ctx.storage.createSession(body.name, body.model);
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
@@ -399,10 +402,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       requestedName && requestedName.length > 0 ? requestedName : `Fork: ${sourceName}`
     ).slice(0, 160);
 
-    const forkSession = ctx.storage.createSession(
-      forkName,
-      latestSource.model || workspace.defaultModel,
-    );
+    const forkSession = ctx.storage.createSession(forkName);
 
     forkSession.workspaceId = workspace.id;
     forkSession.workspaceName = workspace.name;
@@ -489,6 +489,35 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     } catch {
       helpers.error(res, 404, "Full tool output not found");
     }
+  }
+
+  async function handleGetSessionAttachment(
+    workspaceId: string,
+    sessionId: string,
+    attachmentId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+    if (session.workspaceId !== workspaceId) {
+      helpers.error(res, 400, "Session does not belong to this workspace");
+      return;
+    }
+
+    const attachment = await getSessionAttachment(
+      ctx.storage.getDataDir(),
+      sessionId,
+      attachmentId,
+    );
+    if (!attachment) {
+      helpers.error(res, 404, "Attachment not found");
+      return;
+    }
+
+    streamSessionAttachment(attachment, res);
   }
 
   async function handleGetToolOutput(
@@ -790,6 +819,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const baseDir = traceBaseDir();
     const traceOptions = {
       view: traceView,
+      attachmentDataDir: baseDir,
+      attachmentSessionId: session.id,
       ...(leafId !== undefined ? { leafId } : {}),
     };
     let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
@@ -880,6 +911,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (!trace || trace.length === 0) {
       const traceOptions = {
         view: traceView,
+        attachmentDataDir: traceBaseDir(),
+        attachmentSessionId: sessionId,
         ...(live?.leafId !== undefined ? { leafId: live.leafId } : {}),
       };
 
@@ -939,6 +972,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     ctx.storage.deleteSession(sessionId);
     ctx.searchIndex?.deleteSession(sessionId);
+    deleteSessionAttachments(ctx.storage.getDataDir(), sessionId);
 
     // Notify connected clients so they can remove stale session entries.
     ctx.streamMux.recordUserStreamEvent(sessionId, {
@@ -991,6 +1025,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionForkMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/);
     if (wsSessionForkMatch && method === "POST") {
       await handleForkWorkspaceSession(wsSessionForkMatch[1], wsSessionForkMatch[2], req, res);
+      return true;
+    }
+
+    const wsSessionAttachmentMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments\/([^/]+)$/,
+    );
+    if (wsSessionAttachmentMatch && method === "GET") {
+      await handleGetSessionAttachment(
+        wsSessionAttachmentMatch[1],
+        wsSessionAttachmentMatch[2],
+        wsSessionAttachmentMatch[3],
+        res,
+      );
       return true;
     }
 

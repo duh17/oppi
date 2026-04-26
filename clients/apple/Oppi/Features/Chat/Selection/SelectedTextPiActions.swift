@@ -14,29 +14,6 @@ final class SelectedTextPiActionRouter {
     }
 }
 
-/// Shim for backward compatibility with tests and call sites that
-/// reference the old hardcoded action kinds.  Maps 1:1 to built-in
-/// `PiQuickAction` entries via their stable UUIDs.
-// periphery:ignore - used by PiQuickActionTests via @testable import
-enum SelectedTextPiActionKind: String, CaseIterable, Equatable {
-    case explain
-    case doIt
-    case fix
-    case refactor
-    case addToPrompt
-
-    /// Convert to the matching built-in `PiQuickAction`.
-    var builtInAction: PiQuickAction {
-        switch self {
-        case .explain: PiQuickAction.builtInDefaults[0]
-        case .doIt: PiQuickAction.builtInDefaults[1]
-        case .fix: PiQuickAction.builtInDefaults[2]
-        case .refactor: PiQuickAction.builtInDefaults[3]
-        case .addToPrompt: PiQuickAction.builtInDefaults[4]
-        }
-    }
-}
-
 enum SelectedTextSurfaceKind: Equatable {
     case assistantProse
     case userMessage
@@ -86,19 +63,23 @@ struct SelectedTextSourceContext: Equatable {
         self.lineRange = lineRange
         self.languageHint = languageHint
     }
+
+    func withLineRange(_ range: ClosedRange<Int>?) -> SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: surface,
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            lineRange: range ?? lineRange,
+            languageHint: languageHint
+        )
+    }
 }
 
 struct SelectedTextPiRequest: Equatable {
     let action: PiQuickAction
     let selectedText: String
     let source: SelectedTextSourceContext
-
-    /// Convenience initializer for backward compatibility with old enum-based callers.
-    init(action: SelectedTextPiActionKind, selectedText: String, source: SelectedTextSourceContext) {
-        self.action = action.builtInAction
-        self.selectedText = selectedText
-        self.source = source
-    }
 
     init(action: PiQuickAction, selectedText: String, source: SelectedTextSourceContext) {
         self.action = action
@@ -160,7 +141,7 @@ enum SelectedTextPiMenuBuilder {
         let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
 
-        let quickActions = actionStore?.actions ?? PiQuickAction.builtInDefaults
+        let quickActions = PiQuickAction.sortedForSelectionMenu(actionStore?.actions ?? PiQuickAction.builtInDefaults)
 
         let menuActions = quickActions.map { quickAction in
             UIAction(
@@ -198,10 +179,60 @@ enum SelectedTextPiEditMenuSupport {
         return SelectedTextPiMenuBuilder.editMenu(
             suggestedActions: suggestedActions,
             selectedText: selectedText,
-            sourceContext: sourceContext,
+            sourceContext: enrichedSourceContext(sourceContext, textView: textView, range: range),
             router: router,
             actionStore: actionStore
         )
+    }
+
+    private static func enrichedSourceContext(
+        _ sourceContext: SelectedTextSourceContext,
+        textView: UITextView,
+        range: NSRange
+    ) -> SelectedTextSourceContext {
+        guard sourceContext.lineRange == nil else { return sourceContext }
+
+        if let attributedRange = attributedLineRange(in: textView, range: range) {
+            return sourceContext.withLineRange(attributedRange)
+        }
+
+        return sourceContext.withLineRange(textLineRange(in: textView.attributedText?.string ?? textView.text ?? "", range: range))
+    }
+
+    private static func attributedLineRange(in textView: UITextView, range: NSRange) -> ClosedRange<Int>? {
+        guard let attributedText = textView.attributedText,
+              range.location != NSNotFound,
+              range.length > 0,
+              NSMaxRange(range) <= attributedText.length else {
+            return nil
+        }
+
+        let start = max(0, range.location)
+        let end = max(start, NSMaxRange(range) - 1)
+        var numbers: [Int] = []
+        attributedText.enumerateAttribute(reviewLineNumberAttributeKey, in: NSRange(location: start, length: end - start + 1)) { value, _, _ in
+            if let number = value as? Int {
+                numbers.append(number)
+            }
+        }
+        guard let min = numbers.min(), let max = numbers.max() else { return nil }
+        return min...max
+    }
+
+    private static func textLineRange(in text: String, range: NSRange) -> ClosedRange<Int>? {
+        guard range.location != NSNotFound, range.length > 0 else { return nil }
+        let nsText = text as NSString
+        guard NSMaxRange(range) <= nsText.length else { return nil }
+
+        let before = nsText.substring(to: range.location)
+        let selected = nsText.substring(with: range)
+        let startLine = before.reduce(1) { count, character in
+            character == "\n" ? count + 1 : count
+        }
+        let additionalLines = selected.reduce(0) { count, character in
+            character == "\n" ? count + 1 : count
+        }
+        return startLine...max(startLine, startLine + additionalLines)
     }
 }
 
@@ -233,6 +264,47 @@ extension EnvironmentValues {
     var piQuickActionStore: PiQuickActionStore? {
         get { self[PiQuickActionStoreEnvironmentKey.self] }
         set { self[PiQuickActionStoreEnvironmentKey.self] = newValue }
+    }
+}
+
+enum SelectedTextPiRoute: Equatable {
+    case currentSessionDraft(String)
+    case quickSessionDraft(String)
+    case reviewComment(SelectedTextPiRequest)
+}
+
+enum SelectedTextPiRoutingContext: Equatable {
+    case activeChat
+    case nonChat
+}
+
+enum SelectedTextPiRouterPolicy {
+    static func route(
+        request: SelectedTextPiRequest,
+        context: SelectedTextPiRoutingContext
+    ) -> SelectedTextPiRoute? {
+        switch request.action.behavior {
+        case .reviewComment:
+            switch context {
+            case .activeChat:
+                return .reviewComment(request)
+            case .nonChat:
+                let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+                return addition.isEmpty ? nil : .quickSessionDraft(addition)
+            }
+        case .newSession:
+            let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            return addition.isEmpty ? nil : .quickSessionDraft(addition)
+        case .currentSession:
+            let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            guard !addition.isEmpty else { return nil }
+            switch context {
+            case .activeChat:
+                return .currentSessionDraft(addition)
+            case .nonChat:
+                return .quickSessionDraft(addition)
+            }
+        }
     }
 }
 

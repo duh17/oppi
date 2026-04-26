@@ -3,6 +3,7 @@ import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import { createAskFactory } from "../extensions/ask.js";
 import { isWorkspaceExtensionEnabled } from "../extensions/first-party.js";
 import { createSubagentsFactory } from "../extensions/subagents.js";
+import { createVoiceFactory } from "../extensions/voice.js";
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -110,6 +111,10 @@ export class SessionStartCoordinator {
 
         if (isWorkspaceExtensionEnabled(workspace, "ask")) {
           extraExtensionFactories.push(createAskFactory());
+        }
+
+        if (isWorkspaceExtensionEnabled(workspace, "voice")) {
+          extraExtensionFactories.push(createVoiceFactory());
         }
 
         if (isWorkspaceExtensionEnabled(workspace, "subagents")) {

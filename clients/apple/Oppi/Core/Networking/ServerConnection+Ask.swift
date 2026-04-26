@@ -72,4 +72,51 @@ extension ServerConnection {
             activeAskRequest = nil
         }
     }
+
+    // MARK: - Generic extension dialog lifecycle helpers
+
+    func presentExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
+        pendingExtensionDialogs.removeValue(forKey: sessionId)
+        extensionTimeoutTask?.cancel()
+        activeExtensionDialog = request
+        scheduleExtensionTimeout(request)
+    }
+
+    func stashPendingExtensionDialog(_ request: ExtensionUIRequest, for sessionId: String) {
+        pendingExtensionDialogs[sessionId] = request
+    }
+
+    func restorePendingExtensionDialogIfNeeded(for sessionId: String) {
+        if let restored = pendingExtensionDialogs.removeValue(forKey: sessionId) {
+            extensionTimeoutTask?.cancel()
+            activeExtensionDialog = restored
+            scheduleExtensionTimeout(restored)
+        } else {
+            activeExtensionDialog = nil
+        }
+    }
+
+    func stashActiveExtensionDialogIfNeeded() {
+        guard let activeSessionId, let request = activeExtensionDialog else { return }
+        pendingExtensionDialogs[activeSessionId] = request
+        activeExtensionDialog = nil
+        extensionTimeoutTask?.cancel()
+        extensionTimeoutTask = nil
+    }
+
+    func clearExtensionDialog(for sessionId: String?) {
+        guard let sessionId else {
+            activeExtensionDialog = nil
+            extensionTimeoutTask?.cancel()
+            extensionTimeoutTask = nil
+            return
+        }
+
+        pendingExtensionDialogs.removeValue(forKey: sessionId)
+        if activeExtensionDialog?.sessionId == sessionId {
+            activeExtensionDialog = nil
+            extensionTimeoutTask?.cancel()
+            extensionTimeoutTask = nil
+        }
+    }
 }

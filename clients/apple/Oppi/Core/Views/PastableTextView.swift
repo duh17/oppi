@@ -48,7 +48,9 @@ private func requestSystemDictation(for textView: UITextView) {
 }
 
 private func volatileTranscriptBackgroundColor() -> UIColor {
-    UIColor(Color.themeBlue.opacity(0.14))
+    // Needs to read clearly against the darker glass composer background
+    // without looking like a full text selection.
+    UIColor(Color.themeBlue.opacity(0.20))
 }
 
 /// Clamp raw inline composer content height to min/max line bounds.
@@ -392,7 +394,7 @@ struct PastableTextView: UIViewRepresentable {
         /// may report nil or the device's default keyboard instead of the
         /// user's previously active one. Writing that stale value would corrupt
         /// both the `@State keyboardLanguage` binding and the persisted
-        /// `KeyboardLanguageStore`, causing the next voice session to use
+        /// `AppPreferences.Keyboard`, causing the next voice session to use
         /// the wrong speech model.
         func updateKeyboardLanguage() {
             // Walk responder chain to find our text view
@@ -403,7 +405,7 @@ struct PastableTextView: UIViewRepresentable {
             }
             let lang = textView.textInputMode?.primaryLanguage
             keyboardLanguage = lang
-            KeyboardLanguageStore.save(lang)
+            AppPreferences.Keyboard.save(lang)
         }
 
         private func findFirstResponderTextView() -> UITextView? {
@@ -433,7 +435,7 @@ struct PastableTextView: UIViewRepresentable {
             } else {
                 let lang = textView.textInputMode?.primaryLanguage
                 keyboardLanguage = lang
-                KeyboardLanguageStore.save(lang)
+                AppPreferences.Keyboard.save(lang)
             }
             notifyLineCountIfNeeded(textView)
             notifyDictationStateIfNeeded(textView)
@@ -656,7 +658,7 @@ struct FullSizeTextView: UIViewRepresentable {
             }
             let lang = textView.textInputMode?.primaryLanguage
             keyboardLanguage = lang
-            KeyboardLanguageStore.save(lang)
+            AppPreferences.Keyboard.save(lang)
         }
 
         private func updateKeyboardLanguageFromObservedTextView() {

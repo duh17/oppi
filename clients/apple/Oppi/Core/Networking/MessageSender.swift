@@ -64,7 +64,7 @@ final class MessageSender {
         try await dispatchSend(message)
     }
 
-    func dispatchSend(_ message: ClientMessage) async throws {
+    func dispatchSend(_ message: ClientMessage, sessionIdOverride: String? = nil) async throws {
         if let sendHook = _sendMessageForTesting {
             try await sendHook(message)
             return
@@ -72,18 +72,20 @@ final class MessageSender {
 
         guard let wsClient else { throw WebSocketError.notConnected }
 
-        // Session-scoped messages require a valid activeSessionId.
+        let targetSessionId = sessionIdOverride ?? activeSessionId
+
+        // Session-scoped messages require a valid session envelope.
         // During the reconnect gap (disconnectSession clears it, streamSession
         // re-sets it), messages sent without session scope reach the server but
         // can't be routed — the server silently drops them, no ack arrives,
         // and the user waits for the full ack timeout with no feedback.
         // Fail fast so the error handler can restore the text immediately.
-        if activeSessionId == nil, !Self.isSessionLevelCommand(message) {
-            logger.error("SEND blocked: activeSessionId is nil for session-scoped \(message.typeLabel, privacy: .public)")
+        if targetSessionId == nil, !Self.isSessionLevelCommand(message) {
+            logger.error("SEND blocked: targetSessionId is nil for session-scoped \(message.typeLabel, privacy: .public)")
             throw WebSocketError.notConnected
         }
 
-        try await wsClient.send(message, sessionId: activeSessionId)
+        try await wsClient.send(message, sessionId: targetSessionId)
     }
 
     /// Returns true for messages that don't require a session envelope

@@ -7,7 +7,7 @@ import UIKit
 /// - While any tracked session is active (voice input or busy agent), screen
 ///   sleep is prevented immediately.
 /// - After activity stops, prevention remains enabled for the configured
-///   timeout (`ScreenAwakePreferences`) before releasing.
+///   timeout (`AppPreferences.ScreenAwake`) before releasing.
 @MainActor
 final class ScreenAwakeController {
     static let shared = ScreenAwakeController()
@@ -26,7 +26,7 @@ final class ScreenAwakeController {
     private(set) var isPreventingSleep = false
 
     init(
-        timeoutProvider: @escaping TimeoutProvider = { ScreenAwakePreferences.keepAwakeDuration },
+        timeoutProvider: @escaping TimeoutProvider = { AppPreferences.ScreenAwake.keepAwakeDuration },
         idleTimerSetter: @escaping IdleTimerSetter = { UIApplication.shared.isIdleTimerDisabled = $0 },
         sleepFunction: @escaping SleepFunction = { duration in
             try await Task.sleep(for: duration)

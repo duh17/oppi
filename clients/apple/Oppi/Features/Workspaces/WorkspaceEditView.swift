@@ -37,7 +37,6 @@ struct WorkspaceEditView: View {
     @State private var availableExtensions: [ExtensionInfo] = []
     @State private var isLoadingExtensions = false
     @State private var extensionsError: String?
-    @State private var defaultModel: String = ""
     @State private var isSaving = false
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
@@ -64,27 +63,6 @@ struct WorkspaceEditView: View {
 
     private var disabledSkills: [SkillInfo] {
         skills.filter { !selectedSkills.contains($0.name) }
-    }
-
-    private var filteredModels: [ModelInfo] {
-        Self.filterModels(availableModels, query: defaultModel)
-    }
-
-    /// Filter and rank models by fuzzy-matching `query` against name and ID.
-    /// Returns all models when the query is empty or exactly matches a model ID.
-    nonisolated static func filterModels(_ models: [ModelInfo], query: String) -> [ModelInfo] {
-        if query.isEmpty { return models }
-        if models.contains(where: { $0.id == query }) { return models }
-
-        let scored: [(model: ModelInfo, score: Int)] = models.compactMap { model in
-            let nameScore = FuzzyMatch.match(query: query, candidate: model.name)?.score
-            let idScore = FuzzyMatch.match(query: query, candidate: model.id)?.score
-            guard let best = [nameScore, idScore].compactMap({ $0 }).max() else {
-                return nil
-            }
-            return (model, best)
-        }
-        return scored.sorted { $0.score > $1.score }.map(\.model)
     }
 
     private var workspaceForEditing: Workspace {
@@ -302,29 +280,6 @@ struct WorkspaceEditView: View {
                 .selectionDisabled()
             }
 
-            Section("Default Model") {
-                TextField("Model identifier", text: $defaultModel)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-
-                ForEach(filteredModels) { model in
-                    Button {
-                        defaultModel = model.id
-                    } label: {
-                        HStack {
-                            Text(model.name)
-                            Spacer()
-                            if defaultModel == model.id {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.tint)
-                            }
-                        }
-                    }
-                    .foregroundStyle(.themeFg)
-                }
-            }
-            .selectionDisabled()
-
             if let error {
                 Section {
                     Text(error)
@@ -477,7 +432,6 @@ struct WorkspaceEditView: View {
         systemPromptMode = source.systemPromptMode
         gitStatusEnabled = source.gitStatusEnabled ?? true
         setSelectedExtensionNames(source.extensions ?? [])
-        defaultModel = source.defaultModel ?? ""
         runtime = source.runtime
         allowedHostsText = source.sandboxConfig?.allowedHosts?.joined(separator: "\n") ?? "*"
     }
@@ -541,7 +495,6 @@ struct WorkspaceEditView: View {
             hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
             extensions: parseUniqueNames(extensionNames),
-            defaultModel: nullableJSONString(defaultModel),
             sandboxConfig: sandboxConfigValue
         )
 

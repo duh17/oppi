@@ -24,6 +24,7 @@ struct ExpandedRenderOutput {
         case label
         case markdown
         case hostedView
+        case compactHostedView
     }
 
     enum ScrollBehavior {
@@ -38,5 +39,6 @@ struct ExpandedRenderOutput {
     enum InstallAction {
         case none
         case readMedia(output: String, isError: Bool, filePath: String?, startLine: Int)
+        case voiceMessage(text: String, attachmentId: String, mimeType: String)
     }
 }

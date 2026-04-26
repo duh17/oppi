@@ -12,12 +12,8 @@ import Foundation
 ///
 /// ## Usage
 ///
-///     // New code — use the domain namespace:
 ///     let enabled = AppPreferences.LiveActivity.isEnabled
-///     AppPreferences.Session.setAutoTitleEnabled(true)
-///
-///     // Legacy typealiases still work for existing consumers:
-///     let mode = VoiceInputPreferences.engineMode   // same as AppPreferences.Voice.engineMode
+///     AppPreferences.Session.setAutoTitleProvider(.server)
 ///
 enum AppPreferences {
 
@@ -191,15 +187,11 @@ enum AppPreferences {
 
     /// Persisted defaults for the Quick Session sheet.
     ///
-    /// Stores the last-used workspace, model, and thinking level so the sheet
-    /// opens pre-configured to the user's most recent choices.
+    /// Stores the last-used workspace so the sheet opens in the user's most recent context.
     enum QuickSession {
         private static let prefix = "\(AppIdentifiers.subsystem).quickSession"
 
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
-        private static let lastModelIdKey = "\(prefix).lastModelId"
-        private static let lastThinkingLevelKey = "\(prefix).lastThinkingLevel"
-
         // MARK: Workspace
 
         static var lastWorkspaceId: String? {
@@ -210,30 +202,6 @@ enum AppPreferences {
             UserDefaults.standard.set(id, forKey: lastWorkspaceIdKey)
         }
 
-        // MARK: Model
-
-        static var lastModelId: String? {
-            UserDefaults.standard.string(forKey: lastModelIdKey)
-        }
-
-        static func saveModelId(_ id: String) {
-            UserDefaults.standard.set(id, forKey: lastModelIdKey)
-        }
-
-        // MARK: Thinking Level
-
-        static var lastThinkingLevel: ThinkingLevel {
-            guard let raw = UserDefaults.standard.string(forKey: lastThinkingLevelKey),
-                  let level = ThinkingLevel(rawValue: raw)
-            else {
-                return .medium
-            }
-            return level
-        }
-
-        static func saveThinkingLevel(_ level: ThinkingLevel) {
-            UserDefaults.standard.set(level.rawValue, forKey: lastThinkingLevelKey)
-        }
     }
 
     // MARK: - Appearance
@@ -300,50 +268,25 @@ enum AppPreferences {
             case off
         }
 
-        /// UserDefaults key for auto-title enabled state.
-        /// Exposed (internal) so test helpers can set up UserDefaults directly.
-        static let autoTitleEnabledKey = "\(AppIdentifiers.subsystem).session.autoTitle.enabled"
-
         /// UserDefaults key for auto-title provider.
         static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
 
         /// The active auto-title provider.
-        ///
-        /// Backward compat: if no provider key exists yet but the legacy enabled
-        /// key is true, returns `.server`. If legacy key is explicitly false,
-        /// returns `.off`.
         static var autoTitleProvider: AutoTitleProvider {
             if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
                let provider = AutoTitleProvider(rawValue: raw) {
                 return provider
-            }
-            // Legacy migration: old boolean key → new provider
-            if let legacyEnabled = UserDefaults.standard.object(forKey: autoTitleEnabledKey) as? Bool {
-                return legacyEnabled ? .server : .off
             }
             return .server
         }
 
         static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
             UserDefaults.standard.set(provider.rawValue, forKey: autoTitleProviderKey)
-            // Keep legacy key in sync for any code that still reads it
-            UserDefaults.standard.set(provider != .off, forKey: autoTitleEnabledKey)
         }
 
         /// Convenience: true when any provider is active.
         static var isAutoTitleEnabled: Bool {
             autoTitleProvider != .off
-        }
-
-        static func setAutoTitleEnabled(_ enabled: Bool) {
-            if enabled {
-                // Only flip to server if currently off
-                if autoTitleProvider == .off {
-                    setAutoTitleProvider(.server)
-                }
-            } else {
-                setAutoTitleProvider(.off)
-            }
         }
     }
 
@@ -404,13 +347,3 @@ enum AppPreferences {
     }
 }
 
-// MARK: - Backward Compatibility
-
-/// Source-compatibility aliases for consumers that reference the old type names.
-/// New code should prefer `AppPreferences.LiveActivity`, `AppPreferences.Voice`, etc.
-typealias LiveActivityPreferences = AppPreferences.LiveActivity
-typealias ScreenAwakePreferences = AppPreferences.ScreenAwake
-typealias VoiceInputPreferences = AppPreferences.Voice
-typealias KeyboardLanguageStore = AppPreferences.Keyboard
-typealias QuickSessionDefaults = AppPreferences.QuickSession
-typealias RecentModels = AppPreferences.RecentModels

@@ -456,7 +456,7 @@ final class LiveActivityManager {
     }
 
     private func refreshLifecycle() {
-        let liveActivitiesEnabled = LiveActivityPreferences.isEnabled
+        let liveActivitiesEnabled = AppPreferences.LiveActivity.isEnabled
 
         if liveActivitiesEnabled {
             recoverTrackedActivityReferenceIfNeeded()
@@ -584,7 +584,7 @@ final class LiveActivityManager {
     }
 
     private func ensureActivityStartedIfNeeded() {
-        guard LiveActivityPreferences.isEnabled else { return }
+        guard AppPreferences.LiveActivity.isEnabled else { return }
 
         // Check if our tracked activity was ended by the system (8-hour limit,
         // user removal). activityState is synchronously available.
@@ -674,7 +674,7 @@ final class LiveActivityManager {
     /// Throttled push: coalesces rapid state changes into at most one
     /// ActivityKit update per `pushThrottleInterval`.
     private func pushUpdate() {
-        guard LiveActivityPreferences.isEnabled else { return }
+        guard AppPreferences.LiveActivity.isEnabled else { return }
         guard activeActivity != nil else { return }
 
         hasPendingPush = true
@@ -696,7 +696,7 @@ final class LiveActivityManager {
     }
 
     private func executePush() {
-        guard LiveActivityPreferences.isEnabled else { return }
+        guard AppPreferences.LiveActivity.isEnabled else { return }
         guard let activity = activeActivity else { return }
 
         hasPendingPush = false

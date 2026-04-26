@@ -1,22 +1,17 @@
-import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
+import type { PiStateSnapshot } from "./pi-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
-import type { Session, ServerMessage } from "./types.js";
-import { createLogger } from "./logger.js";
+import type { Session } from "./types.js";
 
 export interface SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
 }
 
-const log = createLogger({ base: { component: "session_state" } });
-
 export interface SessionStateCoordinatorDeps {
   storage: Storage;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
-  sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   persistSessionNow: (key: string, session: Session) => void;
-  broadcast: (key: string, message: ServerMessage) => void;
 }
 
 /**
@@ -40,8 +35,6 @@ export class SessionStateCoordinator {
       if (this.applyPiStateSnapshot(active.session, snapshot)) {
         this.deps.persistSessionNow(key, active.session);
       }
-
-      await this.applyRememberedThinkingLevel(key, active);
     } catch {
       // Non-fatal; history remains recoverable from pi trace metadata/files.
     }
@@ -63,84 +56,6 @@ export class SessionStateCoordinator {
       };
     } catch {
       return null;
-    }
-  }
-
-  getRememberedThinkingLevel(modelId: string | undefined): string | undefined {
-    const normalizedModelId = modelId?.trim();
-    if (!normalizedModelId) {
-      return undefined;
-    }
-
-    return this.deps.storage.getModelThinkingLevelPreference(normalizedModelId);
-  }
-
-  persistThinkingPreference(session: Session): void {
-    const modelId = session.model?.trim();
-    const level = session.thinkingLevel?.trim();
-    if (!modelId || !level) {
-      return;
-    }
-
-    this.deps.storage.setModelThinkingLevelPreference(modelId, level);
-  }
-
-  /**
-   * Persist the last-used model on the workspace so new sessions
-   * default to it (sticky model per workspace).
-   */
-  persistWorkspaceLastUsedModel(session: Session): void {
-    const model = session.model?.trim();
-    if (!model || !session.workspaceId) return;
-
-    const workspace = this.deps.storage.getWorkspace(session.workspaceId);
-    if (!workspace || workspace.lastUsedModel === model) return;
-
-    workspace.lastUsedModel = model;
-    workspace.updatedAt = Date.now();
-    this.deps.storage.saveWorkspace(workspace);
-  }
-
-  async applyRememberedThinkingLevel(
-    key: string,
-    active: SessionStateActiveSession,
-  ): Promise<boolean> {
-    const preferred = this.getRememberedThinkingLevel(active.session.model);
-    if (!preferred) {
-      return false;
-    }
-
-    if (active.session.thinkingLevel === preferred) {
-      return false;
-    }
-
-    try {
-      await this.deps.sendCommandAsync(key, { type: "set_thinking_level", level: preferred });
-
-      try {
-        const state = await this.deps.sendCommandAsync(key, { type: "get_state" });
-        const snapshot = parsePiStateSnapshot(state);
-        if (snapshot && this.applyPiStateSnapshot(active.session, snapshot)) {
-          this.deps.persistSessionNow(key, active.session);
-        }
-      } catch {
-        active.session.thinkingLevel = preferred;
-        this.deps.persistSessionNow(key, active.session);
-      }
-
-      this.persistThinkingPreference(active.session);
-
-      // Broadcast corrected session so iOS subscribers see the restored level.
-      this.deps.broadcast(key, { type: "state", session: active.session });
-
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.warn("session_state.apply_remembered_thinking_level.failed", {
-        sessionId: active.session.id,
-        error: message,
-      });
-      return false;
     }
   }
 
@@ -215,7 +130,6 @@ export class SessionStateCoordinator {
 
       if (session.model !== effectiveModelId) {
         session.model = effectiveModelId;
-        this.persistWorkspaceLastUsedModel(session);
         changed = true;
       }
 
@@ -242,12 +156,8 @@ export class SessionStateCoordinator {
       changed = true;
     }
 
-    // NOTE: Do NOT persist thinking preference here. This method is called
-    // during bootstrap (get_state) when pi reports its factory-default level.
-    // Persisting would clobber the user's real preference with the default,
-    // making applyRememberedThinkingLevel a permanent no-op.
-    // Callers that handle user-initiated changes (forwardClientCommand for
-    // set_thinking_level/cycle_thinking_level/cycle_model) persist explicitly.
+    // Pi owns thinking defaults and per-session thinking changes. Oppi mirrors
+    // the current value on Session only so clients can render the toolbar.
 
     return changed;
   }

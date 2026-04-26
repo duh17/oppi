@@ -73,6 +73,7 @@ struct WorkspaceContextBar: View {
     let sessionId: String?
     let childSessions: [Session]
     var onSelectChild: ((String) -> Void)?
+    var fileDetailPiRouter: SelectedTextPiActionRouter?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
     var collapseToken: Int = 0
     /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
@@ -108,6 +109,7 @@ struct WorkspaceContextBar: View {
         sessionId: String? = nil,
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
+        fileDetailPiRouter: SelectedTextPiActionRouter? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
     ) {
@@ -118,11 +120,27 @@ struct WorkspaceContextBar: View {
         self.sessionId = sessionId
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
+        self.fileDetailPiRouter = fileDetailPiRouter
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
     }
 
     // MARK: - Session scoping
+
+    static func makeFileDetailPiRouter(
+        parentRouter: SelectedTextPiActionRouter?,
+        fallbackRouter: SelectedTextPiActionRouter?,
+        dismissFileDetail: @escaping () -> Void
+    ) -> SelectedTextPiActionRouter? {
+        if let parentRouter {
+            return SelectedTextPiActionRouter { request in
+                dismissFileDetail()
+                parentRouter.dispatch(request)
+            }
+        }
+
+        return fallbackRouter
+    }
 
     /// When viewing a session that has touched files, scope the bar to show only those files.
     /// Returns nil if no session, no changeStats, or the session hasn't modified any files yet.
@@ -674,7 +692,12 @@ struct WorkspaceContextBar: View {
                 WorkspaceReviewFileDetailView(
                     workspaceId: workspaceId,
                     selectedSessionId: sessionId,
-                    file: file.toReviewFile()
+                    file: file.toReviewFile(),
+                    selectedTextPiRouterOverride: Self.makeFileDetailPiRouter(
+                        parentRouter: fileDetailPiRouter,
+                        fallbackRouter: nil,
+                        dismissFileDetail: { selectedFile = nil }
+                    )
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {

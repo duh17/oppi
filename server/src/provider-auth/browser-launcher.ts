@@ -2,17 +2,17 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 function waitForSpawn(child: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {
-    const handleSpawn = () => {
+    const handleSpawn = (): void => {
       cleanup();
       resolve();
     };
 
-    const handleError = (error: Error) => {
+    const handleError = (error: Error): void => {
       cleanup();
       reject(error);
     };
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       child.off("spawn", handleSpawn);
       child.off("error", handleError);
     };

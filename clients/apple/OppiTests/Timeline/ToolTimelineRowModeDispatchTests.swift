@@ -170,6 +170,7 @@ struct ToolTimelineRowModeDispatchTests {
             .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
             .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
+            .init(content: .voiceMessage(text: "hi", attachmentId: "att-1", mimeType: "audio/wav", durationSeconds: 1.2), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
             .init(content: .text(text: "extension output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
         ]
 
@@ -1512,7 +1513,7 @@ private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Ro
     case .diff:                   return .diff
     case .code:                   return .code
     case .markdown:               return .markdown
-    case .readMedia:              return .readMedia
+    case .readMedia, .voiceMessage: return .readMedia
     case .status, .text:          return .text
     }
 }

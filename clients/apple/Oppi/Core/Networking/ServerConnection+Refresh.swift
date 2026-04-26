@@ -283,13 +283,10 @@ extension ServerConnection {
         }
 
         if !streamAlive {
-            activeExtensionDialog = nil
-            // Stash the pending ask so focusSession() can restore it after
-            // the reconnect. Without this, the ask card is permanently lost
-            // because the subscribe dedup on the server skips re-sending it.
+            // Stash pending user-blocking UI so focusSession() can restore it
+            // locally and stream subscribe replay can restore it from the server.
             stashActiveAskIfNeeded()
-            extensionTimeoutTask?.cancel()
-            extensionTimeoutTask = nil
+            stashActiveExtensionDialogIfNeeded()
 
             do {
                 let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)

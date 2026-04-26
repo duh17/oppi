@@ -101,6 +101,22 @@ struct AsyncAudioBlob: View {
 extension ToolPresentationBuilder {
     private static let extensionStructuredParseBudgetBytes = 64 * 1024
 
+    /// Pi/Yuwp voice tools (`voice_create`, `voice_speak`) may return
+    /// `tool_end.details.audio` with `{ kind: "audio", id?, mimeType,
+    /// storageKey?, fileName?, durationSeconds? }`. New results replay by fetching
+    /// the session attachment from the Oppi server; base64/path are legacy fallbacks.
+    struct ToolAudioAttachmentDetails: Equatable {
+        let id: String?
+        let mimeType: String
+        let base64: String?
+        let fileName: String?
+        let path: String?
+        let storageKey: String?
+        let sizeBytes: Int?
+        let durationSeconds: Double?
+        let message: String?
+    }
+
     private struct ParsedUnifiedDiff {
         let lines: [DiffLine]
         let path: String?
@@ -122,6 +138,10 @@ extension ToolPresentationBuilder {
             let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
             textOutput = sanitized.isEmpty ? output : sanitized
         }
+        if let audio = toolAudioAttachmentDetails(from: details) {
+            return voiceAudioExpandedContent(audio: audio, fallbackText: textOutput)
+        }
+
         let format = normalizedExtensionPresentationFormat(details)
         let filePathHint = extensionDetailString(details, keys: ["filePath"])
         let languageHint = extensionLanguageHint(details: details, filePathHint: filePathHint)
@@ -188,6 +208,93 @@ extension ToolPresentationBuilder {
         }
 
         return (.text(text: textOutput, language: nil), textOutput)
+    }
+
+    static func toolAudioAttachmentDetails(from details: JSONValue?) -> ToolAudioAttachmentDetails? {
+        guard let object = details?.objectValue,
+              let audio = object["audio"]?.objectValue,
+              audio["kind"]?.stringValue == "audio" else {
+            return nil
+        }
+
+        let mimeType = audio["mimeType"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            ?? ""
+        guard mimeType == "audio/wav" else {
+            return ToolAudioAttachmentDetails(
+                id: audio["id"]?.stringValue,
+                mimeType: mimeType.isEmpty ? "audio/unknown" : mimeType,
+                base64: nil,
+                fileName: audio["fileName"]?.stringValue,
+                path: audio["path"]?.stringValue,
+                storageKey: audio["storageKey"]?.stringValue,
+                sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
+                durationSeconds: audio["durationSeconds"]?.numberValue,
+                message: object["message"]?.stringValue
+            )
+        }
+
+        let base64 = audio["base64"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ToolAudioAttachmentDetails(
+            id: audio["id"]?.stringValue,
+            mimeType: mimeType,
+            base64: base64?.isEmpty == false ? base64 : nil,
+            fileName: audio["fileName"]?.stringValue,
+            path: audio["path"]?.stringValue,
+            storageKey: audio["storageKey"]?.stringValue,
+            sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
+            durationSeconds: audio["durationSeconds"]?.numberValue,
+            message: object["message"]?.stringValue
+        )
+    }
+
+    private static func voiceAudioExpandedContent(
+        audio: ToolAudioAttachmentDetails,
+        fallbackText _: String
+    ) -> (content: ToolExpandedContent, copyOutput: String) {
+        let title = "Voice message"
+        let message = audio.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard audio.mimeType == "audio/wav" else {
+            let message = "Audio unavailable on iOS: unsupported MIME type \(audio.mimeType)"
+            return (.readMedia(output: message, filePath: title, startLine: 1), message)
+        }
+
+        if let attachmentId = audio.id, !attachmentId.isEmpty {
+            let displayText = title
+            return (
+                .voiceMessage(
+                    text: displayText,
+                    attachmentId: attachmentId,
+                    mimeType: audio.mimeType,
+                    durationSeconds: audio.durationSeconds
+                ),
+                displayText
+            )
+        }
+
+        guard let base64 = audio.base64, !base64.isEmpty else {
+            let displayText = title
+            return (.text(text: displayText, language: nil), displayText)
+        }
+
+        var outputLines: [String] = []
+        if !message.isEmpty {
+            outputLines.append(message)
+        }
+        outputLines.append("data:audio/wav;base64,\(base64)")
+        let output = outputLines.joined(separator: "\n")
+        return (.readMedia(output: output, filePath: title, startLine: 1), title)
+    }
+
+    static func formatDuration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "" }
+        let total = Int(seconds.rounded())
+        let minutes = total / 60
+        let remaining = total % 60
+        if minutes > 0 {
+            return String(format: "%d:%02d", minutes, remaining)
+        }
+        return String(format: "0:%02d", remaining)
     }
 
     private static func normalizedExtensionPresentationFormat(_ details: JSONValue?) -> String? {

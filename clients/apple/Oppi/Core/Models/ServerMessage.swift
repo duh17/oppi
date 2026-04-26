@@ -16,6 +16,25 @@ struct DictationTranscriptSplit: Sendable, Equatable {
     let activeText: String?
 }
 
+struct AudioStreamMessage: Sendable, Equatable {
+    enum StreamEvent: String, Codable, Sendable {
+        case metadata
+        case chunk
+        case done
+        case error
+    }
+
+    let id: String
+    let event: StreamEvent
+    let mimeType: String
+    let sampleRate: Int?
+    let channels: Int?
+    let chunkIndex: Int?
+    let audioBase64: String?
+    let text: String?
+    let durationSeconds: Double?
+}
+
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
     case streamConnected(userName: String, asrAvailable: Bool)
@@ -33,6 +52,7 @@ enum ServerMessage: Sendable, Equatable {
     case messageEnd(role: String, content: String)
     case textDelta(delta: String)
     case thinkingDelta(delta: String)
+    case audioStream(AudioStreamMessage)
 
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
@@ -102,9 +122,38 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     var placeholder: String?
     var prefill: String?
     var timeout: Int?
+    var timeoutAt: Date?
     // Ask extension fields (method: "ask")
     var askQuestions: [AskQuestion]?
     var allowCustom: Bool?
+
+    init(
+        id: String,
+        sessionId: String,
+        method: String,
+        title: String? = nil,
+        options: [String]? = nil,
+        message: String? = nil,
+        placeholder: String? = nil,
+        prefill: String? = nil,
+        timeout: Int? = nil,
+        timeoutAt: Date? = nil,
+        askQuestions: [AskQuestion]? = nil,
+        allowCustom: Bool? = nil
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.method = method
+        self.title = title
+        self.options = options
+        self.message = message
+        self.placeholder = placeholder
+        self.prefill = prefill
+        self.timeout = timeout
+        self.timeoutAt = timeoutAt
+        self.askQuestions = askQuestions
+        self.allowCustom = allowCustom
+    }
 }
 
 struct ExtensionUINotification: Sendable, Equatable {
@@ -151,8 +200,8 @@ extension ServerMessage: Decodable {
         case session
         // session_ended / stop lifecycle
         case reason, source
-        // message_end / text_delta / thinking_delta
-        case role, content, delta
+        // message_end / text_delta / thinking_delta / audio_stream
+        case role, content, delta, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds
         // tool_start / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
@@ -243,6 +292,20 @@ extension ServerMessage: Decodable {
         case "thinking_delta":
             let delta = try c.decode(String.self, forKey: .delta)
             self = .thinkingDelta(delta: delta)
+
+        case "audio_stream":
+            let stream = AudioStreamMessage(
+                id: try c.decode(String.self, forKey: .id),
+                event: try c.decode(AudioStreamMessage.StreamEvent.self, forKey: .event),
+                mimeType: try c.decode(String.self, forKey: .mimeType),
+                sampleRate: try c.decodeIfPresent(Int.self, forKey: .sampleRate),
+                channels: try c.decodeIfPresent(Int.self, forKey: .channels),
+                chunkIndex: try c.decodeIfPresent(Int.self, forKey: .chunkIndex),
+                audioBase64: try c.decodeIfPresent(String.self, forKey: .audioBase64),
+                text: try c.decodeIfPresent(String.self, forKey: .text),
+                durationSeconds: try c.decodeIfPresent(Double.self, forKey: .durationSeconds)
+            )
+            self = .audioStream(stream)
 
         case "tool_start":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -365,6 +428,7 @@ extension ServerMessage: Decodable {
                 placeholder: try c.decodeIfPresent(String.self, forKey: .placeholder),
                 prefill: try c.decodeIfPresent(String.self, forKey: .prefill),
                 timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
+                timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
                 askQuestions: askQuestions,
                 allowCustom: allowCustom
             )
@@ -507,6 +571,7 @@ extension ServerMessage {
         case .messageEnd: "messageEnd"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
+        case .audioStream: "audioStream"
         case .toolStart: "toolStart"
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"

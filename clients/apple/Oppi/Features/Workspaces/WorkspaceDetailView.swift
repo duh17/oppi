@@ -1,5 +1,30 @@
 import SwiftUI
 
+/// Sort "Your Turn" sessions so the user sees the oldest waiting item first.
+///
+/// Priority remains permission requests before ask requests before plain ready/error
+/// sessions. Within the same priority tier, use the same timestamp shown in the
+/// row (`lastActivity`) so the visual order matches the visible "xh ago" label.
+func workspaceYourTurnSorted(
+    _ sessions: [Session],
+    hasPermissionInQueue: (String) -> Bool,
+    hasAskInQueue: (String) -> Bool
+) -> [Session] {
+    sessions.sorted { lhs, rhs in
+        let lhsPermPending = hasPermissionInQueue(lhs.id)
+        let rhsPermPending = hasPermissionInQueue(rhs.id)
+        if lhsPermPending != rhsPermPending { return lhsPermPending }
+
+        let lhsAskPending = hasAskInQueue(lhs.id)
+        let rhsAskPending = hasAskInQueue(rhs.id)
+        if lhsAskPending != rhsAskPending { return lhsAskPending }
+
+        if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity < rhs.lastActivity }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id < rhs.id
+    }
+}
+
 /// Detail view for a workspace — shows its sessions with management actions.
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
@@ -242,37 +267,26 @@ struct WorkspaceDetailView: View {
             }
         }
 
-        // Your Turn: apply search, sort by pending-first then oldest turnEndedDate (FIFO)
+        // Your Turn: apply search, keep user-input priorities, then oldest visible activity first.
         let yourTurnRoots: [Session] = {
             let filtered = hasSessionSearchQuery
                 ? yourTurnUnfiltered.filter { rootOrDescendantMatchesSearch($0, using: activeChildIndex) }
                 : yourTurnUnfiltered
-            return filtered.sorted { lhs, rhs in
-                let lhsPermPending = SessionTreeHelper.aggregatePendingCount(
-                    of: lhs.id, in: activeSessions,
-                    pendingForSession: { permissionStore.pending(for: $0).count }
-                ) > 0
-                let rhsPermPending = SessionTreeHelper.aggregatePendingCount(
-                    of: rhs.id, in: activeSessions,
-                    pendingForSession: { permissionStore.pending(for: $0).count }
-                ) > 0
-                // Permission pending sorts first, then ask pending
-                if lhsPermPending != rhsPermPending { return lhsPermPending }
-                let lhsAskPending = SessionTreeHelper.aggregatePendingCount(
-                    of: lhs.id, in: activeSessions,
-                    pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
-                ) > 0
-                let rhsAskPending = SessionTreeHelper.aggregatePendingCount(
-                    of: rhs.id, in: activeSessions,
-                    pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
-                ) > 0
-                if lhsAskPending != rhsAskPending { return lhsAskPending }
-
-                // Within same priority: oldest turnEndedDate first (FIFO queue)
-                let lhsDate = sessionStore.turnEndedDate(for: lhs.id) ?? lhs.createdAt
-                let rhsDate = sessionStore.turnEndedDate(for: rhs.id) ?? rhs.createdAt
-                return lhsDate < rhsDate
-            }
+            return workspaceYourTurnSorted(
+                filtered,
+                hasPermissionInQueue: { sessionId in
+                    SessionTreeHelper.aggregatePendingCount(
+                        of: sessionId, in: activeSessions,
+                        pendingForSession: { permissionStore.pending(for: $0).count }
+                    ) > 0
+                },
+                hasAskInQueue: { sessionId in
+                    SessionTreeHelper.aggregatePendingCount(
+                        of: sessionId, in: activeSessions,
+                        pendingForSession: { askRequestStore.hasPending(for: $0) ? 1 : 0 }
+                    ) > 0
+                }
+            )
         }()
 
         // Working: apply search, sort newest first
@@ -483,11 +497,6 @@ struct WorkspaceDetailView: View {
                         }
                         Text("\(currentWorkspace.skills.count) skills")
                             .font(.caption2)
-                        if let model = currentWorkspace.defaultModel {
-                            Text(model.split(separator: "/").last.map(String.init) ?? model)
-                                .font(.caption2)
-                                .lineLimit(1)
-                        }
                     }
                     .foregroundStyle(.themeComment)
                 }

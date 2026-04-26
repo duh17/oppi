@@ -88,7 +88,6 @@ func makeTestWorkspace(
     hostMount: String? = nil,
     extensions: [String]? = nil,
     gitStatusEnabled: Bool? = nil,
-    defaultModel: String? = nil,
     createdAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
     updatedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
 ) -> Workspace {
@@ -103,7 +102,6 @@ func makeTestWorkspace(
         hostMount: hostMount,
         extensions: extensions,
         gitStatusEnabled: gitStatusEnabled,
-        defaultModel: defaultModel,
         createdAt: createdAt,
         updatedAt: updatedAt
     )

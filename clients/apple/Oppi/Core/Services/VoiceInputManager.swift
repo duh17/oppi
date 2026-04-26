@@ -553,7 +553,7 @@ final class VoiceInputManager {
 
     /// Reload persisted voice settings.
     func loadPreferences() {
-        applyEngineMode(from: VoiceInputPreferences.engineMode)
+        applyEngineMode(from: AppPreferences.Voice.engineMode)
     }
 
     /// Update server credentials for the dictation provider.
@@ -602,7 +602,7 @@ final class VoiceInputManager {
         return provider
     }
 
-    private func applyEngineMode(from preference: VoiceInputPreferences.EngineMode) {
+    private func applyEngineMode(from preference: AppPreferences.Voice.EngineMode) {
         switch preference {
         case .auto:
             setEngineMode(.auto)

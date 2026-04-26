@@ -30,6 +30,7 @@ export interface ExtensionUIRequest {
   widgetPlacement?: string;
   text?: string;
   timeout?: number;
+  timeoutAt?: number;
   questions?: AskQuestion[];
   allowCustom?: boolean;
 }
@@ -312,7 +313,10 @@ export class SessionEventProcessor {
 
   private buildAskBroadcastMessage(
     sessionId: string,
-    req: Pick<ExtensionUIRequest, "id" | "method" | "questions" | "allowCustom" | "timeout">,
+    req: Pick<
+      ExtensionUIRequest,
+      "id" | "method" | "questions" | "allowCustom" | "timeout" | "timeoutAt"
+    >,
   ): ServerMessage {
     return {
       type: "extension_ui_request",
@@ -322,6 +326,7 @@ export class SessionEventProcessor {
       questions: req.questions,
       allowCustom: req.allowCustom,
       timeout: req.timeout,
+      timeoutAt: req.timeoutAt,
     };
   }
 
@@ -337,6 +342,7 @@ export class SessionEventProcessor {
       placeholder: req.placeholder,
       prefill: req.prefill,
       timeout: req.timeout,
+      timeoutAt: req.timeoutAt,
     });
   }
 

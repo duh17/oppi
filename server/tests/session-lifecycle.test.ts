@@ -44,6 +44,7 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
     addSessionMessage: vi.fn(),
+    getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     getWorkspace: vi.fn(() => null),
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
   } as unknown as Storage;
@@ -298,6 +299,28 @@ describe("SessionManager extension UI", () => {
     const result = manager.respondToUIRequest("s1", response);
     expect(result).toBe(true);
     expect(active.pendingUIRequests.has("ui-3")).toBe(false);
+  });
+
+  it("clears settled extension UI requests so they are not replayed", () => {
+    const { manager, active } = makeManagerHarness();
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "ui-settled",
+      method: "confirm",
+      title: "Are you sure?",
+      timeout: 1_000,
+      timeoutAt: Date.now() + 1_000,
+    });
+    expect(active.pendingUIRequests.has("ui-settled")).toBe(true);
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request_settled",
+      id: "ui-settled",
+    });
+
+    expect(active.pendingUIRequests.has("ui-settled")).toBe(false);
+    expect(manager.getPendingUIRequestMessages("s1")).toEqual([]);
   });
 
   it("respondToUIRequest returns false for unknown request", () => {
@@ -860,24 +883,14 @@ describe("SessionManager applyPiStateSnapshot", () => {
     expect(session.thinkingLevel).toBe("high");
   });
 
-  it("does not persist thinking preference on state snapshot", () => {
-    // Regression: applyPiStateSnapshot used to call persistThinkingPreference,
-    // which clobbered the user's saved preference with pi's factory default
-    // during bootstrap. This made applyRememberedThinkingLevel a permanent no-op.
-    const setModelPref = vi.fn();
+  it("only mirrors Pi thinking level on state snapshot", () => {
     const { manager, session } = makeManagerHarness();
-    // Patch in the storage method that persists thinking preferences
-    (
-      (manager as unknown as { storage: Record<string, unknown> }).storage as Record<
-        string,
-        unknown
-      >
-    ).setModelThinkingLevelPreference = setModelPref;
 
     session.model = "anthropic/claude-sonnet-4-0";
-    callApplySnapshot(manager, session, { thinkingLevel: "high" });
+    const changed = callApplySnapshot(manager, session, { thinkingLevel: "high" });
 
-    expect(setModelPref).not.toHaveBeenCalled();
+    expect(changed).toBe(true);
+    expect(session.thinkingLevel).toBe("high");
   });
 
   it("returns false for null/undefined state", () => {

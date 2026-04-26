@@ -511,6 +511,7 @@ extension ChatTimelineCollectionHost.Controller {
         case .code: return "code"
         case .markdown: return "markdown"
         case .readMedia: return "readMedia"
+        case .voiceMessage: return "voiceMessage"
         case .status: return "status"
         case .text: return "text"
         }

@@ -47,6 +47,7 @@ function createMockStreamContext(dictationManager?: MockDictation): StreamContex
       getCurrentSeq: vi.fn(() => 0),
       getActiveSession: vi.fn(() => undefined),
       getPendingAskMessage: vi.fn(() => undefined),
+      getPendingUIRequestMessages: vi.fn(() => []),
       getCatchUp: vi.fn(() => undefined),
     } as unknown as StreamContext["sessions"],
     gate: {

@@ -35,8 +35,14 @@ export interface ExtensionUIRequestEvent {
   widgetPlacement?: string;
   text?: string;
   timeout?: number;
+  timeoutAt?: number;
   questions?: AskQuestion[];
   allowCustom?: boolean;
+}
+
+export interface ExtensionUIRequestSettledEvent {
+  type: "extension_ui_request_settled";
+  id: string;
 }
 
 export interface ExtensionErrorEvent {
@@ -52,11 +58,28 @@ export interface PromptErrorEvent {
   error: string;
 }
 
+export interface ExtensionAudioStreamEvent {
+  type: "extension_audio_stream";
+  kind: "audio-stream";
+  id: string;
+  event: "metadata" | "chunk" | "done" | "error";
+  mimeType: "audio/wav" | "audio/pcm; codecs=s16le";
+  sampleRate?: number;
+  channels?: number;
+  chunkIndex?: number;
+  audioBase64?: string;
+  text?: string;
+  durationSeconds?: number;
+  metrics?: Record<string, unknown>;
+}
+
 export type SessionBackendEvent =
   | AgentSessionEvent
   | ExtensionUIRequestEvent
+  | ExtensionUIRequestSettledEvent
   | ExtensionErrorEvent
-  | PromptErrorEvent;
+  | PromptErrorEvent
+  | ExtensionAudioStreamEvent;
 
 export interface PiStateSnapshot {
   sessionFile?: string;

@@ -52,8 +52,6 @@ final class ChatActionHandler {
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
     private static let autoTitleMaxLength = 48
-    /// Backward-compat key reference for tests that set up UserDefaults directly.
-    static let autoTitleEnabledDefaultsKey = AppPreferences.Session.autoTitleEnabledKey
     /// Key for auto-title provider (server / onDevice / off). Tests use this
     /// to select the on-device path that invokes the test hook.
     static let autoTitleProviderDefaultsKey = AppPreferences.Session.autoTitleProviderKey
@@ -116,6 +114,7 @@ final class ChatActionHandler {
         sessionStore: SessionStore? = nil,
         sessionManager: ChatSessionManager? = nil,
         onDispatchStarted: (() -> Void)? = nil,
+        onSendSucceeded: (() -> Void)? = nil,
         onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)? = nil,
         onNeedsReconnect: (() -> Void)? = nil
     ) -> String {
@@ -156,6 +155,7 @@ final class ChatActionHandler {
                             self.updateSendAckStage(stage)
                         })
                     }
+                    onSendSucceeded?()
                     self.scheduleSendStageClear()
                     Task { @MainActor in
                         try? await connection.requestMessageQueue()
@@ -203,6 +203,7 @@ final class ChatActionHandler {
                     try await connection.sendPrompt(trimmed, images: promptImages, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
+                    onSendSucceeded?()
                     self.scheduleSendStageClear()
                     self.scheduleAutoSessionTitleIfNeeded(
                         sessionId: sessionId,
@@ -223,6 +224,7 @@ final class ChatActionHandler {
                             sessionStore: sessionStore,
                             sessionManager: sessionManager,
                             sessionId: sessionId,
+                            onSendSucceeded: onSendSucceeded,
                             onAsyncFailure: onAsyncFailure,
                             onNeedsReconnect: onNeedsReconnect
                         )
@@ -670,6 +672,7 @@ final class ChatActionHandler {
         sessionStore: SessionStore?,
         sessionManager: ChatSessionManager,
         sessionId: String,
+        onSendSucceeded: (() -> Void)?,
         onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)?,
         onNeedsReconnect: (() -> Void)?
     ) async {
@@ -727,6 +730,7 @@ final class ChatActionHandler {
                     })
                     sendRecoveryText = nil
                     reconnectFailureMessage = nil
+                    onSendSucceeded?()
                     scheduleSendStageClear()
                     scheduleAutoSessionTitleIfNeeded(
                         sessionId: sessionId,

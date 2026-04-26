@@ -37,6 +37,7 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 
 import type { GateServer } from "./gate.js";
 import type {
+  ExtensionAudioStreamEvent,
   ExtensionErrorEvent,
   ExtensionUIRequestEvent,
   PiStateSnapshot,
@@ -70,6 +71,69 @@ function getExtensionName(ext: { path: string; resolvedPath: string }): string {
   const file = basename(ext.resolvedPath || ext.path);
   const suffix = extname(file);
   return suffix ? file.slice(0, -suffix.length) : file;
+}
+
+type ExtensionAudioStreamInput = Omit<ExtensionAudioStreamEvent, "type">;
+
+type OppiExtensionUIContext = ExtensionUIContext & {
+  audioStream: (event: ExtensionAudioStreamInput) => void;
+};
+
+const MAX_EXTENSION_AUDIO_CHUNK_BASE64_BYTES = 512 * 1024;
+const MAX_EXTENSION_AUDIO_TEXT_CHARS = 2_000;
+const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]>([
+  "audio/wav",
+  "audio/pcm; codecs=s16le",
+]);
+
+function validateExtensionAudioStreamEvent(
+  event: ExtensionAudioStreamInput,
+): ExtensionAudioStreamInput {
+  if (event.kind !== "audio-stream") {
+    throw new Error("audioStream kind must be audio-stream");
+  }
+  if (!event.id || event.id.length > 128) {
+    throw new Error("audioStream id must be 1-128 characters");
+  }
+  if (!["metadata", "chunk", "done", "error"].includes(event.event)) {
+    throw new Error("audioStream event must be metadata, chunk, done, or error");
+  }
+  if (!EXTENSION_AUDIO_MIME_TYPES.has(event.mimeType)) {
+    throw new Error(`Unsupported audioStream MIME type: ${event.mimeType}`);
+  }
+  if (
+    event.sampleRate !== undefined &&
+    (!Number.isInteger(event.sampleRate) || event.sampleRate < 8_000 || event.sampleRate > 48_000)
+  ) {
+    throw new Error("audioStream sampleRate must be an integer between 8000 and 48000 Hz");
+  }
+  if (event.channels !== undefined && event.channels !== 1 && event.channels !== 2) {
+    throw new Error("audioStream channels must be 1 or 2");
+  }
+  if (
+    event.chunkIndex !== undefined &&
+    (!Number.isInteger(event.chunkIndex) || event.chunkIndex < 0)
+  ) {
+    throw new Error("audioStream chunkIndex must be a non-negative integer");
+  }
+  if (
+    event.durationSeconds !== undefined &&
+    (!Number.isFinite(event.durationSeconds) || event.durationSeconds < 0)
+  ) {
+    throw new Error("audioStream durationSeconds must be a finite non-negative number");
+  }
+  if (event.audioBase64 !== undefined) {
+    if (Buffer.byteLength(event.audioBase64, "utf8") > MAX_EXTENSION_AUDIO_CHUNK_BASE64_BYTES) {
+      throw new Error("audioStream chunk exceeds 512KB base64 limit");
+    }
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(event.audioBase64) || event.audioBase64.length % 4 !== 0) {
+      throw new Error("audioStream audioBase64 must be valid base64");
+    }
+  }
+  if (event.text !== undefined && event.text.length > MAX_EXTENSION_AUDIO_TEXT_CHARS) {
+    throw new Error("audioStream text exceeds 2000 character limit");
+  }
+  return event;
 }
 
 /**
@@ -195,6 +259,7 @@ const CUSTOM_UI_COMPAT_WIDTH = 88;
 const CUSTOM_UI_COMPAT_MAX_LINES = 28;
 const CUSTOM_UI_COMPAT_MAX_MESSAGE_CHARS = 6_000;
 const CUSTOM_UI_COMPAT_MAX_STEPS = 200;
+const CUSTOM_UI_COMPAT_TIMEOUT_MS = 5 * 60_000;
 const CUSTOM_UI_COMPAT_WIDGET_MAX_LINES = 8;
 const CUSTOM_UI_COMPAT_TYPE_PROMPT = "Type text for extension UI";
 const CUSTOM_UI_COMPAT_CONTROL_OPTIONS = [
@@ -584,10 +649,6 @@ export class SdkBackend {
         authStorage,
         modelRegistry,
         model,
-        thinkingLevel: shouldSeedFromSessionState
-          ? ((session.thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh") ??
-            "medium")
-          : undefined,
         sessionManager,
         settingsManager,
         resourceLoader: loader,
@@ -711,6 +772,7 @@ export class SdkBackend {
         }
         opts?.signal?.removeEventListener("abort", onAbort);
         this.pendingExtensionResponses.delete(id);
+        this.emitEvent({ type: "extension_ui_request_settled", id });
       };
 
       const cancel = (): void => {
@@ -746,6 +808,7 @@ export class SdkBackend {
         id,
         ...request,
         timeout: opts?.timeout,
+        timeoutAt: opts?.timeout ? Date.now() + opts.timeout : undefined,
       });
     });
   }
@@ -792,7 +855,7 @@ export class SdkBackend {
         }
 
         const control = await this.createDialogPromise<CustomUIControl | undefined>(
-          undefined,
+          { timeout: CUSTOM_UI_COMPAT_TIMEOUT_MS },
           undefined,
           {
             method: "select",
@@ -814,7 +877,7 @@ export class SdkBackend {
 
         if (control === "type") {
           const typed = await this.createDialogPromise<string | undefined>(
-            undefined,
+            { timeout: CUSTOM_UI_COMPAT_TIMEOUT_MS },
             undefined,
             {
               method: "input",
@@ -854,7 +917,7 @@ export class SdkBackend {
   }
 
   private createExtensionUIContext(): ExtensionUIContext {
-    return {
+    const context = {
       ask: (questions: AskQuestion[], allowCustom = true, opts?: ExtensionUIDialogOptions) => {
         if (!Array.isArray(questions) || questions.length === 0) {
           return Promise.reject(new Error("ask UI requires at least one question"));
@@ -1062,6 +1125,15 @@ export class SdkBackend {
         // Thinking label customization requires TUI; unsupported in Oppi sessions.
       },
     } as ExtensionUIContext;
+
+    const oppiContext = context as OppiExtensionUIContext;
+    oppiContext.audioStream = (event) => {
+      this.emitEvent({
+        type: "extension_audio_stream",
+        ...validateExtensionAudioStreamEvent(event),
+      });
+    };
+    return oppiContext;
   }
 
   respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean {
@@ -1151,6 +1223,7 @@ export class SdkBackend {
     provider?: string;
     id?: string;
     name?: string;
+    thinkingLevel?: string;
     error?: string;
   }> {
     const parsed = parseModelId(modelId);
@@ -1172,6 +1245,7 @@ export class SdkBackend {
         provider: activeModel?.provider,
         id: activeModel?.id,
         name: activeModel?.name,
+        thinkingLevel: this.piSession.thinkingLevel,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

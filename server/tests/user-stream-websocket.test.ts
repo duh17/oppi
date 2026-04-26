@@ -24,6 +24,7 @@ function makeHarness(options?: {
       catchUpComplete: boolean;
     }
   >;
+  pendingUIBySession?: Record<string, ServerMessage[]>;
   ensureSessionContextWindow?: (session: Session) => Session;
 }): Harness {
   const sessions = options?.sessions ?? [makeSession("s1")];
@@ -78,6 +79,7 @@ function makeHarness(options?: {
       getCurrentSeq,
       getCatchUp,
       getPendingAskMessage: () => undefined,
+      getPendingUIRequestMessages: (sessionId: string) => options?.pendingUIBySession?.[sessionId] ?? [],
     } as unknown as StreamContext["sessions"],
     storage: {
       getSession: vi.fn((sessionId: string) => sessionsById.get(sessionId)),
@@ -150,6 +152,35 @@ describe("/stream websocket behavior", () => {
     expect(
       delivered.find((msg) => msg.type === "text_delta" && msg.sessionId === "s2"),
     ).toBeUndefined();
+  });
+
+  it("replays pending extension UI requests when subscribing", async () => {
+    const pendingRequest: ServerMessage = {
+      type: "extension_ui_request",
+      id: "ui-1",
+      sessionId: "s1",
+      method: "select",
+      title: "Choose",
+      options: ["A", "B"],
+      timeout: 30_000,
+    };
+    const harness = makeHarness({
+      sessions: [makeSession("s1")],
+      pendingUIBySession: { s1: [pendingRequest] },
+    });
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
+
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-1",
+    });
+    await flushQueue();
+
+    expect(messagesOfType(ws.sent, "extension_ui_request")).toContainEqual(pendingRequest);
   });
 
   it("normalizes stale context window on streamed state events", async () => {

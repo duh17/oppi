@@ -38,6 +38,33 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedFileToolTitleCanWrapToShowFullPath() throws {
+        let longPath = "clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift"
+        let config = makeTimelineToolConfiguration(
+            title: longPath,
+            expandedContent: .code(
+                text: "struct WorkspaceReviewFileDetailView {}",
+                language: .swift,
+                startLine: 1,
+                filePath: longPath
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 320)
+
+        let labels = timelineAllLabels(in: view)
+        let titleLabel = try #require(labels.first {
+            timelineRenderedText(of: $0).contains("WorkspaceReviewFileDetailView.swift")
+        })
+
+        #expect(titleLabel.numberOfLines == 0)
+        #expect(titleLabel.lineBreakMode == NSLineBreakMode.byCharWrapping)
+    }
+
+    @MainActor
     @Test func trailingByteCountAlignsWithCollapsedTitleRow() throws {
         let config = makeTimelineToolConfiguration(
             title: "$ pwd",
@@ -225,7 +252,7 @@ struct ToolTimelineRowContentViewTests {
 
         let piMenu = try #require(menu.children.first as? UIMenu)
         #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
         let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
         #expect(copyMenuAction.title == "Copy")
         #expect(commandLabel.isSelectable)
@@ -1048,6 +1075,81 @@ struct ToolTimelineRowContentViewTests {
         #expect(view.expandedTapCopyGestureEnabledForTesting)
         #expect(view.expandedPinchGestureEnabledForTesting)
         #expect(view.canShowFullScreenContentForTesting)
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageDoesNotDuplicateVoiceMessageTitleInsideCard() throws {
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
+                attachmentId: "att-voice-1",
+                mimeType: "audio/wav",
+                durationSeconds: 4.2
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let voiceMessageLabels = timelineAllLabels(in: view).filter {
+            timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == "Voice message"
+        }
+        #expect(voiceMessageLabels.count == 1)
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageHidesCollapsedHeaderPlaybackButton() throws {
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .voiceMessage(
+                text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
+                attachmentId: "att-voice-1",
+                mimeType: "audio/wav",
+                durationSeconds: 4.2
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let button = try #require(privateButton(named: "audioPlaybackButton", in: view))
+        #expect(button.isHidden)
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageShowsReadableTranscriptWithoutDuplicateTitle() throws {
+        let transcript = "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly."
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .voiceMessage(
+                text: transcript,
+                attachmentId: "att-voice-1",
+                mimeType: "audio/wav",
+                durationSeconds: 4.2
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let size = fittedTimelineSize(for: view, width: 370)
+        let transcriptLabel = try #require(timelineAllLabels(in: view).first {
+            timelineRenderedText(of: $0).contains("reinstalling the iPhone app now")
+        })
+        let voiceMessageLabels = timelineAllLabels(in: view).filter {
+            timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == "Voice message"
+        }
+
+        #expect(!transcriptLabel.isHidden)
+        #expect(transcriptLabel.numberOfLines == 0)
+        #expect(size.height < 200)
+        #expect(voiceMessageLabels.count == 1)
     }
 
     @MainActor

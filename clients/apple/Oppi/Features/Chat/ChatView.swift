@@ -70,7 +70,7 @@ struct ChatView: View {
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
-
+    @State private var reviewComments = ChatReviewCommentsController()
 
     init(sessionId: String, initialInputText: String = "", initialPendingFiles: [PendingFileReference] = []) {
         self.sessionId = sessionId
@@ -127,6 +127,14 @@ struct ChatView: View {
         sessionStore.sessions.first { $0.id == sessionId }
     }
 
+    private var workspace: Workspace? {
+        guard let workspaceId = session?.workspaceId else { return nil }
+        return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
+    }
+
+    private var isVoiceExtensionLoaded: Bool {
+        workspace?.extensions?.contains("voice") ?? true
+    }
 
     /// Child sessions spawned by this session.
     private var childSessions: [Session] {
@@ -239,6 +247,7 @@ struct ChatView: View {
                     onSelectChild: { childId in
                         childSessionToOpen = ChildSessionRoute(id: childId)
                     },
+                    fileDetailPiRouter: selectedTextPiRouter,
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: { contextBarExpanded = $0 }
                 )
@@ -272,6 +281,18 @@ struct ChatView: View {
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
             .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
             .sheet(isPresented: $showShareRedactionSheet) { shareRedactionSheet }
+            .sheet(isPresented: reviewCommentsSheetBinding) { reviewCommentsSheet }
+            .sheet(item: reviewCommentDraftBinding) { context in
+                ReviewCommentComposerSheet(
+                    selectedText: context.request.selectedText,
+                    source: context.request.source,
+                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? VoiceInputManager() : nil,
+                    onCancel: { reviewComments.pendingDraft = nil },
+                    onSave: { body in
+                        await saveReviewComment(body: body, request: context.request)
+                    }
+                )
+            }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
             .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
@@ -307,6 +328,9 @@ struct ChatView: View {
                 if ReleaseFeatures.voiceInputEnabled {
                     await voiceInputManager.prewarm(source: "chat_view_task")
                 }
+            }
+            .task(id: session?.workspaceId ?? "") {
+                await loadReviewCommentsIfPossible()
             }
             .task(id: sessionId) {
                 // Auto-send pending message from QuickSessionSheet.
@@ -544,6 +568,13 @@ struct ChatView: View {
                     .padding(.horizontal, 16)
                 }
 
+                if reviewComments.stagedCount > 0 {
+                    ReviewCommentChip(stagedCount: reviewComments.stagedCount) {
+                        reviewComments.openSheet()
+                    }
+                    .padding(.horizontal, 16)
+                }
+
                 ChatInputBar(
                     text: $inputText,
                     textBeforeRecording: $composerTextBeforeRecording,
@@ -553,6 +584,7 @@ struct ChatView: View {
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: actionHandler.isSending,
+                    pendingReviewCommentCount: reviewComments.stagedCount,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -560,21 +592,21 @@ struct ChatView: View {
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: connection.activeAskRequest,
                     onAskSubmit: { answers in
-                        guard let askId = connection.activeAskRequest?.id else { return }
+                        guard let ask = connection.activeAskRequest else { return }
                         let value = AskResponseEncoder.encode(answers)
                         Task {
                             do {
-                                try await connection.respondToExtensionUI(id: askId, value: value)
+                                try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, value: value)
                             } catch {
                                 // Keep the ask card visible so the user can retry.
                             }
                         }
                     },
                     onAskIgnoreAll: {
-                        guard let askId = connection.activeAskRequest?.id else { return }
+                        guard let ask = connection.activeAskRequest else { return }
                         Task {
                             do {
-                                try await connection.respondToExtensionUI(id: askId, cancelled: true)
+                                try await connection.respondToExtensionUI(id: ask.id, sessionId: ask.sessionId, cancelled: true)
                             } catch {
                                 // Keep the ask card visible so the user can retry.
                             }
@@ -647,6 +679,10 @@ struct ChatView: View {
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
         HStack(spacing: 10) {
+            if isVoiceExtensionLoaded {
+                voicePlaybackToolbarButton
+            }
+
             if !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
@@ -658,6 +694,24 @@ struct ChatView: View {
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)
         }
+    }
+
+    private var voicePlaybackToolbarButton: some View {
+        Button {
+            if audioPlayer.hasActivePlayback {
+                audioPlayer.stop()
+            } else {
+                audioPlayer.toggleAutoPlaybackMuted()
+            }
+        } label: {
+            Image(systemName: audioPlayer.hasActivePlayback ? "stop.fill" : (audioPlayer.autoPlaybackMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"))
+                .font(.subheadline)
+                .foregroundStyle(audioPlayer.hasActivePlayback ? .themePurple : .themeFg)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(audioPlayer.hasActivePlayback ? "Stop audio playback" : (audioPlayer.autoPlaybackMuted ? "Unmute automatic voice playback" : "Mute automatic voice playback"))
     }
 
     private var contextRingButton: some View {
@@ -732,6 +786,10 @@ struct ChatView: View {
         }
     }
 
+    static func routeForSelectedTextPiAction(_ request: SelectedTextPiRequest) -> SelectedTextPiRoute? {
+        SelectedTextPiRouterPolicy.route(request: request, context: .activeChat)
+    }
+
     // MARK: - Actions
 
     private func updateFileSuggestions(query: String?) {
@@ -744,33 +802,32 @@ struct ChatView: View {
 
     @MainActor
     private func handleSelectedTextPiAction(_ request: SelectedTextPiRequest) {
-        // "New Session" actions always route through the quick session sheet,
-        // even when triggered from inside an active chat.
-        if request.action.behavior == .newSession {
-            let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-            guard !addition.isEmpty else { return }
+        guard let route = Self.routeForSelectedTextPiAction(request) else { return }
+
+        switch route {
+        case .reviewComment(let request):
+            reviewComments.beginComment(request)
+
+        case .quickSessionDraft(let addition):
             appNavigation.pendingQuickSessionDraft = addition
             appNavigation.showQuickSession = true
-            return
-        }
 
-        let addition = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-        guard !addition.isEmpty else { return }
+        case .currentSessionDraft(let addition):
+            if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                inputText = addition
+            } else if inputText.hasSuffix("\n\n") {
+                inputText += addition
+            } else if inputText.hasSuffix("\n") {
+                inputText += "\n" + addition
+            } else {
+                inputText += "\n\n" + addition
+            }
 
-        if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            inputText = addition
-        } else if inputText.hasSuffix("\n\n") {
-            inputText += addition
-        } else if inputText.hasSuffix("\n") {
-            inputText += "\n" + addition
-        } else {
-            inputText += "\n\n" + addition
-        }
-
-        if isStopped {
-            showComposer = true
-        } else if !showComposer {
-            composerExternalFocusRequestID &+= 1
+            if isStopped {
+                showComposer = true
+            } else if !showComposer {
+                composerExternalFocusRequestID &+= 1
+            }
         }
     }
 
@@ -788,6 +845,99 @@ struct ChatView: View {
         }
     }
 
+    private var reviewCommentsSheetBinding: Binding<Bool> {
+        Binding(
+            get: { reviewComments.showsSheet },
+            set: { reviewComments.showsSheet = $0 }
+        )
+    }
+
+    private var reviewCommentDraftBinding: Binding<ReviewCommentDraftContext?> {
+        Binding(
+            get: { reviewComments.pendingDraft },
+            set: { reviewComments.pendingDraft = $0 }
+        )
+    }
+
+    private var reviewCommentsSheet: some View {
+        ReviewCommentsSheet(
+            comments: reviewComments.comments,
+            onRefresh: {
+                Task { await loadReviewCommentsIfPossible() }
+            },
+            onClose: {
+                reviewComments.closeSheet()
+            },
+            onUpdateBody: { comment, body in
+                await updateReviewComment(comment, body: body)
+            },
+            onDelete: { comment in
+                Task { await deleteReviewComment(comment) }
+            },
+            onResolve: { comment in
+                Task { await updateReviewComment(comment, status: .resolved) }
+            }
+        )
+        .presentationDetents([.medium, .large])
+    }
+
+    private func loadReviewCommentsIfPossible() async {
+        await reviewComments.load(api: connection.apiClient, workspaceId: session?.workspaceId, sessionId: sessionId)
+    }
+
+    @discardableResult
+    private func saveReviewComment(body: String, request: SelectedTextPiRequest) async -> Bool {
+        if let error = await reviewComments.save(
+            body: body,
+            request: request,
+            api: connection.apiClient,
+            workspaceId: session?.workspaceId,
+            sessionId: sessionId
+        ) {
+            connection.extensionToast = error
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    private func updateReviewComment(
+        _ comment: ReviewComment,
+        body: String? = nil,
+        status: ReviewCommentStatus? = nil
+    ) async -> Bool {
+        if let error = await reviewComments.update(
+            comment,
+            body: body,
+            status: status,
+            api: connection.apiClient,
+            workspaceId: session?.workspaceId
+        ) {
+            connection.extensionToast = error
+            return false
+        }
+        return true
+    }
+
+    private func deleteReviewComment(_ comment: ReviewComment) async {
+        if let error = await reviewComments.delete(comment, api: connection.apiClient, workspaceId: session?.workspaceId) {
+            connection.extensionToast = error
+        }
+    }
+
+    private func markReviewCommentsSentIfPossible(ids: [String]) {
+        Task {
+            if let error = await reviewComments.markSent(
+                ids: ids,
+                api: connection.apiClient,
+                workspaceId: session?.workspaceId,
+                sessionId: sessionId
+            ) {
+                connection.extensionToast = error
+            }
+        }
+    }
+
     private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
         let feedback = UIImpactFeedbackGenerator(style: style)
         feedback.prepare()
@@ -801,8 +951,18 @@ struct ChatView: View {
             return
         }
 
+        if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
+            inputText = ""
+            reviewComments.openSheet()
+            Task { await loadReviewCommentsIfPossible() }
+            return
+        }
+
         // Inject pending file references as @path prefixes
-        var text = inputText
+        let originalInputText = inputText
+        let originalPendingFiles = pendingFiles
+        var text = reviewComments.appendReviewBlock(to: inputText)
+        let stagedReviewCommentIds = reviewComments.stagedCommentIds
         if !pendingFiles.isEmpty {
             let fileRefs = pendingFiles.map { "@\($0.path)" }.joined(separator: " ")
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -831,9 +991,13 @@ struct ChatView: View {
                 // Scroll to bottom after sending
                 scrollRef.requestScrollToBottom()
             },
-            onAsyncFailure: { failedText, failedImages in
-                inputText = failedText
+            onSendSucceeded: {
+                markReviewCommentsSentIfPossible(ids: stagedReviewCommentIds)
+            },
+            onAsyncFailure: { _, failedImages in
+                inputText = originalInputText
                 pendingImages = failedImages
+                pendingFiles = originalPendingFiles
             },
             onNeedsReconnect: {
                 sessionManagerRef.reconnect()
@@ -861,7 +1025,7 @@ struct ChatView: View {
     }
 
     private func applyModelSelection(_ model: ModelInfo) {
-        RecentModels.record(ModelSwitchPolicy.fullModelID(for: model))
+        AppPreferences.RecentModels.record(ModelSwitchPolicy.fullModelID(for: model))
         actionHandler.setModel(
             model,
             connection: connection,

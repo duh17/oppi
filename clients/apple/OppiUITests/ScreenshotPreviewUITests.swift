@@ -80,6 +80,15 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testVoiceMessageExpandedPreview() throws {
+        launchPreview(screen: "voice-message-expanded")
+
+        let title = app.staticTexts["Expanded voice message"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Voice message preview title not found")
+
+        saveScreenshot(name: "voice-message-expanded")
+    }
+
     func testShareRedactionReportPreview() throws {
         launchPreview(screen: "share-redaction-report")
 

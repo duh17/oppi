@@ -327,7 +327,7 @@ struct VoiceInputManagerTests {
 
     @Test func resolvedLocaleWithNilUsesPersistedLanguage() {
         // Save a persisted language, then resolve with nil keyboard
-        KeyboardLanguageStore.save("zh-Hans")
+        AppPreferences.Keyboard.save("zh-Hans")
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
         #expect(locale.language.languageCode?.identifier == "zh",
                 "Should fall back to persisted keyboard language")
@@ -338,7 +338,7 @@ struct VoiceInputManagerTests {
     }
 
     @Test func resolvedLocaleIgnoresPseudoKeyboardLanguage() {
-        KeyboardLanguageStore.save("en-US")
+        AppPreferences.Keyboard.save("en-US")
 
         let dictationLocale = VoiceInputManager.resolvedLocale(keyboardLanguage: "dictation")
         #expect(dictationLocale.language.languageCode?.identifier == "en",
@@ -353,7 +353,7 @@ struct VoiceInputManagerTests {
 
     @Test func resolvedLocaleActiveKeyboardTakesPriorityOverPersisted() {
         // Persisted is Chinese, but active keyboard is English
-        KeyboardLanguageStore.save("zh-Hans")
+        AppPreferences.Keyboard.save("zh-Hans")
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
         #expect(locale.language.languageCode?.identifier == "en",
                 "Active keyboard should take priority over persisted")
@@ -399,20 +399,20 @@ struct VoiceInputManagerTests {
         #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "es-ES")) == "ES")
     }
 
-    // MARK: - KeyboardLanguageStore Persistence
+    // MARK: - AppPreferences.Keyboard Persistence
 
     private let testKey = "\(AppIdentifiers.subsystem).keyboardLanguage"
 
     @Test func keyboardLanguageStoreSaveAndRead() {
         // Clean slate
         UserDefaults.standard.removeObject(forKey: testKey)
-        #expect(KeyboardLanguageStore.lastLanguage == nil)
+        #expect(AppPreferences.Keyboard.lastLanguage == nil)
 
-        KeyboardLanguageStore.save("zh-Hans")
-        #expect(KeyboardLanguageStore.lastLanguage == "zh-Hans")
+        AppPreferences.Keyboard.save("zh-Hans")
+        #expect(AppPreferences.Keyboard.lastLanguage == "zh-Hans")
 
-        KeyboardLanguageStore.save("en-US")
-        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
+        AppPreferences.Keyboard.save("en-US")
+        #expect(AppPreferences.Keyboard.lastLanguage == "en-US")
 
         // Clean up
         UserDefaults.standard.removeObject(forKey: testKey)
@@ -420,9 +420,9 @@ struct VoiceInputManagerTests {
 
     @Test func keyboardLanguageStoreIgnoresNil() {
         UserDefaults.standard.removeObject(forKey: testKey)
-        KeyboardLanguageStore.save("zh-Hans")
-        KeyboardLanguageStore.save(nil)
-        #expect(KeyboardLanguageStore.lastLanguage == "zh-Hans",
+        AppPreferences.Keyboard.save("zh-Hans")
+        AppPreferences.Keyboard.save(nil)
+        #expect(AppPreferences.Keyboard.lastLanguage == "zh-Hans",
                 "Saving nil should not clear persisted value")
 
         UserDefaults.standard.removeObject(forKey: testKey)
@@ -430,36 +430,36 @@ struct VoiceInputManagerTests {
 
     @Test func keyboardLanguageStoreIgnoresDuplicate() {
         UserDefaults.standard.removeObject(forKey: testKey)
-        KeyboardLanguageStore.save("en-US")
+        AppPreferences.Keyboard.save("en-US")
         // Saving same value again is a no-op (tested via coverage, not assertion)
-        KeyboardLanguageStore.save("en-US")
-        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
+        AppPreferences.Keyboard.save("en-US")
+        #expect(AppPreferences.Keyboard.lastLanguage == "en-US")
 
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
     @Test func keyboardLanguageStoreIgnoresPseudoLanguages() {
         UserDefaults.standard.removeObject(forKey: testKey)
-        KeyboardLanguageStore.save("en-US")
+        AppPreferences.Keyboard.save("en-US")
 
-        KeyboardLanguageStore.save("dictation")
-        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
+        AppPreferences.Keyboard.save("dictation")
+        #expect(AppPreferences.Keyboard.lastLanguage == "en-US")
 
-        KeyboardLanguageStore.save("emoji")
-        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
+        AppPreferences.Keyboard.save("emoji")
+        #expect(AppPreferences.Keyboard.lastLanguage == "en-US")
 
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
     @Test func keyboardLanguageNormalizeRejectsMalformedValues() {
-        #expect(KeyboardLanguageStore.normalize(nil) == nil)
-        #expect(KeyboardLanguageStore.normalize("") == nil)
-        #expect(KeyboardLanguageStore.normalize(" ") == nil)
-        #expect(KeyboardLanguageStore.normalize("1") == nil)
-        #expect(KeyboardLanguageStore.normalize("x") == nil)
-        #expect(KeyboardLanguageStore.normalize("emoji") == nil)
-        #expect(KeyboardLanguageStore.normalize("en-US") == "en-US")
-        #expect(KeyboardLanguageStore.normalize("zh-Hans") == "zh-Hans")
+        #expect(AppPreferences.Keyboard.normalize(nil) == nil)
+        #expect(AppPreferences.Keyboard.normalize("") == nil)
+        #expect(AppPreferences.Keyboard.normalize(" ") == nil)
+        #expect(AppPreferences.Keyboard.normalize("1") == nil)
+        #expect(AppPreferences.Keyboard.normalize("x") == nil)
+        #expect(AppPreferences.Keyboard.normalize("emoji") == nil)
+        #expect(AppPreferences.Keyboard.normalize("en-US") == "en-US")
+        #expect(AppPreferences.Keyboard.normalize("zh-Hans") == "zh-Hans")
     }
 
     // MARK: - Full Fallback Chain
@@ -468,7 +468,7 @@ struct VoiceInputManagerTests {
         UserDefaults.standard.removeObject(forKey: testKey)
 
         // 1. Active keyboard wins
-        KeyboardLanguageStore.save("zh-Hans")
+        AppPreferences.Keyboard.save("zh-Hans")
         let locale1 = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
         #expect(locale1.language.languageCode?.identifier == "en",
                 "Active keyboard should beat persisted")
@@ -1189,6 +1189,6 @@ struct VoiceInputManagerTests {
     }
 
     private func resetVoicePreferences() {
-        VoiceInputPreferences.setEngineMode(.auto)
+        AppPreferences.Voice.setEngineMode(.auto)
     }
 }

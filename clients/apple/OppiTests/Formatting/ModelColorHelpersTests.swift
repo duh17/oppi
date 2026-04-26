@@ -47,6 +47,19 @@ struct ModelColorHelpersTests {
         #expect(providerDisplayLabel("omlx") == "OMLX")
     }
 
+    @Test func providerIconTintMeetsContrastFloorOnThemeSurfaces() {
+        let palette = ThemePalettes.dark
+        let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
+        let preferred = [palette.green, palette.blue, palette.orange, palette.red, palette.purple]
+
+        for color in preferred {
+            let tinted = providerIconTint(color, palette: palette)
+            let ratio = minimumContrastRatio(of: tinted, on: backgrounds)
+            #expect(ratio != nil)
+            #expect((ratio ?? 0) >= 3.0)
+        }
+    }
+
     private struct HSBA {
         let hue: CGFloat
         let saturation: CGFloat

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("RecentModels")
+@Suite("AppPreferences.RecentModels")
 @MainActor
 struct RecentModelsTests {
     // Use a unique key per test run to avoid polluting real UserDefaults
@@ -12,27 +12,27 @@ struct RecentModelsTests {
 
     @Test func recordAndLoadRoundTrip() {
         cleanup()
-        RecentModels.record("anthropic/claude-sonnet-4")
-        let loaded = RecentModels.load()
+        AppPreferences.RecentModels.record("anthropic/claude-sonnet-4")
+        let loaded = AppPreferences.RecentModels.load()
         #expect(loaded == ["anthropic/claude-sonnet-4"])
         cleanup()
     }
 
     @Test func mostRecentAppearsFirst() {
         cleanup()
-        RecentModels.record("anthropic/claude-sonnet-4")
-        RecentModels.record("openai-codex/gpt-5.3-codex")
-        let loaded = RecentModels.load()
+        AppPreferences.RecentModels.record("anthropic/claude-sonnet-4")
+        AppPreferences.RecentModels.record("openai-codex/gpt-5.3-codex")
+        let loaded = AppPreferences.RecentModels.load()
         #expect(loaded == ["openai-codex/gpt-5.3-codex", "anthropic/claude-sonnet-4"])
         cleanup()
     }
 
     @Test func duplicateMovesToFront() {
         cleanup()
-        RecentModels.record("anthropic/claude-sonnet-4")
-        RecentModels.record("openai-codex/gpt-5.3-codex")
-        RecentModels.record("anthropic/claude-sonnet-4")
-        let loaded = RecentModels.load()
+        AppPreferences.RecentModels.record("anthropic/claude-sonnet-4")
+        AppPreferences.RecentModels.record("openai-codex/gpt-5.3-codex")
+        AppPreferences.RecentModels.record("anthropic/claude-sonnet-4")
+        let loaded = AppPreferences.RecentModels.load()
         #expect(loaded == ["anthropic/claude-sonnet-4", "openai-codex/gpt-5.3-codex"])
         cleanup()
     }
@@ -40,9 +40,9 @@ struct RecentModelsTests {
     @Test func capsAtFiveEntries() {
         cleanup()
         for i in 1...7 {
-            RecentModels.record("provider/model-\(i)")
+            AppPreferences.RecentModels.record("provider/model-\(i)")
         }
-        let loaded = RecentModels.load()
+        let loaded = AppPreferences.RecentModels.load()
         #expect(loaded.count == 5)
         #expect(loaded.first == "provider/model-7")
         #expect(!loaded.contains("provider/model-1"))
@@ -63,10 +63,10 @@ struct RecentModelsTests {
 
         // Record uses ModelSwitchPolicy.fullModelID (the correct path)
         let recordedId = ModelSwitchPolicy.fullModelID(for: serverModels[0])
-        RecentModels.record(recordedId)
+        AppPreferences.RecentModels.record(recordedId)
 
         // Picker lookup must use the same fullModelID — not naive "provider/id" concat
-        let recentIds = RecentModels.load()
+        let recentIds = AppPreferences.RecentModels.load()
         let lookup = Dictionary(
             serverModels.map { (ModelSwitchPolicy.fullModelID(for: $0), $0) },
             uniquingKeysWith: { a, _ in a }

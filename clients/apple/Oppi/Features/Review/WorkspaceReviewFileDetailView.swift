@@ -24,6 +24,7 @@ struct WorkspaceReviewFileDetailView: View {
     let workspaceId: String
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
+    var selectedTextPiRouterOverride: SelectedTextPiActionRouter? = nil
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
@@ -38,7 +39,7 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var navigateToReview: ReviewSessionNavDestination?
 
     private var piRouter: SelectedTextPiActionRouter {
-        navigation.makeQuickSessionPiRouter()
+        selectedTextPiRouterOverride ?? navigation.makeQuickSessionPiRouter()
     }
 
     private func diffSourceContext(filePath: String) -> SelectedTextSourceContext {

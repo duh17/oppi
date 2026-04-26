@@ -28,7 +28,7 @@ struct QuickSessionSheet: View {
     @State private var selectedWorkspace: Workspace?
     @State private var selectedServerId: String?
     @State private var selectedModelId: String?
-    @State private var thinkingLevel: ThinkingLevel = QuickSessionDefaults.lastThinkingLevel
+    @State private var thinkingLevel: ThinkingLevel = .medium
     @State private var showModelPicker = false
     @State private var showExpandedComposer = false
     @State private var isCreating = false
@@ -44,11 +44,9 @@ struct QuickSessionSheet: View {
         }
     }
 
-    /// Effective model: explicit selection > workspace default > last used.
+    /// Effective model: explicit selection only. If nil, Pi settings choose.
     private var effectiveModelId: String? {
         selectedModelId
-            ?? selectedWorkspace?.defaultModel
-            ?? QuickSessionDefaults.lastModelId
     }
 
     /// Whether multiple servers are connected (affects section headers).
@@ -158,7 +156,6 @@ struct QuickSessionSheet: View {
                     onModelTap: { showModelPicker = true },
                     onThinkingSelect: { level in
                         thinkingLevel = level
-                        QuickSessionDefaults.saveThinkingLevel(level)
                     }
                 )
             }
@@ -196,7 +193,6 @@ struct QuickSessionSheet: View {
                 onModelTap: { showModelPicker = true },
                 onThinkingSelect: { level in
                     thinkingLevel = level
-                    QuickSessionDefaults.saveThinkingLevel(level)
                 }
             )
         }
@@ -360,7 +356,7 @@ struct QuickSessionSheet: View {
         Button {
             selectedWorkspace = workspace
             selectedServerId = serverId
-            QuickSessionDefaults.saveWorkspaceId(workspace.id)
+            AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
         } label: {
             Label {
                 Text(workspace.name)
@@ -378,7 +374,7 @@ struct QuickSessionSheet: View {
 
     private func setupInitialState() async {
         // Select workspace: last used > first available across all servers
-        let lastId = QuickSessionDefaults.lastWorkspaceId
+        let lastId = AppPreferences.QuickSession.lastWorkspaceId
         let all = allServerWorkspaces
         if let lastId, let match = all.first(where: { $0.workspace.id == lastId }) {
             selectedWorkspace = match.workspace
@@ -443,12 +439,7 @@ struct QuickSessionSheet: View {
                 targetConnection.sessionStore.upsert(session)
 
                 // Save defaults for next time
-                QuickSessionDefaults.saveWorkspaceId(workspace.id)
-                if let modelId {
-                    QuickSessionDefaults.saveModelId(modelId)
-                }
-                QuickSessionDefaults.saveThinkingLevel(thinking)
-
+                AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
                 // Single atomic write — ContentView.onDismiss unpacks.

@@ -52,7 +52,6 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     port: 7749,
     host: "0.0.0.0",
     dataDir,
-    defaultModel: "openai-codex/gpt-5.3-codex",
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 20,
@@ -94,7 +93,6 @@ function normalizeConfig(
     "port",
     "host",
     "dataDir",
-    "defaultModel",
     "sessionIdleTimeoutMs",
     "workspaceIdleTimeoutMs",
     "maxSessionsPerWorkspace",
@@ -112,7 +110,6 @@ function normalizeConfig(
     "authDeviceTokens",
     "pushDeviceTokens",
     "liveActivityToken",
-    "thinkingLevelByModel",
     "autoTitle",
     "subagents",
     "asr",
@@ -189,11 +186,6 @@ function normalizeConfig(
   const configuredDataDir = readString("dataDir");
   if (configuredDataDir !== undefined) {
     config.dataDir = configuredDataDir;
-  }
-
-  const model = readString("defaultModel");
-  if (model !== undefined) {
-    config.defaultModel = model;
   }
 
   const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 });
@@ -676,14 +668,6 @@ function normalizeConfig(
   if ("liveActivityToken" in obj && typeof obj.liveActivityToken === "string") {
     config.liveActivityToken = obj.liveActivityToken;
   }
-  if ("thinkingLevelByModel" in obj && isRecord(obj.thinkingLevelByModel)) {
-    const map: Record<string, string> = {};
-    for (const [k, v] of Object.entries(obj.thinkingLevelByModel as Record<string, unknown>)) {
-      if (typeof v === "string") map[k] = v;
-    }
-    config.thinkingLevelByModel = map;
-  }
-
   // Auto-title configuration
   if ("autoTitle" in obj && isRecord(obj.autoTitle)) {
     const at = obj.autoTitle;

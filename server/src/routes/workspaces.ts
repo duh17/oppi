@@ -13,11 +13,15 @@ import {
 } from "../git-commits.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
+import { ReviewCommentStore, ReviewCommentStoreError } from "../review-comment-store.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
+  AttachReviewCommentsToTurnRequest,
+  CreateReviewCommentRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceReviewSessionRequest,
   Session,
+  UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
   WorkspaceReviewSessionResponse,
@@ -431,6 +435,130 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
+  function reviewCommentStoreForWorkspace(wsId: string): ReviewCommentStore {
+    return new ReviewCommentStore(ctx.storage.getDataDir(), wsId);
+  }
+
+  async function handleListReviewComments(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const store = reviewCommentStoreForWorkspace(wsId);
+    const comments = await store.list({
+      sessionId: url.searchParams.get("sessionId") ?? undefined,
+      status: url.searchParams.get("status") ?? undefined,
+      path: url.searchParams.get("path") ?? undefined,
+    });
+    helpers.json(res, { comments });
+  }
+
+  async function handleCreateReviewComment(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const store = reviewCommentStoreForWorkspace(wsId);
+    try {
+      const body = await helpers.parseBody<CreateReviewCommentRequest>(req);
+      const comment = await store.create(body);
+      helpers.json(res, { comment }, 201);
+    } catch (error) {
+      if (error instanceof ReviewCommentStoreError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async function handleUpdateReviewComment(
+    wsId: string,
+    commentId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const store = reviewCommentStoreForWorkspace(wsId);
+    try {
+      const body = await helpers.parseBody<UpdateReviewCommentRequest>(req);
+      const comment = await store.update(commentId, body);
+      helpers.json(res, { comment });
+    } catch (error) {
+      if (error instanceof ReviewCommentStoreError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async function handleDeleteReviewComment(
+    wsId: string,
+    commentId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const store = reviewCommentStoreForWorkspace(wsId);
+    try {
+      await store.delete(commentId);
+      helpers.json(res, { ok: true });
+    } catch (error) {
+      if (error instanceof ReviewCommentStoreError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async function handleAttachReviewCommentsToTurn(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const store = reviewCommentStoreForWorkspace(wsId);
+    try {
+      const body = await helpers.parseBody<AttachReviewCommentsToTurnRequest>(req);
+      const comments = await store.attachToTurn(body);
+      helpers.json(res, { comments });
+    } catch (error) {
+      if (error instanceof ReviewCommentStoreError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+  }
+
   async function handleCreateWorkspaceReviewSession(
     wsId: string,
     req: IncomingMessage,
@@ -487,8 +615,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       selectedSession,
     });
 
-    const model = workspace.lastUsedModel || workspace.defaultModel;
-    const session = ctx.storage.createSession(launch.sessionName, model);
+    const session = ctx.storage.createSession(launch.sessionName);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     ctx.storage.saveSession(session);
@@ -585,6 +712,38 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         res,
       );
       return true;
+    }
+
+    const wsReviewCommentsMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments$/);
+    if (wsReviewCommentsMatch) {
+      if (method === "GET") {
+        await handleListReviewComments(wsReviewCommentsMatch[1], url, res);
+        return true;
+      }
+      if (method === "POST") {
+        await handleCreateReviewComment(wsReviewCommentsMatch[1], req, res);
+        return true;
+      }
+    }
+
+    const wsReviewCommentsAttachMatch = path.match(
+      /^\/workspaces\/([^/]+)\/review\/comments\/attach-to-turn$/,
+    );
+    if (wsReviewCommentsAttachMatch && method === "POST") {
+      await handleAttachReviewCommentsToTurn(wsReviewCommentsAttachMatch[1], req, res);
+      return true;
+    }
+
+    const wsReviewCommentMatch = path.match(/^\/workspaces\/([^/]+)\/review\/comments\/([^/]+)$/);
+    if (wsReviewCommentMatch) {
+      if (method === "PATCH") {
+        await handleUpdateReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], req, res);
+        return true;
+      }
+      if (method === "DELETE") {
+        await handleDeleteReviewComment(wsReviewCommentMatch[1], wsReviewCommentMatch[2], res);
+        return true;
+      }
     }
 
     const wsReviewDiffMatch = path.match(/^\/workspaces\/([^/]+)\/review\/diff$/);

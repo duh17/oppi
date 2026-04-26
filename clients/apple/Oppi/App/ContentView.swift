@@ -109,6 +109,9 @@ struct ContentView: View {
         }
         .sheet(item: $liveConnection.activeExtensionDialog) { request in
             ExtensionDialogSheet(request: request)
+                .interactiveDismissDisabled()
+                .presentationDetents(request.method == "editor" ? [.large] : [.medium, .large])
+                .presentationDragIndicator(.hidden)
         }
         .sheet(
             isPresented: Binding(
@@ -316,95 +319,256 @@ private struct ExtensionDialogSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var inputValue: String = ""
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                if let message = request.message {
-                    Text(message)
-                        .font(.body)
+            Group {
+                if isTUICompatibilityRequest {
+                    compatibilityContent
+                } else {
+                    nativeDialogContent
                 }
-
-                if showsTextInput {
-                    TextField(request.placeholder ?? "Value", text: $inputValue)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                }
-
-                if request.method == "select", let options = request.options {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(options, id: \.self) { option in
-                            Button(option) {
-                                submitSelect(option)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                }
-
-                Spacer()
             }
-            .padding()
-            .navigationTitle(request.title ?? "Extension")
+            .navigationTitle(dialogTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", role: .cancel) {
                         cancelRequest()
                     }
+                    .disabled(isSubmitting)
                 }
 
                 if request.method == "confirm" || showsTextInput {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Submit") {
+                        Button(primaryActionTitle) {
                             submitCurrentValue()
                         }
+                        .disabled(isSubmitting || (request.method == "input" && inputValue.isEmpty))
                     }
                 }
             }
         }
-        .onAppear {
+        .task(id: request.id) {
             inputValue = request.prefill ?? ""
+            isSubmitting = false
         }
+    }
+
+    private var nativeDialogContent: some View {
+        Form {
+            if let message = request.message, !message.isEmpty {
+                Section {
+                    Text(message)
+                        .font(.body)
+                        .textSelection(.enabled)
+                }
+            }
+
+            switch request.method {
+            case "select":
+                Section {
+                    ForEach(request.options ?? [], id: \.self) { option in
+                        Button {
+                            submitSelect(option)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(option)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(isSubmitting)
+                    }
+                } header: {
+                    Text("Choose one")
+                }
+
+            case "confirm":
+                Section {
+                    Button {
+                        submitCurrentValue()
+                    } label: {
+                        Label(primaryActionTitle, systemImage: "checkmark.circle.fill")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSubmitting)
+                }
+
+            case "input":
+                Section {
+                    TextField(request.placeholder ?? "Value", text: $inputValue, axis: .vertical)
+                        .lineLimit(1...4)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .submitLabel(.done)
+                        .onSubmit { submitCurrentValue() }
+                } header: {
+                    Text(request.placeholder ?? "Value")
+                }
+
+            case "editor":
+                Section {
+                    TextEditor(text: $inputValue)
+                        .font(.body)
+                        .frame(minHeight: 240)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text(request.placeholder ?? "Edit text")
+                }
+
+            default:
+                Section {
+                    ContentUnavailableView(
+                        "Unsupported extension UI",
+                        systemImage: "questionmark.app",
+                        description: Text("This extension asked for \"\(request.method)\". Cancel and try the task another way.")
+                    )
+                }
+            }
+
+            if let timeout = request.timeout, timeout > 0 {
+                Section {
+                    Label("Expires in about \(max(1, (timeout + 999) / 1000)) seconds", systemImage: "timer")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var compatibilityContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                Text(request.message ?? "")
+                    .font(.system(.callout, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding()
+            }
+            .background(Color(.systemGroupedBackground))
+
+            VStack(spacing: 12) {
+                Text("Compatibility mode")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 10) {
+                    compatButton("Up", systemImage: "arrow.up", value: "↑ Up")
+                    compatButton("Down", systemImage: "arrow.down", value: "↓ Down")
+                    compatButton("Return", systemImage: "return", value: "⏎ Enter")
+                }
+
+                HStack(spacing: 10) {
+                    compatButton("Type Text", systemImage: "keyboard", value: "Type text…")
+                    compatButton("Cancel", systemImage: "xmark.circle", value: "Cancel", role: .cancel)
+                }
+            }
+            .padding()
+            .background(.bar)
+        }
+    }
+
+    @ViewBuilder
+    private func compatButton(
+        _ title: String,
+        systemImage: String,
+        value: String,
+        role: ButtonRole? = nil
+    ) -> some View {
+        let disabled = isSubmitting || !(request.options ?? []).contains(value)
+        if role == .cancel {
+            Button(role: role) {
+                cancelRequest()
+            } label: {
+                Label(title, systemImage: systemImage)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .disabled(disabled)
+        } else {
+            Button(role: role) {
+                submitSelect(value)
+            } label: {
+                Label(title, systemImage: systemImage)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(disabled)
+        }
+    }
+
+    private var dialogTitle: String {
+        if let title = request.title, !title.isEmpty {
+            return title
+        }
+        return "Extension"
+    }
+
+    private var primaryActionTitle: String {
+        request.method == "confirm" ? "Confirm" : "Submit"
     }
 
     private var showsTextInput: Bool {
         request.method == "input" || request.method == "editor"
     }
 
+    private var isTUICompatibilityRequest: Bool {
+        request.method == "select"
+            && request.title == "Extension (TUI compatibility mode)"
+            && Set(request.options ?? []).isSuperset(of: ["↑ Up", "↓ Down", "⏎ Enter", "Type text…", "Cancel"])
+    }
+
     private func submitSelect(_ option: String) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
         Task { @MainActor in
             do {
-                try await connection.respondToExtensionUI(id: request.id, value: option)
+                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: option)
                 dismiss()
             } catch {
+                isSubmitting = false
                 connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
             }
         }
     }
 
     private func submitCurrentValue() {
+        guard !isSubmitting else { return }
+        isSubmitting = true
         Task { @MainActor in
             do {
                 if request.method == "confirm" {
-                    try await connection.respondToExtensionUI(id: request.id, confirmed: true)
+                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, confirmed: true)
                 } else {
-                    try await connection.respondToExtensionUI(id: request.id, value: inputValue)
+                    try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, value: inputValue)
                 }
                 dismiss()
             } catch {
+                isSubmitting = false
                 connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
             }
         }
     }
 
     private func cancelRequest() {
+        guard !isSubmitting else { return }
+        isSubmitting = true
         Task { @MainActor in
             do {
-                try await connection.respondToExtensionUI(id: request.id, cancelled: true)
+                try await connection.respondToExtensionUI(id: request.id, sessionId: request.sessionId, cancelled: true)
                 dismiss()
             } catch {
+                isSubmitting = false
                 connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
             }
         }

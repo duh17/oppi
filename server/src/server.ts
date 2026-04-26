@@ -357,11 +357,7 @@ export class Server {
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     this.modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-    this.models = new ModelCatalog(
-      this.modelRegistry,
-      this.storage,
-      storage.getConfig().modelAllowlist,
-    );
+    this.models = new ModelCatalog(this.modelRegistry, this.storage);
     this.providerAuth = new ProviderAuthManager({
       authStorage,
       getKnownApiKeyProviderIds: () => {

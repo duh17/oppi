@@ -27,6 +27,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let isBusy: Bool
     @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
+    var pendingReviewCommentCount: Int = 0
     let sendProgressText: String?
     let isStopping: Bool
     var voiceInputManager: VoiceInputManager?
@@ -95,12 +96,16 @@ struct ChatInputBar<ActionRow: View>: View {
         let hasImages = !pendingImages.isEmpty
         let hasFiles = !pendingFiles.isEmpty
         let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText || hasImages || hasFiles
+        let hasReviewComments = pendingReviewCommentCount > 0
+        return hasText || hasImages || hasFiles || hasReviewComments
     }
 
     private var accentColor: Color { .themeBlue }
 
     private var composerPlaceholder: String {
+        if pendingReviewCommentCount > 0 {
+            return "Send review comments…"
+        }
         guard isBusy else { return "Message…" }
         return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
     }
@@ -253,7 +258,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
             guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
-            guard KeyboardLanguageStore.normalize(newLanguage) != nil else { return }
+            guard AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
             Task {
                 await manager.prewarm(
                     keyboardLanguage: newLanguage,
@@ -307,7 +312,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
 
                 ZStack(alignment: .leading) {
-                    if text.isEmpty {
+                    if Self.visibleComposerText(composerDisplayText).isEmpty {
                         Text(composerPlaceholder)
                             .font(composerPlaceholderFont)
                             .foregroundStyle(.themeComment)
@@ -348,6 +353,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         keyboardLanguage: $keyboardLanguage
                     )
                 }
+                .padding(.trailing, showsExpandButton ? expandVisualDiameter + 4 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
 

@@ -1,4 +1,3 @@
-
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
@@ -36,6 +35,7 @@ function makeSession(status: Session["status"] = "busy"): Session {
 function makeManagerHarness(status: Session["status"] = "busy") {
   const storage = {
     getConfig: () => TEST_CONFIG,
+    getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     saveSession: vi.fn(),
     getWorkspace: vi.fn(() => undefined),
   } as unknown as Storage;
@@ -70,7 +70,7 @@ function makeManagerHarness(status: Session["status"] = "busy") {
   };
 
   const key = session.id;
-  ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
+  (manager as unknown as { active: Map<string, unknown> }).active.set(key, active);
 
   const events: ServerMessage[] = [];
   manager.subscribe(session.id, (msg) => {
@@ -119,7 +119,9 @@ describe("stop lifecycle", () => {
       await manager.sendAbort("s1");
 
       // Phase 1: after stopAbortTimeoutMs, calls abort() again
-      vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
+      vi.advanceTimersByTime(
+        (manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs,
+      );
 
       // Initial abort + escalation abort
       expect(abort).toHaveBeenCalledTimes(2);
@@ -165,7 +167,9 @@ describe("stop lifecycle", () => {
       await manager.sendAbort("s1");
 
       // Phase 1 timeout: calls abort() again
-      vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
+      vi.advanceTimersByTime(
+        (manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs,
+      );
       expect(abort).toHaveBeenCalledTimes(2);
 
       // Agent responds with agent_end after abort interrupts the tool
@@ -271,7 +275,9 @@ describe("stop lifecycle", () => {
       expect(manager.isActive("s1")).toBe(false);
       expect(events.some((event) => event.type === "session_ended")).toBe(true);
 
-      vi.advanceTimersByTime((manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs);
+      vi.advanceTimersByTime(
+        (manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs,
+      );
       expect(dispose).toHaveBeenCalledTimes(1);
     } finally {
       vi.clearAllTimers();
@@ -288,7 +294,9 @@ describe("stop lifecycle", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      vi.advanceTimersByTime((manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs);
+      vi.advanceTimersByTime(
+        (manager as unknown as { stopSessionGraceMs: number }).stopSessionGraceMs,
+      );
       await stopPromise;
 
       expect(abort).toHaveBeenCalledTimes(1);

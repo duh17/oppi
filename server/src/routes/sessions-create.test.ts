@@ -15,7 +15,6 @@ function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
   return {
     id: "ws-1",
     name: "test-workspace",
-    defaultModel: "test-model",
     ...overrides,
   } as Workspace;
 }
@@ -54,6 +53,7 @@ interface MockRouteContext {
     stopSession: ReturnType<typeof vi.fn>;
   };
   storage: {
+    getDataDir: ReturnType<typeof vi.fn>;
     getWorkspace: ReturnType<typeof vi.fn>;
     createSession: ReturnType<typeof vi.fn>;
     saveSession: ReturnType<typeof vi.fn>;
@@ -69,6 +69,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   const errors: Array<{ status: number; message: string }> = [];
 
   const storage = {
+    getDataDir: vi.fn().mockReturnValue("/tmp/oppi-routes-sessions-create-tests"),
     getWorkspace: vi.fn().mockReturnValue(ws),
     createSession: vi.fn().mockImplementation((name?: string, model?: string) =>
       makeSession({
@@ -277,12 +278,12 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "custom-model");
   });
 
-  it("falls back to workspace default model", async () => {
-    const mock = createMockContext(makeWorkspace({ defaultModel: "ws-default" }));
+  it("omits model when request does not specify one so Pi settings choose", async () => {
+    const mock = createMockContext();
 
     await dispatchCreate(mock, { prompt: "hello" });
 
-    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "ws-default");
+    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, undefined);
   });
 
   it("passes workspace to startSession", async () => {

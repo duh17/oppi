@@ -86,10 +86,11 @@ enum ToolCallFormatting {
         return value
     }
 
-    /// Format file path for header display with optional line range.
+    /// Format file path for header display with optional read line range.
     ///
-    /// Prioritizes the most relevant suffix (`parent/file`) so the filename and
-    /// read line range remain visible in narrow tool rows.
+    /// Keeps the full (shortened) path string so collapsed rows can use
+    /// middle truncation (showing both prefix and filename), while expanded
+    /// rows can wrap to reveal the complete path.
     static func displayFilePath(
         tool: String,
         args: [String: JSONValue]?,
@@ -99,7 +100,7 @@ enum ToolCallFormatting {
             ?? parseArgValue("path", from: argsSummary)
         guard let path = raw else { return argsSummary }
 
-        var display = compactDisplayPath(path)
+        var display = normalizedDisplayPath(path)
 
         // Append line range for read tool
         if isReadTool(tool) {
@@ -114,34 +115,15 @@ enum ToolCallFormatting {
         return display
     }
 
-    /// Keep only the path tail for compact row headers.
-    ///
-    /// Examples:
-    /// - `/Users/example/workspace/oppi/ios/Oppi/Features/Chat/File.swift`
-    ///   -> `Chat/File.swift`
-    /// - `src/server.ts` -> `src/server.ts`
-    /// - `README.md` -> `README.md`
-    private static func compactDisplayPath(_ rawPath: String) -> String {
-        let shortened = rawPath.shortenedPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !shortened.isEmpty else { return rawPath }
+    private static func normalizedDisplayPath(_ rawPath: String) -> String {
+        var normalized = rawPath.shortenedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return rawPath }
 
-        var components = shortened
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        if components.first == "~" {
-            components.removeFirst()
+        while normalized.count > 1 && normalized.hasSuffix("/") {
+            normalized.removeLast()
         }
 
-        guard !components.isEmpty else {
-            return shortened
-        }
-
-        if components.count == 1 {
-            return components[0]
-        }
-
-        return components.suffix(2).joined(separator: "/")
+        return normalized
     }
 
     /// Parse a value from the flat argsSummary string.
@@ -209,6 +191,8 @@ enum ToolCallFormatting {
             return "pencil"
         case "edit", "Edit":
             return "arrow.left.arrow.right"
+        case "voice_speak", "voice_create", "Voice_speak", "Voice_create":
+            return "speaker.wave.2.fill"
         default:
             return nil
         }

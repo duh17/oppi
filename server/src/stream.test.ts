@@ -100,6 +100,7 @@ function createMockContext(sessions: Session[]): {
       getCurrentSeq: () => 0,
       getCatchUp: () => null,
       getPendingAskMessage: () => undefined,
+      getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
 
     gate: {

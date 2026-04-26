@@ -8,8 +8,21 @@ struct PiQuickActionTests {
 
     // MARK: - Model
 
-    @Test func builtInDefaultsContainSixActions() {
-        #expect(PiQuickAction.builtInDefaults.count == 6)
+    @Test func builtInDefaultsContainSevenActions() {
+        #expect(PiQuickAction.builtInDefaults.count == 7)
+        #expect(PiQuickAction.builtInDefaults.last?.behavior == .reviewComment)
+    }
+
+    @Test func commentSortsFirstInSelectionMenu() {
+        let sorted = PiQuickAction.sortedForSelectionMenu(PiQuickAction.builtInDefaults)
+        #expect(sorted.first?.behavior == .reviewComment)
+    }
+
+    @Test func persistedActionsMissingCommentGetCompatibilityAction() {
+        let persisted = Array(PiQuickAction.builtInDefaults.prefix(6))
+        let sorted = PiQuickAction.sortedForSelectionMenu(persisted)
+        #expect(sorted.count == 7)
+        #expect(sorted.first?.behavior == .reviewComment)
     }
 
     @Test func builtInDefaultsHaveStableIds() {
@@ -143,20 +156,9 @@ struct PiQuickActionTests {
         #expect(result == "> some text")
     }
 
-    // MARK: - Backward compat shim
-
-    @Test func oldEnumMapsToCorrectBuiltInAction() {
-        let explain = SelectedTextPiActionKind.explain.builtInAction
-        #expect(explain.title == "Explain")
-        #expect(explain.promptPrefix == "Explain this:")
-
-        let addToPrompt = SelectedTextPiActionKind.addToPrompt.builtInAction
-        #expect(addToPrompt.isRawInsert == true)
-    }
-
-    @Test func requestInitWithOldEnumProducesCorrectDraft() {
+    @Test func builtInDefaultsProduceExpectedDraft() {
         let request = SelectedTextPiRequest(
-            action: .fix,
+            action: PiQuickAction.builtInDefaults[2],
             selectedText: "broken code",
             source: .init(sessionId: "s-1", surface: .assistantProse)
         )

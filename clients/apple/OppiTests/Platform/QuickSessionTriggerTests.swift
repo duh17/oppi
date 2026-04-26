@@ -235,15 +235,15 @@ struct WorkspaceEntityTests {
     }
 }
 
-// MARK: - QuickSessionDefaults
+// MARK: - AppPreferences.QuickSession
 
-@Suite("QuickSessionDefaults")
+@Suite("AppPreferences.QuickSession")
 @MainActor
-struct QuickSessionDefaultsTests {
+struct QuickSessionTests {
 
     @Test func workspaceIdRoundTrip() {
-        QuickSessionDefaults.saveWorkspaceId("test-ws-42")
-        #expect(QuickSessionDefaults.lastWorkspaceId == "test-ws-42")
+        AppPreferences.QuickSession.saveWorkspaceId("test-ws-42")
+        #expect(AppPreferences.QuickSession.lastWorkspaceId == "test-ws-42")
 
         // Clean up
         UserDefaults.standard.removeObject(
@@ -251,61 +251,13 @@ struct QuickSessionDefaultsTests {
         )
     }
 
-    @Test func modelIdRoundTrip() {
-        QuickSessionDefaults.saveModelId("gpt-4o")
-        #expect(QuickSessionDefaults.lastModelId == "gpt-4o")
-
-        UserDefaults.standard.removeObject(
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastModelId"
-        )
-    }
-
-    @Test func thinkingLevelDefaultsToMedium() {
-        // Clear any stored value
-        UserDefaults.standard.removeObject(
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
-        )
-        #expect(QuickSessionDefaults.lastThinkingLevel == .medium)
-    }
-
-    @Test func thinkingLevelRoundTrip() {
-        QuickSessionDefaults.saveThinkingLevel(.high)
-        #expect(QuickSessionDefaults.lastThinkingLevel == .high)
-
-        QuickSessionDefaults.saveThinkingLevel(.off)
-        #expect(QuickSessionDefaults.lastThinkingLevel == .off)
-
-        // Restore default
-        UserDefaults.standard.removeObject(
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
-        )
-    }
-
-    @Test func thinkingLevelInvalidRawFallsBackToMedium() {
-        UserDefaults.standard.set(
-            "nonexistent",
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
-        )
-        #expect(QuickSessionDefaults.lastThinkingLevel == .medium)
-
-        UserDefaults.standard.removeObject(
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastThinkingLevel"
-        )
-    }
-
     @Test func workspaceIdNilWhenNotSet() {
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
         )
-        #expect(QuickSessionDefaults.lastWorkspaceId == nil)
+        #expect(AppPreferences.QuickSession.lastWorkspaceId == nil)
     }
 
-    @Test func modelIdNilWhenNotSet() {
-        UserDefaults.standard.removeObject(
-            forKey: "\(AppIdentifiers.subsystem).quickSession.lastModelId"
-        )
-        #expect(QuickSessionDefaults.lastModelId == nil)
-    }
 }
 
 // MARK: - StartQuickSessionIntent (static properties)

@@ -488,10 +488,15 @@ export class UserStreamMux {
           send(buildPermissionMessage(pending));
         }
 
-        // Re-send pending ask request so iOS can restore the AskCard
+        // Re-send pending UI requests so iOS can restore user-blocking sheets
+        // after reconnects, focus changes, or stream re-subscribe.
         const pendingAskMsg = this.ctx.sessions.getPendingAskMessage(sessionId);
         if (pendingAskMsg) {
           send(pendingAskMsg);
+        }
+
+        for (const pendingUIMsg of this.ctx.sessions.getPendingUIRequestMessages(sessionId)) {
+          send(pendingUIMsg);
         }
 
         const durationMs = Date.now() - subscribeStart;

@@ -105,6 +105,9 @@ final class ServerConnection {
 
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
+    /// Pending generic extension dialogs for sessions the user is not currently viewing.
+    /// Restored when focus returns, matching ask request behavior.
+    var pendingExtensionDialogs: [String: ExtensionUIRequest] = [:]
     var extensionToast: String?
     var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
 
@@ -661,6 +664,7 @@ final class ServerConnection {
             // session can be lost and its watchdog can keep running against
             // the newly focused session.
             stashActiveAskIfNeeded()
+            stashActiveExtensionDialogIfNeeded()
             silenceWatchdog.stop()
         }
 
@@ -672,8 +676,9 @@ final class ServerConnection {
         extensionTimeoutTask = nil
         chatState.resetSessionState()
 
-        // Restore pending ask request if one was stashed for this session.
+        // Restore pending user-blocking UI for this session.
         restorePendingAskRequestIfNeeded(for: sessionId)
+        restorePendingExtensionDialogIfNeeded(for: sessionId)
     }
 
     /// Disconnect from the current session stream.
@@ -689,10 +694,11 @@ final class ServerConnection {
             screenAwakeController.clearSessionActivity(sessionId: activeSessionId)
         }
 
-        // Stash pending ask request before clearing activeSessionId so it can
+        // Stash pending user-blocking UI before clearing activeSessionId so it can
         // be restored on focusSession(). Without this, navigating away loses
-        // the ask card permanently.
+        // in-flight client/server UI state permanently.
         stashActiveAskIfNeeded()
+        stashActiveExtensionDialogIfNeeded()
 
         activeSessionId = nil
         sender.activeSessionId = nil
@@ -784,11 +790,20 @@ final class ServerConnection {
     }
 
     /// Respond to an extension UI dialog (has UI side effects — stays on ServerConnection).
-    func respondToExtensionUI(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil) async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled), sessionId: activeSessionId)
+    func respondToExtensionUI(
+        id: String,
+        sessionId: String,
+        value: String? = nil,
+        confirmed: Bool? = nil,
+        cancelled: Bool? = nil
+    ) async throws {
+        try await sender.dispatchSend(
+            .extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled),
+            sessionIdOverride: sessionId
+        )
         activeExtensionDialog = nil
-        clearAskState(for: activeSessionId)
+        pendingExtensionDialogs.removeValue(forKey: sessionId)
+        clearAskState(for: sessionId)
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
     }

@@ -95,7 +95,6 @@ export class WorkspaceStore {
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeOptionalString(req.hostMount),
       extensions: normalizeExtensions(req.extensions),
-      defaultModel: normalizeOptionalString(req.defaultModel),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime: req.runtime,
       sandboxConfig: normalizeSandboxConfig(req.sandboxConfig),
@@ -138,8 +137,6 @@ export class WorkspaceStore {
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeOptionalString(raw.hostMount),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
-      defaultModel: normalizeOptionalString(raw.defaultModel),
-      lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
       runtime: raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
@@ -215,8 +212,6 @@ export class WorkspaceStore {
       workspace.hostMount = normalizeOptionalString(updates.hostMount);
     if (updates.extensions !== undefined)
       workspace.extensions = normalizeExtensions(updates.extensions);
-    if (updates.defaultModel !== undefined)
-      workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
     if (updates.runtime !== undefined) workspace.runtime = updates.runtime;

@@ -71,15 +71,18 @@ enum ToolPresentationBuilder {
             tool: tool,
             args: args,
             argsSummary: argsSummary,
+            details: context.details,
             isExpanded: isExpanded,
             isError: isError,
             isDone: isDone,
             outputPreview: outputPreview
         )
 
+        let isVoiceAudioResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
+
         // Expanded presentation
         let expanded: ExpandedPresentation
-        if isExpanded {
+        if isExpanded || isVoiceAudioResult {
             expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 rawToolName: tool,
@@ -115,7 +118,8 @@ enum ToolPresentationBuilder {
         }
 
         var title = collapsed.title
-        if title.count > 240 {
+        let shouldCapTitleLength = !(normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit")
+        if shouldCapTitleLength, title.count > 240 {
             title = String(title.prefix(239)) + "…"
         }
 
@@ -136,7 +140,8 @@ enum ToolPresentationBuilder {
         // Expanded bash rows render a dedicated command panel, so we suppress
         // segment title commands there to avoid duplicate command text.
         let segmentAttributedTitle: NSAttributedString?
-        if isExpanded && normalizedTool == "bash" {
+        let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
+        if isVoiceAudioResult || isBuiltInFileTool || (isExpanded && normalizedTool == "bash") {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
             let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
@@ -162,7 +167,7 @@ enum ToolPresentationBuilder {
             expandedContent: expanded.content,
             copyCommandText: expanded.copyCommandText,
             copyOutputText: expanded.copyOutputText,
-            languageBadge: languageBadge,
+            languageBadge: isVoiceAudioResult ? nil : languageBadge,
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: segmentAttributedTitle != nil
@@ -178,8 +183,8 @@ enum ToolPresentationBuilder {
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,
-            startedAt: context.startedAt,
-            elapsedSeconds: context.elapsedSeconds,
+            startedAt: isVoiceAudioResult ? nil : context.startedAt,
+            elapsedSeconds: isVoiceAudioResult ? nil : context.elapsedSeconds,
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
@@ -204,6 +209,7 @@ enum ToolPresentationBuilder {
         tool: String,
         args: [String: JSONValue]?,
         argsSummary: String,
+        details: JSONValue?,
         isExpanded: Bool,
         isError: Bool,
         isDone: Bool,
@@ -272,9 +278,16 @@ enum ToolPresentationBuilder {
         default:
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
-            result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
-            result.toolNamePrefix = tool
-            result.toolNameColor = UIColor(Color.themeCyan)
+            if Self.toolAudioAttachmentDetails(from: details) != nil {
+                result.title = "Voice message"
+                result.languageBadge = nil
+                result.toolNamePrefix = normalizedTool
+                result.toolNameColor = UIColor(Color.themePurple)
+            } else {
+                result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
+                result.toolNamePrefix = tool
+                result.toolNameColor = UIColor(Color.themeCyan)
+            }
         }
 
         return result
@@ -297,6 +310,8 @@ enum ToolPresentationBuilder {
         case markdown(text: String)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
+        /// Voice message with server-owned session attachment replay.
+        case voiceMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
         case status(message: String)
         /// Plain/ANSI text with optional syntax highlighting
@@ -445,7 +460,7 @@ enum ToolPresentationBuilder {
     /// Tools whose icon replaces the textual tool name in collapsed title rendering.
     private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
         switch prefix {
-        case "$", "read", "write", "edit": true
+        case "$", "read", "write", "edit", "voice_speak", "voice_create": true
         default: false
         }
     }

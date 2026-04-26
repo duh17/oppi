@@ -5,7 +5,7 @@ import Testing
 struct SelectedTextPiPromptFormatterTests {
     @Test func addToPromptFormatsAssistantProseAsQuote() {
         let request = SelectedTextPiRequest(
-            action: .addToPrompt,
+            action: PiQuickAction.addToPromptAction,
             selectedText: "first line\nsecond line",
             source: .init(sessionId: "session-1", surface: .assistantProse)
         )
@@ -16,7 +16,7 @@ struct SelectedTextPiPromptFormatterTests {
 
     @Test func addToPromptFormatsCodeSurfaceAsFence() {
         let request = SelectedTextPiRequest(
-            action: .addToPrompt,
+            action: PiQuickAction.addToPromptAction,
             selectedText: "let answer = 42",
             source: .init(
                 sessionId: "session-1",
@@ -31,7 +31,7 @@ struct SelectedTextPiPromptFormatterTests {
 
     @Test func explainAddsInstructionPrefix() {
         let request = SelectedTextPiRequest(
-            action: .explain,
+            action: PiQuickAction.explainAction,
             selectedText: "some passage",
             source: .init(sessionId: "session-1", surface: .assistantProse)
         )
@@ -42,7 +42,7 @@ struct SelectedTextPiPromptFormatterTests {
 
     @Test func codeFormattingUsesLongerFenceWhenSelectionContainsBackticks() {
         let request = SelectedTextPiRequest(
-            action: .addToPrompt,
+            action: PiQuickAction.addToPromptAction,
             selectedText: "````\ncode\n````",
             source: .init(
                 sessionId: "session-1",

@@ -7,8 +7,8 @@ import UIKit
 struct VoiceInputCorrectionHighlightTests {
     @Test("Segment commit highlights corrected committed words briefly")
     func segmentCommitHighlightsCorrectedWordsBriefly() async throws {
-        VoiceInputPreferences.setEngineMode(.auto)
-        defer { VoiceInputPreferences.setEngineMode(.auto) }
+        AppPreferences.Voice.setEngineMode(.auto)
+        defer { AppPreferences.Voice.setEngineMode(.auto) }
 
         let systemAccess = MockVoiceInputSystemAccess()
         let session = MockVoiceSession()
@@ -54,8 +54,8 @@ struct VoiceInputCorrectionHighlightTests {
 
     @Test("Pure append does not create a correction highlight")
     func pureAppendDoesNotCreateCorrectionHighlight() async throws {
-        VoiceInputPreferences.setEngineMode(.auto)
-        defer { VoiceInputPreferences.setEngineMode(.auto) }
+        AppPreferences.Voice.setEngineMode(.auto)
+        defer { AppPreferences.Voice.setEngineMode(.auto) }
 
         let systemAccess = MockVoiceInputSystemAccess()
         let session = MockVoiceSession()

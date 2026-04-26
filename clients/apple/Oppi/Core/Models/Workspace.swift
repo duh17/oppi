@@ -43,9 +43,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var runtime: WorkspaceRuntime?
     var sandboxConfig: SandboxConfig?
 
-    // Defaults
-    var defaultModel: String?
-
     // Metadata
     let createdAt: Date
     var updatedAt: Date
@@ -62,7 +59,6 @@ extension Workspace: Codable {
         case extensions
         case gitStatusEnabled
         case runtime, sandboxConfig
-        case defaultModel
         case createdAt, updatedAt
     }
 
@@ -80,7 +76,6 @@ extension Workspace: Codable {
         gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
         runtime = try c.decodeIfPresent(WorkspaceRuntime.self, forKey: .runtime)
         sandboxConfig = try c.decodeIfPresent(SandboxConfig.self, forKey: .sandboxConfig)
-        defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
 
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
         createdAt = Date(timeIntervalSince1970: createdMs / 1000)
@@ -103,7 +98,6 @@ extension Workspace: Codable {
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(sandboxConfig, forKey: .sandboxConfig)
-        try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)
     }

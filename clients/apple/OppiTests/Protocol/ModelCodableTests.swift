@@ -565,7 +565,6 @@ struct WorkspaceCodableTests {
             "hostMount": "/Users/me/workspace",
             "extensionMode": "explicit",
             "extensions": ["memory", "todos"],
-            "defaultModel": "claude-sonnet-4-20250514",
             "createdAt": 1700000000000,
             "updatedAt": 1700001000000
         }
@@ -581,7 +580,6 @@ struct WorkspaceCodableTests {
         #expect(ws.systemPromptMode == .replace)
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.extensions == ["memory", "todos"])
-        #expect(ws.defaultModel == "claude-sonnet-4-20250514")
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
         #expect(ws.updatedAt.timeIntervalSince1970 == 1700001000)
     }
@@ -606,7 +604,6 @@ struct WorkspaceCodableTests {
         #expect(ws.systemPromptMode == .append)
         #expect(ws.hostMount == nil)
         #expect(ws.extensions == nil)
-        #expect(ws.defaultModel == nil)
     }
 
     @Test func encodeDecodeRoundTrip() throws {
@@ -617,7 +614,6 @@ struct WorkspaceCodableTests {
             "skills": ["fetch"],
             "systemPrompt": "prompt", "systemPromptMode": "replace", "hostMount": "/work",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
-            "defaultModel": "model-1",
             "createdAt": 1700000000000, "updatedAt": 1700001000000
         }
         """

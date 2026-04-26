@@ -25,12 +25,6 @@ export interface ModelInfo {
 
 // ─── Helpers ───
 
-/** Check whether a model passes the allowlist (if one is configured). */
-function isModelAllowed(model: ModelInfo, allowlist: ReadonlySet<string> | null): boolean {
-  if (!allowlist) return true;
-  return allowlist.has(model.id);
-}
-
 /** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
 function normalizeModelToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -64,26 +58,17 @@ function sdkModelsToModelInfo(
 export class ModelCatalog {
   private catalog: ModelInfo[] = [];
   private updatedAt = 0;
-  private allowlist: ReadonlySet<string> | null = null;
-
   constructor(
     private registry: ModelRegistry,
     private storage: Storage,
-    allowlist?: string[],
-  ) {
-    if (allowlist && allowlist.length > 0) {
-      this.allowlist = new Set(allowlist);
-    }
-  }
+  ) {}
 
   /** Refresh the model catalog from the SDK registry. */
   refresh(): void {
     try {
       this.registry.refresh();
       const available = this.registry.getAvailable();
-      this.catalog = sdkModelsToModelInfo(available).filter((m) =>
-        isModelAllowed(m, this.allowlist),
-      );
+      this.catalog = sdkModelsToModelInfo(available);
       this.updatedAt = Date.now();
 
       if (this.catalog.length > 0) {

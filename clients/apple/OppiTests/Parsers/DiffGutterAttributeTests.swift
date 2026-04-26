@@ -107,6 +107,22 @@ struct DiffGutterAttributeTests {
         #expect(bg == nil, "Context line prefix should NOT have a background color")
     }
 
+    @Test func lineNumberAttributeTagsRenderedDiffRows() throws {
+        let result = DiffAttributedStringBuilder.build(
+            hunks: makeHunks(), filePath: "test.swift"
+        )
+        let text = result.string as NSString
+
+        let addedCodeRange = text.range(of: "let y = 3")
+        guard addedCodeRange.location != NSNotFound else {
+            Issue.record("Expected added line in diff output")
+            return
+        }
+
+        let lineNumber = result.attribute(reviewLineNumberAttributeKey, at: addedCodeRange.location, effectiveRange: nil) as? Int
+        #expect(lineNumber == 2)
+    }
+
     @Test func diffUsesSingleDisplayedLineNumberColumn() throws {
         let result = DiffAttributedStringBuilder.build(
             hunks: makeHunks(), filePath: "test.swift"

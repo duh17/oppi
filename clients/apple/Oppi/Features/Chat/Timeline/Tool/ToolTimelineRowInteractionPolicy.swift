@@ -7,6 +7,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case code
         case markdown
         case readMedia
+        case voiceMessage
         case status
         case text
     }
@@ -52,7 +53,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: false
             )
 
-        case .readMedia, .status:
+        case .readMedia, .voiceMessage, .status:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: false,
@@ -76,7 +77,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         switch mode {
         case .diff, .code, .markdown, .bash, .text:
             return true
-        case .readMedia, .status:
+        case .readMedia, .voiceMessage, .status:
             return false
         }
     }
@@ -95,6 +96,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .markdown
         case .readMedia:
             self = .readMedia
+        case .voiceMessage:
+            self = .voiceMessage
         case .status:
             self = .status
         case .text:

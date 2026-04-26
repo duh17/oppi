@@ -1,3 +1,4 @@
+import CryptoKit
 import UIKit
 import SwiftUI
 
@@ -5,6 +6,7 @@ final class NativeExpandedReadMediaView: UIView {
     private let rootStack = UIStackView()
     private var renderSignature: Int?
     private let maxInlineImagePixelSize: CGFloat = 1_600
+    private var audioPlayer: AudioPlayerService?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -19,14 +21,19 @@ final class NativeExpandedReadMediaView: UIView {
         isError: Bool,
         filePath: String?,
         startLine: Int,
-        themeID: ThemeID
+        themeID: ThemeID,
+        audioPlayer: AudioPlayerService?
     ) {
+        self.audioPlayer = audioPlayer
         var hasher = Hasher()
         hasher.combine(output)
         hasher.combine(isError)
         hasher.combine(filePath ?? "")
         hasher.combine(startLine)
         hasher.combine(themeID.rawValue)
+        if let audioPlayer {
+            hasher.combine(ObjectIdentifier(audioPlayer).hashValue)
+        }
         let signature = hasher.finalize()
 
         guard signature != renderSignature else { return }
@@ -48,6 +55,21 @@ final class NativeExpandedReadMediaView: UIView {
                 range: displayText.startIndex..<displayText.endIndex
             )]
             displayText = ""
+        }
+
+        let isVoiceMessage = filePath == "Voice message"
+        if isVoiceMessage, let clip = parsed.audio.first {
+            let row = NativeVoiceMessageView()
+            row.apply(
+                id: "expanded-voice-\(clip.base64.prefix(24))",
+                message: displayText,
+                base64: clip.base64,
+                mimeType: clip.mimeType,
+                audioPlayer: audioPlayer,
+                palette: palette
+            )
+            rootStack.addArrangedSubview(row)
+            return
         }
 
         if let filePath, !filePath.isEmpty {
@@ -98,13 +120,17 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.addArrangedSubview(countLabel)
 
             for (index, clip) in parsed.audio.prefix(6).enumerated() {
-                let row = UILabel()
-                row.font = ToolFont.regular
-                row.textColor = UIColor(palette.fg)
-                row.numberOfLines = 1
-                row.lineBreakMode = .byTruncatingTail
-                row.text = "🔊 Clip \(index + 1) • \(clip.mimeType ?? "audio/unknown")"
-                rootStack.addArrangedSubview(makeCardView(contentView: row, palette: palette))
+                let row = NativeExpandedAudioAttachmentView()
+                row.apply(
+                    id: "expanded-audio-\(index)-\(clip.base64.prefix(24))",
+                    title: filePath?.isEmpty == false ? filePath ?? "Audio" : "Audio clip \(index + 1)",
+                    base64: clip.base64,
+                    mimeType: clip.mimeType,
+                    audioPlayer: audioPlayer,
+                    palette: palette,
+                    compact: false
+                )
+                rootStack.addArrangedSubview(row)
             }
             if parsed.audio.count > 6 {
                 let more = UILabel()
@@ -168,6 +194,229 @@ final class NativeExpandedReadMediaView: UIView {
             rootStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+    }
+}
+
+@MainActor
+final class NativeExpandedAudioAttachmentView: UIView {
+    private static let maxDecodedBytes = 10 * 1024 * 1024
+
+    private let container = UIView()
+    private let rootStack = UIStackView()
+    private let iconView = UIImageView(image: UIImage(systemName: "waveform"))
+    private let labelsStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let playButton = UIButton(type: .system)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+
+    private var id: String?
+    private var fileURL: URL?
+    private var audioPlayer: AudioPlayerService?
+    private var decodeTask: Task<Void, Never>?
+    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        decodeTask?.cancel()
+        if let audioStateObserver {
+            NotificationCenter.default.removeObserver(audioStateObserver)
+        }
+    }
+
+    func apply(
+        id: String,
+        title: String,
+        base64: String,
+        mimeType: String?,
+        audioPlayer: AudioPlayerService?,
+        palette: ThemePalette,
+        compact: Bool = false
+    ) {
+        self.id = id
+        self.audioPlayer = audioPlayer
+        self.fileURL = nil
+        bindAudioStateObservationIfNeeded()
+
+        titleLabel.text = title
+        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.numberOfLines = compact ? 0 : 1
+        titleLabel.lineBreakMode = compact ? .byWordWrapping : .byTruncatingMiddle
+        subtitleLabel.isHidden = compact
+        subtitleLabel.textColor = UIColor(palette.comment)
+        iconView.tintColor = UIColor(palette.purple)
+        spinner.color = UIColor(palette.purple)
+        container.backgroundColor = UIColor(palette.bgDark)
+        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+
+        guard mimeType?.lowercased() == "audio/wav" else {
+            subtitleLabel.text = "Unsupported audio type: \(mimeType ?? "audio/unknown")"
+            playButton.isEnabled = false
+            updateButton(palette: palette)
+            return
+        }
+
+        let compactBase64 = base64.filter { !$0.isWhitespace }
+        guard estimatedDecodedByteCount(compactBase64) <= Self.maxDecodedBytes else {
+            subtitleLabel.text = "Audio is over 10 MB and was not decoded"
+            playButton.isEnabled = false
+            updateButton(palette: palette)
+            return
+        }
+
+        subtitleLabel.text = "Preparing WAV…"
+        playButton.isEnabled = false
+        updateButton(palette: palette)
+        decodeTask?.cancel()
+        let hasAudioPlayer = audioPlayer != nil
+        let maxDecodedBytes = Self.maxDecodedBytes
+        decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result { try ToolAudioAttachmentCache.cachedWAVFileURL(base64: compactBase64, maxDecodedBytes: maxDecodedBytes) }
+            await MainActor.run { [weak self] in
+                guard let self, self.id == id else { return }
+                switch result {
+                case .success(let url):
+                    self.fileURL = url
+                    let byteCount = (try? Data(contentsOf: url))?.count ?? 0
+                    self.subtitleLabel.text = compact ? nil : "WAV • \(ToolCallFormatting.formatBytes(byteCount))"
+                    self.playButton.isEnabled = hasAudioPlayer
+                case .failure:
+                    self.subtitleLabel.text = "Unable to decode WAV payload"
+                    self.playButton.isEnabled = false
+                }
+                self.updateButton(palette: palette)
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            }
+        }
+    }
+
+    private func setupViews() {
+        translatesAutoresizingMaskIntoConstraints = false
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.layer.cornerRadius = 8
+        container.layer.borderWidth = 1
+
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        rootStack.axis = .horizontal
+        rootStack.alignment = .center
+        rootStack.spacing = 10
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.contentMode = .scaleAspectFit
+
+        labelsStack.translatesAutoresizingMaskIntoConstraints = false
+        labelsStack.axis = .vertical
+        labelsStack.alignment = .leading
+        labelsStack.spacing = 2
+
+        titleLabel.font = ToolFont.regular
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.font = ToolFont.small
+        subtitleLabel.numberOfLines = 1
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.hidesWhenStopped = true
+
+        addSubview(container)
+        container.addSubview(rootStack)
+        playButton.addSubview(spinner)
+        labelsStack.addArrangedSubview(titleLabel)
+        labelsStack.addArrangedSubview(subtitleLabel)
+        rootStack.addArrangedSubview(iconView)
+        rootStack.addArrangedSubview(labelsStack)
+        rootStack.addArrangedSubview(UIView())
+        rootStack.addArrangedSubview(playButton)
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: trailingAnchor),
+            container.topAnchor.constraint(equalTo: topAnchor),
+            container.bottomAnchor.constraint(equalTo: bottomAnchor),
+            rootStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            rootStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            rootStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            rootStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            playButton.widthAnchor.constraint(equalToConstant: 36),
+            playButton.heightAnchor.constraint(equalToConstant: 36),
+            spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
+        ])
+    }
+
+    private func bindAudioStateObservationIfNeeded() {
+        guard audioStateObserver == nil else { return }
+        audioStateObserver = NotificationCenter.default.addObserver(
+            forName: AudioPlayerService.stateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.updateButton(palette: ThemeRuntimeState.currentPalette())
+        }
+    }
+
+    private func updateButton(palette: ThemePalette) {
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        playButton.setPreferredSymbolConfiguration(symbolConfig, forImageIn: .normal)
+        guard let id else { return }
+
+        if audioPlayer?.loadingItemID == id {
+            playButton.setImage(nil, for: .normal)
+            spinner.startAnimating()
+        } else if audioPlayer?.playingItemID == id {
+            spinner.stopAnimating()
+            playButton.setImage(UIImage(systemName: "stop.fill"), for: .normal)
+        } else {
+            spinner.stopAnimating()
+            playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        }
+        playButton.tintColor = audioPlayer?.playingItemID == id ? UIColor(palette.purple) : UIColor(palette.comment)
+    }
+
+    @objc private func togglePlayback() {
+        guard let id, let fileURL, let audioPlayer else { return }
+        audioPlayer.toggleFilePlayback(fileURL: fileURL, itemID: id)
+        updateButton(palette: ThemeRuntimeState.currentPalette())
+    }
+
+    private func estimatedDecodedByteCount(_ base64: String) -> Int {
+        max(0, (base64.count * 3) / 4 - base64.suffix(2).filter { $0 == "=" }.count)
+    }
+}
+
+private enum ToolAudioAttachmentCache {
+    static func cachedWAVFileURL(base64: String, maxDecodedBytes: Int) throws -> URL {
+        let digest = SHA256.hash(data: Data(base64.utf8)).map { String(format: "%02x", $0) }.joined()
+        let directory = try cacheDirectory()
+        let fileURL = directory.appendingPathComponent("tool-audio-\(digest).wav")
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            return fileURL
+        }
+        guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters), data.count <= maxDecodedBytes else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
+    private static func cacheDirectory() throws -> URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let directory = base.appendingPathComponent("OppiToolAudio", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 }
 

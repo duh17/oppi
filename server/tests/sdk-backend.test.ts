@@ -45,6 +45,7 @@ describe("SdkBackend.setModel", () => {
             name?: string;
           }
         | undefined,
+      thinkingLevel: "medium",
     };
 
     const runtime = {
@@ -103,6 +104,7 @@ describe("SdkBackend.setModel", () => {
       provider: "studio",
       id: "qwen3-coder",
       name: "Qwen3 Coder",
+      thinkingLevel: "medium",
     });
   });
 });

@@ -122,6 +122,84 @@ struct ReviewSessionNavDestination: Identifiable, Hashable {
     let filePaths: [String]
 }
 
+// MARK: - Review Comments
+
+enum ReviewCommentAuthor: String, Codable, Sendable, Equatable {
+    case human
+    case agent
+}
+
+enum ReviewCommentStatus: String, Codable, Sendable, Equatable {
+    case staged
+    case sent
+    case open
+    case resolved
+    case dismissed
+}
+
+enum ReviewCommentSeverity: String, Codable, Sendable, Equatable {
+    case error
+    case warning
+    case info
+}
+
+enum ReviewCommentReferenceSource: String, Codable, Sendable, Equatable {
+    case gitDiff = "git_diff"
+    case file
+    case timelineText = "timeline_text"
+    case toolOutput = "tool_output"
+    case terminalOutput = "terminal_output"
+    case image
+    case unknown
+}
+
+struct ReviewCommentReference: Codable, Sendable, Equatable {
+    let source: ReviewCommentReferenceSource
+    var label: String?
+    var path: String?
+    var side: String?
+    var startLine: Int?
+    var endLine: Int?
+    var selectedText: String?
+    var languageHint: String? = nil
+    var toolCallId: String?
+    var timelineItemId: String?
+    var url: String?
+}
+
+struct ReviewCommentAttachment: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let kind: String
+    let mimeType: String
+    var width: Int?
+    var height: Int?
+    let storageKey: String
+}
+
+struct ReviewComment: Codable, Sendable, Equatable, Identifiable {
+    let id: String
+    let workspaceId: String
+    var sessionId: String?
+    var turnId: String?
+    let author: ReviewCommentAuthor
+    var status: ReviewCommentStatus
+    var severity: ReviewCommentSeverity?
+    var body: String
+    var attachments: [ReviewCommentAttachment]?
+    let reference: ReviewCommentReference
+    let createdAt: Int64
+    var updatedAt: Int64
+    var sentAt: Int64?
+}
+
+struct ReviewCommentsResponse: Codable, Sendable, Equatable {
+    let comments: [ReviewComment]
+}
+
+struct ReviewCommentResponse: Codable, Sendable, Equatable {
+    let comment: ReviewComment
+}
+
 struct WorkspaceReviewDiffHunk: Codable, Sendable, Equatable, Identifiable {
     let oldStart: Int
     let oldCount: Int

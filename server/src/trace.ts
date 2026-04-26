@@ -19,12 +19,15 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
+import { sessionAttachmentDetailsForToolCall } from "./session-attachments.js";
 
 export type TraceViewMode = "context" | "full";
 
 export interface TraceReadOptions {
   view?: TraceViewMode;
   leafId?: string | null;
+  attachmentDataDir?: string;
+  attachmentSessionId?: string;
 }
 
 const log = createLogger({ base: { component: "trace" } });
@@ -231,7 +234,7 @@ export function buildSessionContext(
 
     switch (entry.type) {
       case "message":
-        emitMessageEvents(entry, timestamp, events);
+        emitMessageEvents(entry, timestamp, events, options);
         break;
 
       case "compaction":
@@ -310,7 +313,12 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
  * Emit TraceEvents for a single message entry.
  * Handles user, assistant (with text/thinking/toolCall blocks), and toolResult.
  */
-function emitMessageEvents(entry: SessionEntry, timestamp: string, events: TraceEvent[]): void {
+function emitMessageEvents(
+  entry: SessionEntry,
+  timestamp: string,
+  events: TraceEvent[],
+  options: TraceReadOptions = {},
+): void {
   const msg = entry.message;
   if (!msg) return;
 
@@ -378,8 +386,17 @@ function emitMessageEvents(entry: SessionEntry, timestamp: string, events: Trace
     // The message object is the raw JSONL entry — details lives on msg
     // as a peer of role/content/toolCallId.
     const rawMsg = msg as Record<string, unknown>;
-    const details =
+    const rawDetails =
       rawMsg.details !== undefined && rawMsg.details !== null ? rawMsg.details : undefined;
+    const details =
+      rawDetails !== undefined && options.attachmentDataDir && options.attachmentSessionId
+        ? sessionAttachmentDetailsForToolCall(
+            options.attachmentDataDir,
+            options.attachmentSessionId,
+            msg.toolCallId,
+            rawDetails,
+          )
+        : rawDetails;
     events.push({
       id: `result-${entry.id}`,
       type: "toolResult",
@@ -448,7 +465,11 @@ export function readSessionTrace(
     "--work--",
   );
 
-  const trace = readTraceFromDir(sessionsDir, options);
+  const trace = readTraceFromDir(sessionsDir, {
+    ...options,
+    attachmentDataDir: options.attachmentDataDir ?? traceBaseDir,
+    attachmentSessionId: options.attachmentSessionId ?? sessionId,
+  });
   return trace && trace.length > 0 ? trace : null;
 }
 

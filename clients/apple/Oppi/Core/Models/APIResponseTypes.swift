@@ -23,7 +23,6 @@ struct CreateWorkspaceRequest: Encodable {
     var hostMount: String?
     var gitStatusEnabled: Bool?
     var extensions: [String]?
-    var defaultModel: String?
     var runtime: WorkspaceRuntime?
     var sandboxConfig: SandboxConfig?
 }
@@ -41,7 +40,6 @@ struct UpdateWorkspaceRequest {
         hostMount: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
         extensions: [String]? = nil,
-        defaultModel: JSONValue? = nil,
         sandboxConfig: JSONValue? = nil
     ) {
         var body: [String: JSONValue] = [:]
@@ -72,9 +70,6 @@ struct UpdateWorkspaceRequest {
         }
         if let extensions {
             body["extensions"] = .array(extensions.map(JSONValue.string))
-        }
-        if let defaultModel {
-            body["defaultModel"] = defaultModel
         }
         if let sandboxConfig {
             body["sandboxConfig"] = sandboxConfig

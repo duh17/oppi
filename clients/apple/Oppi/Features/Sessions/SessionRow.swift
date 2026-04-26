@@ -176,20 +176,24 @@ struct SessionRow: View {
                 }
             }
 
-            // Row 3: files + context gauge + cost + trailing badges
+            // Row 3: metrics on the left, optional adornments inside, status pinned right.
             HStack(spacing: 6) {
+                if let pct = contextPercent {
+                    NativeContextGauge(percent: pct)
+                }
+
                 if let stats = session.changeStats, stats.filesChanged > 0 {
                     Text(filesTouchedSummary(stats.filesChanged))
                         .foregroundStyle(changeSummaryColor(stats))
                 }
 
-                if let pct = contextPercent {
-                    NativeContextGauge(percent: pct)
-                }
-
                 let displayCost = children?.aggregateCost ?? session.cost
                 if displayCost > 0 {
                     Text(costString(displayCost))
+                }
+
+                if let children {
+                    childBadge(children: children)
                 }
 
                 Spacer(minLength: 8)
@@ -209,10 +213,6 @@ struct SessionRow: View {
 
                 SessionStatusPill(pillVariant)
                     .fixedSize()
-
-                if let children {
-                    childBadge(children: children)
-                }
             }
             .font(.caption)
             .foregroundStyle(.themeFgDim)

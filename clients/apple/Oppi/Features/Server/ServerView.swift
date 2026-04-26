@@ -23,6 +23,7 @@ struct ServerView: View {
     @State private var dailyDetailCache: [String: DailyDetail] = [:]
     @State private var selectedMetric: StatsMetric = .cost
     @State private var showAddServer = false
+    @State private var providerStatuses: [ProviderAuthProviderStatus] = []
 
     /// Resolves selected server, falling back to first available.
     private var selectedServer: PairedServer? {
@@ -119,6 +120,10 @@ struct ServerView: View {
                     serverPicker
                 }
 
+                if let selectedServer, shouldShowProviderSetupCard {
+                    providerSetupCard(for: selectedServer)
+                }
+
                 rangePicker
 
                 if isLoading, stats == nil {
@@ -138,14 +143,21 @@ struct ServerView: View {
             clearStatsState()
             async let s: () = loadStats()
             async let i: () = loadServerInfo()
-            _ = await (s, i)
+            async let p: () = loadProviderStatus()
+            _ = await (s, i, p)
         }
         .refreshable {
             dailyDetailCache = [:]
             dailyDetail = nil
             async let s: () = loadStats()
             async let i: () = loadServerInfo()
-            _ = await (s, i)
+            async let p: () = loadProviderStatus()
+            _ = await (s, i, p)
+        }
+        .onAppear {
+            Task {
+                await loadProviderStatus()
+            }
         }
     }
 
@@ -177,6 +189,36 @@ struct ServerView: View {
                 .labelsHidden()
             }
         }
+    }
+
+    // MARK: - Provider Setup
+
+    private var shouldShowProviderSetupCard: Bool {
+        !providerStatuses.isEmpty && !providerStatuses.contains(where: \.authenticated)
+    }
+
+    private func providerSetupCard(for server: PairedServer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Finish server setup", systemImage: "key.fill")
+                .font(.headline)
+                .foregroundStyle(.themeFg)
+
+            Text("Connect a model provider so new sessions can run on this server.")
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+
+            NavigationLink(value: server) {
+                Label("Connect Provider", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(.themeComment.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(.themeComment.opacity(0.18), lineWidth: 1)
+        )
     }
 
     // MARK: - Range Picker
@@ -248,7 +290,7 @@ struct ServerView: View {
             }
         }
 
-        ModelBreakdownSection(breakdown: stats.modelBreakdown)
+        ModelBreakdownSection(breakdown: stats.modelBreakdown, metric: selectedMetric)
 
         WorkspaceBreakdownSection(workspaces: stats.workspaceBreakdown)
 
@@ -270,6 +312,7 @@ struct ServerView: View {
         stats = nil
         serverInfo = nil
         error = nil
+        providerStatuses = []
         isLoading = true
     }
 
@@ -306,6 +349,19 @@ struct ServerView: View {
             serverInfo = try await client.serverInfo()
         } catch {
             // Non-fatal — stats still show without server info
+        }
+    }
+
+    private func loadProviderStatus() async {
+        guard let server = selectedServer,
+              let client = apiClient(for: server)
+        else { return }
+
+        do {
+            providerStatuses = try await client.listProviderAuthStatus()
+        } catch {
+            // Non-fatal — the dashboard can still show stats without setup status.
+            providerStatuses = []
         }
     }
 

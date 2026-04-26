@@ -141,6 +141,8 @@ struct ProviderGlyph: View {
     var color: Color = .secondary
 
     var body: some View {
+        let resolvedColor = providerIconTint(color)
+
         Group {
             if let provider = normalizedProviderKey(provider) {
                 if let assetName = providerLogoAssetName(provider) {
@@ -148,11 +150,11 @@ struct ProviderGlyph: View {
                         .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
-                        .foregroundStyle(color)
+                        .foregroundStyle(resolvedColor)
                 } else {
                     Text(providerMonogram(provider))
                         .font(.system(size: max(8, size * 0.8), weight: .heavy, design: .rounded))
-                        .foregroundStyle(color)
+                        .foregroundStyle(resolvedColor)
                 }
             } else {
                 Color.clear
@@ -162,10 +164,86 @@ struct ProviderGlyph: View {
     }
 }
 
+func providerIconTint(
+    _ preferred: Color,
+    palette: ThemePalette = ThemeRuntimeState.currentPalette(),
+    minimumContrast: Double = 3.0
+) -> Color {
+    let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
+    let fallbackCandidates = [palette.fg, palette.fgDim, palette.bgDark]
+
+    guard let preferredComponents = resolvedSRGB(preferred) else {
+        return preferred
+    }
+
+    let resolvedBackgrounds = backgrounds.compactMap(resolvedSRGB)
+    guard resolvedBackgrounds.count == backgrounds.count else {
+        return preferred
+    }
+
+    if minimumContrastRatio(of: preferred, on: backgrounds) ?? 0 >= minimumContrast {
+        return preferred
+    }
+
+    let resolvedFallbacks = fallbackCandidates.compactMap(resolvedSRGB)
+    let bestFallback = resolvedFallbacks.max { lhs, rhs in
+        minimumContrastRatio(of: lhs, on: resolvedBackgrounds) < minimumContrastRatio(of: rhs, on: resolvedBackgrounds)
+    }
+
+    guard let bestFallback else {
+        return preferred
+    }
+
+    var bestCandidate = preferredComponents
+    var bestScore = minimumContrastRatio(of: preferredComponents, on: resolvedBackgrounds)
+
+    for amount in stride(from: 0.16, through: 1.0, by: 0.12) {
+        let candidate = mix(preferredComponents, bestFallback, amount: amount)
+        let score = minimumContrastRatio(of: candidate, on: resolvedBackgrounds)
+        if score > bestScore {
+            bestScore = score
+            bestCandidate = candidate
+        }
+        if score >= minimumContrast {
+            return candidate.color
+        }
+    }
+
+    return bestCandidate.color
+}
+
+func contrastRatio(between foreground: Color, and background: Color) -> Double? {
+    guard let foreground = resolvedSRGB(foreground),
+          let background = resolvedSRGB(background) else {
+        return nil
+    }
+    return contrastRatio(between: foreground, and: background)
+}
+
+func minimumContrastRatio(of foreground: Color, on backgrounds: [Color]) -> Double? {
+    let resolvedBackgrounds = backgrounds.compactMap(resolvedSRGB)
+    guard let foreground = resolvedSRGB(foreground),
+          resolvedBackgrounds.count == backgrounds.count else {
+        return nil
+    }
+    return minimumContrastRatio(of: foreground, on: resolvedBackgrounds)
+}
+
 private struct ModelColorAdjustment {
     var hue: Double = 0
     var saturation: Double = 0
     var brightness: Double = 0
+}
+
+private struct SRGBColor {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+
+    var color: Color {
+        Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
 }
 
 private func cleanedModelDisplayName(from model: String) -> String {
@@ -379,6 +457,65 @@ private func isVersionToken(_ token: String) -> Bool {
 
 private func isTimestampToken(_ token: String) -> Bool {
     token.count >= 8 && token.allSatisfy(\.isNumber)
+}
+
+private func resolvedSRGB(_ color: Color) -> SRGBColor? {
+    #if canImport(UIKit)
+    let uiColor = UIColor(color)
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var alpha: CGFloat = 0
+    guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+        return nil
+    }
+    return SRGBColor(red: red, green: green, blue: blue, alpha: alpha)
+    #elseif canImport(AppKit)
+    let nsColor = NSColor(color)
+    guard let converted = nsColor.usingColorSpace(.sRGB) else {
+        return nil
+    }
+    return SRGBColor(
+        red: converted.redComponent,
+        green: converted.greenComponent,
+        blue: converted.blueComponent,
+        alpha: converted.alphaComponent
+    )
+    #else
+    return nil
+    #endif
+}
+
+private func minimumContrastRatio(of foreground: SRGBColor, on backgrounds: [SRGBColor]) -> Double {
+    backgrounds
+        .map { contrastRatio(between: foreground, and: $0) }
+        .min() ?? 0
+}
+
+private func contrastRatio(between foreground: SRGBColor, and background: SRGBColor) -> Double {
+    let lighter = max(relativeLuminance(foreground), relativeLuminance(background))
+    let darker = min(relativeLuminance(foreground), relativeLuminance(background))
+    return (lighter + 0.05) / (darker + 0.05)
+}
+
+private func relativeLuminance(_ color: SRGBColor) -> Double {
+    0.2126 * linearize(color.red) + 0.7152 * linearize(color.green) + 0.0722 * linearize(color.blue)
+}
+
+private func linearize(_ component: Double) -> Double {
+    if component <= 0.03928 {
+        return component / 12.92
+    }
+    return pow((component + 0.055) / 1.055, 2.4)
+}
+
+private func mix(_ source: SRGBColor, _ target: SRGBColor, amount: Double) -> SRGBColor {
+    SRGBColor(
+        red: source.red + ((target.red - source.red) * amount),
+        green: source.green + ((target.green - source.green) * amount),
+        blue: source.blue + ((target.blue - source.blue) * amount),
+        alpha: source.alpha + ((target.alpha - source.alpha) * amount)
+    )
 }
 
 private func clamp(_ value: Double, lower: Double, upper: Double) -> Double {

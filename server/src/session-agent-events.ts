@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
-import type { PiMessage, SessionBackendEvent } from "./pi-events.js";
+import type { ExtensionAudioStreamEvent, PiMessage, SessionBackendEvent } from "./pi-events.js";
 import { createLogger } from "./logger.js";
 import {
   extractAssistantText,
@@ -14,6 +14,7 @@ import type {
 } from "./session-events.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
+import { materializeVoiceSpeakAudioDetails } from "./session-attachments.js";
 import type { ServerMessage } from "./types.js";
 
 export interface SessionAgentEventState
@@ -32,6 +33,7 @@ export interface SessionAgentEventCoordinatorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   resetIdleTimer: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
+  dataDir?: string;
 }
 
 export class SessionAgentEventCoordinator {
@@ -69,6 +71,15 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
+    if (data.type === "extension_ui_request_settled") {
+      active.pendingUIRequests.delete(data.id);
+      if (active.pendingAsk?.requestId === data.id) {
+        active.pendingAsk = undefined;
+      }
+      this.deps.resetIdleTimer(key);
+      return;
+    }
+
     if (data.type === "extension_error") {
       log.error("session_agent_events.extension.error", {
         sessionId: active.session.id,
@@ -85,6 +96,12 @@ export class SessionAgentEventCoordinator {
         error: data.error,
       });
       this.deps.broadcast(key, { type: "error", error: data.error });
+      this.deps.resetIdleTimer(key);
+      return;
+    }
+
+    if (data.type === "extension_audio_stream") {
+      this.handleExtensionAudioStream(key, data);
       this.deps.resetIdleTimer(key);
       return;
     }
@@ -133,7 +150,34 @@ export class SessionAgentEventCoordinator {
     }
 
     for (const message of messages) {
-      this.deps.broadcast(key, message);
+      if (
+        message.type === "tool_end" &&
+        (message.tool === "voice_speak" || message.tool === "voice_create") &&
+        message.details !== undefined &&
+        this.deps.dataDir
+      ) {
+        try {
+          this.deps.broadcast(key, {
+            ...message,
+            details: materializeVoiceSpeakAudioDetails({
+              dataDir: this.deps.dataDir,
+              sessionId: active.session.id,
+              toolCallId: message.toolCallId,
+              details: message.details,
+            }),
+          });
+        } catch (error) {
+          log.error("session_agent_events.voice_attachment_materialize.failed", {
+            sessionId: active.session.id,
+            toolCallId: message.toolCallId,
+            tool: message.tool,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          this.deps.broadcast(key, message);
+        }
+      } else {
+        this.deps.broadcast(key, message);
+      }
     }
 
     if (event.type === "agent_start") {
@@ -182,5 +226,22 @@ export class SessionAgentEventCoordinator {
     }
 
     this.deps.eventProcessor.handleExtensionUIRequest(key, active, req);
+  }
+
+  private handleExtensionAudioStream(key: string, event: ExtensionAudioStreamEvent): void {
+    this.deps.broadcast(key, {
+      type: "audio_stream",
+      kind: event.kind,
+      id: event.id,
+      event: event.event,
+      mimeType: event.mimeType,
+      sampleRate: event.sampleRate,
+      channels: event.channels,
+      chunkIndex: event.chunkIndex,
+      audioBase64: event.audioBase64,
+      text: event.text,
+      durationSeconds: event.durationSeconds,
+      metrics: event.metrics,
+    });
   }
 }

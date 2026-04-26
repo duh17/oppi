@@ -766,17 +766,15 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   }
 
   let port: number;
-  let defaultModel: string;
   let maxSessionsGlobal: number;
 
   if (nonInteractive) {
     // Non-interactive: use flags or defaults
     port = parseInt(flags.port || "7749") || 7749;
-    defaultModel = flags.model || "openai-codex/gpt-5.3-codex";
     maxSessionsGlobal = parseInt(flags["max-sessions"] || "40") || 40;
 
     console.log(c.dim(`  Port:         ${port}`));
-    console.log(c.dim(`  Model:        ${defaultModel}`));
+    console.log(c.dim("  Model:        Pi settings (~/.pi/agent/settings.json)"));
     console.log(c.dim(`  Max sessions: ${maxSessionsGlobal}`));
     console.log("");
   } else {
@@ -785,12 +783,10 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
     port = parseInt(portStr) || 7749;
 
     console.log("");
-    console.log(c.dim("  Popular models:"));
-    console.log(c.dim("    openai-codex/gpt-5.3-codex"));
-    console.log(c.dim("    anthropic/claude-opus-4-6"));
-    console.log(c.dim("    anthropic/claude-sonnet-4-20250514"));
+    console.log(c.dim("  Model defaults are read from Pi settings:"));
+    console.log(c.dim("    ~/.pi/agent/settings.json"));
+    console.log(c.dim("    <workspace>/.pi/settings.json"));
     console.log("");
-    defaultModel = await prompt("Default model", "openai-codex/gpt-5.3-codex");
 
     const maxSessionsStr = await prompt("Max concurrent sessions", "40");
     maxSessionsGlobal = parseInt(maxSessionsStr) || 40;
@@ -803,7 +799,6 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   // Default to self-signed TLS so first `oppi serve` boots HTTPS/WSS out of the box.
   storage.updateConfig({
     port,
-    defaultModel,
     maxSessionsGlobal,
     tls: { mode: "self-signed" },
   });
@@ -841,7 +836,6 @@ const SETTABLE_KEYS: Record<
 > = {
   port: { type: "number", desc: "Server port" },
   host: { type: "string", desc: "Bind address" },
-  defaultModel: { type: "string", desc: "Default model for new sessions" },
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
@@ -1233,7 +1227,9 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${c.dim("oppi init")}`);
   console.log(`    ${c.dim("oppi serve")}`);
-  console.log(`    ${c.dim('oppi config set defaultModel "openai-codex/gpt-5.3-codex"')}`);
+  console.log(
+    `    ${c.dim("pi /settings   # configure defaultProvider/defaultModel/defaultThinkingLevel")}`,
+  );
   console.log(`    ${c.dim("oppi config set port 8080")}`);
   console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
   console.log("");

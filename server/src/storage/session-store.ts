@@ -292,7 +292,7 @@ export class SessionStore {
       status: "ready",
       createdAt: Date.now(),
       lastActivity: Date.now(),
-      model: model || this.configStore.getConfig().defaultModel,
+      ...(model ? { model } : {}),
       messageCount: 0,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,

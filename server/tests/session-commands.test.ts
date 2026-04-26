@@ -37,8 +37,6 @@ function makeCoordinator(agentSession: AgentSession): {
     persistSessionNow: vi.fn(),
     broadcast,
     applyPiStateSnapshot: vi.fn(() => false),
-    applyRememberedThinkingLevel: vi.fn(async () => false),
-    persistThinkingPreference: vi.fn(),
     persistWorkspaceLastUsedModel: vi.fn(),
     getContextWindowResolver: vi.fn(() => null),
   });

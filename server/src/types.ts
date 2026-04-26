@@ -30,10 +30,6 @@ export interface Workspace {
   // Git status
   gitStatusEnabled?: boolean; // Show git status context bar (default: true)
 
-  // Defaults
-  defaultModel?: string; // Override server default for this workspace
-  lastUsedModel?: string; // Sticky: last model used in any session (auto-updated)
-
   // Runtime
   /** Workspace runtime mode. "host" = direct execution, "sandbox" = Gondolin micro-VM. */
   runtime?: "host" | "sandbox";
@@ -199,7 +195,6 @@ export interface ServerConfig {
   port: number;
   host: string;
   dataDir: string;
-  defaultModel: string;
   sessionIdleTimeoutMs: number;
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
@@ -233,16 +228,6 @@ export interface ServerConfig {
   // Push notification state (written by iOS client registration)
   pushDeviceTokens?: string[];
   liveActivityToken?: string;
-
-  // Per-model thinking preferences (synced from iOS)
-  thinkingLevelByModel?: Record<string, string>;
-
-  /**
-   * Optional model allowlist. When set, only these models (plus custom provider
-   * models from ~/.pi/agent/models.json) are shown in the model picker.
-   * Format: array of "provider/model-id" strings.
-   */
-  modelAllowlist?: string[];
 
   /**
    * Auto-title configuration. When enabled, generates concise task titles
@@ -481,6 +466,79 @@ export interface WorkspaceReviewSessionResponse {
   filePaths: string[];
 }
 
+export type ReviewCommentAuthor = "human" | "agent";
+export type ReviewCommentStatus = "staged" | "sent" | "open" | "resolved" | "dismissed";
+export type ReviewCommentSeverity = "error" | "warning" | "info";
+export type ReviewCommentReferenceSource =
+  | "git_diff"
+  | "file"
+  | "timeline_text"
+  | "tool_output"
+  | "terminal_output"
+  | "image"
+  | "unknown";
+
+export interface ReviewCommentReference {
+  source: ReviewCommentReferenceSource;
+  label?: string;
+  path?: string;
+  side?: "old" | "new" | "file";
+  startLine?: number;
+  endLine?: number;
+  selectedText?: string;
+  languageHint?: string;
+  toolCallId?: string;
+  timelineItemId?: string;
+  url?: string;
+}
+
+export interface ReviewCommentAttachment {
+  id: string;
+  kind: "image";
+  mimeType: string;
+  width?: number;
+  height?: number;
+  storageKey: string;
+}
+
+export interface ReviewComment {
+  id: string;
+  workspaceId: string;
+  sessionId?: string;
+  turnId?: string;
+  author: ReviewCommentAuthor;
+  status: ReviewCommentStatus;
+  severity?: ReviewCommentSeverity;
+  body: string;
+  attachments?: ReviewCommentAttachment[];
+  reference: ReviewCommentReference;
+  createdAt: number;
+  updatedAt: number;
+  sentAt?: number;
+}
+
+export interface CreateReviewCommentRequest {
+  sessionId?: string;
+  author?: ReviewCommentAuthor;
+  status?: ReviewCommentStatus;
+  severity?: ReviewCommentSeverity;
+  body: string;
+  attachments?: ReviewCommentAttachment[];
+  reference: ReviewCommentReference;
+}
+
+export interface UpdateReviewCommentRequest {
+  status?: ReviewCommentStatus;
+  severity?: ReviewCommentSeverity | null;
+  body?: string;
+}
+
+export interface AttachReviewCommentsToTurnRequest {
+  ids: string[];
+  sessionId?: string;
+  turnId?: string;
+}
+
 // ─── Workspace File Browser ───
 
 export interface FileEntry {
@@ -549,7 +607,6 @@ export interface CreateWorkspaceRequest {
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string;
   extensions?: string[];
-  defaultModel?: string;
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";
   sandboxConfig?: { allowedHosts?: string[]; env?: Record<string, string> };
@@ -566,7 +623,6 @@ export interface UpdateWorkspaceRequest {
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string | null;
   extensions?: string[];
-  defaultModel?: string | null;
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";
   sandboxConfig?: { allowedHosts?: string[]; env?: Record<string, string> } | null;
@@ -1154,6 +1210,20 @@ export type ServerMessage = // ── Connection ──
     // ── Streaming ──
     | { type: "text_delta"; delta: string }
     | { type: "thinking_delta"; delta: string }
+    | {
+        type: "audio_stream";
+        kind: "audio-stream";
+        id: string;
+        event: "metadata" | "chunk" | "done" | "error";
+        mimeType: "audio/wav" | "audio/pcm; codecs=s16le";
+        sampleRate?: number;
+        channels?: number;
+        chunkIndex?: number;
+        audioBase64?: string;
+        text?: string;
+        durationSeconds?: number;
+        metrics?: Record<string, unknown>;
+      }
     // ── Tool execution ──
     | {
         type: "tool_start";
@@ -1252,6 +1322,7 @@ export type ServerMessage = // ── Connection ──
         placeholder?: string;
         prefill?: string;
         timeout?: number;
+        timeoutAt?: number;
         // ── Ask extension fields (method: "ask") ──
         questions?: AskQuestion[];
         allowCustom?: boolean;

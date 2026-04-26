@@ -18,7 +18,6 @@ import {
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "./storage/config-store.js";
-import { PreferenceStore } from "./storage/preference-store.js";
 import { SessionStore } from "./storage/session-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
@@ -34,14 +33,12 @@ export type { ConfigValidationResult };
 export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
-  private readonly preferenceStore: PreferenceStore;
   private readonly sessionStore: SessionStore;
   private readonly workspaceStore: WorkspaceStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
-    this.preferenceStore = new PreferenceStore(this.configStore);
     this.sessionStore = new SessionStore(this.configStore);
     this.workspaceStore = new WorkspaceStore(this.configStore);
   }
@@ -140,16 +137,6 @@ export class Storage {
 
   getLiveActivityToken(): string | undefined {
     return this.authStore.getLiveActivityToken();
-  }
-
-  // ─── Thinking Preferences ───
-
-  getModelThinkingLevelPreference(modelId: string): string | undefined {
-    return this.preferenceStore.getModelThinkingLevelPreference(modelId);
-  }
-
-  setModelThinkingLevelPreference(modelId: string, level: string): void {
-    this.preferenceStore.setModelThinkingLevelPreference(modelId, level);
   }
 
   // ─── Sessions ───

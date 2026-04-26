@@ -76,8 +76,12 @@ final class AppNavigation {
     /// through nested sheet boundaries.
     func makeQuickSessionPiRouter() -> SelectedTextPiActionRouter {
         SelectedTextPiActionRouter { [weak self] request in
-            guard let self else { return }
-            self.pendingQuickSessionDraft = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
+            guard let self,
+                  case .quickSessionDraft(let draft) = SelectedTextPiRouterPolicy.route(
+                    request: request,
+                    context: .nonChat
+                  ) else { return }
+            self.pendingQuickSessionDraft = draft
             self.showQuickSession = true
         }
     }

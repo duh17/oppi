@@ -4,10 +4,10 @@ extension VoiceInputManager {
     /// Resolve locale from a keyboard language string (BCP 47).
     /// Priority: active keyboard → persisted last keyboard → device locale.
     static func resolvedLocale(keyboardLanguage: String? = nil) -> Locale {
-        if let lang = KeyboardLanguageStore.normalize(keyboardLanguage) {
+        if let lang = AppPreferences.Keyboard.normalize(keyboardLanguage) {
             return Locale(identifier: lang)
         }
-        if let stored = KeyboardLanguageStore.lastLanguage {
+        if let stored = AppPreferences.Keyboard.lastLanguage {
             return Locale(identifier: stored)
         }
         return Locale.current

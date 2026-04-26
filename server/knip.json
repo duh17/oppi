@@ -1,7 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "project": ["src/**/*.ts"],
-  "ignore": ["src/qrcode-terminal.d.ts"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@mariozechner/pi-ai", "typebox"],
   "ignoreBinaries": ["scripts/testing-gates.ts"]

@@ -162,7 +162,7 @@ enum ToolTimelineRowSelectedTextSupport {
                 languageHint: language?.displayName
             )
 
-        case .bash, .markdown, .readMedia, .status:
+        case .bash, .markdown, .readMedia, .voiceMessage, .status:
             return nil
         }
     }

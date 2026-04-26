@@ -248,6 +248,35 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.connections["sha256:pool-b"] != nil)
     }
 
+    @Test func ensureConnectionReconfiguresExistingConnectionAfterRepair() async {
+        let (coordinator, _) = makeCoordinator()
+        let original = makeServer(
+            id: "sha256:repair-test",
+            name: "Studio",
+            host: "old.tail00000.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:oldtls"
+        )
+        let repaired = makeServer(
+            id: "sha256:repair-test",
+            name: "Studio",
+            host: "new.tail11111.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:newtls"
+        )
+
+        coordinator.serverStore.addOrUpdate(original)
+        let connection = coordinator.ensureConnection(for: original)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://old.tail00000.ts.net:7749")
+
+        coordinator.serverStore.addOrUpdate(repaired)
+        let repairedConnection = coordinator.ensureConnection(for: repaired)
+
+        #expect(repairedConnection === connection)
+        #expect(repairedConnection.credentials == repaired.credentials)
+        #expect(await repairedConnection.apiClient?.baseURL.absoluteString == "https://new.tail11111.ts.net:7749")
+    }
+
     // MARK: - refreshAllServers ensures connections
 
     @Test func refreshAllServersCreatesConnectionsBeforeIterating() async {

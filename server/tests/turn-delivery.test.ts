@@ -39,24 +39,11 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   session: Session;
   sdkBackend: ReturnType<typeof makeSdkBackendStub>["sdkBackend"];
   prompt: ReturnType<typeof vi.fn>;
-  getModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
-  setModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
 } {
-  const thinkingLevelByModel = new Map<string, string>();
-
-  const getModelThinkingLevelPreference = vi.fn((modelId: string) => {
-    return thinkingLevelByModel.get(modelId);
-  });
-
-  const setModelThinkingLevelPreference = vi.fn((modelId: string, level: string) => {
-    thinkingLevelByModel.set(modelId, level);
-  });
-
   const storage = {
     getConfig: () => TEST_CONFIG,
+    getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     saveSession: vi.fn(),
-    getModelThinkingLevelPreference,
-    setModelThinkingLevelPreference,
     getWorkspace: vi.fn(() => undefined),
     saveWorkspace: vi.fn(),
   } as unknown as Storage;
@@ -104,8 +91,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     session,
     sdkBackend,
     prompt,
-    getModelThinkingLevelPreference,
-    setModelThinkingLevelPreference,
   };
 }
 
@@ -313,9 +298,8 @@ describe("turn delivery idempotency", () => {
     expect(stateEvent?.session.piSessionId).toBe("pi-child-uuid");
   });
 
-  it("persists thinking preference after set_thinking_level", async () => {
-    const { manager, session, events, setModelThinkingLevelPreference } =
-      makeManagerHarness("ready");
+  it("mirrors thinking level after set_thinking_level without Oppi-owned per-model persistence", async () => {
+    const { manager, session, events } = makeManagerHarness("ready");
 
     session.model = "anthropic/claude-sonnet-4-0";
 
@@ -337,39 +321,17 @@ describe("turn delivery idempotency", () => {
     );
 
     expect(session.thinkingLevel).toBe("high");
-    expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      "anthropic/claude-sonnet-4-0",
-      "high",
-    );
 
     const stateEvent = asStateEvents(events).at(-1);
     expect(stateEvent?.session.thinkingLevel).toBe("high");
   });
 
-  it("applies remembered model thinking after set_model", async () => {
-    const {
-      manager,
-      session,
-      events,
-      getModelThinkingLevelPreference,
-      setModelThinkingLevelPreference,
-    } = makeManagerHarness("ready");
-
-    getModelThinkingLevelPreference.mockImplementation((modelId: string) => {
-      if (modelId === "anthropic/claude-sonnet-4-0") {
-        return "minimal";
-      }
-      return undefined;
-    });
+  it("uses Pi-returned thinking after set_model without Oppi-owned per-model memory", async () => {
+    const { manager, session, events } = makeManagerHarness("ready");
 
     const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "set_model") {
-        return { provider: "anthropic", id: "claude-sonnet-4-0" };
-      }
-
-      if (command.type === "set_thinking_level") {
-        expect(command.level).toBe("minimal");
-        return {};
+        return { provider: "anthropic", id: "claude-sonnet-4-0", thinkingLevel: "minimal" };
       }
 
       if (command.type === "get_state") {
@@ -401,24 +363,10 @@ describe("turn delivery idempotency", () => {
       }),
     );
 
-    expect(sendCommandAsync).toHaveBeenNthCalledWith(
-      2,
-      "s1",
-      expect.objectContaining({ type: "set_thinking_level", level: "minimal" }),
-    );
-
-    expect(sendCommandAsync).toHaveBeenNthCalledWith(
-      3,
-      "s1",
-      expect.objectContaining({ type: "get_state" }),
-    );
+    expect(sendCommandAsync).toHaveBeenCalledTimes(1);
 
     expect(session.model).toBe("anthropic/claude-sonnet-4-0");
     expect(session.thinkingLevel).toBe("minimal");
-    expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      "anthropic/claude-sonnet-4-0",
-      "minimal",
-    );
 
     const stateEvent = asStateEvents(events).at(-1);
     expect(stateEvent?.session.model).toBe("anthropic/claude-sonnet-4-0");

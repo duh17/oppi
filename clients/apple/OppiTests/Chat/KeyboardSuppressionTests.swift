@@ -329,7 +329,7 @@ struct KeyboardSuppressionTests {
         #expect(volatileColorAtEnd?.isEqual(volatileColor) == true)
     }
 
-    @Test("Programmatic transcript updates add a subtle background to the volatile suffix")
+    @Test("Programmatic transcript updates add a real background to the volatile suffix")
     func programmaticUpdatesAddVolatileSuffixBackground() {
         let textView = PastableUITextView()
         let font = UIFont.preferredFont(forTextStyle: .body)
@@ -349,10 +349,10 @@ struct KeyboardSuppressionTests {
 
         let attributed = textView.attributedText ?? NSAttributedString()
         let stableBackground = attributed.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? UIColor
-        let volatileBackground = attributed.attribute(.backgroundColor, at: text.count - 1, effectiveRange: nil) as? UIColor
+        let volatileBackgroundAttribute = attributed.attribute(.backgroundColor, at: text.count - 1, effectiveRange: nil) as? UIColor
 
         #expect(stableBackground == nil)
-        #expect(volatileBackground?.isEqual(volatileBackgroundColor) == true)
+        #expect(volatileBackgroundAttribute?.isEqual(volatileBackgroundColor) == true)
     }
 
     // MARK: - Keyboard Shortcuts

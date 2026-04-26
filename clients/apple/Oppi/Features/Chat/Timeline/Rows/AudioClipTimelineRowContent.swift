@@ -136,8 +136,8 @@ final class AudioClipTimelineRowContentView: UIView, UIContentView {
         titleLabel.textColor = UIColor(palette.fg)
         fileNameLabel.textColor = UIColor(palette.comment)
 
-        titleLabel.text = configuration.title
-        fileNameLabel.text = configuration.fileURL.lastPathComponent
+        titleLabel.text = configuration.title.isEmpty ? "Voice message" : configuration.title
+        fileNameLabel.text = "Tap to play"
 
         loadingIndicator.color = UIColor(palette.purple)
         updatePlayButton(state: buttonState(for: configuration), palette: palette)

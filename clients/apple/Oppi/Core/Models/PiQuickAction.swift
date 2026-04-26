@@ -2,9 +2,8 @@ import Foundation
 
 /// A user-configurable action that appears in the π text-selection menu.
 ///
-/// Replaces the old hardcoded `SelectedTextPiActionKind` enum. Users can
-/// add, edit, reorder, and delete actions. Ships with sensible defaults
-/// matching the original five actions.
+/// Users can add, edit, reorder, and delete actions. Ships with sensible
+/// defaults matching the original five actions.
 struct PiQuickAction: Codable, Identifiable, Equatable, Hashable {
     let id: UUID
     var title: String
@@ -25,13 +24,14 @@ enum PiQuickActionBehavior: String, Codable, CaseIterable, Equatable, Hashable {
     case currentSession
     /// Open the Quick Session sheet with the text pre-filled.
     case newSession
+    /// Save the selected text as a staged review comment.
+    case reviewComment
 }
 
 // MARK: - Built-in Defaults
 
 extension PiQuickAction {
-    // Stable UUIDs for built-in defaults so they can be referenced by the
-    // backward-compatibility shim without force unwrapping.
+    // Stable UUIDs for built-in defaults.
     // swiftlint:disable identifier_name
     private static let _id1 = UUID(uuidString: "A0000001-0000-0000-0000-000000000001") ?? UUID()
     private static let _id2 = UUID(uuidString: "A0000001-0000-0000-0000-000000000002") ?? UUID()
@@ -39,58 +39,93 @@ extension PiQuickAction {
     private static let _id4 = UUID(uuidString: "A0000001-0000-0000-0000-000000000004") ?? UUID()
     private static let _id5 = UUID(uuidString: "A0000001-0000-0000-0000-000000000005") ?? UUID()
     private static let _id6 = UUID(uuidString: "A0000001-0000-0000-0000-000000000006") ?? UUID()
+    private static let _id7 = UUID(uuidString: "A0000001-0000-0000-0000-000000000007") ?? UUID()
     // swiftlint:enable identifier_name
 
-    /// The factory defaults, matching the original hardcoded actions.
+    static let explainAction = PiQuickAction(
+        id: _id1,
+        title: "Explain",
+        systemImage: "questionmark.bubble",
+        promptPrefix: "Explain this:",
+        behavior: .currentSession,
+        sortOrder: 0
+    )
+
+    static let doItAction = PiQuickAction(
+        id: _id2,
+        title: "Do it",
+        systemImage: "play.circle",
+        promptPrefix: "Do this:",
+        behavior: .currentSession,
+        sortOrder: 1
+    )
+
+    static let fixAction = PiQuickAction(
+        id: _id3,
+        title: "Fix",
+        systemImage: "wrench.and.screwdriver",
+        promptPrefix: "Fix this:",
+        behavior: .currentSession,
+        sortOrder: 2
+    )
+
+    static let refactorAction = PiQuickAction(
+        id: _id4,
+        title: "Refactor",
+        systemImage: "arrow.triangle.branch",
+        promptPrefix: "Refactor this:",
+        behavior: .currentSession,
+        sortOrder: 3
+    )
+
+    static let addToPromptAction = PiQuickAction(
+        id: _id5,
+        title: "Add to Prompt",
+        systemImage: "plus.bubble",
+        promptPrefix: "",
+        behavior: .currentSession,
+        sortOrder: 4
+    )
+
+    static let newSessionAction = PiQuickAction(
+        id: _id6,
+        title: "New Session",
+        systemImage: "plus.message",
+        promptPrefix: "",
+        behavior: .newSession,
+        sortOrder: 5
+    )
+
+    static let reviewCommentAction = PiQuickAction(
+        id: _id7,
+        title: "Comment",
+        systemImage: "text.bubble",
+        promptPrefix: "",
+        behavior: .reviewComment,
+        sortOrder: 100
+    )
+
+    /// The factory defaults.
+    static func sortedForSelectionMenu(_ actions: [PiQuickAction]) -> [PiQuickAction] {
+        var quickActions = actions
+        if !quickActions.contains(where: { $0.behavior == .reviewComment }) {
+            quickActions.append(reviewCommentAction)
+        }
+        return quickActions.sorted { lhs, rhs in
+            if lhs.behavior == .reviewComment { return true }
+            if rhs.behavior == .reviewComment { return false }
+            return lhs.sortOrder < rhs.sortOrder
+        }
+    }
+
     static let builtInDefaults: [PiQuickAction] = [
-        PiQuickAction(
-            id: _id1,
-            title: "Explain",
-            systemImage: "questionmark.bubble",
-            promptPrefix: "Explain this:",
-            behavior: .currentSession,
-            sortOrder: 0
-        ),
-        PiQuickAction(
-            id: _id2,
-            title: "Do it",
-            systemImage: "play.circle",
-            promptPrefix: "Do this:",
-            behavior: .currentSession,
-            sortOrder: 1
-        ),
-        PiQuickAction(
-            id: _id3,
-            title: "Fix",
-            systemImage: "wrench.and.screwdriver",
-            promptPrefix: "Fix this:",
-            behavior: .currentSession,
-            sortOrder: 2
-        ),
-        PiQuickAction(
-            id: _id4,
-            title: "Refactor",
-            systemImage: "arrow.triangle.branch",
-            promptPrefix: "Refactor this:",
-            behavior: .currentSession,
-            sortOrder: 3
-        ),
-        PiQuickAction(
-            id: _id5,
-            title: "Add to Prompt",
-            systemImage: "plus.bubble",
-            promptPrefix: "",
-            behavior: .currentSession,
-            sortOrder: 4
-        ),
-        PiQuickAction(
-            id: _id6,
-            title: "New Session",
-            systemImage: "plus.message",
-            promptPrefix: "",
-            behavior: .newSession,
-            sortOrder: 5
-        ),
+        explainAction,
+        doItAction,
+        fixAction,
+        refactorAction,
+        addToPromptAction,
+        newSessionAction,
+        reviewCommentAction,
     ]
 }
 

@@ -18,7 +18,7 @@ struct FileBrowserPiActionTests {
         }
 
         let request = SelectedTextPiRequest(
-            action: .explain,
+            action: PiQuickAction.explainAction,
             selectedText: "let x = 42",
             source: SelectedTextSourceContext(
                 sessionId: "",
@@ -44,7 +44,7 @@ struct FileBrowserPiActionTests {
         }
 
         let request = SelectedTextPiRequest(
-            action: .addToPrompt,
+            action: PiQuickAction.addToPromptAction,
             selectedText: "func hello() {}",
             source: SelectedTextSourceContext(
                 sessionId: "",
@@ -67,7 +67,7 @@ struct FileBrowserPiActionTests {
         }
 
         let request = SelectedTextPiRequest(
-            action: .addToPrompt,
+            action: PiQuickAction.addToPromptAction,
             selectedText: "Some markdown prose",
             source: SelectedTextSourceContext(
                 sessionId: "",
@@ -154,7 +154,7 @@ struct FileBrowserPiActionTests {
         }
 
         let request = SelectedTextPiRequest(
-            action: .explain,
+            action: PiQuickAction.explainAction,
             selectedText: "complex code",
             source: SelectedTextSourceContext(
                 sessionId: "",

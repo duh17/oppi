@@ -6,8 +6,8 @@ import Testing
 struct VoiceInputPresentationRevisionTests {
     @Test("Same-text segment commit advances presentation revision")
     func sameTextSegmentCommitAdvancesPresentationRevision() async throws {
-        VoiceInputPreferences.setEngineMode(.auto)
-        defer { VoiceInputPreferences.setEngineMode(.auto) }
+        AppPreferences.Voice.setEngineMode(.auto)
+        defer { AppPreferences.Voice.setEngineMode(.auto) }
 
         let systemAccess = MockVoiceInputSystemAccess()
         let session = MockVoiceSession()

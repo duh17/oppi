@@ -148,9 +148,7 @@ export function createSessionCoordinatorBundle(
   const stateCoordinator = new SessionStateCoordinator({
     storage: deps.storage,
     getContextWindowResolver: () => deps.getContextWindowResolver(),
-    sendCommandAsync: (key, command) => deps.sendCommandAsync(key, command),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
-    broadcast: (key, message) => deps.broadcast(key, message),
   });
 
   const commandCoordinator = new SessionCommandCoordinator({
@@ -158,11 +156,6 @@ export function createSessionCoordinatorBundle(
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     broadcast: (key, message) => deps.broadcast(key, message),
     applyPiStateSnapshot: (session, state) => stateCoordinator.applyPiStateSnapshot(session, state),
-    applyRememberedThinkingLevel: (key, active) =>
-      stateCoordinator.applyRememberedThinkingLevel(key, active),
-    persistThinkingPreference: (session) => stateCoordinator.persistThinkingPreference(session),
-    persistWorkspaceLastUsedModel: (session) =>
-      stateCoordinator.persistWorkspaceLastUsedModel(session),
     getContextWindowResolver: () => deps.getContextWindowResolver(),
   });
 
@@ -262,6 +255,7 @@ export function createSessionCoordinatorBundle(
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
+    dataDir: deps.storage.getDataDir(),
   });
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(

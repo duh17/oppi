@@ -227,7 +227,7 @@ struct ExpandedComposerView: View {
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
             guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
-            guard KeyboardLanguageStore.normalize(newLanguage) != nil else { return }
+            guard AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
             Task {
                 await manager.prewarm(
                     keyboardLanguage: newLanguage,

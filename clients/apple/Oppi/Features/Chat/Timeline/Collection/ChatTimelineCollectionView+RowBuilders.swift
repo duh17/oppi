@@ -155,6 +155,17 @@ extension ChatTimelineCollectionHost.Controller {
         )
 
         let interactionCtx = self.interactionContext
+        let attachmentFetcher: ((String) async throws -> Data)? = if let workspaceId, let apiClient = connection?.apiClient {
+            { [sessionId] attachmentId in
+                try await apiClient.fetchSessionAttachment(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    attachmentId: attachmentId
+                )
+            }
+        } else {
+            nil
+        }
         return ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -163,7 +174,10 @@ extension ChatTimelineCollectionHost.Controller {
             isError: isError,
             isDone: isDone,
             context: context
-        ).withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
+        )
+        .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
+        .withAudioPlayer(audioPlayer)
+        .withSessionAttachmentFetcher(attachmentFetcher)
     }
 }
 

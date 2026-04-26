@@ -666,9 +666,6 @@ export interface SessionCommandCoordinatorDeps {
   persistSessionNow: (key: string, session: Session) => void;
   broadcast: (key: string, message: ServerMessage) => void;
   applyPiStateSnapshot: (session: Session, state: PiStateSnapshot | null | undefined) => boolean;
-  applyRememberedThinkingLevel: (key: string, active: CommandSessionState) => Promise<boolean>;
-  persistThinkingPreference: (session: Session) => void;
-  persistWorkspaceLastUsedModel: (session: Session) => void;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
 }
 
@@ -894,7 +891,7 @@ export class SessionCommandCoordinator {
     }
 
     try {
-      let rpcData: unknown = await sendCommandAsync(key, { ...message });
+      const rpcData: unknown = await sendCommandAsync(key, { ...message });
       const rpcObject = toRecord(rpcData);
 
       if (cmdType === "get_state") {
@@ -924,8 +921,6 @@ export class SessionCommandCoordinator {
           active.session.thinkingLevel = effectiveLevel;
           this.deps.persistSessionNow(key, active.session);
         }
-
-        this.deps.persistThinkingPreference(active.session);
       }
 
       // Track model changes so the session object stays in sync
@@ -942,31 +937,17 @@ export class SessionCommandCoordinator {
             if (contextWindowResolver) {
               active.session.contextWindow = contextWindowResolver(fullId);
             }
-            this.deps.persistWorkspaceLastUsedModel(active.session);
             this.deps.persistSessionNow(key, active.session);
           }
         }
 
-        // cycle_model also returns thinkingLevel
+        // Pi returns the clamped thinkingLevel for the active model.
         if (
-          cmdType === "cycle_model" &&
           typeof rpcObject.thinkingLevel === "string" &&
           rpcObject.thinkingLevel.trim().length > 0
         ) {
           active.session.thinkingLevel = rpcObject.thinkingLevel.trim();
-          this.deps.persistThinkingPreference(active.session);
-        }
-
-        const appliedRememberedThinking = await this.deps.applyRememberedThinkingLevel(key, active);
-
-        // Keep command_result payload consistent with server-authoritative session state.
-        if (
-          cmdType === "cycle_model" &&
-          appliedRememberedThinking &&
-          active.session.thinkingLevel
-        ) {
-          rpcObject.thinkingLevel = active.session.thinkingLevel;
-          rpcData = rpcObject;
+          this.deps.persistSessionNow(key, active.session);
         }
       }
 

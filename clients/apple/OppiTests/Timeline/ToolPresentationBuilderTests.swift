@@ -158,6 +158,38 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == "Markdown")
     }
 
+    @Test("voice tool uses compact voice message title for attachment expanded content")
+    func voiceAttachmentPresentation() {
+        let details: JSONValue = .object([
+            "message": .string("You need to restart the server."),
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(1.2),
+            ]),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: "You need to restart the server.",
+            isError: false, isDone: true,
+            context: emptyContext(details: details)
+        )
+
+        #expect(config.title == "Voice message")
+        #expect(config.toolNamePrefix == "voice_speak")
+        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds) = config.expandedContent else {
+            Issue.record("Expected .voiceMessage content")
+            return
+        }
+        #expect(text == "Voice message")
+        #expect(attachmentId == "att-1")
+        #expect(mimeType == "audio/wav")
+        #expect(durationSeconds == 1.2)
+    }
+
     // MARK: - Read
 
     @Test("read collapsed shows file path")
@@ -172,6 +204,30 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "src/server.ts")
         #expect(config.toolNamePrefix == "read")
+        #expect(config.titleLineBreakMode == .byTruncatingMiddle)
+    }
+
+    @Test("read ignores segment title override so path truncation stays informative")
+    func readIgnoresSegmentTitleOverride() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: .init(
+                args: ["path": .string("clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift")],
+                expandedItemIDs: [],
+                fullOutput: "",
+                isLoadingOutput: false,
+                callSegments: [
+                    StyledSegment(text: "read", style: .bold),
+                    StyledSegment(text: " clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift", style: .accent),
+                ]
+            )
+        )
+
+        #expect(config.segmentAttributedTitle == nil)
+        #expect(config.title == "clients/apple/Oppi/Features/Chat/Support/WorkspaceReviewFileDetailView.swift")
         #expect(config.titleLineBreakMode == .byTruncatingMiddle)
     }
 
@@ -1432,6 +1488,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "markdown"
     case .readMedia:
         return "readMedia"
+    case .voiceMessage:
+        return "voiceMessage"
     case .status:
         return "status"
     case .text:

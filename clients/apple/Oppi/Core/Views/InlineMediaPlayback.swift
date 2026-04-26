@@ -275,6 +275,9 @@ final class AnimatedImageWebContainerView: UIView {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
+        webView.scrollView.alwaysBounceVertical = false
+        webView.scrollView.alwaysBounceHorizontal = false
+        webView.scrollView.bounces = false
         webView.scrollView.backgroundColor = .clear
         if #available(iOS 16.4, *) {
             webView.isInspectable = false

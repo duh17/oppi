@@ -228,7 +228,14 @@ export class SessionManager extends EventEmitter {
 
   /** Process a pi agent event from the SDK subscribe callback. */
   private handlePiEvent(key: string, data: SessionBackendEvent): void {
-    this.agentEventCoordinator.handlePiEvent(key, data);
+    try {
+      this.agentEventCoordinator.handlePiEvent(key, data);
+    } catch (error: unknown) {
+      log.error("sessions.pi_event_handler.failed", {
+        sessionId: key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     // Update search index on relevant events
     if (this.searchIndex) {
@@ -571,6 +578,38 @@ export class SessionManager extends EventEmitter {
     return this.active.get(this.sessionKey(sessionId))?.pendingAsk?.broadcastMessage;
   }
 
+  /** Return pending generic extension UI dialogs for stream re-subscribe replay. */
+  getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
+    const active = this.active.get(this.sessionKey(sessionId));
+    if (!active) {
+      return [];
+    }
+
+    const messages: ServerMessage[] = [];
+    for (const req of active.pendingUIRequests.values()) {
+      // Ask has a dedicated replay path because its broadcast payload has
+      // ask-specific fields and mobile state handling.
+      if (req.method === "ask") {
+        continue;
+      }
+
+      messages.push({
+        type: "extension_ui_request",
+        id: req.id,
+        sessionId,
+        method: req.method,
+        title: req.title,
+        options: req.options,
+        message: req.message,
+        placeholder: req.placeholder,
+        prefill: req.prefill,
+        timeout: req.timeout,
+        timeoutAt: req.timeoutAt,
+      });
+    }
+    return messages;
+  }
+
   /** Cancel a pending ask request. */
   cancelPendingAsk(sessionId: string): void {
     const key = this.sessionKey(sessionId);
@@ -652,7 +691,7 @@ export class SessionManager extends EventEmitter {
     await this.refreshSessionState(parentSessionId).catch(() => null);
     const latestParentSession = this.storage.getSession(parentSessionId) || parentSession;
 
-    const model = params.model || latestParentSession.model || workspace.defaultModel;
+    const model = params.model || latestParentSession.model;
     const session = this.storage.createSession(params.name, model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
@@ -725,7 +764,7 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Workspace not found: ${originSession.workspaceId}`);
     }
 
-    const model = params.model || originSession.model || workspace.defaultModel;
+    const model = params.model || originSession.model;
     const session = this.storage.createSession(params.name, model);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;

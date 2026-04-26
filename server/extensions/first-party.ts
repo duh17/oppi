@@ -3,13 +3,17 @@ import type { Workspace } from "../src/types.js";
 /**
  * Server-managed extension names.
  */
-export const MANAGED_EXTENSION_NAMES = ["permission-gate", "ask", "subagents"] as const;
+export const MANAGED_EXTENSION_NAMES = ["permission-gate", "ask", "subagents", "voice"] as const;
 
 export type ManagedExtensionName = (typeof MANAGED_EXTENSION_NAMES)[number];
-export type FirstPartyExtensionName = "ask" | "subagents";
+export type FirstPartyExtensionName = "ask" | "subagents" | "voice";
 
 /** First-party extension names exposed to the workspace UI. */
-export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = ["ask", "subagents"];
+export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = [
+  "ask",
+  "subagents",
+  "voice",
+];
 
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
 
@@ -19,6 +23,7 @@ const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
  * - permission-gate is replaced by the server's policy engine
  * - ask is a first-party factory extension so iOS AskCard behavior stays aligned
  * - subagents is a first-party factory extension backed by SessionManager
+ * - voice is a first-party factory extension backed by local Yuwp TTS
  */
 export function isManagedExtensionName(name: string): boolean {
   return MANAGED_EXTENSION_NAME_SET.has(name);
