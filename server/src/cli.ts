@@ -844,9 +844,9 @@ const SETTABLE_KEYS: Record<
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
   tls: { type: "json", desc: "TLS config JSON (mode/certPath/keyPath/caPath)" },
-  subagents: {
+  extensions: {
     type: "json",
-    desc: "Subagent config JSON (maxDepth/autoStopWhenDone/startupGraceMs/defaultWaitTimeoutMs)",
+    desc: "Extension config JSON (for example voice.defaultVoiceId, subagents.*)",
   },
 };
 

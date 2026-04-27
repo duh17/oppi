@@ -2148,6 +2148,104 @@ describe("translatePiEvent", () => {
       expect(ctx.partialResults.size).toBe(0);
     });
 
+    it("keeps voice_speak arg preview visible when tool execution starts", () => {
+      const ctx = makeCtx();
+      const text = "Streaming voice text should stay visible as output.";
+
+      translatePiEvent(
+        {
+          type: "message_update",
+          message: {
+            content: [
+              {
+                type: "toolCall",
+                id: "voice-keep-1",
+                name: "voice_speak",
+                arguments: { text, delivery: "directSpeak" },
+              },
+            ],
+          },
+          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+        } as unknown as AgentSessionEvent,
+        ctx,
+      );
+
+      const execStart = translatePiEvent(
+        {
+          type: "tool_execution_start",
+          toolCallId: "voice-keep-1",
+          toolName: "voice_speak",
+          args: { text, delivery: "directSpeak" },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(execStart).toHaveLength(1);
+      expect(execStart[0]!.type).toBe("tool_start");
+      expect(ctx.streamingArgPreviews.has("voice-keep-1")).toBe(true);
+    });
+
+    it("suppresses placeholder and duplicate final transcript while voice_speak preview is active", () => {
+      const ctx = makeCtx();
+      const text = "Hello there.";
+
+      translatePiEvent(
+        {
+          type: "message_update",
+          message: {
+            content: [
+              {
+                type: "toolCall",
+                id: "voice-dup-1",
+                name: "voice_speak",
+                arguments: { text, delivery: "directSpeak" },
+              },
+            ],
+          },
+          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+        } as unknown as AgentSessionEvent,
+        ctx,
+      );
+
+      translatePiEvent(
+        {
+          type: "tool_execution_start",
+          toolCallId: "voice-dup-1",
+          toolName: "voice_speak",
+          args: { text, delivery: "directSpeak" },
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      const execUpdate = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "voice-dup-1",
+          toolName: "voice_speak",
+          partialResult: {
+            content: [{ type: "text", text: "Streaming speech from Yuwp..." }],
+          },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(execUpdate).toEqual([]);
+
+      const execEnd = translatePiEvent(
+        {
+          type: "tool_execution_end",
+          toolCallId: "voice-dup-1",
+          toolName: "voice_speak",
+          result: { content: [{ type: "text", text }] },
+          isError: false,
+        } as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(execEnd).toHaveLength(1);
+      expect(execEnd[0]!.type).toBe("tool_end");
+      expect(ctx.streamingArgPreviews.has("voice-dup-1")).toBe(false);
+    });
+
     it("previews short voice_speak text during tool-call arg streaming", () => {
       const ctx = makeCtx();
       const text = "Yes, I can hear you.";

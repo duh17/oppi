@@ -16,11 +16,11 @@ function makeWorkspace(extensions?: string[]): Workspace {
 }
 
 describe("isManagedExtensionName", () => {
-  it("marks server-managed extensions as managed", () => {
+  it("marks only truly server-managed extensions as managed", () => {
     expect(isManagedExtensionName("permission-gate")).toBe(true);
-    expect(isManagedExtensionName("ask")).toBe(true);
-    expect(isManagedExtensionName("subagents")).toBe(true);
-    expect(isManagedExtensionName("voice")).toBe(true);
+    expect(isManagedExtensionName("ask")).toBe(false);
+    expect(isManagedExtensionName("subagents")).toBe(false);
+    expect(isManagedExtensionName("voice")).toBe(false);
   });
 
   it("does not mark regular host extensions as managed", () => {

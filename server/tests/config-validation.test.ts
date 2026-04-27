@@ -189,62 +189,66 @@ describe("Storage config validation", () => {
     );
   });
 
-  it("accepts subagents config with all fields", () => {
+  it("accepts extensions.subagents config with all fields", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      subagents: {
-        maxDepth: 3,
-        autoStopWhenDone: false,
-        startupGraceMs: 120_000,
-        defaultWaitTimeoutMs: 60 * 60_000,
+      extensions: {
+        subagents: {
+          maxDepth: 3,
+          autoStopWhenDone: false,
+          startupGraceMs: 120_000,
+          defaultWaitTimeoutMs: 60 * 60_000,
+        },
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
-    expect(result.config?.subagents?.maxDepth).toBe(3);
-    expect(result.config?.subagents?.autoStopWhenDone).toBe(false);
-    expect(result.config?.subagents?.startupGraceMs).toBe(120_000);
-    expect(result.config?.subagents?.defaultWaitTimeoutMs).toBe(3_600_000);
+    expect(result.config?.extensions?.subagents?.maxDepth).toBe(3);
+    expect(result.config?.extensions?.subagents?.autoStopWhenDone).toBe(false);
+    expect(result.config?.extensions?.subagents?.startupGraceMs).toBe(120_000);
+    expect(result.config?.extensions?.subagents?.defaultWaitTimeoutMs).toBe(3_600_000);
   });
 
-  it("rejects subagents.maxDepth < 0", () => {
+  it("rejects extensions.subagents.maxDepth < 0", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      subagents: { maxDepth: -1 },
+      extensions: { subagents: { maxDepth: -1 } },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("subagents.maxDepth"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("extensions.subagents.maxDepth"))).toBe(true);
   });
 
-  it("rejects unknown keys in subagents in strict mode", () => {
+  it("rejects unknown keys in extensions.subagents in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      subagents: { unknownField: true },
+      extensions: { subagents: { unknownField: true } },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
     expect(
-      result.errors.some((e) => e.includes("config.subagents.unknownField: unknown key")),
+      result.errors.some((e) =>
+        e.includes("config.extensions.subagents.unknownField: unknown key"),
+      ),
     ).toBe(true);
   });
 
-  it("backfills subagents defaults when partially specified", () => {
+  it("backfills extensions.subagents defaults when partially specified", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      subagents: { maxDepth: 2 },
+      extensions: { subagents: { maxDepth: 2 } },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
-    expect(result.config?.subagents?.maxDepth).toBe(2);
+    expect(result.config?.extensions?.subagents?.maxDepth).toBe(2);
     // Other fields use defaults
-    expect(result.config?.subagents?.autoStopWhenDone).toBe(false);
-    expect(result.config?.subagents?.startupGraceMs).toBe(60_000);
-    expect(result.config?.subagents?.defaultWaitTimeoutMs).toBe(1_800_000);
+    expect(result.config?.extensions?.subagents?.autoStopWhenDone).toBe(false);
+    expect(result.config?.extensions?.subagents?.startupGraceMs).toBe(60_000);
+    expect(result.config?.extensions?.subagents?.defaultWaitTimeoutMs).toBe(1_800_000);
   });
 
   // ── ASR config regression ──

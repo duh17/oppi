@@ -63,7 +63,9 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     runtimeEnv: {},
     tls: { mode: "self-signed" },
     policy: defaultPolicy(),
-    subagents: defaultSubagentConfig(),
+    extensions: {
+      subagents: defaultSubagentConfig(),
+    },
   };
 }
 
@@ -111,8 +113,8 @@ function normalizeConfig(
     "pushDeviceTokens",
     "liveActivityToken",
     "autoTitle",
-    "subagents",
     "asr",
+    "extensions",
   ]);
 
   if (strictUnknown) {
@@ -704,9 +706,16 @@ function normalizeConfig(
     }
   }
 
-  // Subagent lifecycle config
-  if ("subagents" in obj && isRecord(obj.subagents)) {
-    const sa = obj.subagents;
+  const parseSubagentConfig = (value: unknown, pathPrefix: string): SubagentConfig | undefined => {
+    if (!isRecord(value)) {
+      if (value !== undefined) {
+        errors.push(`${pathPrefix}: expected object`);
+        changed = true;
+      }
+      return undefined;
+    }
+
+    const sa = value;
     const defaults = defaultSubagentConfig();
     const subagents: SubagentConfig = { ...defaults };
 
@@ -721,7 +730,7 @@ function normalizeConfig(
     if (strictUnknown) {
       for (const key of Object.keys(sa)) {
         if (!allowedSubagentKeys.has(key)) {
-          errors.push(`config.subagents.${key}: unknown key`);
+          errors.push(`${pathPrefix}.${key}: unknown key`);
         }
       }
     }
@@ -730,7 +739,7 @@ function normalizeConfig(
       if (typeof sa.maxDepth === "number" && Number.isInteger(sa.maxDepth) && sa.maxDepth >= 0) {
         subagents.maxDepth = sa.maxDepth;
       } else {
-        errors.push("config.subagents.maxDepth: expected non-negative integer");
+        errors.push(`${pathPrefix}.maxDepth: expected non-negative integer`);
         changed = true;
       }
     }
@@ -739,7 +748,7 @@ function normalizeConfig(
       if (typeof sa.autoStopWhenDone === "boolean") {
         subagents.autoStopWhenDone = sa.autoStopWhenDone;
       } else {
-        errors.push("config.subagents.autoStopWhenDone: expected boolean");
+        errors.push(`${pathPrefix}.autoStopWhenDone: expected boolean`);
         changed = true;
       }
     }
@@ -752,7 +761,7 @@ function normalizeConfig(
       ) {
         subagents.childIdleTimeoutMs = sa.childIdleTimeoutMs;
       } else {
-        errors.push("config.subagents.childIdleTimeoutMs: expected positive integer");
+        errors.push(`${pathPrefix}.childIdleTimeoutMs: expected positive integer`);
         changed = true;
       }
     }
@@ -765,7 +774,7 @@ function normalizeConfig(
       ) {
         subagents.startupGraceMs = sa.startupGraceMs;
       } else {
-        errors.push("config.subagents.startupGraceMs: expected positive integer");
+        errors.push(`${pathPrefix}.startupGraceMs: expected positive integer`);
         changed = true;
       }
     }
@@ -778,12 +787,69 @@ function normalizeConfig(
       ) {
         subagents.defaultWaitTimeoutMs = sa.defaultWaitTimeoutMs;
       } else {
-        errors.push("config.subagents.defaultWaitTimeoutMs: expected positive integer");
+        errors.push(`${pathPrefix}.defaultWaitTimeoutMs: expected positive integer`);
         changed = true;
       }
     }
 
-    config.subagents = subagents;
+    return subagents;
+  };
+
+  // Extension configuration
+  if ("extensions" in obj && isRecord(obj.extensions)) {
+    const extensions = obj.extensions;
+    const extensionConfig: NonNullable<ServerConfig["extensions"]> = {};
+    const allowedExtensionKeys = new Set(["voice", "subagents"]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(extensions)) {
+        if (!allowedExtensionKeys.has(key)) {
+          errors.push(`config.extensions.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("voice" in extensions) {
+      if (isRecord(extensions.voice)) {
+        const voice = extensions.voice;
+        const voiceConfig: NonNullable<NonNullable<ServerConfig["extensions"]>["voice"]> = {};
+        const allowedVoiceKeys = new Set(["defaultVoiceId"]);
+
+        if (strictUnknown) {
+          for (const key of Object.keys(voice)) {
+            if (!allowedVoiceKeys.has(key)) {
+              errors.push(`config.extensions.voice.${key}: unknown key`);
+            }
+          }
+        }
+
+        if (typeof voice.defaultVoiceId === "string" && voice.defaultVoiceId.trim().length > 0) {
+          voiceConfig.defaultVoiceId = voice.defaultVoiceId.trim();
+        } else if ("defaultVoiceId" in voice && voice.defaultVoiceId !== undefined) {
+          errors.push("config.extensions.voice.defaultVoiceId: expected non-empty string");
+          changed = true;
+        }
+
+        if (Object.keys(voiceConfig).length > 0) {
+          extensionConfig.voice = voiceConfig;
+        }
+      } else if (extensions.voice !== undefined) {
+        errors.push("config.extensions.voice: expected object");
+        changed = true;
+      }
+    }
+
+    const nestedSubagents = parseSubagentConfig(
+      extensions.subagents,
+      "config.extensions.subagents",
+    );
+    if (nestedSubagents) {
+      extensionConfig.subagents = nestedSubagents;
+    }
+
+    if (Object.keys(extensionConfig).length > 0) {
+      config.extensions = extensionConfig;
+    }
   }
 
   return { valid: errors.length === 0, errors, warnings, config, changed };

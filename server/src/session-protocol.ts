@@ -243,6 +243,7 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
  */
 const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
 const VOICE_SPEAK_ARG_PREVIEW_THRESHOLD = 0;
+const VOICE_SPEAK_PROGRESS_PLACEHOLDER = "Streaming speech from Yuwp...";
 
 /**
  * Find the largest string arg value suitable for viewport preview.
@@ -472,13 +473,23 @@ export function translatePiEvent(
       // Clear streaming arg viewport preview before real execution begins.
       // The preview was emitted during toolcall_delta streaming; now real
       // tool output will arrive via tool_execution_update/end.
-      if (toolCallId && ctx.streamingArgPreviews.delete(toolCallId)) {
-        messages.push({
-          type: "tool_output",
-          output: "",
-          toolCallId,
-          mode: "replace",
-        });
+      if (toolCallId && ctx.streamingArgPreviews.has(toolCallId)) {
+        if (event.toolName === "voice_speak") {
+          // For voice replies, the streamed text argument is also the user-visible
+          // transcript. Keep it in the output area while TTS runs instead of
+          // flashing back to an empty/working state at execution start.
+          if (typeof event.args?.text === "string" && event.args.text.length > 0) {
+            ctx.partialResults.set(toolCallId, event.args.text);
+          }
+        } else {
+          ctx.streamingArgPreviews.delete(toolCallId);
+          messages.push({
+            type: "tool_output",
+            output: "",
+            toolCallId,
+            mode: "replace",
+          });
+        }
       }
 
       messages.push({
@@ -505,6 +516,7 @@ export function translatePiEvent(
 
       const messages: ServerMessage[] = [];
       const shellTool = isShellLikeTool(toolName);
+      const hasStreamingArgPreview = !!toolCallId && ctx.streamingArgPreviews.has(toolCallId);
 
       for (const block of contents) {
         const record = asRecord(block);
@@ -515,6 +527,14 @@ export function translatePiEvent(
         const type = record.type;
         if ((type === "text" || type === "output_text") && typeof record.text === "string") {
           const fullText = stripAnsiEscapes(record.text);
+
+          if (
+            toolName === "voice_speak" &&
+            hasStreamingArgPreview &&
+            fullText.trim() === VOICE_SPEAK_PROGRESS_PLACEHOLDER
+          ) {
+            continue;
+          }
 
           // Compute delta from last partialResult to avoid duplication.
           // partialResult is accumulated (replace semantics) — we convert
@@ -562,6 +582,7 @@ export function translatePiEvent(
       const lastText = ctx.partialResults.get(key) ?? "";
       const toolName = ctx.toolNames.get(key) ?? event.toolName ?? "";
       const shellTool = isShellLikeTool(toolName);
+      const hasStreamingArgPreview = !!toolCallId && ctx.streamingArgPreviews.has(toolCallId);
 
       // Ask tool output is only for the LLM — suppress it from iOS broadcast.
       // The structured details (answers) are delivered via tool_end, and iOS
@@ -600,6 +621,13 @@ export function translatePiEvent(
             truncated: true,
             totalBytes: finalTextBytes,
           });
+        } else if (toolName === "voice_speak" && hasStreamingArgPreview && finalText !== lastText) {
+          messages.push({
+            type: "tool_output",
+            output: finalText,
+            toolCallId,
+            mode: "replace",
+          });
         } else {
           const delta = computeToolDelta(lastText, finalText);
           if (delta.length > 0) {
@@ -613,6 +641,9 @@ export function translatePiEvent(
       ctx.partialResults.delete(key);
       ctx.toolNames.delete(key);
       ctx.shellPreviewLastSent.delete(key);
+      if (toolCallId) {
+        ctx.streamingArgPreviews.delete(toolCallId);
+      }
 
       // Forward structured details and error status from pi tool results.
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})

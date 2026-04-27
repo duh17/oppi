@@ -1,9 +1,5 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
-import { createAskFactory } from "../extensions/ask.js";
-import { isWorkspaceExtensionEnabled } from "../extensions/first-party.js";
-import { createSubagentsFactory } from "../extensions/subagents.js";
-import { createVoiceFactory } from "../extensions/voice.js";
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -109,55 +105,37 @@ export class SessionStartCoordinator {
           workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
         const extraExtensionFactories = this.deps.getAndClearPendingExtensionFactories(sessionId);
 
-        if (isWorkspaceExtensionEnabled(workspace, "ask")) {
-          extraExtensionFactories.push(createAskFactory());
-        }
-
-        if (isWorkspaceExtensionEnabled(workspace, "voice")) {
-          extraExtensionFactories.push(createVoiceFactory());
-        }
-
-        if (isWorkspaceExtensionEnabled(workspace, "subagents")) {
-          // Root/detached sessions get full tools (spawn, stop, send, inspect).
-          // Child sessions get childMode (send, inspect only — no spawning).
-          const isChildSession = !!session.parentSessionId;
-          const subagentsCtx = {
-            workspaceId: identity.workspaceId,
-            sessionId: session.id,
-            spawnChild: (params: {
-              name?: string;
-              model?: string;
-              thinking?: string;
-              prompt: string;
-            }) => this.deps.spawnChildSession(session.id, params),
-            spawnDetached: (params: {
-              name?: string;
-              model?: string;
-              thinking?: string;
-              prompt: string;
-            }) => this.deps.spawnDetachedSession(session.id, params),
-            listChildren: () => this.deps.listChildSessions(session.id),
-            getSession: (id: string) => this.deps.storage.getSession(id),
-            listWorkspaceSessions: () =>
-              this.deps.storage
-                .listSessions()
-                .filter((s) => s.workspaceId === identity.workspaceId),
-            subscribe: (id: string, callback: (msg: ServerMessage) => void) =>
-              this.deps.subscribeToSession(id, callback),
-            getAvailableModelIds: () => this.deps.getAvailableModelIds(),
-            stopSession: (id: string) => this.deps.stopSession(id),
-            resumeSession: (id: string) => this.deps.resumeSession(id),
-            sendMessage: (id: string, message: string, behavior?: "steer" | "followUp") =>
-              this.deps.sendMessage(id, message, behavior),
-          };
-          const subagentConfig = this.deps.runtimeManager.getLimits().subagents;
-          extraExtensionFactories.push(
-            createSubagentsFactory(subagentsCtx, {
-              childMode: isChildSession,
-              subagentConfig,
-            }),
-          );
-        }
+        // Root/detached sessions get full tools (spawn, stop, send, inspect).
+        // Child sessions get childMode (send, inspect only — no spawning).
+        const isChildSession = !!session.parentSessionId;
+        const subagentsCtx = {
+          workspaceId: identity.workspaceId,
+          sessionId: session.id,
+          spawnChild: (params: {
+            name?: string;
+            model?: string;
+            thinking?: string;
+            prompt: string;
+          }) => this.deps.spawnChildSession(session.id, params),
+          spawnDetached: (params: {
+            name?: string;
+            model?: string;
+            thinking?: string;
+            prompt: string;
+          }) => this.deps.spawnDetachedSession(session.id, params),
+          listChildren: () => this.deps.listChildSessions(session.id),
+          getSession: (id: string) => this.deps.storage.getSession(id),
+          listWorkspaceSessions: () =>
+            this.deps.storage.listSessions().filter((s) => s.workspaceId === identity.workspaceId),
+          subscribe: (id: string, callback: (msg: ServerMessage) => void) =>
+            this.deps.subscribeToSession(id, callback),
+          getAvailableModelIds: () => this.deps.getAvailableModelIds(),
+          stopSession: (id: string) => this.deps.stopSession(id),
+          resumeSession: (id: string) => this.deps.resumeSession(id),
+          sendMessage: (id: string, message: string, behavior?: "steer" | "followUp") =>
+            this.deps.sendMessage(id, message, behavior),
+        };
+        const subagentConfig = this.deps.runtimeManager.getLimits().subagents;
 
         const createStart = Date.now();
         const sdkBackend = await SdkBackend.create({
@@ -169,7 +147,14 @@ export class SessionStartCoordinator {
           workspaceId: identity.workspaceId,
           permissionGate: useGate,
           skillPaths,
-          storage: this.deps.storage,
+          reloadableFirstPartyExtensionContext: {
+            storage: this.deps.storage,
+            subagents: {
+              context: subagentsCtx,
+              childMode: isChildSession,
+              subagentConfig,
+            },
+          },
           extraExtensionFactories:
             extraExtensionFactories.length > 0 ? extraExtensionFactories : undefined,
           metrics: this.deps.metrics,

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import type { Storage } from "../src/storage.js";
 
 const DEFAULT_TTS_URL = "http://127.0.0.1:7937";
 const DEFAULT_LANGUAGE = "English";
@@ -40,6 +41,8 @@ const VOICE_DESIGN_REPOS = [
   "models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice",
 ];
 
+type VoiceDeliveryMode = "voiceMessage" | "directSpeak";
+
 type VoiceRecord = {
   id: string;
   object?: string;
@@ -53,6 +56,11 @@ type VoiceRecord = {
   created_at?: string;
   updated_at?: string;
   defaults?: Record<string, unknown>;
+};
+
+type VoicePreferencesRecord = {
+  defaultVoiceId?: string;
+  updatedAt?: string;
 };
 
 type AudioDetails = {
@@ -74,6 +82,8 @@ type VoiceToolDetails = {
   audio?: AudioDetails;
   played?: boolean;
   message?: string;
+  delivery?: VoiceDeliveryMode;
+  preferences?: VoicePreferencesRecord;
 };
 
 type SpeechResult = {
@@ -114,6 +124,7 @@ type OppiAudioStreamEvent = {
   text?: string;
   durationSeconds?: number;
   metrics?: Record<string, unknown>;
+  delivery?: VoiceDeliveryMode;
 };
 
 function hasError(value: unknown): value is { error: unknown } {
@@ -123,7 +134,7 @@ function hasError(value: unknown): value is { error: unknown } {
 let serverProcess: ReturnType<typeof spawn> | undefined;
 let speechQueue: Promise<unknown> = Promise.resolve();
 
-export function createVoiceFactory(): ExtensionFactory {
+export function createVoiceFactory(storage?: Storage): ExtensionFactory {
   return (pi) => {
     pi.registerTool({
       name: "voice_create",
@@ -176,6 +187,11 @@ export function createVoiceFactory(): ExtensionFactory {
           Type.Boolean({
             description:
               "Embed small preview WAV as base64 in tool details for Oppi timeline playback. Default: true.",
+          }),
+        ),
+        setDefault: Type.Optional(
+          Type.Boolean({
+            description: "Persist this voice as the default for future voice_speak calls.",
           }),
         ),
       }),
@@ -239,12 +255,22 @@ export function createVoiceFactory(): ExtensionFactory {
             }
           }
 
-          const details: VoiceToolDetails = { serverUrl, voice, audio, played };
+          if (params.setDefault) {
+            saveVoicePreferences(storage, { defaultVoiceId: voice.id });
+          }
+
+          const details: VoiceToolDetails = {
+            serverUrl,
+            voice,
+            audio,
+            played,
+            preferences: readVoicePreferences(storage),
+          };
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Created voice ${voice.id}: ${voice.name}${audio ? `\nPreview: ${audio.path}` : ""}`,
+                text: `Created voice ${voice.id}: ${voice.name}${params.setDefault ? "\nSaved as default voice." : ""}${audio ? `\nPreview: ${audio.path}` : ""}`,
               },
             ],
             details,
@@ -260,6 +286,9 @@ export function createVoiceFactory(): ExtensionFactory {
           theme.fg("muted", details.voice.name),
         ];
         if (details.voice.prompt) lines.push(theme.fg("dim", `Prompt: ${details.voice.prompt}`));
+        if (details.preferences?.defaultVoiceId === details.voice.id) {
+          lines.push(theme.fg("success", "Saved as default voice"));
+        }
         if (details.audio) lines.push(theme.fg("dim", `Audio: ${details.audio.path}`));
         if (details.played) lines.push(theme.fg("success", "Played preview locally"));
         return new Text(lines.join("\n"), 0, 0);
@@ -274,7 +303,10 @@ export function createVoiceFactory(): ExtensionFactory {
       promptSnippet: "Speak using a saved local Yuwp voice",
       promptGuidelines: [
         "Use voice_speak when the user asks to hear a saved voice or wants the agent to speak with a named voice.",
-        `If the user asks you to speak without naming a voice, default to ${DEFAULT_VOICE_ID}.`,
+        `If the user asks you to speak without naming a voice, default to the saved default voice or ${DEFAULT_VOICE_ID} if none is saved.`,
+        "When the user asks for a voice reply without specifying delivery, default delivery to voiceMessage.",
+        "If the user explicitly wants immediate playback, live interaction, or direct speech, set delivery to directSpeak.",
+        "If the user is choosing an ongoing voice reply style and the preference is genuinely unclear, use ask instead of guessing.",
         "Use voice_speak for direct spoken replies, not written mini-essays read aloud.",
         "When already speaking in a voice during the session, keep using that same voice unless the user asks to switch.",
         "For voice_speak, write for the ear: shorter sentences, simpler joins, fewer stacked clauses, and fewer abstractions.",
@@ -306,6 +338,12 @@ export function createVoiceFactory(): ExtensionFactory {
               "Embed small WAV as base64 in tool details for Oppi timeline playback. Default: true.",
           }),
         ),
+        delivery: Type.Optional(
+          Type.Union([Type.Literal("voiceMessage"), Type.Literal("directSpeak")], {
+            description:
+              "Oppi delivery hint. voiceMessage renders a playable voice card without autoplay by default. directSpeak requests immediate client playback when allowed.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params, _signal, onUpdate, ctx) {
         return enqueue(async () => {
@@ -318,7 +356,8 @@ export function createVoiceFactory(): ExtensionFactory {
             details: { status: "speaking" },
           });
           const serverUrl = await ensureYuwpTTSServer();
-          const voice = resolveVoiceId(params.voice);
+          const voice = resolveVoiceId(params.voice, storage);
+          const delivery = normalizeVoiceDelivery(params.delivery);
           const outPath = params.out
             ? path.resolve(params.out)
             : audioOutputPath(`voice-speak-${safeSlug(voice)}`);
@@ -341,13 +380,16 @@ export function createVoiceFactory(): ExtensionFactory {
           const audioStream = (
             ctx?.ui as { audioStream?: (event: OppiAudioStreamEvent) => void } | undefined
           )?.audioStream;
-          const streamId = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const streamId =
+            _toolCallId || `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const result = stream
             ? await streamSpeechToWav(
                 serverUrl,
                 speechRequest,
                 outPath,
-                audioStream ? (event) => audioStream({ id: streamId, ...event }) : undefined,
+                audioStream
+                  ? (event) => audioStream({ id: streamId, delivery, ...event })
+                  : undefined,
               )
             : await fullSpeechToWav(serverUrl, speechRequest, outPath);
           let played = false;
@@ -357,7 +399,14 @@ export function createVoiceFactory(): ExtensionFactory {
           }
           const bytes = readFileSync(outPath);
           const audio = audioDetails(outPath, bytes, params.embedAudio !== false, result.metrics);
-          const details: VoiceToolDetails = { serverUrl, audio, played, message: spokenText };
+          const details: VoiceToolDetails = {
+            serverUrl,
+            audio,
+            played,
+            message: spokenText,
+            delivery,
+            preferences: readVoicePreferences(storage),
+          };
           return {
             content: [{ type: "text" as const, text: spokenText }],
             details,
@@ -381,6 +430,50 @@ export function createVoiceFactory(): ExtensionFactory {
     });
 
     pi.registerTool({
+      name: "voice_preferences",
+      label: "Voice Preferences",
+      description:
+        "Inspect or update saved voice preferences such as the default voice used by voice_speak.",
+      promptSnippet: "Inspect or update saved voice preferences",
+      promptGuidelines: [
+        "Use voice_preferences when the user wants to set, change, or inspect the saved default voice.",
+        "Default voices should point to an existing saved voice ID whenever possible.",
+      ],
+      parameters: Type.Object({
+        defaultVoiceId: Type.Optional(
+          Type.String({
+            description: "Persist this saved voice ID as the default for future voice_speak calls.",
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const serverUrl = await ensureYuwpTTSServer();
+        if (params.defaultVoiceId) {
+          const voiceId = params.defaultVoiceId.trim();
+          if (!voiceId) {
+            throw new Error("defaultVoiceId cannot be empty");
+          }
+          await assertSavedVoiceExists(serverUrl, voiceId);
+          saveVoicePreferences(storage, { defaultVoiceId: voiceId });
+        }
+        const preferences = readVoicePreferences(storage);
+        const activeDefault = preferences.defaultVoiceId ?? DEFAULT_VOICE_ID;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Default voice: ${activeDefault}${preferences.defaultVoiceId ? "" : " (fallback)"}`,
+            },
+          ],
+          details: {
+            serverUrl,
+            preferences,
+          } satisfies VoiceToolDetails,
+        };
+      },
+    });
+
+    pi.registerTool({
       name: "voice_list",
       label: "List Voices",
       description: "List saved local Yuwp voices available for voice_speak.",
@@ -389,27 +482,34 @@ export function createVoiceFactory(): ExtensionFactory {
         const serverUrl = await ensureYuwpTTSServer();
         const response = await requestJSON<{ data: VoiceRecord[] }>(serverUrl, "/v1/voices", "GET");
         const voices = response.data ?? [];
+        const preferences = readVoicePreferences(storage);
+        const defaultVoiceId = preferences.defaultVoiceId ?? DEFAULT_VOICE_ID;
         return {
           content: [
             {
               type: "text" as const,
               text: voices.length
-                ? voices.map((v) => `${v.id}: ${v.name}`).join("\n")
+                ? voices
+                    .map((v) => `${v.id}: ${v.name}${v.id === defaultVoiceId ? " (default)" : ""}`)
+                    .join("\n")
                 : "No saved voices.",
             },
           ],
-          details: { serverUrl, voices } satisfies VoiceToolDetails,
+          details: { serverUrl, voices, preferences } satisfies VoiceToolDetails,
         };
       },
     });
 
     pi.registerCommand("voice", {
       description:
-        "Create/list/speak local Yuwp voices. Usage: /voice list | /voice speak <voice-id> <text>",
+        "Create/list/speak local Yuwp voices. Usage: /voice list | /voice default [voice-id] | /voice speak <voice-id> <text>",
       handler: async (args, ctx) => {
         const trimmed = args.trim();
         if (!trimmed || trimmed === "help") {
-          ctx.ui.notify("Usage: /voice list | /voice speak <voice-id> <text>", "info");
+          ctx.ui.notify(
+            "Usage: /voice list | /voice default [voice-id] | /voice speak <voice-id> <text>",
+            "info",
+          );
           return;
         }
         const [cmd, ...rest] = trimmed.split(/\s+/);
@@ -420,16 +520,33 @@ export function createVoiceFactory(): ExtensionFactory {
             "/v1/voices",
             "GET",
           );
+          const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId ?? DEFAULT_VOICE_ID;
           ctx.ui.notify(
-            (response.data ?? []).map((v) => `${v.id}: ${v.name}`).join("\n") || "No saved voices",
+            (response.data ?? [])
+              .map((v) => `${v.id}: ${v.name}${v.id === defaultVoiceId ? " (default)" : ""}`)
+              .join("\n") || "No saved voices",
             "info",
           );
           return;
         }
+        if (cmd === "default") {
+          const requestedVoiceId = rest.join(" ").trim();
+          if (!requestedVoiceId) {
+            const defaultVoiceId = readVoicePreferences(storage).defaultVoiceId ?? DEFAULT_VOICE_ID;
+            ctx.ui.notify(`Default voice: ${defaultVoiceId}`, "info");
+            return;
+          }
+          const serverUrl = await ensureYuwpTTSServer();
+          await assertSavedVoiceExists(serverUrl, requestedVoiceId);
+          saveVoicePreferences(storage, { defaultVoiceId: requestedVoiceId });
+          ctx.ui.notify(`Saved default voice: ${requestedVoiceId}`, "info");
+          return;
+        }
         if (cmd === "speak") {
-          const voice = rest.shift();
+          const voiceArg = rest.shift();
           const text = rest.join(" ");
-          if (!voice || !text) {
+          const voice = resolveVoiceId(voiceArg, storage);
+          if (!text) {
             ctx.ui.notify("Usage: /voice speak <voice-id> <text>", "warning");
             return;
           }
@@ -469,9 +586,53 @@ async function ensureYuwpTTSServer(): Promise<string> {
   throw new Error(`Yuwp TTS server did not become ready at ${serverUrl}`);
 }
 
-function resolveVoiceId(voice?: string): string {
+function resolveVoiceId(voice: string | undefined, storage?: Storage): string {
   const trimmed = typeof voice === "string" ? voice.trim() : "";
-  return trimmed || DEFAULT_VOICE_ID;
+  return trimmed || resolveConfiguredDefaultVoiceId(storage);
+}
+
+export function normalizeVoiceDelivery(value: unknown): VoiceDeliveryMode | undefined {
+  return value === "voiceMessage" || value === "directSpeak" ? value : undefined;
+}
+
+export function readVoicePreferences(storage?: Storage): VoicePreferencesRecord {
+  const defaultVoiceId = storage?.getConfig().extensions?.voice?.defaultVoiceId?.trim();
+  return defaultVoiceId ? { defaultVoiceId } : {};
+}
+
+export function saveVoicePreferences(
+  storage: Storage | undefined,
+  update: VoicePreferencesRecord,
+): VoicePreferencesRecord {
+  const next: VoicePreferencesRecord = {
+    ...readVoicePreferences(storage),
+    ...update,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (storage) {
+    const current = storage.getConfig();
+    storage.updateConfig({
+      extensions: {
+        ...(current.extensions ?? {}),
+        voice: next.defaultVoiceId ? { defaultVoiceId: next.defaultVoiceId } : undefined,
+      },
+    });
+  }
+
+  return next;
+}
+
+export function resolveConfiguredDefaultVoiceId(storage?: Storage): string {
+  return readVoicePreferences(storage).defaultVoiceId?.trim() || DEFAULT_VOICE_ID;
+}
+
+async function assertSavedVoiceExists(serverUrl: string, voiceId: string): Promise<void> {
+  const response = await requestJSON<{ data: VoiceRecord[] }>(serverUrl, "/v1/voices", "GET");
+  const voices = response.data ?? [];
+  if (!voices.some((voice) => voice.id === voiceId)) {
+    throw new Error(`Saved voice not found: ${voiceId}`);
+  }
 }
 
 function assertLocalURL(raw: string): void {

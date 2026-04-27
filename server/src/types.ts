@@ -239,17 +239,21 @@ export interface ServerConfig {
   };
 
   /**
-   * Subagent lifecycle configuration. Controls how spawned child sessions
-   * behave — depth limits, auto-stop behavior, timeouts, and polling.
-   */
-  subagents?: SubagentConfig;
-
-  /**
    * ASR / dictation pipeline configuration. Controls remote dictation routing
    * by pointing Oppi at an STT backend endpoint.
    */
   asr?: {
     sttEndpoint?: string;
+  };
+
+  /**
+   * Server-managed extension configuration and lightweight persisted state.
+   */
+  extensions?: {
+    voice?: {
+      defaultVoiceId?: string;
+    };
+    subagents?: SubagentConfig;
   };
 }
 
@@ -1223,6 +1227,7 @@ export type ServerMessage = // ── Connection ──
         text?: string;
         durationSeconds?: number;
         metrics?: Record<string, unknown>;
+        delivery?: "voiceMessage" | "directSpeak";
       }
     // ── Tool execution ──
     | {

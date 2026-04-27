@@ -99,7 +99,7 @@ export function resolveRuntimeLimits(config: ServerConfig): RuntimeLimits {
     maxSessionsGlobal: config.maxSessionsGlobal ?? DEFAULTS.maxSessionsGlobal,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs ?? DEFAULTS.sessionIdleTimeoutMs,
     workspaceIdleTimeoutMs: config.workspaceIdleTimeoutMs ?? DEFAULTS.workspaceIdleTimeoutMs,
-    subagents: config.subagents ?? DEFAULTS.subagents,
+    subagents: config.extensions?.subagents ?? DEFAULTS.subagents,
   };
 }
 

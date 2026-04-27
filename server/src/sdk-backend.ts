@@ -44,8 +44,12 @@ import type {
   SessionBackendEvent,
 } from "./pi-events.js";
 import { isManagedExtensionName } from "../extensions/first-party.js";
+import {
+  getReloadableFirstPartyExtensionPaths,
+  withReloadableFirstPartyExtensionContext,
+  type ReloadableFirstPartyExtensionContext,
+} from "./first-party-extension-runtime.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
-import type { Storage } from "./storage.js";
 import type { AskQuestion, Session, Workspace } from "./types.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
@@ -186,8 +190,8 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
-  /** Storage for server-managed extensions. */
-  storage?: Storage;
+  /** Session-scoped deps for Oppi's reloadable first-party extensions. */
+  reloadableFirstPartyExtensionContext?: ReloadableFirstPartyExtensionContext;
   /** Additional extension factories injected for this session. */
   extraExtensionFactories?: ExtensionFactory[];
   /** Operational metrics collector for SDK timing. */
@@ -503,8 +507,12 @@ export class SdkBackend {
         extensionFactories.push(...config.extraExtensionFactories);
       }
 
-      // Resource loader — suppress auto-discovery, load only what we need.
-      // Extension factories (permission gate) are injected here.
+      const firstPartyExtensionPaths = getReloadableFirstPartyExtensionPaths();
+
+      // Resource loader — suppress skill/prompt/theme auto-discovery, but keep
+      // file-based extensions so /reload can re-import Oppi's first-party ones.
+      // Extension factories (permission gate + temporary pending factories) are
+      // still injected here.
       // Pi's auto-discovered permission-gate extension is filtered out since
       // oppi has its own policy engine (GateServer). Without this, both gates
       // run and the pi extension blocks commands it considers "dangerous" with
@@ -514,7 +522,7 @@ export class SdkBackend {
         cwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        additionalExtensionPaths: [],
+        additionalExtensionPaths: firstPartyExtensionPaths,
         additionalSkillPaths: config.skillPaths ?? [],
         noSkills: true,
         noPromptTemplates: true,
@@ -527,8 +535,8 @@ export class SdkBackend {
             : undefined,
         extensionsOverride: (base) => {
           // 1. Filter out extensions managed directly by oppi-server.
-          //    ask and spawn_agent are injected as first-party factory extensions,
-          //    and permission-gate is replaced by oppi's own policy engine.
+          //    permission-gate is replaced by oppi's own policy engine.
+          //    ask, voice, and subagents stay file-based so /reload can re-import them.
           let filtered = base.extensions.filter(
             (ext) => !isManagedExtensionName(getExtensionName(ext)),
           );
@@ -565,6 +573,13 @@ export class SdkBackend {
           return { ...base, extensions: filtered };
         },
       });
+      const firstPartyExtensionContext = config.reloadableFirstPartyExtensionContext;
+      if (firstPartyExtensionContext) {
+        const reloadWithContext = loader.reload.bind(loader);
+        loader.reload = () =>
+          withReloadableFirstPartyExtensionContext(firstPartyExtensionContext, reloadWithContext);
+      }
+
       await loader.reload();
 
       // Sandbox mode: create tools backed by Gondolin micro-VM

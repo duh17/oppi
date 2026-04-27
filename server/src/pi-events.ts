@@ -71,6 +71,7 @@ export interface ExtensionAudioStreamEvent {
   text?: string;
   durationSeconds?: number;
   metrics?: Record<string, unknown>;
+  delivery?: "voiceMessage" | "directSpeak";
 }
 
 export type SessionBackendEvent =
