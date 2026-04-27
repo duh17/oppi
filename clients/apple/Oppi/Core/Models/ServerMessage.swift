@@ -33,6 +33,7 @@ struct AudioStreamMessage: Sendable, Equatable {
     let audioBase64: String?
     let text: String?
     let durationSeconds: Double?
+    let delivery: VoiceReplyDelivery?
 }
 
 enum ServerMessage: Sendable, Equatable {
@@ -201,7 +202,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / text_delta / thinking_delta / audio_stream
-        case role, content, delta, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds
+        case role, content, delta, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, delivery
         // tool_start / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
@@ -303,7 +304,8 @@ extension ServerMessage: Decodable {
                 chunkIndex: try c.decodeIfPresent(Int.self, forKey: .chunkIndex),
                 audioBase64: try c.decodeIfPresent(String.self, forKey: .audioBase64),
                 text: try c.decodeIfPresent(String.self, forKey: .text),
-                durationSeconds: try c.decodeIfPresent(Double.self, forKey: .durationSeconds)
+                durationSeconds: try c.decodeIfPresent(Double.self, forKey: .durationSeconds),
+                delivery: try c.decodeIfPresent(VoiceReplyDelivery.self, forKey: .delivery)
             )
             self = .audioStream(stream)
 

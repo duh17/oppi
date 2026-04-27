@@ -13,7 +13,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Audi
 /// Tracks which item is currently playing so the UI can render
 /// per-row play/stop/loading state.
 @MainActor @Observable
-final class AudioPlayerService: NSObject {
+final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
     nonisolated static let stateDidChangeNotification = Notification.Name("AudioPlayerService.stateDidChange")
     nonisolated static let previousPlayingItemIDUserInfoKey = "previousPlayingItemID"
     nonisolated static let playingItemIDUserInfoKey = "playingItemID"
@@ -26,23 +26,9 @@ final class AudioPlayerService: NSObject {
     /// ID of the ChatItem currently loading/decoding audio.
     private(set) var loadingItemID: String?
 
-    /// When enabled, live/automatic streamed speech is suppressed.
-    /// Manual replay from an audio card still works after the user taps play.
-    var autoPlaybackMuted: Bool {
-        didSet {
-            UserDefaults.standard.set(autoPlaybackMuted, forKey: Self.autoPlaybackMutedDefaultsKey)
-            if autoPlaybackMuted {
-                stopAudioStream(clearState: true)
-            }
-            postPlaybackPolicyChanged()
-        }
-    }
-
     var hasActivePlayback: Bool {
         playingItemID != nil || loadingItemID != nil || streamID != nil
     }
-
-    private static let autoPlaybackMutedDefaultsKey = "AudioPlayerService.autoPlaybackMuted"
 
     private var player: AVAudioPlayer?
     private var playbackDelegate: PlaybackDelegate?
@@ -51,20 +37,12 @@ final class AudioPlayerService: NSObject {
     private var streamFormat: AVAudioFormat?
     private var streamID: String?
     private var suppressedAudioStreamIDs: Set<String> = []
+    private var autoPlayedVoiceReplyItemIDs: Set<String> = []
     private var streamPendingBuffers = 0
     private var streamReceivedDone = false
 
     override init() {
-        if let stored = UserDefaults.standard.object(forKey: Self.autoPlaybackMutedDefaultsKey) as? Bool {
-            self.autoPlaybackMuted = stored
-        } else {
-            self.autoPlaybackMuted = true
-        }
         super.init()
-    }
-
-    func toggleAutoPlaybackMuted() {
-        autoPlaybackMuted.toggle()
     }
 
     /// Play a pre-generated local audio clip file.
@@ -109,6 +87,19 @@ final class AudioPlayerService: NSObject {
         setPlaybackState(playing: nil, loading: nil)
     }
 
+    func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?) -> Bool {
+        AppPreferences.Voice.shouldAutoplay(delivery: delivery) && !autoPlayedVoiceReplyItemIDs.contains(itemID)
+    }
+
+    func markVoiceReplyAutoplayed(itemID: String) {
+        autoPlayedVoiceReplyItemIDs.insert(itemID)
+    }
+
+    func isStreamingPlaybackActive(itemID: String) -> Bool {
+        let streamPlaybackID = Self.streamingPlaybackItemID(for: itemID)
+        return playingItemID == streamPlaybackID || loadingItemID == streamPlaybackID
+    }
+
     /// Consume low-latency audio chunks emitted by Oppi/Pi extensions.
     ///
     /// Supports 16-bit little-endian PCM (`audio/pcm; codecs=s16le`) for true
@@ -122,9 +113,9 @@ final class AudioPlayerService: NSObject {
             return
         }
 
-        if autoPlaybackMuted {
-            if stream.event == .error {
-                logger.error("Muted audio stream \(stream.id, privacy: .public) reported error: \(stream.text ?? "unknown", privacy: .public)")
+        guard AppPreferences.Voice.shouldAutoplay(delivery: stream.delivery) else {
+            if stream.event == .error, stream.delivery == .directSpeak {
+                logger.error("Suppressed audio stream \(stream.id, privacy: .public) reported error: \(stream.text ?? "unknown", privacy: .public)")
             }
             return
         }
@@ -210,7 +201,8 @@ final class AudioPlayerService: NSObject {
                   data.count <= 10 * 1024 * 1024 else {
                 return
             }
-            toggleDataPlayback(data: data, itemID: "audio-stream-\(stream.id)")
+            markVoiceReplyAutoplayed(itemID: stream.id)
+            toggleDataPlayback(data: data, itemID: Self.streamingPlaybackItemID(for: stream.id))
         case .error:
             logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             stopAudioStream(clearState: true)
@@ -250,7 +242,8 @@ final class AudioPlayerService: NSObject {
             streamID = id
             streamPendingBuffers = 0
             streamReceivedDone = false
-            setPlaybackState(playing: "audio-stream-\(id)", loading: nil)
+            markVoiceReplyAutoplayed(itemID: id)
+            setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
         } catch {
             logger.error("Audio stream start failed: \(error.localizedDescription)")
             stopAudioStream(clearState: true)
@@ -337,19 +330,6 @@ final class AudioPlayerService: NSObject {
         }
     }
 
-    private func postPlaybackPolicyChanged() {
-        NotificationCenter.default.post(
-            name: Self.stateDidChangeNotification,
-            object: self,
-            userInfo: [
-                Self.previousPlayingItemIDUserInfoKey: playingItemID ?? "",
-                Self.playingItemIDUserInfoKey: playingItemID ?? "",
-                Self.previousLoadingItemIDUserInfoKey: loadingItemID ?? "",
-                Self.loadingItemIDUserInfoKey: loadingItemID ?? "",
-            ]
-        )
-    }
-
     private func setPlaybackState(playing: String?, loading: String?) {
         let previousPlaying = playingItemID
         let previousLoading = loadingItemID
@@ -370,6 +350,10 @@ final class AudioPlayerService: NSObject {
                 Self.loadingItemIDUserInfoKey: loading ?? "",
             ]
         )
+    }
+
+    private static func streamingPlaybackItemID(for streamID: String) -> String {
+        "audio-stream-\(streamID)"
     }
 }
 

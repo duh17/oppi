@@ -7,20 +7,17 @@ final class ReviewCommentStore {
     var lastError: String?
 
     var stagedComments: [ReviewComment] {
-        comments.filter { $0.status == .staged }
-            .sorted { $0.createdAt < $1.createdAt }
+        comments(matching: { $0.status == .staged }) { $0.createdAt < $1.createdAt }
     }
 
     var stagedCount: Int { stagedComments.count }
 
     var sentOrOpenComments: [ReviewComment] {
-        comments.filter { $0.status == .sent || $0.status == .open }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        comments(matching: { $0.status == .sent || $0.status == .open }) { $0.updatedAt > $1.updatedAt }
     }
 
     var resolvedComments: [ReviewComment] {
-        comments.filter { $0.status == .resolved }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        comments(matching: { $0.status == .resolved }) { $0.updatedAt > $1.updatedAt }
     }
 
     func load(api: APIClient, workspaceId: String, sessionId: String? = nil) async {
@@ -113,6 +110,13 @@ final class ReviewCommentStore {
         return "\(trimmed)\n\n\(block)"
     }
 
+    private func comments(
+        matching predicate: (ReviewComment) -> Bool,
+        sortedBy areInIncreasingOrder: (ReviewComment, ReviewComment) -> Bool
+    ) -> [ReviewComment] {
+        comments.filter(predicate).sorted(by: areInIncreasingOrder)
+    }
+
     private func upsert(_ comment: ReviewComment) {
         if let index = comments.firstIndex(where: { $0.id == comment.id }) {
             comments[index] = comment
@@ -122,7 +126,8 @@ final class ReviewCommentStore {
     }
 
     static func reviewBlock(for comments: [ReviewComment]) -> String {
-        let staged = comments.filter { $0.status == .staged }
+        let staged = comments
+            .filter { $0.status == .staged }
             .sorted { $0.createdAt < $1.createdAt }
         guard !staged.isEmpty else { return "" }
 

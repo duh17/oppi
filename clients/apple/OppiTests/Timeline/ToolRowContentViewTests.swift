@@ -1085,7 +1085,8 @@ struct ToolTimelineRowContentViewTests {
                 text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
-                durationSeconds: 4.2
+                durationSeconds: 4.2,
+                delivery: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1102,13 +1103,14 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedVoiceMessageHidesCollapsedHeaderPlaybackButton() throws {
+    @Test func expandedVoiceMessageKeepsPlaybackButtonInHeaderTrailingArea() throws {
         let config = makeTimelineToolConfiguration(
             expandedContent: .voiceMessage(
                 text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
-                durationSeconds: 4.2
+                durationSeconds: 4.2,
+                delivery: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1119,7 +1121,208 @@ struct ToolTimelineRowContentViewTests {
         _ = fittedTimelineSize(for: view, width: 370)
 
         let button = try #require(privateButton(named: "audioPlaybackButton", in: view))
-        #expect(button.isHidden)
+        #expect(!button.isHidden)
+
+        let titleLabel = try #require(timelineAllLabels(in: view).first {
+            timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == "Voice message"
+        })
+        let buttonRect = button.convert(button.bounds, to: view)
+        let titleRect = titleLabel.convert(titleLabel.bounds, to: view)
+        #expect(buttonRect.minX > titleRect.maxX)
+    }
+
+    @MainActor
+    @Test func streamingVoiceSpeakTextDoesNotReserveGiantBodySpace() {
+        let transcript = "Fixed and installed. Empty voice transcripts no longer reserve that giant expanded body; the row collapses to the header unless there is actual transcript text to show."
+        let config = ToolPresentationBuilder.build(
+            itemID: "voice-streaming-text",
+            tool: "voice_speak",
+            argsSummary: "text: \(transcript)",
+            outputPreview: transcript,
+            isError: false,
+            isDone: false,
+            context: emptyContext(expandedItemIDs: ["voice-streaming-text"])
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let size = fittedTimelineSize(for: view, width: 370)
+
+        #expect(size.height < 240)
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageWrappedTranscriptDoesNotReserveGiantBodySpace() {
+        let transcript = "Fixed and installed. Empty voice transcripts no longer reserve that giant expanded body; the row collapses to the header unless there is actual transcript text to show."
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: transcript,
+                attachmentId: "att-wrapped-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 4.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let size = fittedTimelineSize(for: view, width: 370)
+
+        #expect(size.height < 240)
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageWithEmptyTranscriptDoesNotReserveBodySpace() {
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "",
+                attachmentId: "att-empty-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let size = fittedTimelineSize(for: view, width: 370)
+
+        #expect(size.height < 90)
+    }
+
+    @MainActor
+    @Test func streamingVoiceMessageWithNoTranscriptOrAttachmentDoesNotReserveViewport() {
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "",
+                attachmentId: "",
+                mimeType: "audio/wav",
+                durationSeconds: nil,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true,
+            isDone: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let size = fittedTimelineSize(for: view, width: 370)
+
+        #expect(size.height < 90)
+        #expect(view.expandedContainer.isHidden)
+    }
+
+    @MainActor
+    @Test func streamingVoiceMessageHeightTransitionsFromEmptyToTranscriptWithoutViewportJump() {
+        let empty = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "",
+                attachmentId: "",
+                mimeType: "audio/wav",
+                durationSeconds: nil,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true,
+            isDone: false
+        )
+        let withTranscript = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Direct voice is streaming now. The card should grow to the transcript, not jump to a generic streaming viewport.",
+                attachmentId: "",
+                mimeType: "audio/wav",
+                durationSeconds: nil,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: empty)
+        let emptySize = fittedTimelineSize(for: view, width: 370)
+
+        view.configuration = withTranscript
+        let transcriptSize = fittedTimelineSize(for: view, width: 370)
+
+        #expect(emptySize.height < 90)
+        #expect(transcriptSize.height > emptySize.height)
+        #expect(transcriptSize.height < 220)
+    }
+
+    @MainActor
+    @Test func voiceMessageFirstExpandFitsTranscriptHeight() throws {
+        let transcript = "Direct voice is working now, and this transcript should be visible immediately without waiting for a second expand pass."
+        let collapsed = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: transcript,
+                attachmentId: "att-voice-first-height",
+                mimeType: "audio/wav",
+                durationSeconds: 2.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: false
+        )
+        var expanded = collapsed
+        expanded.isExpanded = true
+
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        view.frame = CGRect(x: 0, y: 0, width: 370, height: 1)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        view.configuration = expanded
+        let firstExpandSize = fittedTimelineSize(for: view, width: 370)
+        let voiceView = try #require(timelineFirstView(ofType: NativeVoiceMessageView.self, in: view))
+
+        #expect(firstExpandSize.height >= 104)
+        #expect(voiceView.bounds.width >= 320)
+    }
+
+    @MainActor
+    @Test func voiceMessageTranscriptAppearsOnFirstExpandFromCollapsedState() throws {
+        let transcript = "Direct voice is working now, and this transcript should be visible immediately."
+        let collapsed = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: transcript,
+                attachmentId: "att-voice-first-expand",
+                mimeType: "audio/wav",
+                durationSeconds: 2.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: false
+        )
+        var expanded = collapsed
+        expanded.isExpanded = true
+
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        view.configuration = expanded
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let rendered = timelineAllLabels(in: view)
+            .filter { !$0.isHidden }
+            .map(timelineRenderedText(of:))
+            .joined(separator: "\n")
+        #expect(rendered.contains("this transcript should be visible immediately"))
     }
 
     @MainActor
@@ -1130,7 +1333,8 @@ struct ToolTimelineRowContentViewTests {
                 text: transcript,
                 attachmentId: "att-voice-1",
                 mimeType: "audio/wav",
-                durationSeconds: 4.2
+                durationSeconds: 4.2,
+                delivery: nil
             ),
             toolNamePrefix: "voice_speak",
             toolNameColor: .systemPurple,
@@ -1148,6 +1352,7 @@ struct ToolTimelineRowContentViewTests {
 
         #expect(!transcriptLabel.isHidden)
         #expect(transcriptLabel.numberOfLines == 0)
+        #expect(transcriptLabel.font == AppFont.messageBody)
         #expect(size.height < 200)
         #expect(voiceMessageLabels.count == 1)
     }

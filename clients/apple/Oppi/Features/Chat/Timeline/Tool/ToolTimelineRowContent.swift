@@ -6,12 +6,13 @@ import UIKit
 /// Supports both collapsed and expanded presentation for tool rows, so row
 /// expansion uses the same native renderer in both states.
 struct ToolTimelineRowConfiguration: UIContentConfiguration {
+    let itemID: String
     let title: String
     let preview: String?
     /// Single discriminated union for expanded content rendering.
     /// Replaces the previous 13 boolean/optional fields, making it
     /// impossible to set conflicting rendering modes.
-    let expandedContent: ToolPresentationBuilder.ToolExpandedContent?
+    var expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     let copyCommandText: String?
     let copyOutputText: String?
     let languageBadge: String?
@@ -67,6 +68,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         copy.sessionAttachmentFetcher = fetcher
         return copy
     }
+
 }
 
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
@@ -497,7 +499,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func installExpandedVoiceMessageView(
         text: String,
         attachmentId: String,
-        mimeType: String
+        mimeType: String,
+        delivery: VoiceReplyDelivery?
     ) {
         let native: NativeVoiceMessageView
         if let existing = expandedReadMediaContentView as? NativeVoiceMessageView {
@@ -508,15 +511,32 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             installExpandedEmbeddedView(native)
         }
 
-        native.apply(
-            id: "expanded-voice-\(attachmentId)",
-            message: text,
-            attachmentId: attachmentId,
-            mimeType: mimeType,
-            audioPlayer: currentConfiguration.audioPlayer,
-            attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
-            palette: ThemeRuntimeState.currentPalette()
-        )
+        if attachmentId.isEmpty {
+            native.apply(
+                id: currentConfiguration.itemID,
+                message: text,
+                attachmentId: attachmentId,
+                mimeType: mimeType,
+                delivery: delivery,
+                audioPlayer: currentConfiguration.audioPlayer,
+                attachmentFetcher: nil,
+                palette: ThemeRuntimeState.currentPalette()
+            )
+        } else {
+            native.apply(
+                id: currentConfiguration.itemID,
+                message: text,
+                attachmentId: attachmentId,
+                mimeType: mimeType,
+                delivery: delivery,
+                audioPlayer: currentConfiguration.audioPlayer,
+                attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
+                palette: ThemeRuntimeState.currentPalette()
+            )
+        }
+        native.setNeedsLayout()
+        setNeedsLayout()
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     private func installExpandedReadMediaView(
@@ -989,7 +1009,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
                 showCommand = result.showCommand
                 showOutput = result.showOutput
-            } else {
+            } else if shouldRenderExpandedContent(expandedContent) {
                 let output = makeExpandedRenderOutput(
                     expandedContent: expandedContent,
                     configuration: configuration,
@@ -999,6 +1019,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 )
                 applyExpandedRenderOutput(output)
                 showExpanded = true
+            } else {
+                hideExpandedContainer(outputColor: outputColor)
             }
         }
 
@@ -1090,12 +1112,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func applyCollapsedAudioPlaybackButton(configuration: ToolTimelineRowConfiguration) {
-        if configuration.isExpanded && isVoiceMessageExpandedContent(configuration) {
-            audioPlaybackButton.isHidden = true
-            return
-        }
-
-        guard collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil else {
+        let hasReplayableVoiceAudio = collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil
+        let hasLiveStreamPlayback = configuration.toolNamePrefix == "voice_speak"
+            && (configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false)
+        guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
             audioPlaybackButton.isHidden = true
             return
         }
@@ -1130,7 +1150,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func isCollapsedVoiceAudioPlaying(configuration: ToolTimelineRowConfiguration) -> Bool {
         guard let itemID = collapsedVoiceAudioItemID(in: configuration) else { return false }
-        return configuration.audioPlayer?.playingItemID == itemID || configuration.audioPlayer?.loadingItemID == itemID
+        return configuration.audioPlayer?.playingItemID == itemID
+            || configuration.audioPlayer?.loadingItemID == itemID
+            || (configuration.audioPlayer?.isStreamingPlaybackActive(itemID: itemID) ?? false)
+    }
+
+    private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
+        switch content {
+        case .voiceMessage(let text, let attachmentId, _, _, _):
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
+        case .bash, .diff, .code, .markdown, .readMedia, .status, .text:
+            return true
+        }
     }
 
     private func isVoiceMessageExpandedContent(_ configuration: ToolTimelineRowConfiguration) -> Bool {
@@ -1154,18 +1185,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func collapsedVoiceAudioAttachment(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard case .voiceMessage(_, let attachmentId, _, _) = configuration.expandedContent else {
+        guard case .voiceMessage(_, let attachmentId, _, _, _) = configuration.expandedContent,
+              !attachmentId.isEmpty else {
             return nil
         }
         return attachmentId
     }
 
     private func collapsedVoiceAudioItemID(in configuration: ToolTimelineRowConfiguration) -> String? {
-        if let attachmentId = collapsedVoiceAudioAttachment(in: configuration) {
-            return "collapsed-voice-\(attachmentId)"
+        guard collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil || configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) == true else {
+            return nil
         }
-        guard let base64 = collapsedVoiceAudioBase64(in: configuration) else { return nil }
-        return "collapsed-voice-\(base64.prefix(24))"
+        return configuration.itemID
     }
 
     @objc
@@ -1175,7 +1206,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return
         }
 
-        if audioPlayer.playingItemID == itemID || audioPlayer.loadingItemID == itemID {
+        if audioPlayer.playingItemID == itemID
+            || audioPlayer.loadingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID) {
             audioPlayer.stop()
             updateCollapsedAudioPlaybackButtonImage(configuration: currentConfiguration)
             return
@@ -1414,16 +1447,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 hasExpandedReadMediaContentView: expandedReadMediaContentView != nil
             )
 
-        case .voiceMessage(let text, let attachmentId, let mimeType, _):
+        case .voiceMessage(let text, let attachmentId, let mimeType, _, let delivery):
+            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var hasher = Hasher()
-            hasher.combine(text)
+            hasher.combine(trimmedText)
             hasher.combine(attachmentId)
             hasher.combine(mimeType)
             return ExpandedRenderOutput(
                 renderSignature: hasher.finalize(),
-                renderedText: text,
+                renderedText: trimmedText,
                 shouldAutoFollow: false,
-                surface: .compactHostedView,
+                surface: trimmedText.isEmpty ? .label : .compactHostedView,
                 viewportMode: .text,
                 verticalLock: false,
                 scrollBehavior: .preserve,
@@ -1431,7 +1465,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 horizontalScroll: false,
                 deferredHighlight: nil,
                 invalidateLayout: true,
-                installAction: .voiceMessage(text: text, attachmentId: attachmentId, mimeType: mimeType)
+                installAction: trimmedText.isEmpty ? .none : .voiceMessage(text: trimmedText, attachmentId: attachmentId, mimeType: mimeType, delivery: delivery)
             )
 
         case .status(let message):
@@ -1482,8 +1516,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             break
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
-        case .voiceMessage(let text, let attachmentId, let mimeType):
-            installExpandedVoiceMessageView(text: text, attachmentId: attachmentId, mimeType: mimeType)
+        case .voiceMessage(let text, let attachmentId, let mimeType, let delivery):
+            installExpandedVoiceMessageView(text: text, attachmentId: attachmentId, mimeType: mimeType, delivery: delivery)
         }
 
         switch output.surface {
@@ -1505,8 +1539,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         setExpandedVerticalLockEnabled(output.verticalLock)
         updateExpandedLabelWidthIfNeeded()
         if output.surface == .compactHostedView {
-            expandedViewportHeightConstraint?.isActive = false
             expandedUsesViewport = false
+            let width = max(1, bounds.width > 0 ? bounds.width - 16 : UIScreen.main.bounds.width - 48)
+            let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
+                for: expandedReadMediaContentView ?? expandedReadMediaContainer,
+                width: width
+            )
+            expandedViewportHeightConstraint?.constant = max(1, ceil(measured))
+            expandedViewportHeightConstraint?.isActive = true
         } else {
             showExpandedViewport()
         }

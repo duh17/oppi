@@ -434,9 +434,9 @@ private struct ExtensionDialogSheet: View {
                 }
             }
 
-            if let timeout = request.timeout, timeout > 0 {
+            if let timeoutSummary {
                 Section {
-                    Label("Expires in about \(max(1, (timeout + 999) / 1000)) seconds", systemImage: "timer")
+                    Label(timeoutSummary, systemImage: "timer")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -485,37 +485,56 @@ private struct ExtensionDialogSheet: View {
         value: String,
         role: ButtonRole? = nil
     ) -> some View {
-        let disabled = isSubmitting || !(request.options ?? []).contains(value)
+        let isDisabled = isSubmitting || !(request.options ?? []).contains(value)
+
         if role == .cancel {
             Button(role: role) {
                 cancelRequest()
             } label: {
-                Label(title, systemImage: systemImage)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                compatButtonLabel(title: title, systemImage: systemImage)
             }
             .buttonStyle(.bordered)
-            .disabled(disabled)
+            .disabled(isDisabled)
         } else {
             Button(role: role) {
                 submitSelect(value)
             } label: {
-                Label(title, systemImage: systemImage)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                compatButtonLabel(title: title, systemImage: systemImage)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(disabled)
+            .disabled(isDisabled)
         }
     }
 
+    private func compatButtonLabel(title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .frame(maxWidth: .infinity, minHeight: 44)
+    }
+
     private var dialogTitle: String {
-        if let title = request.title, !title.isEmpty {
-            return title
+        guard let trimmedTitle = request.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmedTitle.isEmpty else {
+            return "Extension"
         }
-        return "Extension"
+        return trimmedTitle
     }
 
     private var primaryActionTitle: String {
         request.method == "confirm" ? "Confirm" : "Submit"
+    }
+
+    private var timeoutSummary: String? {
+        let remainingSeconds: Int?
+        if let timeoutAt = request.timeoutAt {
+            remainingSeconds = max(1, Int(ceil(timeoutAt.timeIntervalSinceNow)))
+        } else if let timeout = request.timeout, timeout > 0 {
+            remainingSeconds = max(1, (timeout + 999) / 1000)
+        } else {
+            remainingSeconds = nil
+        }
+
+        guard let remainingSeconds else { return nil }
+        return "Expires in about \(remainingSeconds) seconds"
     }
 
     private var showsTextInput: Bool {

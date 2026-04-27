@@ -38,6 +38,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let connection: ServerConnection
         let currentModel: String?
         let audioPlayer: AudioPlayerService
+        let audioLifecycleCoordinator: AudioLifecycleCoordinator?
         let selectedTextPiRouter: SelectedTextPiActionRouter?
         let piQuickActionStore: PiQuickActionStore?
         let topOverlap: CGFloat
@@ -63,6 +64,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             connection: ServerConnection,
             currentModel: String? = nil,
             audioPlayer: AudioPlayerService,
+            audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
             selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
             piQuickActionStore: PiQuickActionStore? = nil,
             topOverlap: CGFloat = 0,
@@ -87,6 +89,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.connection = connection
             self.currentModel = currentModel
             self.audioPlayer = audioPlayer
+            self.audioLifecycleCoordinator = audioLifecycleCoordinator
             self.selectedTextPiRouter = selectedTextPiRouter
             self.piQuickActionStore = piQuickActionStore
             self.topOverlap = topOverlap
@@ -154,6 +157,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var renderWindowStep = 0
         var streamingAssistantID: String?
         var audioPlayer: AudioPlayerService?
+        var audioLifecycleCoordinator: AudioLifecycleCoordinator? {
+            get { context.audioLifecycleCoordinator }
+            set { context.audioLifecycleCoordinator = newValue }
+        }
         weak var collectionView: UICollectionView?
 
         var sessionId: String {

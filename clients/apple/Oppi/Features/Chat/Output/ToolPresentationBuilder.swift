@@ -162,6 +162,7 @@ enum ToolPresentationBuilder {
         }
 
         return ToolTimelineRowConfiguration(
+            itemID: itemID,
             title: title,
             preview: nil, // collapsed tool rows single-line
             expandedContent: expanded.content,
@@ -311,7 +312,7 @@ enum ToolPresentationBuilder {
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
         /// Voice message with server-owned session attachment replay.
-        case voiceMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?)
+        case voiceMessage(text: String, attachmentId: String, mimeType: String, durationSeconds: Double?, delivery: VoiceReplyDelivery?)
         /// Lightweight non-copyable placeholder while an expanded tool has no body yet.
         case status(message: String)
         /// Plain/ANSI text with optional syntax highlighting
@@ -434,13 +435,28 @@ enum ToolPresentationBuilder {
 
         default:
             if !outputTrimmed.isEmpty {
-                let resolved = resolveGenericExtensionExpandedContent(
-                    output: outputTrimmed,
-                    toolName: rawToolName,
-                    details: details
-                )
-                content = resolved.content
-                copyOutput = resolved.copyOutput
+                if !isError,
+                   normalizedTool == "voice_speak",
+                   Self.toolAudioAttachmentDetails(from: details) == nil {
+                    let transcript = voiceSpeakTranscript(output: outputTrimmed, args: args)
+                    content = .voiceMessage(
+                        text: transcript,
+                        attachmentId: "",
+                        mimeType: "audio/wav",
+                        durationSeconds: nil,
+                        delivery: args?["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+                    )
+                    copyOutput = transcript.isEmpty ? nil : transcript
+                } else {
+                    let resolved = resolveGenericExtensionExpandedContent(
+                        output: outputTrimmed,
+                        toolName: rawToolName,
+                        details: details,
+                        args: args
+                    )
+                    content = resolved.content
+                    copyOutput = resolved.copyOutput
+                }
             }
         }
 
@@ -572,6 +588,15 @@ enum ToolPresentationBuilder {
             return editText.newText
         }
         return editText.oldText
+    }
+
+    private static func voiceSpeakTranscript(output: String, args: [String: JSONValue]?) -> String {
+        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let argText = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedOutput == "Voice message" || trimmedOutput == "Streaming speech from Yuwp..." {
+            return argText
+        }
+        return trimmedOutput
     }
 
     private static func pendingStatusMessage(normalizedTool: String) -> String {

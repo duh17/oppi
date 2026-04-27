@@ -77,7 +77,6 @@ private struct WorkspaceEditPreview: View {
         ExtensionInfo(name: "workflow", path: "~/.pi/agent/extensions/workflow", kind: "file", source: "pi"),
         ExtensionInfo(name: "index", path: "~/.pi/agent/git/index", kind: "file", source: "pi"),
         ExtensionInfo(name: "pi-sessions", path: "~/.pi/agent/extensions/pi-sessions", kind: "file", source: "pi"),
-        ExtensionInfo(name: "review", path: "~/.pi/agent/git/review", kind: "file", source: "pi"),
         ExtensionInfo(name: "simplify", path: "~/.pi/agent/extensions/simplify", kind: "file", source: "pi"),
         ExtensionInfo(name: "theme-builder", path: "~/.pi/agent/extensions/theme-builder", kind: "file", source: "pi"),
         ExtensionInfo(name: "todos", path: "~/.pi/agent/extensions/todos", kind: "file", source: "pi"),
@@ -97,7 +96,7 @@ private struct WorkspaceEditPreview: View {
         skills: ["agents-md", "audio-transcribe", "autoresearch"],
         systemPrompt: nil,
         hostMount: "~/workspace/oppi",
-        extensions: ["index", "pi-sessions", "review", "simplify", "todos"],
+        extensions: ["index", "pi-sessions", "simplify", "todos"],
         gitStatusEnabled: true,
         createdAt: Date(),
         updatedAt: Date()
@@ -315,13 +314,15 @@ private struct SessionTimelinePreview: View {
 
 private struct VoiceMessageExpandedPreview: View {
     private static let previewConfiguration = ToolTimelineRowConfiguration(
+        itemID: "voice-preview-1",
         title: "Voice message",
         preview: nil,
         expandedContent: .voiceMessage(
             text: "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly.",
             attachmentId: "att-voice-preview-1",
             mimeType: "audio/wav",
-            durationSeconds: 4.2
+            durationSeconds: 4.2,
+            delivery: nil
         ),
         copyCommandText: nil,
         copyOutputText: nil,

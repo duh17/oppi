@@ -16,6 +16,14 @@ protocol VoiceInputSystemAccessing {
 struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     static let live = Self()
 
+    #if os(iOS)
+    static let recordingCategory: AVAudioSession.Category = .record
+    static let recordingMode: AVAudioSession.Mode = .default
+    static let recordingCategoryOptions: AVAudioSession.CategoryOptions = [
+        .allowBluetoothHFP,
+    ]
+    #endif
+
     var hasPermissions: Bool {
         let mic = AVAudioApplication.shared.recordPermission == .granted
         let speech = SFSpeechRecognizer.authorizationStatus() == .authorized
@@ -42,11 +50,12 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
-            .playAndRecord,
-            mode: .spokenAudio,
-            options: [.defaultToSpeaker]
+            Self.recordingCategory,
+            mode: Self.recordingMode,
+            options: Self.recordingCategoryOptions
         )
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        try Self.preferBluetoothHandsFreeInputIfAvailable(session)
         #endif
     }
 
@@ -57,6 +66,13 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             options: .notifyOthersOnDeactivation
         )
         #endif
+    }
+
+    private static func preferBluetoothHandsFreeInputIfAvailable(_ session: AVAudioSession) throws {
+        guard let bluetoothInput = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else {
+            return
+        }
+        try session.setPreferredInput(bluetoothInput)
     }
 
     nonisolated private static func requestMicPermission() async -> Bool {

@@ -26,6 +26,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Voic
 ///
 /// Audio engine setup is extracted to a `nonisolated` helper to avoid
 /// MainActor isolation violations in the audio tap callback.
+@MainActor
+protocol VoicePlaybackInterrupter: AnyObject {
+    var hasActivePlayback: Bool { get }
+    func stop()
+}
+
 @MainActor @Observable
 final class VoiceInputManager {
 
@@ -499,6 +505,7 @@ final class VoiceInputManager {
     private let routeResolver: VoiceInputRouteResolver
     private let sessionMonitor: VoiceInputSessionMonitor
     private let systemAccess: any VoiceInputSystemAccessing
+    private weak var playbackInterrupter: (any VoicePlaybackInterrupter)?
 
     /// Drives character-by-character text reveal for server dictation updates.
     let typewriterAnimator = TypewriterAnimator()
@@ -565,6 +572,10 @@ final class VoiceInputManager {
         }
         let host = credentials?.host ?? "none"
         logger.info("Server credentials: \(credentials != nil ? "set" : "cleared") host=\(host)")
+    }
+
+    func setPlaybackInterrupter(_ interrupter: (any VoicePlaybackInterrupter)?) {
+        playbackInterrupter = interrupter
     }
 
     /// Update the server connection reference for the dictation provider.
@@ -792,6 +803,11 @@ final class VoiceInputManager {
         do {
             try validateServerDictationAvailabilityIfNeeded(for: engine)
             try ensureStartRequestActive(requestID)
+
+            if playbackInterrupter?.hasActivePlayback == true {
+                logger.info("Stopping active audio playback before voice recording")
+                playbackInterrupter?.stop()
+            }
 
             let timings = try await startProviderRecording(
                 requestID: requestID,

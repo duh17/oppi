@@ -10,9 +10,7 @@ final class NativeVoiceMessageView: UIView {
     private let headerIconView = UIImageView(image: UIImage(systemName: "speaker.wave.2.fill"))
     private let headerLabel = UILabel()
     private let messageLabel = UILabel()
-    private let controlsRow = UIStackView()
     private let transcriptStack = UIStackView()
-    private let playButton = UIButton(type: .system)
     private let progressView = UIProgressView(progressViewStyle: .default)
     private let spinner = UIActivityIndicatorView(style: .medium)
 
@@ -21,6 +19,7 @@ final class NativeVoiceMessageView: UIView {
     private var decodedData: Data?
     private var attachmentId: String?
     private var attachmentFetcher: ((String) async throws -> Data)?
+    private var delivery: VoiceReplyDelivery?
     private var decodeTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
     nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
@@ -32,6 +31,11 @@ final class NativeVoiceMessageView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: CGSize {
+        let targetWidth = max(1, bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 48)
+        return CGSize(width: UIView.noIntrinsicMetric, height: fittedSize(forWidth: targetWidth).height)
+    }
 
     override func sizeThatFits(_ size: CGSize) -> CGSize {
         let targetWidth = max(1, size.width > 0 ? size.width : bounds.width)
@@ -60,15 +64,15 @@ final class NativeVoiceMessageView: UIView {
         message: String,
         base64: String,
         mimeType: String?,
+        delivery: VoiceReplyDelivery?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette
     ) {
-        prepareForApply(id: id, message: message, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
         attachmentId = nil
         attachmentFetcher = nil
 
         guard mimeType?.lowercased() == "audio/wav" else {
-            playButton.isEnabled = false
             progressView.isHidden = true
             updateButton(palette: palette)
             return
@@ -76,13 +80,11 @@ final class NativeVoiceMessageView: UIView {
 
         let compactBase64 = base64.filter { !$0.isWhitespace }
         guard estimatedDecodedByteCount(compactBase64) <= Self.maxDecodedBytes else {
-            playButton.isEnabled = false
             progressView.isHidden = true
             updateButton(palette: palette)
             return
         }
 
-        playButton.isEnabled = false
         progressView.progress = 0
         progressView.isHidden = false
         updateButton(palette: palette)
@@ -95,10 +97,9 @@ final class NativeVoiceMessageView: UIView {
                 guard let self, self.id == id else { return }
                 if let data, data.count <= maxDecodedBytes {
                     self.decodedData = data
-                    self.playButton.isEnabled = audioPlayer != nil
                     self.progressView.progress = 0
+                    self.maybeAutoplayDecodedDataIfNeeded(palette: palette)
                 } else {
-                    self.playButton.isEnabled = false
                     self.progressView.isHidden = true
                 }
                 self.updateButton(palette: palette)
@@ -112,35 +113,37 @@ final class NativeVoiceMessageView: UIView {
         message: String,
         attachmentId: String,
         mimeType: String?,
+        delivery: VoiceReplyDelivery?,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
         palette: ThemePalette
     ) {
-        prepareForApply(id: id, message: message, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
 
         guard mimeType?.lowercased() == "audio/wav", attachmentFetcher != nil else {
-            playButton.isEnabled = false
             progressView.isHidden = true
             updateButton(palette: palette)
             return
         }
 
-        playButton.isEnabled = audioPlayer != nil
         progressView.progress = 0
         progressView.isHidden = true
         updateButton(palette: palette)
+        maybeAutoplayAttachmentIfNeeded(palette: palette)
     }
 
     private func prepareForApply(
         id: String,
         message: String,
+        delivery: VoiceReplyDelivery?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette
     ) {
         self.id = id
         self.audioPlayer = audioPlayer
+        self.delivery = delivery
         self.decodedData = nil
         self.attachmentId = nil
         self.attachmentFetcher = nil
@@ -156,7 +159,6 @@ final class NativeVoiceMessageView: UIView {
         spinner.color = UIColor(palette.purple)
         progressView.progressTintColor = UIColor(palette.purple)
         progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        playButton.tintColor = UIColor(palette.purple)
         headerLabel.text = "Voice message"
         headerRow.isHidden = true
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -170,10 +172,12 @@ final class NativeVoiceMessageView: UIView {
                 attributes: [
                     .paragraphStyle: paragraphStyle,
                     .foregroundColor: UIColor(palette.fg),
-                    .font: ToolFont.regular,
+                    .font: AppFont.messageBody,
                 ]
             )
         messageLabel.isHidden = trimmedMessage.isEmpty
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 
     private func setupViews() {
@@ -200,16 +204,11 @@ final class NativeVoiceMessageView: UIView {
         headerLabel.numberOfLines = 1
         headerLabel.lineBreakMode = .byTruncatingTail
 
-        messageLabel.font = ToolFont.regular
+        messageLabel.font = AppFont.messageBody
         messageLabel.numberOfLines = 0
         messageLabel.lineBreakMode = .byWordWrapping
         messageLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         messageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        controlsRow.translatesAutoresizingMaskIntoConstraints = false
-        controlsRow.axis = .horizontal
-        controlsRow.alignment = .top
-        controlsRow.spacing = 12
 
         transcriptStack.translatesAutoresizingMaskIntoConstraints = false
         transcriptStack.axis = .vertical
@@ -218,23 +217,19 @@ final class NativeVoiceMessageView: UIView {
         transcriptStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         transcriptStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        playButton.translatesAutoresizingMaskIntoConstraints = false
-        playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
         progressView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(container)
         container.addSubview(stack)
-        playButton.addSubview(spinner)
+        container.addSubview(spinner)
         headerRow.addArrangedSubview(headerIconView)
         headerRow.addArrangedSubview(headerLabel)
         transcriptStack.addArrangedSubview(progressView)
         transcriptStack.addArrangedSubview(messageLabel)
-        controlsRow.addArrangedSubview(playButton)
-        controlsRow.addArrangedSubview(transcriptStack)
         stack.addArrangedSubview(headerRow)
-        stack.addArrangedSubview(controlsRow)
+        stack.addArrangedSubview(transcriptStack)
 
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -245,13 +240,11 @@ final class NativeVoiceMessageView: UIView {
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
-            playButton.widthAnchor.constraint(equalToConstant: 44),
-            playButton.heightAnchor.constraint(equalToConstant: 44),
             transcriptStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
             headerIconView.widthAnchor.constraint(equalToConstant: 16),
             headerIconView.heightAnchor.constraint(equalToConstant: 16),
-            spinner.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
+            spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
     }
 
@@ -267,34 +260,30 @@ final class NativeVoiceMessageView: UIView {
         }
     }
 
-    private func updateButton(palette: ThemePalette) {
-        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        playButton.setPreferredSymbolConfiguration(symbolConfig, forImageIn: .normal)
+    private func updateButton(palette _: ThemePalette) {
         guard let id else { return }
-
         if audioPlayer?.loadingItemID == id {
-            playButton.setImage(nil, for: .normal)
             spinner.startAnimating()
-        } else if audioPlayer?.playingItemID == id {
-            spinner.stopAnimating()
-            playButton.setImage(UIImage(systemName: "stop.fill"), for: .normal)
         } else {
             spinner.stopAnimating()
-            playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
         }
-        playButton.tintColor = audioPlayer?.playingItemID == id ? UIColor(palette.purple) : UIColor(palette.comment)
     }
 
-    @objc private func togglePlayback() {
-        guard let id, let audioPlayer else { return }
-        if let decodedData {
-            audioPlayer.toggleDataPlayback(data: decodedData, itemID: id)
-            updateButton(palette: ThemeRuntimeState.currentPalette())
+    private func maybeAutoplayDecodedDataIfNeeded(palette: ThemePalette) {
+        guard let id, let decodedData, let audioPlayer,
+              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
             return
         }
+        audioPlayer.markVoiceReplyAutoplayed(itemID: id)
+        audioPlayer.toggleDataPlayback(data: decodedData, itemID: id)
+        updateButton(palette: palette)
+    }
 
-        guard let attachmentId, let attachmentFetcher else { return }
-        playButton.isEnabled = false
+    private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
+        guard let id, let attachmentId, let attachmentFetcher, let audioPlayer,
+              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
+            return
+        }
         spinner.startAnimating()
         fetchTask?.cancel()
         fetchTask = Task { [weak self, attachmentId, id, weak audioPlayer] in
@@ -303,14 +292,13 @@ final class NativeVoiceMessageView: UIView {
                 await MainActor.run { [weak self] in
                     guard let self, self.id == id else { return }
                     self.decodedData = data
-                    self.playButton.isEnabled = true
+                    audioPlayer?.markVoiceReplyAutoplayed(itemID: id)
                     audioPlayer?.toggleDataPlayback(data: data, itemID: id)
                     self.updateButton(palette: ThemeRuntimeState.currentPalette())
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.id == id else { return }
-                    self.playButton.isEnabled = self.audioPlayer != nil
                     self.spinner.stopAnimating()
                     self.updateButton(palette: ThemeRuntimeState.currentPalette())
                 }
@@ -321,7 +309,7 @@ final class NativeVoiceMessageView: UIView {
     private func fittedSize(forWidth width: CGFloat) -> CGSize {
         let outerInsets: CGFloat = 24
         let innerWidth = max(1, width - outerInsets)
-        let transcriptWidth = max(1, innerWidth - 44 - 12)
+        let transcriptWidth = max(1, innerWidth)
 
         let progressHeight: CGFloat = progressView.isHidden ? 0 : 2
         let messageHeight: CGFloat
@@ -337,8 +325,7 @@ final class NativeVoiceMessageView: UIView {
 
         let transcriptSpacing: CGFloat = (!progressView.isHidden && !messageLabel.isHidden) ? transcriptStack.spacing : 0
         let transcriptHeight = progressHeight + transcriptSpacing + messageHeight
-        let controlsHeight = max(44, transcriptHeight)
-        let totalHeight = outerInsets + controlsHeight
+        let totalHeight = outerInsets + transcriptHeight
         return CGSize(width: width, height: ceil(totalHeight))
     }
 

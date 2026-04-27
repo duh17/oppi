@@ -21,7 +21,6 @@ struct UnifiedDiffView: View {
 
     /// Pre-built attributed string + measured width, computed off main thread.
     @State private var built: BuiltDiff?
-    @State private var showReviewCommentHint = true
 
     var body: some View {
         Group {
@@ -45,29 +44,6 @@ struct UnifiedDiffView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.themeBgDark)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if showReviewCommentHint,
-               selectedTextSourceContext?.surface == .fullScreenDiff,
-               piRouter != nil {
-                Button {
-                    showReviewCommentHint = false
-                } label: {
-                    Label("Select lines → π → Comment", systemImage: "text.bubble")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay {
-                            Capsule().stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 10)
-                .padding(.leading, 10)
-                .accessibilityLabel("Select changed lines, open the pi menu, then choose Comment")
             }
         }
         .task(id: filePath + "|\(hunks.count)") {

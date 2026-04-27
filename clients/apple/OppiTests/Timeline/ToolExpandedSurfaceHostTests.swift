@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Tool expanded surface host")
@@ -22,6 +23,30 @@ struct ToolExpandedSurfaceHostTests {
         _ = fittedTimelineSize(for: diffView, width: 360)
         #expect(diffView.activeExpandedSurfaceKindForTesting == .label)
 
+    }
+
+    @Test func surfaceHostSizesToActiveVoiceViewWithoutPriorLayout() {
+        let host = ToolExpandedSurfaceHostView()
+        let voiceView = NativeVoiceMessageView()
+        voiceView.apply(
+            id: "voice-host-size",
+            message: "This final voice transcript should determine the host height immediately when the audio card replaces streaming text, without clipping the lower lines or waiting for a later collection view sizing pass to recover.",
+            attachmentId: "att-1",
+            mimeType: "audio/wav",
+            delivery: .directSpeak,
+            audioPlayer: nil,
+            attachmentFetcher: nil,
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        host.activateSurfaceView(voiceView)
+
+        let fitted = host.systemLayoutSizeFitting(
+            CGSize(width: 342, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+
+        #expect(fitted.height >= 130)
     }
 
     @Test func expandedSurfaceHostSwitchesActiveSurfaceOnReuse() {

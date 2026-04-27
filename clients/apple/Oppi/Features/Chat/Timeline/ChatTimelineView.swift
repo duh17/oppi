@@ -29,6 +29,7 @@ struct ChatTimelineView: View {
     let connection: ServerConnection
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
+    let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let onFork: (String) -> Void
     let selectedTextPiRouter: SelectedTextPiActionRouter?
     let piQuickActionStore: PiQuickActionStore?
@@ -103,6 +104,7 @@ struct ChatTimelineView: View {
                 connection: connection,
                 currentModel: currentModel,
                 audioPlayer: audioPlayer,
+                audioLifecycleCoordinator: audioLifecycleCoordinator,
                 selectedTextPiRouter: selectedTextPiRouter,
                 piQuickActionStore: piQuickActionStore,
                 topOverlap: topOverlap,

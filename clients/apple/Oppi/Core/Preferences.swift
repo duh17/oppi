@@ -1,5 +1,10 @@
 import Foundation
 
+enum VoiceReplyDelivery: String, Codable, Sendable, Equatable {
+    case voiceMessage
+    case directSpeak
+}
+
 /// Unified preference system for all UserDefaults-backed settings.
 ///
 /// Organized by domain — each is an enum with static getters and setters,
@@ -116,11 +121,39 @@ enum AppPreferences {
             }
         }
 
+        enum ReplyMode: String, CaseIterable, Identifiable {
+            case voice
+            case voiceMessage
+            case directSpeak
+
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .voice: return "Voice"
+                case .voiceMessage: return "Voice message"
+                case .directSpeak: return "Direct speak"
+                }
+            }
+
+            var detail: String {
+                switch self {
+                case .voice:
+                    return "Autoplay only when the agent explicitly asks for direct playback."
+                case .voiceMessage:
+                    return "Never autoplay. Voice replies appear as playable cards."
+                case .directSpeak:
+                    return "Autoplay all voice replies right away."
+                }
+            }
+        }
+
         /// User-facing engine choices. Auto remains available only as a legacy
         /// stored value so older installs can be migrated safely.
         static let supportedModes: [EngineMode] = [.remote, .onDevice]
 
         private static let engineModeKey = "\(AppIdentifiers.subsystem).voice.engineMode"
+        private static let replyModeKey = "\(AppIdentifiers.subsystem).voice.replyMode"
 
         static var engineMode: EngineMode {
             guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
@@ -131,9 +164,33 @@ enum AppPreferences {
             return mode == .auto ? .remote : mode
         }
 
+        static var replyMode: ReplyMode {
+            guard let raw = UserDefaults.standard.string(forKey: replyModeKey),
+                  let mode = ReplyMode(rawValue: raw)
+            else {
+                return .voice
+            }
+            return mode
+        }
+
         static func setEngineMode(_ mode: EngineMode) {
             let normalizedMode: EngineMode = mode == .auto ? .remote : mode
             UserDefaults.standard.set(normalizedMode.rawValue, forKey: engineModeKey)
+        }
+
+        static func setReplyMode(_ mode: ReplyMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: replyModeKey)
+        }
+
+        static func shouldAutoplay(delivery: VoiceReplyDelivery?) -> Bool {
+            switch replyMode {
+            case .voice:
+                return delivery == .directSpeak
+            case .voiceMessage:
+                return false
+            case .directSpeak:
+                return true
+            }
         }
     }
 

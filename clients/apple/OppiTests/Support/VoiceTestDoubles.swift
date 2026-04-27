@@ -12,6 +12,7 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
     var activateAudioSessionCallCount = 0
     var deactivateAudioSessionCallCount = 0
     var activateAudioSessionError: Error?
+    var onActivateAudioSession: (() -> Void)?
 
     func requestPermissions() async -> Bool {
         requestPermissionsCallCount += 1
@@ -25,6 +26,7 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
 
     func activateAudioSession() throws {
         activateAudioSessionCallCount += 1
+        onActivateAudioSession?()
         if let activateAudioSessionError {
             throw activateAudioSessionError
         }
@@ -122,6 +124,7 @@ final class MockVoiceSession: VoiceTranscriptionSession {
     var stopCallCount = 0
     var cancelCallCount = 0
     /// Custom stop handler. When set, called instead of default immediate finish.
+    var startHandler: (@MainActor () async -> Void)?
     var stopHandler: (@MainActor () async -> Void)?
 
     init() {
@@ -136,6 +139,7 @@ final class MockVoiceSession: VoiceTranscriptionSession {
 
     func start() async throws -> VoiceSessionStartTimings {
         startCallCount += 1
+        await startHandler?()
         if let startError {
             throw startError
         }
@@ -193,6 +197,19 @@ actor AsyncGate {
         for continuation in pending {
             continuation.resume()
         }
+    }
+}
+
+@MainActor
+final class MockVoicePlaybackInterrupter: VoicePlaybackInterrupter {
+    var hasActivePlayback = false
+    var stopCallCount = 0
+    var onStop: (() -> Void)?
+
+    func stop() {
+        stopCallCount += 1
+        hasActivePlayback = false
+        onStop?()
     }
 }
 

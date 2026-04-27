@@ -65,6 +65,7 @@ final class NativeExpandedReadMediaView: UIView {
                 message: displayText,
                 base64: clip.base64,
                 mimeType: clip.mimeType,
+                delivery: nil,
                 audioPlayer: audioPlayer,
                 palette: palette
             )

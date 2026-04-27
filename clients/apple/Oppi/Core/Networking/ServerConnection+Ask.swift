@@ -87,36 +87,38 @@ extension ServerConnection {
     }
 
     func restorePendingExtensionDialogIfNeeded(for sessionId: String) {
-        if let restored = pendingExtensionDialogs.removeValue(forKey: sessionId) {
-            extensionTimeoutTask?.cancel()
-            activeExtensionDialog = restored
-            scheduleExtensionTimeout(restored)
-        } else {
+        guard let restored = pendingExtensionDialogs.removeValue(forKey: sessionId) else {
             activeExtensionDialog = nil
+            return
         }
+
+        cancelExtensionTimeout()
+        activeExtensionDialog = restored
+        scheduleExtensionTimeout(restored)
     }
 
     func stashActiveExtensionDialogIfNeeded() {
         guard let activeSessionId, let request = activeExtensionDialog else { return }
         pendingExtensionDialogs[activeSessionId] = request
         activeExtensionDialog = nil
-        extensionTimeoutTask?.cancel()
-        extensionTimeoutTask = nil
+        cancelExtensionTimeout()
     }
 
     func clearExtensionDialog(for sessionId: String?) {
         guard let sessionId else {
             activeExtensionDialog = nil
-            extensionTimeoutTask?.cancel()
-            extensionTimeoutTask = nil
+            cancelExtensionTimeout()
             return
         }
 
         pendingExtensionDialogs.removeValue(forKey: sessionId)
-        if activeExtensionDialog?.sessionId == sessionId {
-            activeExtensionDialog = nil
-            extensionTimeoutTask?.cancel()
-            extensionTimeoutTask = nil
-        }
+        guard activeExtensionDialog?.sessionId == sessionId else { return }
+        activeExtensionDialog = nil
+        cancelExtensionTimeout()
+    }
+
+    private func cancelExtensionTimeout() {
+        extensionTimeoutTask?.cancel()
+        extensionTimeoutTask = nil
     }
 }

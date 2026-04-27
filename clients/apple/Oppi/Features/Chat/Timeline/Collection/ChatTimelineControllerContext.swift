@@ -14,6 +14,7 @@ final class ChatTimelineControllerContext {
     var toolDetailsStore: ToolDetailsStore?
     var connection: ServerConnection?
     var currentModel: String?
+    var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
     var piQuickActionStore: PiQuickActionStore?
 
@@ -34,6 +35,7 @@ final class ChatTimelineControllerContext {
         toolDetailsStore = configuration.toolDetailsStore
         connection = configuration.connection
         currentModel = configuration.currentModel
+        audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.selectedTextPiRouter = configuration.selectedTextPiRouter
         interactionContext.sessionId = configuration.sessionId
         piQuickActionStore = configuration.piQuickActionStore

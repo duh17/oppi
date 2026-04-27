@@ -166,7 +166,7 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
-        return ToolPresentationBuilder.build(
+        var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
             argsSummary: argsSummary,
@@ -175,9 +175,14 @@ extension ChatTimelineCollectionHost.Controller {
             isDone: isDone,
             context: context
         )
-        .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
-        .withAudioPlayer(audioPlayer)
-        .withSessionAttachmentFetcher(attachmentFetcher)
+        configuration.expandedContent = VoiceTimelinePresentationAdapter.expandedContent(
+            from: audioLifecycleCoordinator?.presentation.timelinePresentation(for: itemID),
+            fallback: configuration.expandedContent
+        )
+        return configuration
+            .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
+            .withAudioPlayer(audioPlayer)
+            .withSessionAttachmentFetcher(attachmentFetcher)
     }
 }
 

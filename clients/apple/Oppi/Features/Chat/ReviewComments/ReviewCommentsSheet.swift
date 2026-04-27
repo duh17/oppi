@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReviewCommentsSheet: View {
     let comments: [ReviewComment]
+    var voiceInputManager: VoiceInputManager?
     let onRefresh: () -> Void
     let onClose: () -> Void
     let onUpdateBody: (ReviewComment, String) async -> Bool
@@ -31,8 +32,7 @@ struct ReviewCommentsSheet: View {
                 if comments.isEmpty {
                     ContentUnavailableView(
                         "No Review Comments",
-                        systemImage: "text.bubble",
-                        description: Text("Select text, tap π, then Comment to stage feedback for the next turn.")
+                        systemImage: "text.bubble"
                     )
                     .listRowBackground(Color.clear)
                 }
@@ -97,7 +97,7 @@ struct ReviewCommentsSheet: View {
             .sheet(item: $editingComment) { comment in
                 ReviewCommentEditSheet(
                     comment: comment,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? VoiceInputManager() : nil,
+                    voiceInputManager: voiceInputManager,
                     onCancel: { editingComment = nil },
                     onSave: { body in
                         let didSave = await onUpdateBody(comment, body)

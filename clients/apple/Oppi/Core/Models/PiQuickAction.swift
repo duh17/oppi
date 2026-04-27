@@ -107,14 +107,14 @@ extension PiQuickAction {
 
     /// The factory defaults.
     static func sortedForSelectionMenu(_ actions: [PiQuickAction]) -> [PiQuickAction] {
-        var quickActions = actions
-        if !quickActions.contains(where: { $0.behavior == .reviewComment }) {
-            quickActions.append(reviewCommentAction)
-        }
-        return quickActions.sorted { lhs, rhs in
-            if lhs.behavior == .reviewComment { return true }
-            if rhs.behavior == .reviewComment { return false }
-            return lhs.sortOrder < rhs.sortOrder
+        let actionsWithReviewComment = actions.contains(where: { $0.behavior == .reviewComment })
+            ? actions
+            : actions + [reviewCommentAction]
+
+        return actionsWithReviewComment.sorted { lhs, rhs in
+            let lhsPriority = lhs.behavior == .reviewComment ? -1 : lhs.sortOrder
+            let rhsPriority = rhs.behavior == .reviewComment ? -1 : rhs.sortOrder
+            return lhsPriority < rhsPriority
         }
     }
 

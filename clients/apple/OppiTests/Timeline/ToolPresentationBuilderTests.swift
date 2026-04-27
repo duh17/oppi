@@ -158,6 +158,108 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == "Markdown")
     }
 
+    @Test("streaming voice speak text uses compact voice transcript presentation")
+    func streamingVoiceSpeakTextUsesCompactVoiceTranscriptPresentation() {
+        let transcript = "This voice text is still streaming but should render like spoken output, not a large generic text viewport."
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "voice-streaming", tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: transcript,
+            isError: false, isDone: false,
+            context: emptyContext(args: ["text": .string(transcript)], expanded: ["voice-streaming"])
+        )
+
+        guard case .voiceMessage(let text, let attachmentId, let mimeType, _, _) = config.expandedContent else {
+            Issue.record("Expected streaming voice_speak text to use .voiceMessage compact content")
+            return
+        }
+        #expect(text == transcript)
+        #expect(attachmentId.isEmpty)
+        #expect(mimeType == "audio/wav")
+    }
+
+    @Test("voice_speak errors render generic text instead of a voice card")
+    func voiceSpeakErrorsUseTextPresentation() {
+        let errorMessage = "voice_speak text has no speakable content after removing URLs/addresses"
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "voice-error", tool: "voice_speak",
+            argsSummary: "text: https://example.com/private-link",
+            outputPreview: errorMessage,
+            isError: true, isDone: true,
+            context: emptyContext(
+                args: ["text": .string("https://example.com/private-link")],
+                expanded: ["voice-error"],
+                fullOutput: errorMessage
+            )
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected voice_speak error output to stay in generic text presentation")
+            return
+        }
+        #expect(text == errorMessage)
+        #expect(language == nil)
+        #expect(config.copyOutputText == errorMessage)
+    }
+
+    @Test("voice tool uses args transcript when attachment output is placeholder")
+    func voiceAttachmentPresentationFallsBackToArgsTranscript() {
+        let details: JSONValue = .object([
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(1.2),
+            ]),
+        ])
+        let transcript = "This transcript should render on first expand from args."
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: "Voice message",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["text": .string(transcript)], details: details)
+        )
+
+        guard case .voiceMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
+            Issue.record("Expected .voiceMessage content")
+            return
+        }
+        #expect(text == transcript)
+        #expect(attachmentId == "att-1")
+    }
+
+    @Test("voice tool uses output transcript when attachment details omit message")
+    func voiceAttachmentPresentationFallsBackToOutputTranscript() {
+        let details: JSONValue = .object([
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(1.2),
+            ]),
+        ])
+        let transcript = "This transcript should render on the first expansion."
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: transcript,
+            isError: false, isDone: true,
+            context: emptyContext(details: details)
+        )
+
+        guard case .voiceMessage(let text, let attachmentId, _, _, _) = config.expandedContent else {
+            Issue.record("Expected .voiceMessage content")
+            return
+        }
+        #expect(text == transcript)
+        #expect(attachmentId == "att-1")
+    }
+
     @Test("voice tool uses compact voice message title for attachment expanded content")
     func voiceAttachmentPresentation() {
         let details: JSONValue = .object([
@@ -180,14 +282,15 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "Voice message")
         #expect(config.toolNamePrefix == "voice_speak")
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds) = config.expandedContent else {
+        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds, let delivery) = config.expandedContent else {
             Issue.record("Expected .voiceMessage content")
             return
         }
-        #expect(text == "Voice message")
+        #expect(text == "You need to restart the server.")
         #expect(attachmentId == "att-1")
         #expect(mimeType == "audio/wav")
         #expect(durationSeconds == 1.2)
+        #expect(delivery == nil)
     }
 
     // MARK: - Read

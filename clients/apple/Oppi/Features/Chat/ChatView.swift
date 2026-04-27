@@ -37,6 +37,7 @@ struct ChatView: View {
     @State private var scrollController = ChatScrollController()
     @State private var actionHandler = ChatActionHandler()
     @State private var voiceInputManager = VoiceInputManager()
+    @State private var audioLifecycleCoordinator = AudioLifecycleCoordinator()
 
     @State private var inputText = ""
     @State private var composerTextBeforeRecording: String?
@@ -132,10 +133,6 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
     }
 
-    private var isVoiceExtensionLoaded: Bool {
-        workspace?.extensions?.contains("voice") ?? true
-    }
-
     /// Child sessions spawned by this session.
     private var childSessions: [Session] {
         SessionTreeHelper.sortedChildSessions(of: sessionId, in: sessionStore.sessions)
@@ -214,6 +211,7 @@ struct ChatView: View {
             connection: connection,
             scrollController: scrollController,
             sessionManager: sessionManager,
+            audioLifecycleCoordinator: audioLifecycleCoordinator,
             onFork: forkFromMessage,
             selectedTextPiRouter: selectedTextPiRouter,
             piQuickActionStore: piQuickActionStore,
@@ -249,7 +247,7 @@ struct ChatView: View {
                     },
                     fileDetailPiRouter: selectedTextPiRouter,
                     collapseToken: contextBarCollapseToken,
-                    onExpandedChanged: { contextBarExpanded = $0 }
+                    onExpandedChanged: handleContextBarExpandedChanged
                 )
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             }
@@ -286,7 +284,7 @@ struct ChatView: View {
                 ReviewCommentComposerSheet(
                     selectedText: context.request.selectedText,
                     source: context.request.source,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? VoiceInputManager() : nil,
+                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     onCancel: { reviewComments.pendingDraft = nil },
                     onSave: { body in
                         await saveReviewComment(body: body, request: context.request)
@@ -318,6 +316,8 @@ struct ChatView: View {
                 voiceInputManager.activeSessionId = sessionId
                 voiceInputManager.setServerCredentials(connection.credentials)
                 voiceInputManager.setServerConnection(connection)
+                audioLifecycleCoordinator.setPlaybackInterrupter(audioPlayer)
+                voiceInputManager.setPlaybackInterrupter(audioLifecycleCoordinator)
                 await sessionManager.connect(
                     connection: connection,
                     sessionStore: sessionStore
@@ -431,6 +431,15 @@ struct ChatView: View {
                 default:
                     break
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { notification in
+                guard notification.object as? AudioPlayerService === audioPlayer else { return }
+                let playing = notification.userInfo?[AudioPlayerService.playingItemIDUserInfoKey] as? String
+                let loading = notification.userInfo?[AudioPlayerService.loadingItemIDUserInfoKey] as? String
+                audioLifecycleCoordinator.syncPlaybackState(
+                    playingItemID: playing?.isEmpty == false ? playing : nil,
+                    loadingItemID: loading?.isEmpty == false ? loading : nil
+                )
             }
             .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
@@ -679,10 +688,6 @@ struct ChatView: View {
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
         HStack(spacing: 10) {
-            if isVoiceExtensionLoaded {
-                voicePlaybackToolbarButton
-            }
-
             if !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
@@ -694,24 +699,6 @@ struct ChatView: View {
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)
         }
-    }
-
-    private var voicePlaybackToolbarButton: some View {
-        Button {
-            if audioPlayer.hasActivePlayback {
-                audioPlayer.stop()
-            } else {
-                audioPlayer.toggleAutoPlaybackMuted()
-            }
-        } label: {
-            Image(systemName: audioPlayer.hasActivePlayback ? "stop.fill" : (audioPlayer.autoPlaybackMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"))
-                .font(.subheadline)
-                .foregroundStyle(audioPlayer.hasActivePlayback ? .themePurple : .themeFg)
-                .frame(width: 32, height: 32)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(audioPlayer.hasActivePlayback ? "Stop audio playback" : (audioPlayer.autoPlaybackMuted ? "Unmute automatic voice playback" : "Mute automatic voice playback"))
     }
 
     private var contextRingButton: some View {
@@ -862,6 +849,7 @@ struct ChatView: View {
     private var reviewCommentsSheet: some View {
         ReviewCommentsSheet(
             comments: reviewComments.comments,
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
             onRefresh: {
                 Task { await loadReviewCommentsIfPossible() }
             },
@@ -942,6 +930,21 @@ struct ChatView: View {
         let feedback = UIImpactFeedbackGenerator(style: style)
         feedback.prepare()
         feedback.impactOccurred(intensity: intensity)
+    }
+
+    @MainActor
+    private func handleContextBarExpandedChanged(_ expanded: Bool) {
+        contextBarExpanded = expanded
+        guard expanded else { return }
+
+        // Avoid overlap between expanded git context and composer when the
+        // software keyboard is visible.
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 
     private func sendPrompt() {

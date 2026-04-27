@@ -73,8 +73,10 @@ struct ChatInputBar<ActionRow: View>: View {
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
-    private let actionVisualDiameter: CGFloat = 32
-    private let expandVisualDiameter: CGFloat = 28
+    /// Apple HIG uses 44×44 pt as the practical minimum touch target.
+    /// Keep visible controls at that floor so composer actions are easier to hit.
+    private let actionVisualDiameter: CGFloat = 44
+    private let expandVisualDiameter: CGFloat = 44
     private let composerHorizontalPadding: CGFloat = 12
 
     private var composerInputFont: UIFont {
@@ -305,7 +307,7 @@ struct ChatInputBar<ActionRow: View>: View {
             }
 
             // Text row with mic + text + send/stop
-            HStack(alignment: .bottom, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
                 if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
                     inlineMicButton(manager: manager)
                         .fixedSize()
@@ -361,7 +363,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     .fixedSize()
             }
             .padding(.horizontal, composerHorizontalPadding)
-            .padding(.vertical, 7)
+            .padding(.vertical, 10)
 
             if showsComposerActionRow {
                 HStack(spacing: 6) {
@@ -379,13 +381,13 @@ struct ChatInputBar<ActionRow: View>: View {
                 .transition(ThemeMotion.move(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .frame(minHeight: 38)
+        .frame(minHeight: 88)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if showsExpandButton {
                 expandButton
-                    .padding(.top, 4)
+                    .padding(.top, 6)
                     .padding(.trailing, composerHorizontalPadding)
             }
         }

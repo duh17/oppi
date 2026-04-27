@@ -14,6 +14,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     case extensionMarkdown
     case extensionLookup
     case customText
+    case voiceStreamingText
+    case voiceFinalCard
     case readMarkdown
     case readMedia
 
@@ -28,6 +30,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         case .extensionMarkdown: return "extension-markdown"
         case .extensionLookup: return "extension-lookup"
         case .customText: return "custom-text"
+        case .voiceStreamingText: return "voice-streaming-text"
+        case .voiceFinalCard: return "voice-final-card"
         case .readMarkdown: return "read-markdown"
         case .readMedia: return "read-media"
         }
@@ -37,7 +41,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var expectedSupportsFullScreenPreview: Bool {
         switch self {
-        case .readMedia:
+        case .readMedia, .voiceStreamingText, .voiceFinalCard:
             return false
         case .writeCode, .readCode, .bashOutput, .editDiff, .extensionMutation,
                 .extensionStructured, .extensionMarkdown, .extensionLookup,
@@ -300,6 +304,50 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 argsSummary: "query: scroll reset bug",
                 outputPreview: "custom-result-1",
                 outputByteCount: output.utf8.count,
+                isError: false,
+                isDone: true
+            )
+
+        case .voiceStreamingText:
+            let text = "Streaming voice text should render as compact spoken output, not a generic full-height tool viewport."
+            toolArgsStore.set([
+                "text": .string(text),
+                "delivery": .string("directSpeak"),
+            ], for: itemID)
+            toolOutputStore.append(text, to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "voice_speak ", style: .bold),
+                StyledSegment(text: "direct", style: .accent),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "voice_speak",
+                argsSummary: "text: \(text)",
+                outputPreview: text,
+                outputByteCount: text.utf8.count,
+                isError: false,
+                isDone: false
+            )
+
+        case .voiceFinalCard:
+            let text = "Final voice card should use the same compact height expectations as streaming voice output."
+            toolArgsStore.set([
+                "text": .string(text),
+                "delivery": .string("directSpeak"),
+            ], for: itemID)
+            toolOutputStore.append(text, to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "voice_speak ", style: .bold),
+                StyledSegment(text: "direct", style: .accent),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "voice_speak",
+                argsSummary: "text: \(text)",
+                outputPreview: text,
+                outputByteCount: text.utf8.count,
                 isError: false,
                 isDone: true
             )

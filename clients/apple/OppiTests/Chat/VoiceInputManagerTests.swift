@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import Oppi
@@ -486,6 +487,74 @@ struct VoiceInputManagerTests {
     }
 
     // MARK: - Orchestration
+
+    @Test func recordingAudioSessionPolicyCapturesOnlyAndPreservesBluetoothInput() {
+        #if os(iOS)
+        #expect(VoiceInputSystemAccess.recordingCategory == .record)
+        #expect(VoiceInputSystemAccess.recordingMode == .default)
+        let options = VoiceInputSystemAccess.recordingCategoryOptions
+        #expect(options.contains(.allowBluetoothHFP))
+        #expect(!options.contains(.allowBluetoothA2DP))
+        #expect(!options.contains(.defaultToSpeaker))
+        #endif
+    }
+
+    @Test func startRecordingStopsActivePlaybackBeforeAudioSessionActivationAndCapture() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        var events: [String] = []
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.onActivateAudioSession = { events.append("activate") }
+
+        let playback = MockVoicePlaybackInterrupter()
+        playback.hasActivePlayback = true
+        playback.onStop = { events.append("stopPlayback") }
+
+        let session = MockVoiceSession()
+        session.startHandler = { events.append("startCapture") }
+
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setPlaybackInterrupter(playback)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(manager.state == .recording)
+        #expect(playback.stopCallCount == 1)
+        #expect(events == ["stopPlayback", "activate", "startCapture"])
+    }
+
+    @Test func startRecordingDoesNotStopIdlePlaybackInterrupter() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let playback = MockVoicePlaybackInterrupter()
+        playback.hasActivePlayback = false
+
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setPlaybackInterrupter(playback)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(manager.state == .recording)
+        #expect(playback.stopCallCount == 0)
+        #expect(systemAccess.activateAudioSessionCallCount == 1)
+        #expect(session.startCallCount == 1)
+    }
 
     @Test func startRecordingProcessesSessionLifecycle() async throws {
         resetVoicePreferences()

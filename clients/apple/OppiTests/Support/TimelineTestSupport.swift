@@ -565,6 +565,7 @@ func makeTimelineToolConfiguration(
     selectedTextSessionId: String? = nil
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
+        itemID: "tool-row-test-item",
         title: title,
         preview: preview,
         expandedContent: expandedContent,

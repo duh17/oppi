@@ -115,6 +115,7 @@ extension ToolPresentationBuilder {
         let sizeBytes: Int?
         let durationSeconds: Double?
         let message: String?
+        let delivery: VoiceReplyDelivery?
     }
 
     private struct ParsedUnifiedDiff {
@@ -125,7 +126,8 @@ extension ToolPresentationBuilder {
     static func resolveGenericExtensionExpandedContent(
         output: String,
         toolName: String,
-        details: JSONValue?
+        details: JSONValue?,
+        args: [String: JSONValue]? = nil
     ) -> (content: ToolExpandedContent, copyOutput: String) {
         // Server/extension-provided expanded text overrides raw output for display.
         // The extension sets details.expandedText + details.presentationFormat to
@@ -139,7 +141,7 @@ extension ToolPresentationBuilder {
             textOutput = sanitized.isEmpty ? output : sanitized
         }
         if let audio = toolAudioAttachmentDetails(from: details) {
-            return voiceAudioExpandedContent(audio: audio, fallbackText: textOutput)
+            return voiceAudioExpandedContent(audio: audio, fallbackText: textOutput, args: args)
         }
 
         let format = normalizedExtensionPresentationFormat(details)
@@ -229,7 +231,8 @@ extension ToolPresentationBuilder {
                 storageKey: audio["storageKey"]?.stringValue,
                 sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
                 durationSeconds: audio["durationSeconds"]?.numberValue,
-                message: object["message"]?.stringValue
+                message: object["message"]?.stringValue,
+                delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
             )
         }
 
@@ -243,16 +246,22 @@ extension ToolPresentationBuilder {
             storageKey: audio["storageKey"]?.stringValue,
             sizeBytes: audio["sizeBytes"]?.numberValue.map(Int.init),
             durationSeconds: audio["durationSeconds"]?.numberValue,
-            message: object["message"]?.stringValue
+            message: object["message"]?.stringValue,
+            delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
         )
     }
 
     private static func voiceAudioExpandedContent(
         audio: ToolAudioAttachmentDetails,
-        fallbackText _: String
+        fallbackText: String,
+        args: [String: JSONValue]?
     ) -> (content: ToolExpandedContent, copyOutput: String) {
         let title = "Voice message"
-        let message = audio.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let explicitMessage = audio.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let argMessage = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fallbackMessage = fallbackText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputMessage = fallbackMessage == title ? "" : fallbackMessage
+        let message = !explicitMessage.isEmpty ? explicitMessage : (!argMessage.isEmpty ? argMessage : outputMessage)
 
         guard audio.mimeType == "audio/wav" else {
             let message = "Audio unavailable on iOS: unsupported MIME type \(audio.mimeType)"
@@ -260,13 +269,14 @@ extension ToolPresentationBuilder {
         }
 
         if let attachmentId = audio.id, !attachmentId.isEmpty {
-            let displayText = title
+            let displayText = message.isEmpty ? title : message
             return (
                 .voiceMessage(
                     text: displayText,
                     attachmentId: attachmentId,
                     mimeType: audio.mimeType,
-                    durationSeconds: audio.durationSeconds
+                    durationSeconds: audio.durationSeconds,
+                    delivery: audio.delivery
                 ),
                 displayText
             )

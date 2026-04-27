@@ -163,6 +163,7 @@ struct ReadySessionScrollToBottomTests {
                 connection: connection,
                 scrollController: scrollController,
                 sessionManager: sessionManager,
+                audioLifecycleCoordinator: nil,
                 onFork: { _ in },
                 selectedTextPiRouter: nil,
                 piQuickActionStore: nil,

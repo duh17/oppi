@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var selectedCodeFont = FontPreferences.codeFont
     @State private var useMonoMessages = FontPreferences.useMonoForMessages
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
+    @State private var voiceReplyMode = AppPreferences.Voice.replyMode
 
     var body: some View {
         List {
@@ -141,6 +142,21 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Voice Replies", selection: $voiceReplyMode) {
+                    ForEach(AppPreferences.Voice.ReplyMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .onChange(of: voiceReplyMode) { _, newValue in
+                    AppPreferences.Voice.setReplyMode(newValue)
+                }
+
+                if voiceReplyMode == .voice {
+                    Text(AppPreferences.Voice.ReplyMode.voice.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                }
+
                 Picker("Dictation Engine", selection: $voiceEngineMode) {
                     ForEach(AppPreferences.Voice.supportedModes) { mode in
                         Text(mode.label).tag(mode)
@@ -150,11 +166,12 @@ struct SettingsView: View {
                     AppPreferences.Voice.setEngineMode(newValue)
                 }
             } header: {
-                Text("Voice Input")
+                Text("Voice")
             } footer: {
                 Text(
-                    "Server dictation uses your Mac's ASR model. "
-                        + "On-device uses Apple's local dictation."
+                    "Voice mode autoplays only when the agent explicitly requests direct playback. "
+                        + "Voice message mode never autoplays. Direct speak autoplays all voice replies. "
+                        + "Server dictation uses your Mac's ASR model. On-device uses Apple's local dictation."
                 )
             }
 

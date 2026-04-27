@@ -113,6 +113,27 @@ struct ToolExpandScrollMatrixTests {
     }
 
     @Test(arguments: ToolExpandScrollMatrixCase.allCases)
+    func expandedToolRowsHaveExpectedHeightEnvelope(_ toolCase: ToolExpandScrollMatrixCase) throws {
+        let fixture = try #require(
+            ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "height-envelope")
+        )
+
+        fixture.prepareDetachedViewport()
+        fixture.expandTarget()
+        let cell = try #require(fixture.collectionView.cellForItem(at: fixture.targetIndexPath))
+        let height = cell.frame.height
+
+        switch toolCase {
+        case .voiceStreamingText, .voiceFinalCard:
+            #expect(height < 220, "Voice rows should be compact, got \(height)pt")
+        case .extensionMutation, .extensionStructured, .extensionMarkdown, .extensionLookup, .customText:
+            #expect(height < 520, "Custom extension rows should stay bounded, got \(height)pt")
+        case .writeCode, .readCode, .bashOutput, .editDiff, .readMarkdown, .readMedia:
+            #expect(height < 760, "Expanded tool row exceeded viewport envelope, got \(height)pt")
+        }
+    }
+
+    @Test(arguments: ToolExpandScrollMatrixCase.allCases)
     func expandedToolRowsFollowFullScreenSupportMatrix(_ toolCase: ToolExpandScrollMatrixCase) throws {
         let fixture = try #require(
             ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "fullscreen")
