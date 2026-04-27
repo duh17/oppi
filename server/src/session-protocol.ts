@@ -242,6 +242,7 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
  * the content in real time instead of stuffing it into the title bar.
  */
 const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
+const VOICE_SPEAK_ARG_PREVIEW_THRESHOLD = 0;
 
 /**
  * Find the largest string arg value suitable for viewport preview.
@@ -251,7 +252,14 @@ const STREAMING_ARG_PREVIEW_THRESHOLD = 200;
  * arrays, numbers) are ignored — only plain text content is meaningful
  * for viewport rendering.
  */
-function findLargestStringArg(args: Record<string, unknown>): string | null {
+function findLargestStringArg(toolName: string, args: Record<string, unknown>): string | null {
+  if (toolName === "voice_speak") {
+    const text = args.text;
+    return typeof text === "string" && text.length > VOICE_SPEAK_ARG_PREVIEW_THRESHOLD
+      ? text
+      : null;
+  }
+
   let largest: string | null = null;
   let largestLen = 0;
   for (const value of Object.values(args)) {
@@ -260,6 +268,7 @@ function findLargestStringArg(args: Record<string, unknown>): string | null {
       largestLen = value.length;
     }
   }
+
   return largest !== null && largestLen > STREAMING_ARG_PREVIEW_THRESHOLD ? largest : null;
 }
 
@@ -431,7 +440,7 @@ export function translatePiEvent(
         // Stream the largest string arg value as tool_output (replace mode)
         // so the iOS viewport shows streaming content instead of "Waiting for
         // output…". Cleared at tool_execution_start with an empty replace.
-        const largestArg = findLargestStringArg(toolCallUpdate.args);
+        const largestArg = findLargestStringArg(toolCallUpdate.tool, toolCallUpdate.args);
         if (largestArg && toolCallUpdate.toolCallId) {
           messages.push({
             type: "tool_output",

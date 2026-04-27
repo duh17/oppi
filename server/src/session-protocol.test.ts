@@ -2148,6 +2148,64 @@ describe("translatePiEvent", () => {
       expect(ctx.partialResults.size).toBe(0);
     });
 
+    it("previews short voice_speak text during tool-call arg streaming", () => {
+      const ctx = makeCtx();
+      const text = "Yes, I can hear you.";
+
+      const result = translatePiEvent(
+        {
+          type: "message_update",
+          message: {
+            content: [
+              {
+                type: "toolCall",
+                id: "voice-1",
+                name: "voice_speak",
+                arguments: { text, delivery: "directSpeak" },
+              },
+            ],
+          },
+          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+        } as unknown as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0]!.type).toBe("tool_start");
+      const preview = result[1] as Extract<ServerMessage, { type: "tool_output" }>;
+      expect(preview.output).toBe(text);
+      expect(preview.mode).toBe("replace");
+      expect(ctx.streamingArgPreviews.has("voice-1")).toBe(true);
+    });
+
+    it("uses voice_speak text arg even when another string arg is longer", () => {
+      const ctx = makeCtx();
+      const text = "Yes, I can hear you.";
+      const voicePrompt = "warm conversational voice, medium pace, clear enunciation, low pitch";
+
+      const result = translatePiEvent(
+        {
+          type: "message_update",
+          message: {
+            content: [
+              {
+                type: "toolCall",
+                id: "voice-1",
+                name: "voice_speak",
+                arguments: { text, voice: voicePrompt, delivery: "directSpeak" },
+              },
+            ],
+          },
+          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+        } as unknown as AgentSessionEvent,
+        ctx,
+      );
+
+      expect(result).toHaveLength(2);
+      const preview = result[1] as Extract<ServerMessage, { type: "tool_output" }>;
+      expect(preview.output).toBe(text);
+    });
+
     it("streaming arg preview skipped when toolCallId is missing", () => {
       const ctx = makeCtx();
       const largeBody = "x".repeat(300);
