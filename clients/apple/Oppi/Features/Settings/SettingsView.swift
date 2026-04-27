@@ -142,7 +142,7 @@ struct SettingsView: View {
 
             Section {
                 Picker("Dictation Engine", selection: $voiceEngineMode) {
-                    ForEach(AppPreferences.Voice.EngineMode.allCases) { mode in
+                    ForEach(AppPreferences.Voice.supportedModes) { mode in
                         Text(mode.label).tag(mode)
                     }
                 }
@@ -153,8 +153,8 @@ struct SettingsView: View {
                 Text("Voice Input")
             } footer: {
                 Text(
-                    "Automatic uses server dictation when connected, falling back to on-device. "
-                        + "Server dictation uses your Mac's ASR model for higher accuracy."
+                    "Server dictation uses your Mac's ASR model. "
+                        + "On-device uses Apple's local dictation."
                 )
             }
 

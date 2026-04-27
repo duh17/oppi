@@ -672,8 +672,8 @@ struct VoiceInputManagerTests {
         }())
     }
 
-    /// Remote mode without ASR available falls back to on-device engine.
-    @Test func remoteModeWithoutAsrFallsBackToOnDevice() async {
+    /// Remote mode without ASR available fails clearly instead of falling back.
+    @Test func remoteModeWithoutAsrFailsClearly() async {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -685,20 +685,18 @@ struct VoiceInputManagerTests {
             systemAccess: systemAccess
         )
         manager.setEngineMode(.remote)
-        // No connection / no asrAvailable — should fall back
+        // No connection / no asrAvailable — should fail clearly.
 
         try? await manager.startRecording(source: "test")
 
-        // Fell back to on-device — server provider was NOT used
         #expect(serverProvider.prepareSessionCallCount == 0)
-        #expect(onDeviceProvider.prepareSessionCallCount == 1)
+        #expect(onDeviceProvider.prepareSessionCallCount == 0)
+        #expect(manager.state == .error("Server dictation is not connected. Connect to an Oppi server first."))
     }
 
-    /// Has credentials but no ServerConnection — prepareSession should throw
-    /// VoiceInputError.serverNotConnected because the provider needs a live
-    /// connection to send dictation messages over the /stream WebSocket.
-    /// Credentials exist but ASR not available — falls back to on-device.
-    @Test func remoteModeWithCredentialsButNoAsrFallsBackToOnDevice() async {
+    /// Credentials exist but ASR is not available — remote mode should fail
+    /// clearly instead of silently dropping to on-device dictation.
+    @Test func remoteModeWithCredentialsButNoAsrFailsClearly() async {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -722,13 +720,14 @@ struct VoiceInputManagerTests {
 
         try? await manager.startRecording(source: "test")
 
-        // Fell back to on-device — server provider was NOT called
         #expect(serverProvider.prepareSessionCallCount == 0)
-        #expect(onDeviceProvider.prepareSessionCallCount == 1)
+        #expect(onDeviceProvider.prepareSessionCallCount == 0)
+        #expect(manager.state == .error("Server dictation is unavailable on this server. Check the ASR server and reconnect."))
     }
 
-    /// ASR advertised but remote setup fails — automatically retries with on-device.
-    @Test func remoteModeWithAsrAvailableButServerSetupFailureFallsBackToOnDevice() async {
+    /// ASR advertised but remote setup fails — remote mode should surface the
+    /// server failure instead of silently retrying on-device.
+    @Test func remoteModeWithAsrAvailableButServerSetupFailureFailsClearly() async {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -744,6 +743,12 @@ struct VoiceInputManagerTests {
             systemAccess: systemAccess
         )
         manager.setEngineMode(.remote)
+        manager.setServerCredentials(ServerCredentials(
+            host: "localhost", port: 7749,
+            token: "test-token",
+            name: "test-server",
+            scheme: .http
+        ))
 
         let conn = ServerConnection()
         conn.setAsrAvailableForTesting(true)
@@ -752,11 +757,9 @@ struct VoiceInputManagerTests {
         try? await manager.startRecording(source: "test")
 
         #expect(serverProvider.prepareSessionCallCount == 1)
-        #expect(onDeviceProvider.prepareSessionCallCount == 1)
-        #expect(manager.state == .recording)
-        #expect(manager.activeEngine == .classicDictation)
-
-        await manager.cancelRecording()
+        #expect(onDeviceProvider.prepareSessionCallCount == 0)
+        #expect(manager.state == .error("Remote ASR request timed out. Check server load or network latency."))
+        #expect(manager.activeEngine == nil)
     }
 
     // MARK: - Send-while-recording: stop awaits final transcript
@@ -1189,6 +1192,6 @@ struct VoiceInputManagerTests {
     }
 
     private func resetVoicePreferences() {
-        AppPreferences.Voice.setEngineMode(.auto)
+        AppPreferences.Voice.setEngineMode(.onDevice)
     }
 }

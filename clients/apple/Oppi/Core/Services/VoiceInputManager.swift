@@ -74,9 +74,9 @@ final class VoiceInputManager {
 
         var accessibilityLabel: String {
             switch self {
-            case .auto: return "Automatic routing"
-            case .onDevice: return "On-device transcription"
-            case .remote: return "Remote transcription"
+            case .auto: return "Automatic"
+            case .onDevice: return "On-device"
+            case .remote: return "Server"
             }
         }
     }
@@ -593,6 +593,18 @@ final class VoiceInputManager {
         )
     }
 
+    private func validateServerDictationAvailabilityIfNeeded(
+        for engine: TranscriptionEngine
+    ) throws {
+        guard engine == .serverDictation else { return }
+        guard serverCredentials != nil, serverConnection != nil else {
+            throw VoiceInputError.serverNotConnected
+        }
+        guard serverConnection?.asrAvailable == true else {
+            throw VoiceInputError.serverAsrUnavailable
+        }
+    }
+
     private func provider(
         for engine: TranscriptionEngine
     ) throws -> any VoiceTranscriptionProvider {
@@ -734,130 +746,120 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        let fallbackEngine = Self.preferredEngine(for: locale)
-        var engine = await effectiveEngine(for: locale)
-        var attemptedServerFallback = false
+        let engine = await effectiveEngine(for: locale)
         dictationSessionStart = startTime
+        activeEngine = engine
 
-        while true {
-            activeEngine = engine
-
-            // Engine-aware permission check: server dictation needs only mic,
-            // on-device engines need both mic + speech recognition.
-            switch engine {
-            case .serverDictation:
-                if !systemAccess.hasMicPermission {
-                    guard await systemAccess.requestMicPermission() else {
-                        activeEngine = nil
-                        state = .error("Microphone permission denied")
-                        scheduleErrorReset()
-                        return
-                    }
-                }
-            case .modernSpeech, .classicDictation:
-                if !systemAccess.hasPermissions {
-                    guard await requestPermissions() else {
-                        activeEngine = nil
-                        state = .error("Microphone or speech permission denied")
-                        scheduleErrorReset()
-                        return
-                    }
+        // Engine-aware permission check: server dictation needs only mic,
+        // on-device engines need both mic + speech recognition.
+        switch engine {
+        case .serverDictation:
+            if !systemAccess.hasMicPermission {
+                guard await systemAccess.requestMicPermission() else {
+                    activeEngine = nil
+                    state = .error("Microphone permission denied")
+                    scheduleErrorReset()
+                    return
                 }
             }
+        case .modernSpeech, .classicDictation:
+            if !systemAccess.hasPermissions {
+                guard await requestPermissions() else {
+                    activeEngine = nil
+                    state = .error("Microphone or speech permission denied")
+                    scheduleErrorReset()
+                    return
+                }
+            }
+        }
 
-            let metricAnnotation = VoiceMetricAnnotation(
-                engine: engine.logName,
-                locale: localeID,
-                source: source
-            )
-            activeMetricAnnotation = metricAnnotation
+        let metricAnnotation = VoiceMetricAnnotation(
+            engine: engine.logName,
+            locale: localeID,
+            source: source
+        )
+        activeMetricAnnotation = metricAnnotation
 
-            let context = VoiceProviderContext(
+        let context = VoiceProviderContext(
+            locale: locale,
+            source: source,
+            serverCredentials: serverCredentials,
+            serverConnection: serverConnection
+        )
+        let provider = try provider(for: engine)
+        var modelPathTag = "warm_cache"
+
+        do {
+            try validateServerDictationAvailabilityIfNeeded(for: engine)
+            try ensureStartRequestActive(requestID)
+
+            let timings = try await startProviderRecording(
+                requestID: requestID,
+                startTime: startTime,
                 locale: locale,
-                source: source,
-                serverCredentials: serverCredentials,
-                serverConnection: serverConnection
+                provider: provider,
+                context: context,
+                metricAnnotation: metricAnnotation,
+                modelPathTag: &modelPathTag
             )
-            let provider = try provider(for: engine)
-            var modelPathTag = "warm_cache"
 
-            do {
-                try ensureStartRequestActive(requestID)
+            state = .recording
 
-                let timings = try await startProviderRecording(
-                    requestID: requestID,
-                    startTime: startTime,
-                    locale: locale,
-                    provider: provider,
-                    context: context,
-                    metricAnnotation: metricAnnotation,
-                    modelPathTag: &modelPathTag
+            // Emit telemetry AFTER state transition — off the critical path
+            emitStartupTelemetry(timings, annotation: metricAnnotation)
+            logger.error("Voice setup: recording started in \(timings.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
+            return
+        } catch is CancellationError {
+            let totalMs = startTime.elapsedMs()
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: totalMs,
+                annotation: metricAnnotation,
+                phase: .total,
+                status: "cancelled",
+                extraTags: ["path": modelPathTag]
+            )
+            logger.info("Voice setup cancelled")
+            await cleanupFailedStart()
+            state = .idle
+            return
+        } catch {
+            let totalMs = startTime.elapsedMs()
+            let userFacingMessage = userFacingErrorMessage(for: error)
+            let errorKind = Self.metricErrorKind(for: error)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: totalMs,
+                annotation: metricAnnotation,
+                phase: .total,
+                status: "error",
+                extraTags: [
+                    "path": modelPathTag,
+                    "error": String(describing: type(of: error)),
+                    "error_kind": errorKind,
+                ]
+            )
+            recordDictationCountMetric(
+                .dictationError,
+                value: 1,
+                annotation: metricAnnotation,
+                status: "error",
+                extraTags: [
+                    "phase": "setup",
+                    "error_kind": errorKind,
+                ]
+            )
+            if engine == .serverDictation {
+                logger.error(
+                    "Server dictation setup failed: \(userFacingMessage, privacy: .public)"
                 )
-
-                state = .recording
-
-                // Emit telemetry AFTER state transition — off the critical path
-                emitStartupTelemetry(timings, annotation: metricAnnotation)
-                logger.error("Voice setup: recording started in \(timings.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
-                return
-            } catch is CancellationError {
-                let totalMs = startTime.elapsedMs()
-                recordVoiceMetric(
-                    .voiceSetupMs,
-                    valueMs: totalMs,
-                    annotation: metricAnnotation,
-                    phase: .total,
-                    status: "cancelled",
-                    extraTags: ["path": modelPathTag]
-                )
-                logger.info("Voice setup cancelled")
-                await cleanupFailedStart()
-                state = .idle
-                return
-            } catch {
-                if engine == .serverDictation, !attemptedServerFallback {
-                    attemptedServerFallback = true
-                    let message = userFacingErrorMessage(for: error)
-                    logger.warning(
-                        "Server dictation setup failed: \(message, privacy: .public) — falling back to \(fallbackEngine.logName, privacy: .public)"
-                    )
-                    await cleanupFailedStart()
-                    state = .preparingModel
-                    engine = fallbackEngine
-                    continue
-                }
-
-                let totalMs = startTime.elapsedMs()
-                let userFacingMessage = userFacingErrorMessage(for: error)
-                let errorKind = Self.metricErrorKind(for: error)
-                recordVoiceMetric(
-                    .voiceSetupMs,
-                    valueMs: totalMs,
-                    annotation: metricAnnotation,
-                    phase: .total,
-                    status: "error",
-                    extraTags: [
-                        "path": modelPathTag,
-                        "error": String(describing: type(of: error)),
-                        "error_kind": errorKind,
-                    ]
-                )
-                recordDictationCountMetric(
-                    .dictationError,
-                    value: 1,
-                    annotation: metricAnnotation,
-                    status: "error",
-                    extraTags: [
-                        "phase": "setup",
-                        "error_kind": errorKind,
-                    ]
-                )
+            } else {
                 logger.error("Voice setup failed: \(userFacingMessage, privacy: .public)")
-                await cleanupFailedStart()
-                state = .error(userFacingMessage)
-                scheduleErrorReset()
-                throw error
             }
+            await cleanupFailedStart()
+            state = .error(userFacingMessage)
+            scheduleErrorReset()
+            throw error
         }
     }
 

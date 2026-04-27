@@ -116,19 +116,24 @@ enum AppPreferences {
             }
         }
 
+        /// User-facing engine choices. Auto remains available only as a legacy
+        /// stored value so older installs can be migrated safely.
+        static let supportedModes: [EngineMode] = [.remote, .onDevice]
+
         private static let engineModeKey = "\(AppIdentifiers.subsystem).voice.engineMode"
 
         static var engineMode: EngineMode {
             guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
                   let mode = EngineMode(rawValue: raw)
             else {
-                return .auto
+                return .remote
             }
-            return mode
+            return mode == .auto ? .remote : mode
         }
 
         static func setEngineMode(_ mode: EngineMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: engineModeKey)
+            let normalizedMode: EngineMode = mode == .auto ? .remote : mode
+            UserDefaults.standard.set(normalizedMode.rawValue, forKey: engineModeKey)
         }
     }
 

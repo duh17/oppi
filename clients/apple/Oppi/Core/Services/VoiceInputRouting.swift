@@ -13,11 +13,12 @@ final class VoiceInputRouteResolver {
         case .onDevice:
             return fallback
         case .remote:
-            // Only route to server if ASR is actually configured.
-            // Otherwise fall back to on-device so the user isn't stuck.
-            return asrAvailable ? .serverDictation : fallback
+            return .serverDictation
         case .auto:
-            if serverCredentials != nil, asrAvailable {
+            // Legacy path: prefer server dictation whenever a server is in play.
+            // The settings UI no longer exposes Auto because dictation routing
+            // should be explicit, but stale preferences may still exist.
+            if serverCredentials != nil || asrAvailable {
                 return .serverDictation
             }
             return fallback

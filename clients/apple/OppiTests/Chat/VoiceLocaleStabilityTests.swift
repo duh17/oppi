@@ -353,6 +353,6 @@ struct VoiceLocaleStabilityTests {
     // MARK: - Helpers
 
     private func resetVoicePreferences() {
-        AppPreferences.Voice.setEngineMode(.auto)
+        AppPreferences.Voice.setEngineMode(.onDevice)
     }
 }
