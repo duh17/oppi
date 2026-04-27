@@ -97,6 +97,16 @@ describe("Storage.createWorkspace", () => {
     expect(ws.extensions).toEqual(["spawn_agent", "ask"]);
   });
 
+  it("filters deprecated review extension from workspace config", () => {
+    const ws = storage.createWorkspace(
+      createReq({
+        extensions: ["review", "todos", "review"],
+      }),
+    );
+
+    expect(ws.extensions).toEqual(["todos"]);
+  });
+
   it("persists to disk as JSON", () => {
     const ws = storage.createWorkspace(createReq());
     const path = join(dataDir, "workspaces", `${ws.id}.json`);

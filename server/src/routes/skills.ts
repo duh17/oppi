@@ -5,6 +5,8 @@ import { listConfiguredHostExtensions } from "../extension-loader.js";
 import { FIRST_PARTY_EXTENSION_NAMES } from "../../extensions/first-party.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
+const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
+
 export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function handleListSkills(res: ServerResponse): void {
     helpers.json(res, { skills: ctx.skillRegistry.list() });
@@ -17,10 +19,12 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
   async function handleListExtensions(url: URL, res: ServerResponse): Promise<void> {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    const piExtensions = (await listConfiguredHostExtensions({ cwd })).map((ext) => ({
-      ...ext,
-      source: "pi" as const,
-    }));
+    const piExtensions = (await listConfiguredHostExtensions({ cwd }))
+      .filter((ext) => !DEPRECATED_EXTENSION_NAMES.has(ext.name))
+      .map((ext) => ({
+        ...ext,
+        source: "pi" as const,
+      }));
     const oppiExtensions = FIRST_PARTY_EXTENSION_NAMES.map((name) => ({
       name,
       path: "oppi-server",

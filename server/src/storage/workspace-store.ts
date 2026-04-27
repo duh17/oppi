@@ -13,6 +13,7 @@ import type {
 import type { ConfigStore } from "./config-store.js";
 
 const log = createLogger({ base: { component: "workspace_store" } });
+const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
 
 function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
   if (!extensions) {
@@ -24,7 +25,7 @@ function normalizeExtensions(extensions: string[] | undefined): string[] | undef
 
   for (const value of extensions) {
     const name = value.trim();
-    if (name.length === 0 || unique.has(name)) {
+    if (name.length === 0 || unique.has(name) || DEPRECATED_EXTENSION_NAMES.has(name)) {
       continue;
     }
 

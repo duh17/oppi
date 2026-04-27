@@ -246,10 +246,11 @@ describe("POST /workspaces/:wid/review/session", () => {
         "new-session",
         expect.objectContaining({ id: "w1" }),
       );
-      // No preamble — agent reads files itself. iOS injects @paths.
-      expect(body.visiblePrompt).toBe(
+      expect(body.visiblePrompt).toContain("# Review Guidelines");
+      expect(body.visiblePrompt).toContain(
         "Review the selected files for bugs, regressions, and risky patterns. Cite file and line number for each finding.",
       );
+      expect(body.visiblePrompt).toContain("## Human Reviewer Callouts (Non-Blocking)");
       expect(body.filePaths).toEqual(["review.swift"]);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
