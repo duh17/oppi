@@ -406,6 +406,7 @@ enum DictationAudioEngineHelper {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        try AudioEngineHelper.validateInputFormat(inputFormat)
 
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -418,7 +419,10 @@ enum DictationAudioEngineHelper {
 
         let converter: AVAudioConverter?
         if inputFormat != targetFormat {
-            converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+            guard let audioConverter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+                throw VoiceInputError.internalError("Cannot create dictation audio converter")
+            }
+            converter = audioConverter
         } else {
             converter = nil
         }
