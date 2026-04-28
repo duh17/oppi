@@ -58,7 +58,7 @@ final class ScriptedStreamFactory {
     func waitForCreated(_ expected: Int, timeoutMs: Int = 1_000) async -> Bool {
         let attempts = max(1, timeoutMs / 20)
         for _ in 0..<attempts {
-            if streamsCreated >= expected {
+            if streamsCreated >= expected, continuations.count >= expected {
                 return true
             }
             try? await Task.sleep(for: .milliseconds(20))

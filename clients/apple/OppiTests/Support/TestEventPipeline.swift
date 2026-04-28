@@ -42,7 +42,7 @@ final class TestEventPipeline {
     /// Mirrors the production path: applySharedStoreUpdate → routeToTimeline → handleActiveSessionUI.
     func handle(_ message: ServerMessage, sessionId: String) {
         let conn = connection
-        guard sessionId == conn.activeSessionId else { return }
+        guard conn.isFocusedSession(sessionId) else { return }
 
         if conn.isStopLifecycleMessage(message) {
             let storeResult = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)

@@ -20,7 +20,7 @@ extension ServerConnection {
         sessionId: String,
         storeResult: StoreUpdateResult = .notHandled
     ) {
-        guard sessionId == activeSessionId else { return }
+        guard isFocusedSession(sessionId) else { return }
 
         switch message {
         case .connected(let session):
@@ -28,45 +28,13 @@ extension ServerConnection {
 
         case .state(let session):
             handleState(session, previousWorkspaceId: storeResult.previousWorkspaceId)
-            if session.status.isTerminal {
-                silenceWatchdog.stop()
-                clearAskState(for: sessionId)
-                clearExtensionDialog(for: sessionId)
-            }
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
-        case .queueState(let queue):
-            messageQueueStore.apply(queue, for: sessionId)
+        case .queueState, .queueItemStarted:
+            applyQueueEffects(ServerMessageEffects.queueEffects(for: message), sessionId: sessionId)
 
-        case .queueItemStarted(let kind, let item, let queueVersion):
-            messageQueueStore.applyQueueItemStarted(
-                for: sessionId,
-                kind: kind,
-                item: item,
-                queueVersion: queueVersion
-            )
-
-        case .extensionUIRequest(let request):
-            if let ask = askRequest(from: request) {
-                presentAskRequest(ask, for: sessionId)
-            } else {
-                presentExtensionDialog(request, for: sessionId)
-            }
-
-        case .extensionUINotification(let notification):
-            applyExtensionUINotification(
-                method: notification.method,
-                message: notification.message,
-                notifyType: notification.notifyType,
-                statusKey: notification.statusKey,
-                statusText: notification.statusText,
-                title: notification.title,
-                text: notification.text,
-                widgetKey: notification.widgetKey,
-                widgetLines: notification.widgetLines,
-                widgetPlacement: notification.widgetPlacement,
-                sessionId: sessionId,
-                isActiveSession: true
-            )
+        case .extensionUIRequest, .extensionUINotification:
+            applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: true), sessionId: sessionId)
 
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: MessageSender.turnSendRequiredStage)
@@ -88,19 +56,8 @@ extension ServerConnection {
         case .error(_, _, _):
             break
 
-        case .sessionEnded:
-            silenceWatchdog.stop()
-            clearAskState(for: sessionId)
-            messageQueueStore.clear(sessionId: sessionId)
-            clearExtensionSurface(for: sessionId)
-
-        case .sessionDeleted(let deletedId):
-            messageQueueStore.clear(sessionId: deletedId)
-            clearExtensionSurface(for: deletedId)
-
-        case .stopConfirmed:
-            silenceWatchdog.stop()
-            clearAskState(for: sessionId)
+        case .sessionEnded, .sessionDeleted, .stopConfirmed:
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
         default:
             break
@@ -116,14 +73,33 @@ extension ServerConnection {
         sessionId: String
     ) {
         switch message {
-        case .extensionUIRequest(let request):
+        case .extensionUIRequest, .extensionUINotification:
+            applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
+
+        case .state, .sessionEnded, .stopConfirmed, .sessionDeleted:
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
+
+        default:
+            break
+        }
+    }
+
+    func applyUIEffects(_ effects: ServerMessageUIEffects, sessionId: String) {
+        if let request = effects.extensionRequest {
             if let ask = askRequest(from: request) {
-                stashPendingAskRequest(ask, for: sessionId)
+                if effects.isFocusedSession {
+                    presentAskRequest(ask, for: sessionId)
+                } else {
+                    stashPendingAskRequest(ask, for: sessionId)
+                }
+            } else if effects.isFocusedSession {
+                presentExtensionDialog(request, for: sessionId)
             } else {
                 stashPendingExtensionDialog(request, for: sessionId)
             }
+        }
 
-        case .extensionUINotification(let notification):
+        if let notification = effects.extensionNotification {
             applyExtensionUINotification(
                 method: notification.method,
                 message: notification.message,
@@ -136,28 +112,49 @@ extension ServerConnection {
                 widgetLines: notification.widgetLines,
                 widgetPlacement: notification.widgetPlacement,
                 sessionId: sessionId,
-                isActiveSession: false
+                isActiveSession: effects.isFocusedSession
             )
+        }
+    }
 
-        case .state(let session):
-            if session.status.isTerminal {
-                clearAskState(for: sessionId)
-                clearExtensionDialog(for: sessionId)
-            }
+    func applyQueueEffects(_ effects: ServerMessageQueueEffects, sessionId: String) {
+        if let queue = effects.applyQueueState {
+            messageQueueStore.apply(queue, for: sessionId)
+        }
+        if let started = effects.queueItemStarted {
+            messageQueueStore.applyQueueItemStarted(
+                for: sessionId,
+                kind: started.kind,
+                item: started.item,
+                queueVersion: started.queueVersion
+            )
+        }
+    }
 
-        case .sessionEnded:
+    func applyCleanupEffects(
+        for message: ServerMessage,
+        sessionId: String,
+        isFocusedSession: Bool
+    ) {
+        let effects = ServerMessageEffects.cleanupEffects(
+            for: message,
+            routedSessionId: sessionId,
+            isFocusedSession: isFocusedSession
+        )
+        if effects.stopSilenceWatchdog {
+            silenceWatchdog.stop()
+        }
+        for sessionId in effects.clearAskSessionIds {
             clearAskState(for: sessionId)
+        }
+        for sessionId in effects.clearExtensionDialogSessionIds {
+            clearExtensionDialog(for: sessionId)
+        }
+        for sessionId in effects.clearExtensionSurfaceSessionIds {
             clearExtensionSurface(for: sessionId)
-
-        case .stopConfirmed:
-            clearAskState(for: sessionId)
-
-        case .sessionDeleted(let deletedId):
-            clearAskState(for: deletedId)
-            clearExtensionSurface(for: deletedId)
-
-        default:
-            break
+        }
+        for sessionId in effects.clearMessageQueueSessionIds {
+            messageQueueStore.clear(sessionId: sessionId)
         }
     }
 
@@ -265,7 +262,7 @@ extension ServerConnection {
         // Active-session-only: thinking level, slash commands.
         // Skip for child sessions whose state arrives via the parent's broadcast key —
         // they should not overwrite the active session's UI state.
-        guard session.id == activeSessionId else { return }
+        guard isFocusedSession(session.id) else { return }
 
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
@@ -357,18 +354,6 @@ extension ServerConnection {
         return ("unknown", trimmed)
     }
 
-    func decodeQueueStateFromCommandData(_ data: JSONValue?) -> MessageQueueState? {
-        guard let data else { return nil }
-
-        do {
-            let encoded = try JSONEncoder().encode(data)
-            return try JSONDecoder().decode(MessageQueueState.self, from: encoded)
-        } catch {
-            logger.warning("Failed to decode queue command_result: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
     // MARK: - Stop Lifecycle
 
     /// Returns true if the message is a stop lifecycle event.
@@ -417,8 +402,15 @@ extension ServerConnection {
         }
 
         if command == "get_queue" || command == "set_queue" {
-            if success, let queue = decodeQueueStateFromCommandData(data) {
-                messageQueueStore.apply(queue, for: sessionId)
+            let effects = ServerMessageEffects.queueEffectsForCommandResult(
+                command: command,
+                success: success,
+                data: data
+            )
+            if success, !effects.isEmpty {
+                applyQueueEffects(effects, sessionId: sessionId)
+            } else if success, data != nil {
+                logger.warning("Failed to decode queue command_result for \(command, privacy: .public)")
             }
             return true
         }

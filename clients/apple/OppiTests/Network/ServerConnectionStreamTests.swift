@@ -170,6 +170,45 @@ struct ServerConnectionStreamTests {
         #expect(received, "Message should be yielded to session continuation")
     }
 
+    @Test func routeStreamMessageYieldsSessionEventWithMetadata() async {
+        let (conn, _) = makeTestConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        var receivedEvents: [SessionStreamEvent] = []
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
+        }
+
+        let consumeTask = Task {
+            for await event in stream {
+                await MainActor.run { receivedEvents.append(event) }
+            }
+        }
+
+        conn.routeStreamMessage(StreamFrameEvent(
+            sessionId: "s1",
+            message: .agentStart,
+            meta: InboundStreamMeta(
+                seq: 42,
+                currentSeq: 45,
+                receivedAtMs: 123,
+                transportPath: .lan
+            )
+        ))
+
+        let received = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { !receivedEvents.isEmpty }
+        }
+
+        consumeTask.cancel()
+
+        #expect(received, "Message should be yielded to event continuation")
+        #expect(receivedEvents.first?.sessionId == "s1")
+        #expect(receivedEvents.first?.meta?.seq == 42)
+        #expect(receivedEvents.first?.meta?.currentSeq == 45)
+        #expect(receivedEvents.first?.meta?.transportPath == .lan)
+    }
+
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadStream() async {
@@ -199,7 +238,7 @@ struct ServerConnectionStreamTests {
                 "Should not replace an active consumption task")
     }
 
-    // MARK: - routeStreamMessage resolves subscribe waiter eagerly
+    // MARK: - routeStreamMessage resolves command waiters at stream boundary
 
     @Test func routeStreamMessageResolvesSubscribeWaiterBeforePerSessionRouting() async {
         let (conn, _) = makeTestConnection()
@@ -257,7 +296,7 @@ struct ServerConnectionStreamTests {
         #expect(result != nil, "get_queue waiter should be resolved eagerly by routeStreamMessage")
     }
 
-    @Test func routeStreamMessageDoesNotEagerlyResolveNonSetupCommands() {
+    @Test func routeStreamMessageResolvesNonSetupCommandAtBoundary() async {
         let (conn, _) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -280,8 +319,8 @@ struct ServerConnectionStreamTests {
         )
         conn.routeStreamMessage(streamMsg)
 
-        #expect(conn.commands.pendingCommandsByRequestId["req-m"] != nil,
-                "Non-setup commands should not be resolved eagerly by routeStreamMessage")
+        let result = try? await pending.waiter.wait()
+        #expect(result != nil, "All requestId command results should resolve at stream boundary")
     }
 
     // MARK: - streamSession timing budget (regression gate)
@@ -432,53 +471,4 @@ struct ServerConnectionStreamTests {
                 "disconnectStream should cancel all pending unsubscribes")
     }
 
-    // MARK: - Pre-track subscription for inbound meta
-
-    @Test func subscribePreTracksActiveSubscriptionSynchronously() throws {
-        let (conn, _) = makeTestConnection()
-        let ws = try #require(conn.wsClient)
-
-        // Before pre-track: no subscription
-        #expect(ws._activeSubscriptionForTesting("pre-track-session") == nil)
-
-        // Simulate what send() does: pre-track synchronously
-        ws._preTrackSubscriptionForTesting(
-            .subscribe(sessionId: "pre-track-session", level: .full, requestId: "r1")
-        )
-
-        #expect(
-            ws._activeSubscriptionForTesting("pre-track-session") == .full,
-            "preTrackSubscription should set activeSubscriptions synchronously before the actual send, so the receive loop meta guard passes for the server's immediate response"
-        )
-    }
-
-    @Test func subscribePreTrackRolledBackOnFailure() throws {
-        let (conn, _) = makeTestConnection()
-        let ws = try #require(conn.wsClient)
-
-        // Pre-track then rollback (simulates send failure path)
-        ws._preTrackSubscriptionForTesting(
-            .subscribe(sessionId: "rollback-session", level: .full, requestId: "r1")
-        )
-        #expect(ws._activeSubscriptionForTesting("rollback-session") == .full)
-
-        ws._rollbackPreTrackSubscriptionForTesting(
-            .subscribe(sessionId: "rollback-session", level: .full, requestId: "r1")
-        )
-        #expect(
-            ws._activeSubscriptionForTesting("rollback-session") == nil,
-            "rollbackPreTrackSubscription should remove the pre-tracked subscription"
-        )
-    }
-
-    @Test func preTrackIsNoOpForNonSubscribeMessages() throws {
-        let (conn, _) = makeTestConnection()
-        let ws = try #require(conn.wsClient)
-
-        // Pre-track with a non-subscribe message should be a no-op
-        ws._preTrackSubscriptionForTesting(
-            .unsubscribe(sessionId: "some-session", requestId: "r1")
-        )
-        #expect(ws._activeSubscriptionForTesting("some-session") == nil)
-    }
 }

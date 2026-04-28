@@ -54,8 +54,8 @@ extension ServerConnection {
     }
 
     func stashActiveAskIfNeeded(keepStoreEntry: Bool = true) {
-        guard let activeSessionId, let ask = activeAskRequest else { return }
-        stashPendingAskRequest(ask, for: activeSessionId, keepStoreEntry: keepStoreEntry)
+        guard let focusedSessionId, let ask = activeAskRequest else { return }
+        stashPendingAskRequest(ask, for: focusedSessionId, keepStoreEntry: keepStoreEntry)
         activeAskRequest = nil
     }
 
@@ -98,8 +98,8 @@ extension ServerConnection {
     }
 
     func stashActiveExtensionDialogIfNeeded() {
-        guard let activeSessionId, let request = activeExtensionDialog else { return }
-        pendingExtensionDialogs[activeSessionId] = request
+        guard let focusedSessionId, let request = activeExtensionDialog else { return }
+        pendingExtensionDialogs[focusedSessionId] = request
         activeExtensionDialog = nil
         cancelExtensionTimeout()
     }

@@ -101,27 +101,34 @@ struct ServerConnectionNetworkPathChangeTests {
 
     // MARK: - Session Preservation
 
-    @Test func pathChangePreservesActiveSessionId() {
+    @Test func pathChangePreservesFocusedSessionId() {
         let (conn, pipe) = makeConnectionOnLAN()
         conn._setActiveSessionIdForTesting("s1")
         conn.wsClient?._setStatusForTesting(.connected)
 
         conn.handleNetworkPathChange()
 
-        #expect(conn.activeSessionId == "s1",
-                "Active session must survive network path change")
+        #expect(conn.focusedSessionId == "s1",
+                "Focused session must survive network path change")
     }
 
     @Test func pathChangePreservesNotificationSubscriptions() {
         let (conn, pipe) = makeConnectionOnLAN()
         conn._setActiveSessionIdForTesting("s1")
-        conn.notificationSessionIds = ["s2", "s3"]
+        conn.subscriptionRegistry.setDesired(.notifications, for: "s2")
+        conn.subscriptionRegistry.markSubscribeSent(sessionId: "s2", requestId: "r2", level: .notifications)
+        conn.subscriptionRegistry.markSubscribeAck(sessionId: "s2", requestId: "r2")
+        conn.subscriptionRegistry.setDesired(.notifications, for: "s3")
+        conn.subscriptionRegistry.markSubscribeSent(sessionId: "s3", requestId: "r3", level: .notifications)
+        conn.subscriptionRegistry.markSubscribeAck(sessionId: "s3", requestId: "r3")
         conn.wsClient?._setStatusForTesting(.connected)
 
         conn.handleNetworkPathChange()
 
-        #expect(conn.notificationSessionIds == ["s2", "s3"],
-                "Notification subscriptions must survive network path change")
+        #expect(conn.subscriptionRegistry.sessionIds(desired: .notifications) == ["s2", "s3"],
+                "Desired notification subscriptions must survive network path change")
+        #expect(conn.subscriptionRegistry.sessionIds(acked: .notifications) == ["s2", "s3"],
+                "Acked notification subscriptions must survive network path change")
     }
 
     @Test func pathChangePreservesReducerTimeline() {
@@ -348,8 +355,8 @@ struct ConnectionCoordinatorPathChangeTests {
                 "Should fall back to paired/Tailscale endpoint")
         #expect(await conn.apiClient?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749",
                 "API client should use Tailscale address")
-        #expect(conn.activeSessionId == "s1",
-                "Active session must survive the transition")
+        #expect(conn.focusedSessionId == "s1",
+                "Focused session must survive the transition")
         #expect(conn.sessionStore.sessions.first(where: { $0.id == "s1" })?.status == .busy,
                 "Session status must survive the transition")
         #expect(conn.wsClient?.status != .connected,

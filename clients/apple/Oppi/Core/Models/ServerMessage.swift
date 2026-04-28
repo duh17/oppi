@@ -531,6 +531,48 @@ struct StreamMessage: Sendable, Equatable {
     let message: ServerMessage
 }
 
+/// Transport metadata attached to the same frame as a server message.
+struct InboundStreamMeta: Sendable, Equatable {
+    let seq: Int?
+    let currentSeq: Int?
+    let receivedAtMs: Int64?
+    let transportPath: ConnectionTransportPath
+
+    init(
+        seq: Int?,
+        currentSeq: Int?,
+        receivedAtMs: Int64? = nil,
+        transportPath: ConnectionTransportPath = .paired
+    ) {
+        self.seq = seq
+        self.currentSeq = currentSeq
+        self.receivedAtMs = receivedAtMs
+        self.transportPath = transportPath
+    }
+}
+
+/// A decoded `/stream` WebSocket frame with its metadata kept in-band.
+struct StreamFrameEvent: Sendable, Equatable {
+    let sessionId: String?
+    let message: ServerMessage
+    let meta: InboundStreamMeta?
+}
+
+/// A session-routed stream event. Chat session consumers receive this instead
+/// of reconstructing metadata from a side queue.
+struct SessionStreamEvent: Sendable, Equatable {
+    enum Source: Sendable, Equatable {
+        case live
+        case catchUp
+        case replay
+    }
+
+    let sessionId: String
+    let message: ServerMessage
+    let meta: InboundStreamMeta?
+    let source: Source
+}
+
 extension StreamMessage: Decodable {
     enum CodingKeys: String, CodingKey {
         case sessionId, streamSeq, seq, currentSeq

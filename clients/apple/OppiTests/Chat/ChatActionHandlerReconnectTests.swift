@@ -252,17 +252,17 @@ struct ChatActionHandlerReconnectTests {
         #expect(queue.steering.first?.message == "steer while busy")
     }
 
-    // MARK: - activeSessionId nil window
+    // MARK: - focus nil window
 
-    @Test func sendWithNilActiveSessionId_failsGracefully() async {
-        // Reproduces the window between disconnectSession() clearing
-        // sender.activeSessionId and streamSession() re-setting it.
+    @Test func sendWithNilFocusedSession_failsGracefully() async {
+        // Reproduces the window between disconnectSession() clearing focus and
+        // streamSession() re-establishing it.
         // The prompt should fail with a visible error, not hang silently.
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection.configure(credentials: makeTestCredentials())
-        // Deliberately do NOT set activeSessionId — simulates the nil window
+        // Deliberately do NOT set focus — simulates the nil window
         connection._setActiveSessionIdForTesting(nil)
         connection._sendAckTimeoutForTesting = .milliseconds(200)
 
@@ -299,7 +299,7 @@ struct ChatActionHandlerReconnectTests {
     // MARK: - Full reconnect cycle simulation
 
     @Test func promptAfterSimulatedReconnect_delivered() async {
-        // Happy path after reconnect: activeSessionId is re-set,
+        // Happy path after reconnect: focus is re-set,
         // WS is connected, prompt goes through.
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -327,10 +327,10 @@ struct ChatActionHandlerReconnectTests {
             }
         }
 
-        // Simulate: disconnectSession clears activeSessionId
+        // Simulate: disconnectSession clears focus
         connection._setActiveSessionIdForTesting(nil)
 
-        // Simulate: streamSession re-sets it (reconnect complete)
+        // Simulate: streamSession re-sets focus (reconnect complete)
         connection._setActiveSessionIdForTesting("s1")
 
         // Now send — should work

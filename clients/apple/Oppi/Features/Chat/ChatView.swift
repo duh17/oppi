@@ -406,7 +406,7 @@ struct ChatView: View {
                 sessionManager.cleanup()
                 scrollController.cancel()
                 audioPlayer.stop()
-                if connection.activeSessionId == oldId {
+                if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
 
@@ -524,11 +524,12 @@ struct ChatView: View {
                             try await connection.setMessageQueue(
                                 baseVersion: baseVersion,
                                 steering: steering,
-                                followUp: followUp
+                                followUp: followUp,
+                                sessionIdOverride: sessionId
                             )
                         },
                         onRefresh: {
-                            try? await connection.requestMessageQueue()
+                            try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
                         }
                     )
                     .padding(.horizontal, 16)
@@ -961,7 +962,7 @@ struct ChatView: View {
 
         guard newStatus == .busy else { return }
         Task {
-            try? await connection.requestMessageQueue()
+            try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
         }
     }
 
@@ -974,8 +975,8 @@ struct ChatView: View {
 
     @MainActor
     private func disconnectIfCurrentSession() {
-        let activeSessionId = connection.activeSessionId
-        if activeSessionId == sessionId || activeSessionId == nil {
+        let focusedSessionId = connection.focusedSessionId
+        if focusedSessionId == sessionId || focusedSessionId == nil {
             connection.disconnectSession()
         }
     }

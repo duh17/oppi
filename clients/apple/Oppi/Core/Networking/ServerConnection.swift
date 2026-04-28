@@ -51,7 +51,16 @@ final class ServerConnection {
     // owned by ChatSessionManager. Tests use TestEventPipeline instead.
 
     // Stream lifecycle
-    var activeSessionId: String?
+    let focusedSessionStore = FocusedSessionStore()
+
+    var focusedSessionId: String? {
+        focusedSessionStore.focused?.sessionId
+    }
+
+
+    func isFocusedSession(_ sessionId: String) -> Bool {
+        focusedSessionStore.isFocused(sessionId)
+    }
     let sessionStreamCoordinator = SessionStreamCoordinator()
     let subscriptionRegistry = StreamSubscriptionRegistry()
 
@@ -146,14 +155,6 @@ final class ServerConnection {
     /// fire-and-forget unsubscribe from racing past the new subscribe.
     var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
 
-    /// Sessions we intentionally keep at notification-level subscription.
-    /// Excludes the current `activeSessionId` (which is subscribed at full level).
-    var notificationSessionIds: Set<String> = []
-
-    /// Notification-level subscribes in flight; prevents duplicate subscribe storms
-    /// when `syncNotificationSubscriptions()` is triggered repeatedly.
-    var pendingNotificationSubscriptionIds: Set<String> = []
-
     /// Debounce timer for notification subscription sync.
     /// Coalesces rapid-fire calls (every server message triggers
     /// syncLiveActivityPermissions) into a single WS subscribe batch.
@@ -222,6 +223,9 @@ final class ServerConnection {
             preferredEndpoint: selection
         )
         sender.wsClient = self.wsClient
+        sender.focusedSessionProvider = { [weak self] in
+            self?.focusedSessionStore.focused
+        }
 
         return true
     }
@@ -331,7 +335,7 @@ final class ServerConnection {
         ClientLog.info("Network", "Force stream reconnect after path change", metadata: [
             "wasLAN": wasOnLAN ? "true" : "false",
             "wsStatus": String(describing: statusBeforePathChange),
-            "activeSession": activeSessionId ?? "none",
+            "focusedSession": focusedSessionId ?? "none",
         ])
 
         // Tear down old WS + consumption task. Per-session continuations
@@ -438,8 +442,6 @@ final class ServerConnection {
         pendingUnsubscribeTasks.removeAll()
         pendingNotificationSyncTask?.cancel()
         pendingNotificationSyncTask = nil
-        notificationSessionIds.removeAll()
-        pendingNotificationSubscriptionIds.removeAll()
         subscriptionRegistry.removeAll()
         sessionUsageMetricSnapshots.removeAll()
         asrAvailable = false
@@ -532,7 +534,7 @@ final class ServerConnection {
 
         // Also route notification-level events to the active session handler
         // (permissions from other sessions still need processing)
-        if let sessionId, sessionId != activeSessionId {
+        if let sessionId, !isFocusedSession(sessionId) {
             handleCrossSessionMessage(message, sessionId: sessionId)
         }
     }
@@ -705,7 +707,7 @@ final class ServerConnection {
     /// or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
-        let previousSessionId = activeSessionId
+        let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
             // Hand off session-scoped control-plane state before switching the
             // focused command target. Without this, an ask from the previous
@@ -716,8 +718,8 @@ final class ServerConnection {
             silenceWatchdog.stop()
         }
 
-        activeSessionId = sessionId
-        sender.activeSessionId = sessionId
+        let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
+        focusedSessionStore.focus(sessionId: sessionId, workspaceId: workspaceId)
         // Reset per-connection UI state for the new focused session
         activeExtensionDialog = nil
         extensionTimeoutTask?.cancel()
@@ -735,21 +737,20 @@ final class ServerConnection {
         commands.failAllTurnSends(error: WebSocketError.notConnected)
         commands.failAllCommands(error: WebSocketError.notConnected)
 
-        if let activeSessionId {
-            unsubscribeSession(activeSessionId)
-            messageQueueStore.clear(sessionId: activeSessionId)
-            sessionUsageMetricSnapshots.removeValue(forKey: activeSessionId)
-            screenAwakeController.clearSessionActivity(sessionId: activeSessionId)
+        if let focusedSessionId {
+            unsubscribeSession(focusedSessionId)
+            messageQueueStore.clear(sessionId: focusedSessionId)
+            sessionUsageMetricSnapshots.removeValue(forKey: focusedSessionId)
+            screenAwakeController.clearSessionActivity(sessionId: focusedSessionId)
         }
 
-        // Stash pending user-blocking UI before clearing activeSessionId so it can
+        // Stash pending user-blocking UI before clearing focus so it can
         // be restored on focusSession(). Without this, navigating away loses
         // in-flight client/server UI state permanently.
         stashActiveAskIfNeeded()
         stashActiveExtensionDialogIfNeeded()
 
-        activeSessionId = nil
-        sender.activeSessionId = nil
+        focusedSessionStore.clear()
         sessionStreamCoordinator.noteStreamDisconnected()
         Task {
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
@@ -770,31 +771,31 @@ final class ServerConnection {
 
     // MARK: - Actions (delegated to MessageSender)
 
-    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendPrompt(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
+    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendPrompt(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
-    func sendSteer(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendSteer(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
+    func sendSteer(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendSteer(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
-    func sendFollowUp(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendFollowUp(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
+    func sendFollowUp(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendFollowUp(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
-    func sendStop() async throws { try await sender.sendStop() }
-    func sendStopSession() async throws { try await sender.sendStopSession() }
+    func sendStop(sessionIdOverride: String? = nil) async throws { try await sender.sendStop(sessionIdOverride: sessionIdOverride) }
+    func sendStopSession(sessionIdOverride: String? = nil) async throws { try await sender.sendStopSession(sessionIdOverride: sessionIdOverride) }
 
     func send(_ message: ClientMessage) async throws { try await sender.send(message) }
 
     func requestState() async throws { try await sender.requestState() }
 
-    func requestMessageQueue(timeout: Duration = MessageSender.commandRequestTimeoutDefault) async throws {
-        try await sender.requestMessageQueue(timeout: timeout)
+    func requestMessageQueue(timeout: Duration = MessageSender.commandRequestTimeoutDefault, sessionIdOverride: String? = nil) async throws {
+        try await sender.requestMessageQueue(timeout: timeout, sessionIdOverride: sessionIdOverride)
     }
 
-    func setMessageQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem]) async throws {
-        try await sender.setMessageQueue(baseVersion: baseVersion, steering: steering, followUp: followUp)
+    func setMessageQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem], sessionIdOverride: String? = nil) async throws {
+        try await sender.setMessageQueue(baseVersion: baseVersion, steering: steering, followUp: followUp, sessionIdOverride: sessionIdOverride)
     }
 
     func sendCommandAwaitingResult(
@@ -827,7 +828,7 @@ final class ServerConnection {
 
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
-            if request.sessionId == activeSessionId {
+            if isFocusedSession(request.sessionId) {
                 onPermissionResolved?(id, outcome, request.tool, request.displaySummary)
             }
         }
@@ -857,8 +858,11 @@ final class ServerConnection {
     }
 
     func _setActiveSessionIdForTesting(_ sessionId: String?) {
-        activeSessionId = sessionId
-        sender.activeSessionId = sessionId
+        if let sessionId {
+            focusedSessionStore.focus(sessionId: sessionId, workspaceId: nil)
+        } else {
+            focusedSessionStore.clear()
+        }
     }
 
     func telemetryErrorKind(from error: Error) -> String {

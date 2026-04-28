@@ -5,7 +5,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebS
 
 /// WebSocket client for the multiplexed `/stream` endpoint.
 ///
-/// Returns an `AsyncStream<StreamMessage>` from `connect()`.
+/// Returns an `AsyncStream<StreamFrameEvent>` from `connect()`.
 /// Handles keepalive pings, reconnection, and cleanup.
 ///
 /// Each server gets one persistent `/stream` WebSocket. Sessions are
@@ -26,35 +26,19 @@ final class WebSocketClient {
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
     private var connectionID: UInt64 = 0
 
-    struct InboundMeta: Sendable, Equatable {
-        let seq: Int?
-        let currentSeq: Int?
-        let receivedAtMs: Int64?
-
-        init(seq: Int?, currentSeq: Int?, receivedAtMs: Int64? = nil) {
-            self.seq = seq
-            self.currentSeq = currentSeq
-            self.receivedAtMs = receivedAtMs
-        }
-    }
+    typealias InboundMeta = InboundStreamMeta
 
     private var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
-    private var continuation: AsyncStream<StreamMessage>.Continuation?
-    private var inboundMetaQueueBySessionID: [String: [InboundMeta]] = [:]
-    private var inboundMetaQueueHighWaterBySessionID: [String: Int] = [:]
+    private var continuation: AsyncStream<StreamFrameEvent>.Continuation?
     private var lastReceiveErrorFingerprint: String?
     private var lastReceiveErrorLogNs: UInt64 = 0
 
     /// Deduplicate repeated receive error logs (common during lifecycle
     /// transitions) while preserving first occurrence signal.
     private let receiveErrorLogCooldownNs: UInt64 = 3_000_000_000
-
-    /// Active subscriptions tracked for resubscription after reconnect.
-    /// Key: sessionId, Value: subscription level.
-    private(set) var activeSubscriptions: [String: StreamSubscriptionLevel] = [:]
 
     let credentials: ServerCredentials
     private var preferredEndpoint: EndpointSelection?
@@ -99,13 +83,13 @@ final class WebSocketClient {
     /// Connect to the server's multiplexed `/stream` WebSocket.
     ///
     /// Disconnects any existing connection first.
-    /// Returns an `AsyncStream` that yields `StreamMessage` (message + sessionId)
+    /// Returns an `AsyncStream` that yields `StreamFrameEvent` (message + sessionId + metadata)
     /// until disconnect.
     ///
     /// The first message will be `streamConnected(userName:)`.
     /// After reconnection, `streamConnected` is yielded again — ServerConnection
     /// uses this as the signal to re-subscribe to sessions.
-    func connect() -> AsyncStream<StreamMessage> {
+    func connect() -> AsyncStream<StreamFrameEvent> {
         // Disconnect previous connection
         let oldConn = connectionID
         disconnect()
@@ -185,20 +169,6 @@ final class WebSocketClient {
 
         let sendTimeout = self.sendTimeout
 
-        // Track subscribe state BEFORE sending so the receive loop's meta
-        // guard (`activeSubscriptions[sessionId] == .full`) passes for the
-        // server's immediate response (connected, state, command_result).
-        //
-        // Without this, there's a race: `sendWithTimeout` suspends the
-        // MainActor, the server responds, the receive loop hops to
-        // MainActor to store InboundMeta but `activeSubscriptions` isn't
-        // set yet → meta (carrying `currentSeq`) is dropped → catch-up
-        // is skipped → timeline stays empty for idle sessions.
-        //
-        // Unsubscribe is tracked AFTER send to avoid premature rejection
-        // of in-flight messages.
-        preTrackSubscription(message)
-
         do {
             try await sendWithTimeout(payload: payload, over: ws, timeout: sendTimeout)
         } catch {
@@ -214,52 +184,9 @@ final class WebSocketClient {
                     attemptReconnect()
                 }
             }
-            // Rollback pre-tracked subscription on send failure so stale
-            // entries don't leak into the meta guard.
-            rollbackPreTrackSubscription(message)
             throw error
         }
 
-        // Post-send tracking: handles unsubscribe and is a no-op for
-        // subscribe (already tracked above).
-        trackSubscription(message)
-    }
-
-    // MARK: - Subscription Tracking
-
-    /// Pre-send: set subscription level for `.subscribe` so the receive
-    /// loop's meta guard passes for the server's immediate response.
-    /// No-op for other message types.
-    private func preTrackSubscription(_ message: ClientMessage) {
-        guard case .subscribe(let sessionId, let level, _, _) = message else { return }
-        activeSubscriptions[sessionId] = level
-        inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
-        inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
-    }
-
-    /// Undo `preTrackSubscription` when the send fails — prevents stale
-    /// subscription entries from leaking.
-    private func rollbackPreTrackSubscription(_ message: ClientMessage) {
-        guard case .subscribe(let sessionId, _, _, _) = message else { return }
-        activeSubscriptions.removeValue(forKey: sessionId)
-        inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
-        inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
-    }
-
-    /// Post-send: track subscribe/unsubscribe for reconnect resubscription.
-    /// For `.subscribe` this is a no-op (already pre-tracked).
-    private func trackSubscription(_ message: ClientMessage) {
-        switch message {
-        case .subscribe(let sessionId, let level, _, _):
-            activeSubscriptions[sessionId] = level
-            // Meta queue already cleared by preTrackSubscription; no-op here.
-        case .unsubscribe(let sessionId, _):
-            activeSubscriptions.removeValue(forKey: sessionId)
-            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
-            inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
-        default:
-            break
-        }
     }
 
     /// Commands that include their own sessionId and don't need the envelope.
@@ -394,9 +321,9 @@ final class WebSocketClient {
     /// errors. Resetting here lets `connectStream()` start a fresh connection
     /// without waiting for the stale backoff timer.
     ///
-    /// Unlike `disconnect()`, this preserves active subscriptions and the
-    /// continuation so `handleStreamReconnected()` can re-subscribe after
-    /// the new connection opens.
+    /// Unlike `disconnect()`, this preserves diagnostic subscription state and
+    /// the continuation. Durable resubscribe intent is owned by
+    /// `StreamSubscriptionRegistry` on `ServerConnection`.
     func cancelReconnectBackoff() {
         guard case .reconnecting(let attempt) = status else { return }
         wsLogInfo("Cancelling reconnect backoff (was attempt \(attempt))")
@@ -416,8 +343,8 @@ final class WebSocketClient {
     ///
     /// Sends `.goingAway` (1001) so the server sees a clean close instead of
     /// discovering the dead connection via ping timeout (1006). Stops the ping
-    /// timer since no pongs can be sent while suspended. Preserves subscriptions
-    /// and continuation so `reconnectIfNeeded()` can reopen on foreground.
+    /// timer since no pongs can be sent while suspended. Keeps the stream
+    /// continuation so `reconnectIfNeeded()` can reopen on foreground.
     func prepareForBackground() {
         guard let ws = webSocket, status == .connected else { return }
         wsLogInfo("Preparing for background — sending goingAway close")
@@ -435,7 +362,6 @@ final class WebSocketClient {
                 "hasReceiveTask": String(receiveTask != nil),
                 "hasPingTask": String(pingTask != nil),
                 "hasReconnectTask": String(reconnectTask != nil),
-                "subscriptions": String(activeSubscriptions.count),
             ]
         )
 
@@ -451,9 +377,6 @@ final class WebSocketClient {
 
         continuation?.finish()
         continuation = nil
-        inboundMetaQueueBySessionID.removeAll(keepingCapacity: false)
-        inboundMetaQueueHighWaterBySessionID.removeAll(keepingCapacity: false)
-        activeSubscriptions.removeAll()
         lastReceiveErrorFingerprint = nil
         lastReceiveErrorLogNs = 0
 
@@ -467,7 +390,6 @@ final class WebSocketClient {
         var metadata = extra
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
-        metadata["subscriptions"] = activeSubscriptions.keys.joined(separator: ",")
         metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
         return metadata
     }
@@ -505,7 +427,7 @@ final class WebSocketClient {
         return true
     }
 
-    private func openStreamWebSocket(continuation: AsyncStream<StreamMessage>.Continuation) {
+    private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         let url = preferredEndpoint?.streamURL ?? credentials.streamURL
 
         guard let url else {
@@ -524,7 +446,7 @@ final class WebSocketClient {
         startPingTimer(ws: ws)
     }
 
-    private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<StreamMessage>.Continuation) {
+    private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<StreamFrameEvent>.Continuation) {
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -554,58 +476,18 @@ final class WebSocketClient {
                         continue
                     }
 
-                    let transportTag = self?.preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
-                    let messageType = streamMessage.message.typeLabel
-
-                    let inboundReceivedAtMs = Date.nowMs()
+                    let transportPath = self?.preferredEndpoint?.transportPath ?? .paired
                     let inboundMeta = InboundMeta(
                         seq: streamMessage.seq,
                         currentSeq: streamMessage.currentSeq,
-                        receivedAtMs: inboundReceivedAtMs
+                        receivedAtMs: Date.nowMs(),
+                        transportPath: transportPath
                     )
-                    let mainActorHopStartedAtMs = Date.nowMs()
-                    await MainActor.run {
-                        guard let self,
-                              let sessionId = streamMessage.sessionId,
-                              !sessionId.isEmpty,
-                              self.activeSubscriptions[sessionId] == .full else {
-                            return
-                        }
-
-                        var queue = self.inboundMetaQueueBySessionID[sessionId] ?? []
-                        queue.append(inboundMeta)
-                        // Cap per-session queue to prevent unbounded growth if
-                        // messages arrive faster than they are consumed.
-                        if queue.count > 100 {
-                            queue.removeFirst(queue.count - 100)
-                        }
-                        self.inboundMetaQueueBySessionID[sessionId] = queue
-
-                        let depth = queue.count
-                        let previousHighWater = self.inboundMetaQueueHighWaterBySessionID[sessionId] ?? 0
-                        if depth > previousHighWater {
-                            self.inboundMetaQueueHighWaterBySessionID[sessionId] = depth
-                            Task.detached(priority: .utility) {
-                                await ChatMetricsService.shared.record(
-                                    metric: .inboundQueueDepth,
-                                    value: Double(depth),
-                                    unit: .count,
-                                    sessionId: sessionId
-                                )
-                            }
-                        }
-                    }
-                    let mainActorHopDurationMs = max(0, Date.nowMs() - mainActorHopStartedAtMs)
-                    if mainActorHopDurationMs >= 1_000 {
-                        self?.wsLogError(
-                            "WS main-actor hop lag",
-                            metadata: [
-                                "type": messageType,
-                                "hopMs": String(mainActorHopDurationMs),
-                                "transport": transportTag,
-                            ]
-                        )
-                    }
+                    let frameEvent = StreamFrameEvent(
+                        sessionId: streamMessage.sessionId,
+                        message: streamMessage.message,
+                        meta: inboundMeta
+                    )
 
                     // First successful message = connected
                     await MainActor.run {
@@ -622,7 +504,7 @@ final class WebSocketClient {
                         logger.debug("Received unknown server message: \(type)")
                     }
 
-                    continuation.yield(streamMessage)
+                    continuation.yield(frameEvent)
                 } catch {
                     if Task.isCancelled { break }
                     if let self, self.shouldLogReceiveError(error) {
@@ -722,18 +604,10 @@ final class WebSocketClient {
         }
     }
 
-    func consumeInboundMeta(sessionId: String) -> InboundMeta? {
-        guard var queue = inboundMetaQueueBySessionID[sessionId], !queue.isEmpty else {
-            return nil
-        }
-
-        let meta = queue.removeFirst()
-        if queue.isEmpty {
-            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
-        } else {
-            inboundMetaQueueBySessionID[sessionId] = queue
-        }
-        return meta
+    func consumeInboundMeta(sessionId _: String) -> InboundMeta? {
+        // Metadata now travels in-band on StreamFrameEvent / SessionStreamEvent.
+        // Kept as a compatibility seam for older tests.
+        nil
     }
 
     /// Reconnect delay curve tuned for mobile networking:
@@ -771,24 +645,6 @@ final class WebSocketClient {
         if status == .connected || status == .disconnected {
             resolveConnectionWaiters()
         }
-    }
-
-    // periphery:ignore - used by OppiTests via @testable import
-    /// Test seam: read subscription level for a session.
-    func _activeSubscriptionForTesting(_ sessionId: String) -> StreamSubscriptionLevel? {
-        activeSubscriptions[sessionId]
-    }
-
-    // periphery:ignore - used by OppiTests via @testable import
-    /// Test seam: exercise pre-track subscription logic without a real send.
-    func _preTrackSubscriptionForTesting(_ message: ClientMessage) {
-        preTrackSubscription(message)
-    }
-
-    // periphery:ignore - used by OppiTests via @testable import
-    /// Test seam: exercise rollback logic without a real send failure.
-    func _rollbackPreTrackSubscriptionForTesting(_ message: ClientMessage) {
-        rollbackPreTrackSubscription(message)
     }
 
     /// Thread-safe one-shot resolver for callback + timeout races.

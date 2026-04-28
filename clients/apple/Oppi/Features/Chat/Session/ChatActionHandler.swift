@@ -196,18 +196,18 @@ final class ChatActionHandler {
                 do {
                     switch busyStreamingBehavior {
                     case .steer:
-                        try await connection.sendSteer(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, onAckStage: { stage in
+                        try await connection.sendSteer(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
                             self.updateSendAckStage(stage)
                         })
                     case .followUp:
-                        try await connection.sendFollowUp(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, onAckStage: { stage in
+                        try await connection.sendFollowUp(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
                             self.updateSendAckStage(stage)
                         })
                     }
                     onSendSucceeded?()
                     self.scheduleSendStageClear()
                     Task { @MainActor in
-                        try? await connection.requestMessageQueue()
+                        try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
                     }
                 } catch {
                     connection.messageQueueStore.removeQueuedItem(
@@ -251,7 +251,7 @@ final class ChatActionHandler {
                 }
                 do {
                     let promptAttachments = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, onAckStage: { stage in
+                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, sessionIdOverride: sessionId, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     onSendSucceeded?()
@@ -445,7 +445,7 @@ final class ChatActionHandler {
         sessionManager: ChatSessionManager,
         sessionId: String
     ) {
-        guard connection.activeSessionId == sessionId else {
+        guard connection.isFocusedSession(sessionId) else {
             reducer.process(
                 .error(
                     sessionId: sessionId,
@@ -466,7 +466,7 @@ final class ChatActionHandler {
                 if let sendStopHook = self._sendStopForTesting {
                     try await sendStopHook(connection)
                 } else {
-                    try await connection.sendStop()
+                    try await connection.sendStop(sessionIdOverride: sessionId)
                 }
             } catch {
                 isStopping = false
@@ -495,7 +495,7 @@ final class ChatActionHandler {
                 if let sendStopSessionHook = self._sendStopSessionForTesting {
                     try await sendStopSessionHook(connection)
                 } else {
-                    try await connection.sendStopSession()
+                    try await connection.sendStopSession(sessionIdOverride: sessionId)
                 }
                 reducer.appendSystemEvent("Session stopped")
             } catch {
@@ -776,7 +776,7 @@ final class ChatActionHandler {
             ) {
                 do {
                     let promptAttachments = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmedText, attachments: promptAttachments, onAckStage: { stage in
+                    try await connection.sendPrompt(trimmedText, attachments: promptAttachments, sessionIdOverride: sessionId, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     sendRecoveryText = nil
@@ -872,7 +872,7 @@ final class ChatActionHandler {
         sessionId: String
     ) -> Bool {
         guard connection.wsClient?.status == .connected else { return false }
-        guard connection.activeSessionId == sessionId else { return false }
+        guard connection.isFocusedSession(sessionId) else { return false }
         guard sessionManager.entryState == .streaming else { return false }
         return true
     }

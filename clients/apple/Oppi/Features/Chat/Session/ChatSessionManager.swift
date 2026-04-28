@@ -606,7 +606,7 @@ final class ChatSessionManager {
 
         let storeResult = connection.applySharedStoreUpdate(for: message, sessionId: sessionId)
         routeToTimeline(message, connection: connection, storeResult: storeResult)
-        if connection.activeSessionId == sessionId {
+        if connection.isFocusedSession(sessionId) {
             connection.handleActiveSessionUI(message, sessionId: sessionId, storeResult: storeResult)
         }
     }
@@ -776,18 +776,13 @@ final class ChatSessionManager {
     /// its own coalescer + reducer, so parent/child sessions maintain
     /// independent timelines across NavigationStack navigation.
     private func routeToTimeline(_ message: ServerMessage, connection: ServerConnection, storeResult: ServerConnection.StoreUpdateResult = .notHandled) {
+        for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
+            coalescer.receive(event)
+        }
+
         switch message {
-        case .agentStart:
-            coalescer.receive(.agentStart(sessionId: sessionId))
-
-        case .agentEnd:
-            coalescer.receive(.agentEnd(sessionId: sessionId))
-
-        case .textDelta(let delta):
-            coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
-
-        case .thinkingDelta(let delta):
-            coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
+        case .agentStart, .agentEnd, .textDelta, .thinkingDelta:
+            break
 
         case .audioStream(let stream):
             connection.audioPlayer.handleAudioStream(stream)
@@ -813,49 +808,23 @@ final class ChatSessionManager {
             ))
 
         case .messageEnd(let role, let content):
-            if role == "assistant" {
-                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
-            } else if role == "user", !content.isEmpty {
+            if role == "user", !content.isEmpty {
                 if !reducer.hasUserMessage(matching: content) {
                     reducer.appendUserMessage(content)
                 }
             }
 
-        case .error(let msg, _, let fatal):
+        case .error(_, _, let fatal):
             // Sandbox VM errors (e.g. QEMU unavailable, VM start failure) propagate
             // through this standard path — the server sends them as .error messages
             // with fatal=true, which displays the message in the timeline and
             // suppresses auto-reconnect below.
-            coalescer.receive(.error(sessionId: sessionId, message: msg))
             if fatal {
                 connection.fatalSetupError = true
             }
 
-        case .sessionEnded(let reason):
-            coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
-
-        case .compactionStart(let reason):
-            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
-
-        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
-            coalescer.receive(.compactionEnd(
-                sessionId: sessionId, aborted: aborted,
-                willRetry: willRetry, summary: summary,
-                tokensBefore: tokensBefore
-            ))
-
-        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
-            coalescer.receive(.retryStart(
-                sessionId: sessionId, attempt: attempt,
-                maxAttempts: maxAttempts, delayMs: delayMs,
-                errorMessage: errorMessage
-            ))
-
-        case .retryEnd(let success, let attempt, let finalError):
-            coalescer.receive(.retryEnd(
-                sessionId: sessionId, success: success,
-                attempt: attempt, finalError: finalError
-            ))
+        case .sessionEnded, .compactionStart, .compactionEnd, .retryStart, .retryEnd:
+            break
 
         case .commandResult(let command, let requestId, let success, let data, let error):
             let consumed = connection.handleCommandResult(
@@ -1030,7 +999,7 @@ final class ChatSessionManager {
 
                 let eventStoreResult = connection.applySharedStoreUpdate(for: event.message, sessionId: sessionId)
                 routeToTimeline(event.message, connection: connection, storeResult: eventStoreResult)
-                if connection.activeSessionId == sessionId {
+                if connection.isFocusedSession(sessionId) {
                     connection.handleActiveSessionUI(event.message, sessionId: sessionId, storeResult: eventStoreResult)
                 }
                 appliedCatchUp = true
@@ -1351,8 +1320,8 @@ final class ChatSessionManager {
         // Without this check, when session B takes over the WS,
         // session A's cleanup would kill session B's connection,
         // causing a connect/disconnect ping-pong loop.
-        guard connection.activeSessionId == sessionId
-              || connection.activeSessionId == nil else { return }
+        guard connection.isFocusedSession(sessionId)
+              || connection.focusedSessionId == nil else { return }
         connection.disconnectSession()
     }
 }

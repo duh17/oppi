@@ -23,8 +23,12 @@ final class MessageSender {
     /// WebSocket client — set/cleared by ServerConnection on connect/disconnect.
     weak var wsClient: WebSocketClient?
 
-    /// Active session ID — read from ServerConnection for envelope framing.
-    var activeSessionId: String?
+    /// Focused session context used for session envelope framing.
+    var focusedSessionProvider: (() -> FocusedSessionContext?)?
+
+    private var targetSessionId: String? {
+        focusedSessionProvider?()?.sessionId
+    }
 
     // MARK: - Constants
 
@@ -72,7 +76,7 @@ final class MessageSender {
 
         guard let wsClient else { throw WebSocketError.notConnected }
 
-        let targetSessionId = sessionIdOverride ?? activeSessionId
+        let resolvedSessionId = sessionIdOverride ?? targetSessionId
 
         // Session-scoped messages require a valid session envelope.
         // During the reconnect gap (disconnectSession clears it, streamSession
@@ -80,12 +84,12 @@ final class MessageSender {
         // can't be routed — the server silently drops them, no ack arrives,
         // and the user waits for the full ack timeout with no feedback.
         // Fail fast so the error handler can restore the text immediately.
-        if targetSessionId == nil, !Self.isSessionLevelCommand(message) {
+        if resolvedSessionId == nil, !Self.isSessionLevelCommand(message) {
             logger.error("SEND blocked: targetSessionId is nil for session-scoped \(message.typeLabel, privacy: .public)")
             throw WebSocketError.notConnected
         }
 
-        try await wsClient.send(message, sessionId: targetSessionId)
+        try await wsClient.send(message, sessionId: resolvedSessionId)
     }
 
     /// Returns true for messages that don't require a session envelope
@@ -138,12 +142,13 @@ final class MessageSender {
         requestId: String,
         clientTurnId: String,
         command: String,
+        sessionIdOverride: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil,
         message: () -> ClientMessage
     ) async throws {
         if _sendMessageForTesting == nil {
             guard wsClient != nil else { throw WebSocketError.notConnected }
-            guard activeSessionId != nil else {
+            guard sessionIdOverride ?? targetSessionId != nil else {
                 logger.error("SEND \(command, privacy: .public) blocked: no active session (reconnect gap)")
                 throw WebSocketError.notConnected
             }
@@ -164,9 +169,9 @@ final class MessageSender {
                 pending.resetWaiter()
                 try? await Task.sleep(for: Self.turnSendRetryDelay)
 
-                // Re-check after sleep: activeSessionId may have been cleared
-                // by disconnectSession() during the retry delay.
-                if _sendMessageForTesting == nil, activeSessionId == nil {
+                // Re-check after sleep: focus may have been cleared by
+                // disconnectSession() during the retry delay.
+                if _sendMessageForTesting == nil, sessionIdOverride ?? targetSessionId == nil {
                     let error = WebSocketError.notConnected
                     pending.waiter.resolve(.failure(error))
                     commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
@@ -175,7 +180,7 @@ final class MessageSender {
             }
 
             do {
-                try await dispatchSend(message())
+                try await dispatchSend(message(), sessionIdOverride: sessionIdOverride)
             } catch {
                 lastError = error
                 if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
@@ -243,6 +248,7 @@ final class MessageSender {
     func sendCommandAwaitingResult(
         command: String,
         timeout: Duration? = nil,
+        sessionIdOverride: String? = nil,
         message: (String) -> ClientMessage
     ) async throws -> JSONValue? {
         if _sendMessageForTesting == nil, wsClient == nil {
@@ -260,7 +266,7 @@ final class MessageSender {
         commands.registerCommand(pending)
 
         do {
-            try await dispatchSend(outboundMessage)
+            try await dispatchSend(outboundMessage, sessionIdOverride: sessionIdOverride)
         } catch {
             commands.unregisterCommand(requestId: requestId)
             pending.waiter.resolve(.failure(error))
@@ -318,6 +324,7 @@ final class MessageSender {
         _ text: String,
         attachments: [ChatAttachmentRef]? = nil,
         clientTurnId providedClientTurnId: String? = nil,
+        sessionIdOverride: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
@@ -326,6 +333,7 @@ final class MessageSender {
             requestId: requestId,
             clientTurnId: clientTurnId,
             command: "prompt",
+            sessionIdOverride: sessionIdOverride,
             onAckStage: onAckStage
         ) {
             .prompt(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
@@ -336,10 +344,12 @@ final class MessageSender {
         _ text: String,
         attachments: [ChatAttachmentRef]? = nil,
         clientTurnId providedClientTurnId: String? = nil,
+        sessionIdOverride: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
+        let metricSessionId = sessionIdOverride ?? targetSessionId
         let startedAt = ContinuousClock.now
 
         do {
@@ -347,15 +357,16 @@ final class MessageSender {
                 requestId: requestId,
                 clientTurnId: clientTurnId,
                 command: "steer",
+                sessionIdOverride: sessionIdOverride,
                 onAckStage: onAckStage
             ) {
                 .steer(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
-            Self.recordQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok", sessionId: activeSessionId)
+            Self.recordQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok", sessionId: metricSessionId)
         } catch {
             Self.recordQueueAckMetric(
                 command: "steer", startedAt: startedAt, status: "error",
-                errorKind: Self.telemetryErrorKind(from: error), sessionId: activeSessionId
+                errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
             )
             throw error
         }
@@ -365,10 +376,12 @@ final class MessageSender {
         _ text: String,
         attachments: [ChatAttachmentRef]? = nil,
         clientTurnId providedClientTurnId: String? = nil,
+        sessionIdOverride: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
+        let metricSessionId = sessionIdOverride ?? targetSessionId
         let startedAt = ContinuousClock.now
 
         do {
@@ -376,28 +389,30 @@ final class MessageSender {
                 requestId: requestId,
                 clientTurnId: clientTurnId,
                 command: "follow_up",
+                sessionIdOverride: sessionIdOverride,
                 onAckStage: onAckStage
             ) {
                 .followUp(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
-            Self.recordQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok", sessionId: activeSessionId)
+            Self.recordQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok", sessionId: metricSessionId)
         } catch {
             Self.recordQueueAckMetric(
                 command: "follow_up", startedAt: startedAt, status: "error",
-                errorKind: Self.telemetryErrorKind(from: error), sessionId: activeSessionId
+                errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
             )
             throw error
         }
     }
 
-    func sendStop() async throws {
+    func sendStop(sessionIdOverride: String? = nil) async throws {
         var lastError: Error?
 
         for attempt in 1...Self.stopMaxAttempts {
             do {
                 _ = try await sendCommandAwaitingResult(
                     command: "stop",
-                    timeout: Self.stopCommandTimeout
+                    timeout: Self.stopCommandTimeout,
+                    sessionIdOverride: sessionIdOverride
                 ) { requestId in
                     .stop(requestId: requestId)
                 }
@@ -415,9 +430,9 @@ final class MessageSender {
         throw lastError ?? WebSocketError.notConnected
     }
 
-    func sendStopSession() async throws {
+    func sendStopSession(sessionIdOverride: String? = nil) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stopSession(), sessionId: activeSessionId)
+        try await wsClient.send(.stopSession(), sessionId: sessionIdOverride ?? targetSessionId)
     }
 
     // MARK: - Convenience: Commands
@@ -426,8 +441,11 @@ final class MessageSender {
         try await send(.getState())
     }
 
-    func requestMessageQueue(timeout: Duration = MessageSender.commandRequestTimeoutDefault) async throws {
-        _ = try await sendCommandAwaitingResult(command: "get_queue", timeout: timeout) { requestId in
+    func requestMessageQueue(
+        timeout: Duration = MessageSender.commandRequestTimeoutDefault,
+        sessionIdOverride: String? = nil
+    ) async throws {
+        _ = try await sendCommandAwaitingResult(command: "get_queue", timeout: timeout, sessionIdOverride: sessionIdOverride) { requestId in
             .getQueue(requestId: requestId)
         }
     }
@@ -435,9 +453,10 @@ final class MessageSender {
     func setMessageQueue(
         baseVersion: Int,
         steering: [MessageQueueDraftItem],
-        followUp: [MessageQueueDraftItem]
+        followUp: [MessageQueueDraftItem],
+        sessionIdOverride: String? = nil
     ) async throws {
-        _ = try await sendCommandAwaitingResult(command: "set_queue") { requestId in
+        _ = try await sendCommandAwaitingResult(command: "set_queue", sessionIdOverride: sessionIdOverride) { requestId in
             .setQueue(
                 baseVersion: baseVersion,
                 steering: steering,

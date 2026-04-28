@@ -69,7 +69,7 @@ extension ServerConnection {
             if ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.notifyIfNeeded(
                     perm,
-                    activeSessionId: sessionStore.activeSessionId
+                    activeSessionId: focusedSessionId
                 )
             }
             syncLiveActivityPermissions()
@@ -168,7 +168,7 @@ extension ServerConnection {
 
         case .sessionDeleted(let deletedId):
             sessionStore.remove(id: deletedId)
-            notificationSessionIds.remove(deletedId)
+            subscriptionRegistry.remove(sessionId: deletedId)
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)
@@ -188,7 +188,7 @@ extension ServerConnection {
         let message = ServerMessage.state(session: session)
         let result = applySharedStoreUpdate(for: message, sessionId: session.id)
 
-        if session.id == activeSessionId {
+        if isFocusedSession(session.id) {
             handleActiveSessionUI(message, sessionId: session.id, storeResult: result)
         } else {
             handleInactiveSessionUI(message, sessionId: session.id)

@@ -530,7 +530,7 @@ struct ChatSessionManagerTests {
         await firstConnect.value
 
         #expect(
-            connection.activeSessionId == "s1",
+            connection.focusedSessionId == "s1",
             "Stale generation cleanup must not disconnect newer stream"
         )
 
@@ -538,7 +538,7 @@ struct ChatSessionManagerTests {
         await secondConnect.value
 
         #expect(
-            connection.activeSessionId == nil,
+            connection.focusedSessionId == nil,
             "Current generation should disconnect on normal loop exit"
         )
     }
@@ -567,7 +567,7 @@ struct ChatSessionManagerTests {
         await connectTask.value
 
         #expect(
-            connection.activeSessionId == "s2",
+            connection.focusedSessionId == "s2",
             "Cleanup must not disconnect socket owned by a different session"
         )
     }

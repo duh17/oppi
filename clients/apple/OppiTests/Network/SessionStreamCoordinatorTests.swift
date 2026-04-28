@@ -316,48 +316,6 @@ struct SSCStateMachineTests {
     }
 }
 
-// MARK: - Eager Command Resolution
-
-@Suite("SessionStreamCoordinator Eager Resolution")
-@MainActor
-struct SSCEagerResolutionTests {
-
-    @Test func subscribeIsEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(coordinator.shouldResolveEagerly(command: "subscribe"))
-    }
-
-    @Test func unsubscribeIsEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(coordinator.shouldResolveEagerly(command: "unsubscribe"))
-    }
-
-    @Test func getQueueIsEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(coordinator.shouldResolveEagerly(command: "get_queue"))
-    }
-
-    @Test func promptIsNotEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(!coordinator.shouldResolveEagerly(command: "prompt"))
-    }
-
-    @Test func getStateIsNotEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(!coordinator.shouldResolveEagerly(command: "get_state"))
-    }
-
-    @Test func emptyStringIsNotEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(!coordinator.shouldResolveEagerly(command: ""))
-    }
-
-    @Test func unknownCommandIsNotEager() {
-        let coordinator = SessionStreamCoordinator()
-        #expect(!coordinator.shouldResolveEagerly(command: "frobnicate"))
-    }
-}
-
 // MARK: - Multi-Session Isolation
 
 @Suite("SessionStreamCoordinator Multi-Session Isolation")

@@ -250,7 +250,7 @@ extension ServerConnection {
         let expiredRequests = permissionStore.sweepExpired()
         for request in expiredRequests {
             // Notify per-session reducer via callback
-            if request.sessionId == activeSessionId {
+            if isFocusedSession(request.sessionId) {
                 onPermissionResolved?(request.id, .expired, request.tool, request.displaySummary)
             }
             if ReleaseFeatures.pushNotificationsEnabled {
@@ -262,14 +262,15 @@ extension ServerConnection {
         }
 
         // 3. Refresh active session metadata (not timeline — ChatSessionManager owns that)
-        guard let sessionId = activeSessionId else { return }
+        guard let sessionId = focusedSessionId else { return }
         guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
               !workspaceId.isEmpty else {
             logger.error("Missing workspaceId for active session \(sessionId)")
             return
         }
 
-        let streamAttached = sessionContinuations[sessionId] != nil
+        let streamAttached = sessionEventContinuations[sessionId] != nil
+            || sessionContinuations[sessionId] != nil
         let streamAlive: Bool
         if streamAttached {
             switch wsClient?.status {
