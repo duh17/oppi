@@ -53,6 +53,7 @@ final class ServerConnection {
     // Stream lifecycle
     var activeSessionId: String?
     let sessionStreamCoordinator = SessionStreamCoordinator()
+    let subscriptionRegistry = StreamSubscriptionRegistry()
 
     /// Send protocol — turn ack, command correlation, retry.
     let sender = MessageSender()
@@ -355,7 +356,11 @@ final class ServerConnection {
     /// and recreates the stream in quick succession.
     private var streamConsumptionGeneration: UInt64 = 0
 
-    /// Per-session continuations for routing multiplexed messages.
+    /// Per-session continuations for routing multiplexed messages with metadata in-band.
+    internal var sessionEventContinuations: [String: AsyncStream<SessionStreamEvent>.Continuation] = [:]
+
+    /// Legacy test seam for routing bare messages. Production session streams use
+    /// `sessionEventContinuations` so metadata cannot drift from its message.
     internal var sessionContinuations: [String: AsyncStream<ServerMessage>.Continuation] = [:]
 
     /// Continuation for routing dictation messages from the multiplexed /stream.
@@ -417,6 +422,10 @@ final class ServerConnection {
         sessionStreamCoordinator.noteStreamDisconnected()
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
+        for (_, cont) in sessionEventContinuations {
+            cont.finish()
+        }
+        sessionEventContinuations.removeAll()
         for (_, cont) in sessionContinuations {
             cont.finish()
         }
@@ -431,6 +440,7 @@ final class ServerConnection {
         pendingNotificationSyncTask = nil
         notificationSessionIds.removeAll()
         pendingNotificationSubscriptionIds.removeAll()
+        subscriptionRegistry.removeAll()
         sessionUsageMetricSnapshots.removeAll()
         asrAvailable = false
         wsClient?.disconnect()
@@ -451,8 +461,21 @@ final class ServerConnection {
     private static let notSubscribedFullCode = "stream_not_subscribed_full"
 
     func routeStreamMessage(_ streamMessage: StreamMessage) {
-        let sessionId = streamMessage.sessionId
-        let message = streamMessage.message
+        routeStreamMessage(StreamFrameEvent(
+            sessionId: streamMessage.sessionId,
+            message: streamMessage.message,
+            meta: InboundStreamMeta(
+                seq: streamMessage.seq,
+                currentSeq: streamMessage.currentSeq,
+                receivedAtMs: Date.nowMs(),
+                transportPath: transportPath
+            )
+        ))
+    }
+
+    func routeStreamMessage(_ frameEvent: StreamFrameEvent) {
+        let sessionId = frameEvent.sessionId
+        let message = frameEvent.message
 
         // Handle stream-level events (no sessionId)
         if case .streamConnected(_, let asr) = message {
@@ -478,19 +501,31 @@ final class ServerConnection {
            code == Self.notSubscribedFullCode,
            let sessionId,
            sessionStreamCoordinator.handleNotSubscribedError(connection: self, sessionId: sessionId) {
-            // Still resolve eager commands (e.g. the paired command_result)
-            // so waiters don't time out, but don't yield to the per-session stream.
-            resolveEagerCommands(message)
+            // Still resolve paired command_result waiters so callers don't
+            // time out, but don't yield to the per-session stream.
+            resolveBoundaryCommandResult(message)
             return
         }
 
-        // Resolve pending command waiters directly from stream routing,
-        // BEFORE yielding to the per-session stream. Commands sent during
-        // streamSession() setup (subscribe, get_queue) block before the
-        // consumer loop starts, so their results must be resolved eagerly.
-        resolveEagerCommands(message)
+        // Resolve pending command waiters directly at the stream boundary,
+        // BEFORE yielding to the per-session stream. Semantic effects still
+        // flow downstream, but request waiters do not depend on a session
+        // consumer being attached and running.
+        resolveBoundaryCommandResult(message)
 
-        // Route to per-session continuation if active
+        // Route to per-session continuation if active. Metadata stays attached
+        // to the message through SessionStreamEvent.
+        if let sessionId, let cont = sessionEventContinuations[sessionId] {
+            cont.yield(SessionStreamEvent(
+                sessionId: sessionId,
+                message: message,
+                meta: frameEvent.meta,
+                source: .live
+            ))
+        }
+
+        // Compatibility route for older tests that still inspect bare-message
+        // continuations directly.
         if let sessionId, let cont = sessionContinuations[sessionId] {
             cont.yield(message)
         }
@@ -502,21 +537,30 @@ final class ServerConnection {
         }
     }
 
-    /// Eagerly resolve command results from stream routing for commands
-    /// sent during `streamSession()` setup.
-    ///
-    /// Without this, `command_result` messages buffer in the per-session
-    /// `AsyncStream` (nobody consuming it yet) while `sendCommandAwaitingResult`
-    /// waits for the waiter to resolve — causing an 8s timeout.
-    private func resolveEagerCommands(_ message: ServerMessage) {
+    /// Resolve command waiters at the stream boundary for every command_result
+    /// with a requestId. Semantic effects still flow through session routing.
+    private func resolveBoundaryCommandResult(_ message: ServerMessage) {
         guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
-              let requestId,
-              sessionStreamCoordinator.shouldResolveEagerly(command: command) else {
+              let requestId else {
             return
         }
+
+        if command == "prompt" || command == "steer" || command == "follow_up" {
+            _ = commands.resolveTurnCommandResult(
+                command: command,
+                requestId: requestId,
+                success: success,
+                error: error
+            )
+            return
+        }
+
         _ = commands.resolveCommandResult(
-            command: command, requestId: requestId,
-            success: success, data: data, error: error
+            command: command,
+            requestId: requestId,
+            success: success,
+            data: data,
+            error: error
         )
     }
 
@@ -586,14 +630,14 @@ final class ServerConnection {
 
     /// Subscribe to a session at full streaming level.
     ///
-    /// Returns an `AsyncStream<ServerMessage>` that yields events for this session.
+    /// Returns an `AsyncStream<SessionStreamEvent>` that yields events for this session.
     /// The `/stream` WebSocket is opened if not already connected.
     /// The caller owns stream consumption and task lifecycle.
     ///
     /// Awaits the subscribe `command_result` before returning so that
     /// subsequent commands (prompt, stop, etc.) never race ahead of the
     /// subscription on the server side.
-    func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<ServerMessage>? {
+    func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
         await sessionStreamCoordinator.streamSession(
             connection: self,
             sessionId: sessionId,
@@ -637,8 +681,12 @@ final class ServerConnection {
     /// resubscribing the same session — preventing the fire-and-forget
     /// unsubscribe from arriving after a newer subscribe.
     func unsubscribeSession(_ sessionId: String) {
+        sessionEventContinuations[sessionId]?.finish()
+        sessionEventContinuations.removeValue(forKey: sessionId)
         sessionContinuations[sessionId]?.finish()
         sessionContinuations.removeValue(forKey: sessionId)
+
+        subscriptionRegistry.setDesired(.none, for: sessionId)
 
         pendingUnsubscribeTasks[sessionId]?.cancel()
         pendingUnsubscribeTasks[sessionId] = Task { [weak self] in
@@ -722,16 +770,16 @@ final class ServerConnection {
 
     // MARK: - Actions (delegated to MessageSender)
 
-    func sendPrompt(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendPrompt(text, images: images, onAckStage: onAckStage)
+    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendPrompt(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
     }
 
-    func sendSteer(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendSteer(text, images: images, onAckStage: onAckStage)
+    func sendSteer(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendSteer(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
     }
 
-    func sendFollowUp(_ text: String, images: [ImageAttachment]? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try await sender.sendFollowUp(text, images: images, onAckStage: onAckStage)
+    func sendFollowUp(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+        try await sender.sendFollowUp(text, attachments: attachments, clientTurnId: clientTurnId, onAckStage: onAckStage)
     }
 
     func sendStop() async throws { try await sender.sendStop() }

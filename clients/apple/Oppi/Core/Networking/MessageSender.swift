@@ -316,28 +316,30 @@ final class MessageSender {
 
     func sendPrompt(
         _ text: String,
-        images: [ImageAttachment]? = nil,
+        attachments: [ChatAttachmentRef]? = nil,
+        clientTurnId providedClientTurnId: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
+        let clientTurnId = providedClientTurnId ?? UUID().uuidString
         try await sendTurnWithAck(
             requestId: requestId,
             clientTurnId: clientTurnId,
             command: "prompt",
             onAckStage: onAckStage
         ) {
-            .prompt(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+            .prompt(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
         }
     }
 
     func sendSteer(
         _ text: String,
-        images: [ImageAttachment]? = nil,
+        attachments: [ChatAttachmentRef]? = nil,
+        clientTurnId providedClientTurnId: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
+        let clientTurnId = providedClientTurnId ?? UUID().uuidString
         let startedAt = ContinuousClock.now
 
         do {
@@ -347,7 +349,7 @@ final class MessageSender {
                 command: "steer",
                 onAckStage: onAckStage
             ) {
-                .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+                .steer(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
             Self.recordQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok", sessionId: activeSessionId)
         } catch {
@@ -361,11 +363,12 @@ final class MessageSender {
 
     func sendFollowUp(
         _ text: String,
-        images: [ImageAttachment]? = nil,
+        attachments: [ChatAttachmentRef]? = nil,
+        clientTurnId providedClientTurnId: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
-        let clientTurnId = UUID().uuidString
+        let clientTurnId = providedClientTurnId ?? UUID().uuidString
         let startedAt = ContinuousClock.now
 
         do {
@@ -375,7 +378,7 @@ final class MessageSender {
                 command: "follow_up",
                 onAckStage: onAckStage
             ) {
-                .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+                .followUp(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
             }
             Self.recordQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok", sessionId: activeSessionId)
         } catch {

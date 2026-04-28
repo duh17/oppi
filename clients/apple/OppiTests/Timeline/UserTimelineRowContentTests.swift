@@ -257,6 +257,59 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row hides generic photo badge when inline uploaded image preview is available")
+    func userRowHidesGenericPhotoBadgeWhenInlineUploadedImagePreviewIsAvailable() async throws {
+        let pngData = try #require(makeTestImage().pngData())
+        let text = "[[oppi-attachments:b:photos=1]]\nAttached files:\n- image-1.png: .pi/attachments/demo/image-1.png"
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: text,
+                images: [],
+                fetchWorkspaceFileData: { _ in pngData },
+                canFork: false,
+                onFork: nil
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 220)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let inlineThumbnail = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.user.inline-path-thumbnail.0", in: view)
+        )
+        #expect(!inlineThumbnail.isHidden)
+        #expect(!allLabelTexts(in: view).contains("1 photo"))
+    }
+
+    @MainActor
+    @Test("user row suppresses duplicate uploaded image inline preview when local image is present")
+    func userRowSuppressesDuplicateUploadedImageInlinePreviewWhenLocalImageIsPresent() throws {
+        let imageData = try #require(makeTestImage().pngData())
+        let attachment = ImageAttachment(data: imageData.base64EncodedString(), mimeType: "image/png")
+        let text = "Attached files:\n- image-1.png: .pi/attachments/demo/image-1.png"
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: text,
+                images: [attachment],
+                fetchWorkspaceFileData: { _ in imageData },
+                canFork: false,
+                onFork: nil
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 220)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        #expect(firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view) != nil)
+        #expect(firstSubview(withAccessibilityIdentifier: "chat.user.inline-path-thumbnail.0", in: view) == nil)
+    }
+
+    @MainActor
     @Test("user row reconfigure keeps thumbnail view identity for same images")
     func userRowReconfigureKeepsThumbnailViewIdentityForSameImages() throws {
         let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
@@ -350,6 +403,20 @@ private func firstSubview(withAccessibilityIdentifier identifier: String, in roo
     }
 
     return nil
+}
+
+@MainActor
+private func allLabelTexts(in root: UIView) -> [String] {
+    var texts: [String] = []
+    if let label = root as? UILabel, let text = label.text {
+        texts.append(text)
+    }
+
+    for child in root.subviews {
+        texts.append(contentsOf: allLabelTexts(in: child))
+    }
+
+    return texts
 }
 
 @MainActor

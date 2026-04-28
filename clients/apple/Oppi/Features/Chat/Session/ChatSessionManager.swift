@@ -37,6 +37,11 @@ final class ChatSessionManager {
         case fullReloadScheduled
     }
 
+    private enum SessionStreamInput {
+        case events(AsyncStream<SessionStreamEvent>)
+        case legacyMessages(AsyncStream<ServerMessage>)
+    }
+
     let sessionId: String
 
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
@@ -59,6 +64,7 @@ final class ChatSessionManager {
 
     private var reconcileTask: Task<Void, Never>?
     private var historyReloadTask: Task<Void, Never>?
+    private var activeHistoryReplayID: UUID?
     private var stateSyncTask: Task<Void, Never>?
     private var autoReconnectTask: Task<Void, Never>?
     private var latestTraceSignature: TraceSignature?
@@ -75,9 +81,13 @@ final class ChatSessionManager {
     private(set) var isSyncing = false
     private(set) var lastSyncFailed = false
 
-    /// Test seam: inject a scripted stream to exercise lifecycle races
-    /// without opening a real WebSocket.
+    /// Test seam: inject a scripted legacy message stream to exercise lifecycle
+    /// races without opening a real WebSocket. Production streams use
+    /// `SessionStreamEvent` so metadata travels in-band.
     var _streamSessionForTesting: ((String) -> AsyncStream<ServerMessage>?)?
+
+    /// Test seam: inject a scripted event stream with in-band metadata.
+    var _streamEventsForTesting: ((String) -> AsyncStream<SessionStreamEvent>?)?
 
     /// Test seam: override history loading to validate reconnect behavior
     /// without performing REST requests.
@@ -87,7 +97,7 @@ final class ChatSessionManager {
     /// (`/workspaces/:workspaceId/sessions/:id/events?since=`).
     var _loadCatchUpForTesting: ((_ since: Int, _ currentSeq: Int) async -> APIClient.SessionEventsResponse?)?
 
-    /// Test seam: inject inbound sequence metadata per streamed message.
+    /// Legacy test seam: inject inbound sequence metadata for `_streamSessionForTesting`.
     var _consumeInboundMetaForTesting: (() -> WebSocketClient.InboundMeta?)?
 
     /// Test seam: override trace fetch for lifecycle snapshot flush.
@@ -162,14 +172,22 @@ final class ChatSessionManager {
     private func openSessionStream(
         connection: ServerConnection,
         sessionStore: SessionStore
-    ) async -> AsyncStream<ServerMessage>? {
-        if let streamForTesting = _streamSessionForTesting?(sessionId) {
+    ) async -> SessionStreamInput? {
+        if let eventStreamForTesting = _streamEventsForTesting?(sessionId) {
             connection._setActiveSessionIdForTesting(sessionId)
-            return streamForTesting
+            return .events(eventStreamForTesting)
         }
 
-        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else { return nil }
-        return await connection.streamSession(sessionId, workspaceId: workspaceId)
+        if let streamForTesting = _streamSessionForTesting?(sessionId) {
+            connection._setActiveSessionIdForTesting(sessionId)
+            return .legacyMessages(streamForTesting)
+        }
+
+        guard let workspaceId = resolveWorkspaceId(from: sessionStore),
+              let stream = await connection.streamSession(sessionId, workspaceId: workspaceId) else {
+            return nil
+        }
+        return .events(stream)
     }
 
     private func markSyncStarted() {
@@ -305,18 +323,37 @@ final class ChatSessionManager {
         }
 
         var hasReceivedConnected = false
-        for await message in stream {
-            let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
-            await handleStreamMessage(
-                message,
-                inboundMeta: inboundMeta,
-                connection: connection,
-                sessionStore: sessionStore,
-                generation: generation,
-                wsOpenStartMs: wsOpenStartMs,
-                hasReceivedConnected: &hasReceivedConnected
-            )
-            if case .disconnected = entryState { break }
+        switch stream {
+        case .events(let eventStream):
+            for await event in eventStream {
+                await handleStreamEvent(
+                    event,
+                    connection: connection,
+                    sessionStore: sessionStore,
+                    generation: generation,
+                    wsOpenStartMs: wsOpenStartMs,
+                    hasReceivedConnected: &hasReceivedConnected
+                )
+                if case .disconnected = entryState { break }
+            }
+
+        case .legacyMessages(let messageStream):
+            for await message in messageStream {
+                await handleStreamEvent(
+                    SessionStreamEvent(
+                        sessionId: sessionId,
+                        message: message,
+                        meta: _consumeInboundMetaForTesting?(),
+                        source: .live
+                    ),
+                    connection: connection,
+                    sessionStore: sessionStore,
+                    generation: generation,
+                    wsOpenStartMs: wsOpenStartMs,
+                    hasReceivedConnected: &hasReceivedConnected
+                )
+                if case .disconnected = entryState { break }
+            }
         }
 
         handleStreamEnded(
@@ -419,15 +456,21 @@ final class ChatSessionManager {
     ///
     /// Transitions to `.disconnected` on generation change or cancellation;
     /// the caller breaks the stream loop when it detects that state.
-    private func handleStreamMessage(
-        _ message: ServerMessage,
-        inboundMeta: WebSocketClient.InboundMeta?,
+    private func handleStreamEvent(
+        _ event: SessionStreamEvent,
         connection: ServerConnection,
         sessionStore: SessionStore,
         generation: Int,
         wsOpenStartMs: Int64,
         hasReceivedConnected: inout Bool
     ) async {
+        guard event.sessionId == sessionId else {
+            log.warning("Ignoring stream event for wrong session: \(event.sessionId, privacy: .public) while handling \(self.sessionId, privacy: .public)")
+            return
+        }
+
+        let message = event.message
+        let inboundMeta = event.meta
         if generation != connectionGeneration {
             transitionTo(.disconnected(reason: .generationChanged))
             return
@@ -496,14 +539,6 @@ final class ChatSessionManager {
                 unexpectedStreamExitCount = 0
                 transitionTo(.streaming)
 
-                // Start replay buffering if the session is busy and we loaded
-                // from cache (trace rebuild is pending). This captures live WS
-                // events so they survive the loadHistory() rebuild.
-                let sessionIsBusy = sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .busy
-                    || sessionStore.sessions.first(where: { $0.id == self.sessionId })?.status == .stopping
-                if sessionIsBusy, telemetry.loadedFromCacheAtConnect {
-                    reducer.startReplayBuffer()
-                }
             }
 
         case .streaming:
@@ -857,7 +892,11 @@ final class ChatSessionManager {
             coalescer.receive(.permissionRequest(perm))
 
         case .queueItemStarted(_, let item, _):
-            reducer.appendUserMessage(item.message, images: item.images ?? [])
+            let displayText = UserMessageAttachmentPresentation.makeTimelineText(
+                text: item.message,
+                uploadedAttachments: item.attachments ?? []
+            )
+            reducer.appendUserMessage(displayText, images: item.images ?? [])
 
         case .stopRequested(_, let reason):
             reducer.appendSystemEvent(reason ?? "Stopping…")
@@ -1033,7 +1072,8 @@ final class ChatSessionManager {
         api: APIClient,
         sessionStore: SessionStore,
         cachedEventCount: Int?,
-        cachedLastEventId: String?
+        cachedLastEventId: String?,
+        replayID: UUID?
     ) async -> TraceSignature? {
         guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
             markSyncFailed()
@@ -1069,15 +1109,18 @@ final class ChatSessionManager {
                    cachedCount == freshSignature.eventCount,
                    cachedLastEventId == freshSignature.lastEventId {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
+                    if let replayID {
+                        reducer.discardHistoryReplayBuffer(id: replayID)
+                    }
                     freshnessReason = "history_unchanged"
                 } else {
                     // Apply the fresh trace. If live events arrived via WS during
                     // the fetch, the replay buffer preserves them and re-applies
                     // on top of the rebuilt timeline in a single @MainActor turn.
-                    let usedReplay = reducer.isReplayBuffering
+                    let usedReplay = replayID.map { reducer.isReplayBuffering(id: $0) } ?? false
                     let reducerStartMs = ChatSessionTelemetry.nowMs()
-                    if usedReplay {
-                        reducer.applyTraceWithLiveReplay(trace)
+                    if usedReplay, let replayID {
+                        reducer.applyTraceWithLiveReplay(trace, replayID: replayID)
                     } else {
                         // Fresh trace is authoritative — don't preserve orphans.
                         // Orphan detection creates "ghost" user messages at the
@@ -1115,6 +1158,10 @@ final class ChatSessionManager {
                 }
             }
 
+            if trace.isEmpty, let replayID {
+                reducer.discardHistoryReplayBuffer(id: replayID)
+            }
+
             telemetry.recordFreshContentLagIfNeeded(reason: freshnessReason, sessionId: sessionId, workspaceId: workspaceId)
 
             // Always update cache with fresh data
@@ -1133,6 +1180,9 @@ final class ChatSessionManager {
             return freshSignature
         } catch {
             guard !Task.isCancelled else { return nil }
+            if let replayID {
+                reducer.discardHistoryReplayBuffer(id: replayID)
+            }
             markSyncFailed()
             log.warning("Trace fetch failed for \(self.sessionId): \(error.localizedDescription)")
             return nil
@@ -1150,6 +1200,9 @@ final class ChatSessionManager {
 
         let cachedEventCount = cachedSignature?.eventCount
         let cachedLastEventId = cachedSignature?.lastEventId
+        let replayID = UUID()
+        activeHistoryReplayID = replayID
+        reducer.beginHistoryReplayBuffer(id: replayID)
 
         historyReloadTask = Task { @MainActor [weak self, weak connection] in
             guard let self else { return }
@@ -1159,6 +1212,10 @@ final class ChatSessionManager {
                 let signature = await loadHook(cachedEventCount, cachedLastEventId)
                 guard !Task.isCancelled else { return }
                 guard generation == self.connectionGeneration else { return }
+                self.reducer.discardHistoryReplayBuffer(id: replayID)
+                if self.activeHistoryReplayID == replayID {
+                    self.activeHistoryReplayID = nil
+                }
                 if let signature {
                     self.latestTraceSignature = TraceSignature(
                         eventCount: signature.eventCount,
@@ -1168,15 +1225,26 @@ final class ChatSessionManager {
                 return
             }
 
-            guard let api = connection?.apiClient else { return }
+            guard let api = connection?.apiClient else {
+                self.reducer.discardHistoryReplayBuffer(id: replayID)
+                if self.activeHistoryReplayID == replayID {
+                    self.activeHistoryReplayID = nil
+                }
+                return
+            }
             if let freshSignature = await self.loadHistory(
                 api: api,
                 sessionStore: sessionStore,
                 cachedEventCount: cachedEventCount,
-                cachedLastEventId: cachedLastEventId
+                cachedLastEventId: cachedLastEventId,
+                replayID: replayID
             ) {
                 guard generation == self.connectionGeneration else { return }
+                guard self.activeHistoryReplayID == replayID else { return }
                 self.latestTraceSignature = freshSignature
+                self.activeHistoryReplayID = nil
+            } else if self.activeHistoryReplayID == replayID {
+                self.activeHistoryReplayID = nil
             }
         }
     }
@@ -1214,17 +1282,27 @@ final class ChatSessionManager {
         }
 
         markSyncStarted()
+        let replayID = UUID()
+        activeHistoryReplayID = replayID
+        reducer.beginHistoryReplayBuffer(id: replayID)
 
         guard let freshSignature = await loadHistory(
             api: api,
             sessionStore: sessionStore,
             cachedEventCount: nil,
-            cachedLastEventId: nil
+            cachedLastEventId: nil,
+            replayID: replayID
         ) else {
+            if activeHistoryReplayID == replayID {
+                activeHistoryReplayID = nil
+            }
             return false
         }
 
         latestTraceSignature = freshSignature
+        if activeHistoryReplayID == replayID {
+            activeHistoryReplayID = nil
+        }
         return true
     }
 
@@ -1261,6 +1339,10 @@ final class ChatSessionManager {
     private func cancelHistoryReload() {
         historyReloadTask?.cancel()
         historyReloadTask = nil
+        if let activeHistoryReplayID {
+            reducer.discardHistoryReplayBuffer(id: activeHistoryReplayID)
+            self.activeHistoryReplayID = nil
+        }
     }
 
     private func disconnectIfCurrent(_ generation: Int, connection: ServerConnection) {

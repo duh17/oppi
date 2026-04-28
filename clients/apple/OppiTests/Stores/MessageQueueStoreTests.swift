@@ -51,6 +51,46 @@ struct MessageQueueStoreTests {
         #expect(queue.steering.isEmpty)
     }
 
+    @Test func enqueueOptimisticItemPreservesImagesAndAttachments() {
+        let store = MessageQueueStore()
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let attachment = ChatAttachmentRef(
+            id: "att-1",
+            source: .upload,
+            name: "image-1.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            workspacePath: ".pi/attachments/demo/image-1.png"
+        )
+
+        _ = store.enqueueOptimisticItem(
+            for: "s1",
+            kind: .steer,
+            message: "queued",
+            attachments: [attachment],
+            images: [image]
+        )
+
+        let queue = store.queue(for: "s1")
+        #expect(queue.steering.first?.attachments == [attachment])
+        #expect(queue.steering.first?.images == [image])
+    }
+
+    @Test func enqueueOptimisticItemCanUseStableTurnId() {
+        let store = MessageQueueStore()
+
+        _ = store.enqueueOptimisticItem(
+            for: "s1",
+            kind: .steer,
+            message: "queued",
+            attachments: nil,
+            id: "turn-123"
+        )
+
+        let queue = store.queue(for: "s1")
+        #expect(queue.steering.first?.id == "turn-123")
+    }
+
     @Test func queueItemStartedRemovesOptimisticItemAtCurrentServerVersion() {
         let store = MessageQueueStore()
         store.apply(

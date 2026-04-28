@@ -1,5 +1,7 @@
 import type { PiMessage } from "./pi-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
+import { materializeChatAttachments } from "./chat-attachments.js";
+import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
 import {
   cloneQueueItem,
   cloneQueueState,
@@ -9,31 +11,44 @@ import {
   normalizeQueueMessage,
   promptImagesFromQueue,
   queueImagesFromPromptImages,
-  reconcileItemsWithTextQueue,
   type QueueImageContent,
 } from "./session-queue-utils.js";
 import type {
+  ChatAttachmentRef,
+  ImageAttachment,
   MessageQueueDraftItem,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
   ServerMessage,
+  Session,
 } from "./types.js";
+
+interface QueueStoreItem extends MessageQueueItem {
+  /** SDK-only materialized message text. Queue UI/state keeps `message` raw. */
+  sdkMessage?: string;
+  /** SDK-only image inputs. Queue UI/state keeps `images` as display metadata. */
+  sdkImages?: ImageAttachment[];
+}
 
 export interface SessionMessageQueueStore {
   version: number;
-  steering: MessageQueueItem[];
-  followUp: MessageQueueItem[];
+  steering: QueueStoreItem[];
+  followUp: QueueStoreItem[];
 }
 
 export interface SessionMessageQueueState {
   sdkBackend: SdkBackend;
+  session: Session;
   messageQueue?: SessionMessageQueueStore;
 }
 
 export interface SessionMessageQueueCoordinatorDeps {
   getActiveSession: (key: string) => SessionMessageQueueState | undefined;
   broadcast: (key: string, message: ServerMessage) => void;
+  resolveWorkspaceRoot?: (session: Session) => string | null;
+  maxTurnAttachmentBytes?: number;
+  uploadStoreConfig?: UploadStoreConfigResolved;
 }
 
 export class SessionMessageQueueCoordinator {
@@ -51,10 +66,48 @@ export class SessionMessageQueueCoordinator {
     return active.messageQueue;
   }
 
-  private removedItemsByID(
-    existing: MessageQueueItem[],
-    next: MessageQueueItem[],
-  ): MessageQueueItem[] {
+  private cloneStoreItem(item: QueueStoreItem): QueueStoreItem {
+    return {
+      ...cloneQueueItem(item),
+      ...(item.sdkMessage ? { sdkMessage: item.sdkMessage } : {}),
+      ...(item.sdkImages ? { sdkImages: item.sdkImages.map((image) => ({ ...image })) } : {}),
+    };
+  }
+
+  private sdkQueueText(item: QueueStoreItem): string {
+    return item.sdkMessage ?? item.message;
+  }
+
+  private reconcileItemsWithSdkTextQueue(
+    existing: QueueStoreItem[],
+    queuedTexts: readonly string[],
+  ): QueueStoreItem[] {
+    const next: QueueStoreItem[] = [];
+    const consumed = new Set<number>();
+
+    for (const text of queuedTexts) {
+      const matchIdx = existing.findIndex(
+        (item, idx) => !consumed.has(idx) && this.sdkQueueText(item) === text,
+      );
+
+      if (matchIdx !== -1) {
+        consumed.add(matchIdx);
+        next.push(this.cloneStoreItem(existing[matchIdx]));
+        continue;
+      }
+
+      next.push({
+        id: normalizeQueueId(undefined),
+        message: text,
+        sdkMessage: text,
+        createdAt: Date.now(),
+      });
+    }
+
+    return next;
+  }
+
+  private removedItemsByID(existing: QueueStoreItem[], next: QueueStoreItem[]): MessageQueueItem[] {
     const nextIdCounts = new Map<string, number>();
     for (const item of next) {
       nextIdCounts.set(item.id, (nextIdCounts.get(item.id) ?? 0) + 1);
@@ -87,10 +140,10 @@ export class SessionMessageQueueCoordinator {
 
     const steeringMatches =
       queue.steering.length === sdkSteering.length &&
-      queue.steering.every((item, idx) => item.message === sdkSteering[idx]);
+      queue.steering.every((item, idx) => this.sdkQueueText(item) === sdkSteering[idx]);
     const followUpMatches =
       queue.followUp.length === sdkFollowUp.length &&
-      queue.followUp.every((item, idx) => item.message === sdkFollowUp[idx]);
+      queue.followUp.every((item, idx) => this.sdkQueueText(item) === sdkFollowUp[idx]);
 
     if (steeringMatches && followUpMatches) {
       return {
@@ -101,8 +154,8 @@ export class SessionMessageQueueCoordinator {
       };
     }
 
-    const nextSteering = reconcileItemsWithTextQueue(queue.steering, sdkSteering);
-    const nextFollowUp = reconcileItemsWithTextQueue(queue.followUp, sdkFollowUp);
+    const nextSteering = this.reconcileItemsWithSdkTextQueue(queue.steering, sdkSteering);
+    const nextFollowUp = this.reconcileItemsWithSdkTextQueue(queue.followUp, sdkFollowUp);
 
     const removedSteering = this.removedItemsByID(queue.steering, nextSteering);
     const removedFollowUp = this.removedItemsByID(queue.followUp, nextFollowUp);
@@ -171,7 +224,10 @@ export class SessionMessageQueueCoordinator {
     kind: MessageQueueKind,
     message: string,
     images?: QueueImageContent[],
+    attachments?: ChatAttachmentRef[],
     idHint?: string,
+    sdkMessage?: string,
+    sdkImages?: QueueImageContent[],
   ): void {
     const active = this.deps.getActiveSession(key);
     if (!active) {
@@ -179,11 +235,14 @@ export class SessionMessageQueueCoordinator {
     }
 
     const queue = this.ensureQueueStore(active);
-    const nextItem: MessageQueueItem = {
+    const nextItem: QueueStoreItem = {
       id: normalizeQueueId(idHint),
       message: normalizeQueueMessage(message),
       images: queueImagesFromPromptImages(images),
+      attachments: attachments ? [...attachments] : undefined,
       createdAt: Date.now(),
+      sdkMessage: sdkMessage ? normalizeQueueMessage(sdkMessage) : normalizeQueueMessage(message),
+      sdkImages: queueImagesFromPromptImages(sdkImages ?? images),
     };
 
     if (kind === "steer") {
@@ -194,6 +253,51 @@ export class SessionMessageQueueCoordinator {
 
     queue.version += 1;
     this.broadcastQueueState(key, queue);
+  }
+
+  private async materializeQueueItemForSdk(
+    active: SessionMessageQueueState,
+    item: MessageQueueItem,
+  ): Promise<QueueStoreItem> {
+    if (!item.attachments?.length) {
+      return {
+        ...cloneQueueItem(item),
+        sdkMessage: item.message,
+        sdkImages: item.images ? item.images.map((image) => ({ ...image })) : undefined,
+      };
+    }
+
+    const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
+    if (!workspaceRoot || !active.session.workspaceId) {
+      throw new Error("Attachments require a workspace-backed session");
+    }
+
+    const materialized = await materializeChatAttachments({
+      workspaceRoot,
+      workspaceId: active.session.workspaceId,
+      sessionId: active.session.id,
+      turnId: item.id,
+      message: item.message,
+      attachments: item.attachments,
+      maxTurnBytes: this.deps.maxTurnAttachmentBytes,
+      uploadStore: this.deps.uploadStoreConfig,
+    });
+
+    const materializedImages = queueImagesFromPromptImages(materialized.imageInputs) ?? [];
+    const existingImages = item.images ?? [];
+
+    return {
+      ...cloneQueueItem(item),
+      message: item.message,
+      images: existingImages.length ? existingImages.map((image) => ({ ...image })) : undefined,
+      sdkMessage: materialized.message,
+      sdkImages:
+        materializedImages.length > 0
+          ? materializedImages
+          : existingImages.length > 0
+            ? existingImages.map((image) => ({ ...image }))
+            : undefined,
+    };
   }
 
   markQueuedMessageStarted(key: string, message: PiMessage): void {
@@ -237,8 +341,10 @@ export class SessionMessageQueueCoordinator {
       return;
     }
 
-    const dequeue = (kind: MessageQueueKind, list: MessageQueueItem[]): MessageQueueItem | null => {
-      const index = list.findIndex((item) => item.message === text);
+    const dequeue = (kind: MessageQueueKind, list: QueueStoreItem[]): MessageQueueItem | null => {
+      const index = list.findIndex(
+        (item) => item.message === text || this.sdkQueueText(item) === text,
+      );
       if (index === -1) {
         return null;
       }
@@ -299,18 +405,31 @@ export class SessionMessageQueueCoordinator {
       throw new Error("Message queue can only contain items while a turn is streaming");
     }
 
+    const sdkSteeringItems = await Promise.all(
+      steeringItems.map((item) => this.materializeQueueItemForSdk(active, item)),
+    );
+    const sdkFollowUpItems = await Promise.all(
+      followUpItems.map((item) => this.materializeQueueItemForSdk(active, item)),
+    );
+
     active.sdkBackend.session.clearQueue();
 
-    for (const item of steeringItems) {
-      await active.sdkBackend.session.steer(item.message, promptImagesFromQueue(item.images));
+    for (const item of sdkSteeringItems) {
+      await active.sdkBackend.session.steer(
+        item.sdkMessage ?? item.message,
+        promptImagesFromQueue(item.sdkImages ?? item.images),
+      );
     }
 
-    for (const item of followUpItems) {
-      await active.sdkBackend.session.followUp(item.message, promptImagesFromQueue(item.images));
+    for (const item of sdkFollowUpItems) {
+      await active.sdkBackend.session.followUp(
+        item.sdkMessage ?? item.message,
+        promptImagesFromQueue(item.sdkImages ?? item.images),
+      );
     }
 
-    queue.steering = steeringItems;
-    queue.followUp = followUpItems;
+    queue.steering = sdkSteeringItems;
+    queue.followUp = sdkFollowUpItems;
     queue.version += 1;
 
     this.broadcastQueueState(key, queue);

@@ -592,7 +592,7 @@ struct ChatActionHandlerTests {
         #expect(queue.steering.count == 1)
     }
 
-    @Test func sendPromptFailureRestoresInputAndImagesViaCallback() async {
+    @Test func sendPromptWithImageReportsUploadRefBlocker() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -615,9 +615,7 @@ struct ChatActionHandlerTests {
             }
         )
 
-        #expect(returned.isEmpty)
-        _ = await waitForTestCondition { await MainActor.run { restoredText != nil } }
-
+        #expect(returned == "hello")
         #expect(restoredText == "hello")
         #expect(restoredImageCount == 1)
 
@@ -625,13 +623,15 @@ struct ChatActionHandlerTests {
             if case .userMessage = item { return true }
             return false
         }
-        #expect(!hasUserRow, "Optimistic user row should be removed after async send failure")
+        #expect(!hasUserRow)
 
         let hasError = reducer.items.contains { item in
-            if case .error = item { return true }
+            if case .error(_, let message) = item {
+                return message.contains("Image upload refs are not wired")
+            }
             return false
         }
-        #expect(hasError, "Failure should surface as explicit timeline error")
+        #expect(hasError)
     }
 
     @Test func sendPromptFailureTriggersReconnectCallbackOnce() async {

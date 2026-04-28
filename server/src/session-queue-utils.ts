@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PiMessage } from "./pi-events.js";
 import type {
+  ChatAttachmentRef,
   ImageAttachment,
   MessageQueueDraftItem,
   MessageQueueItem,
@@ -37,12 +38,37 @@ function cloneImageAttachments(
   return images.map(cloneImageAttachment);
 }
 
+function cloneAttachmentRef(attachment: ChatAttachmentRef): ChatAttachmentRef {
+  return {
+    type: "attachment",
+    id: attachment.id,
+    source: attachment.source,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+    ...(attachment.kind ? { kind: attachment.kind } : {}),
+    ...(attachment.workspacePath ? { workspacePath: attachment.workspacePath } : {}),
+  };
+}
+
+function cloneAttachmentRefs(
+  attachments: ChatAttachmentRef[] | undefined,
+): ChatAttachmentRef[] | undefined {
+  if (!attachments || attachments.length === 0) {
+    return undefined;
+  }
+
+  return attachments.map(cloneAttachmentRef);
+}
+
 export function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
   return {
     id: item.id,
     message: item.message,
     createdAt: item.createdAt,
     images: cloneImageAttachments(item.images),
+    attachments: cloneAttachmentRefs(item.attachments),
   };
 }
 
@@ -136,6 +162,7 @@ export function normalizeDraftItems(items: MessageQueueDraftItem[]): MessageQueu
       id: normalizeQueueId(item.id),
       message: normalizeQueueMessage(item.message),
       images: cloneImageAttachments(item.images),
+      attachments: cloneAttachmentRefs(item.attachments),
       createdAt:
         typeof item.createdAt === "number" && Number.isFinite(item.createdAt)
           ? Math.trunc(item.createdAt)
@@ -144,31 +171,4 @@ export function normalizeDraftItems(items: MessageQueueDraftItem[]): MessageQueu
   }
 
   return normalized;
-}
-
-export function reconcileItemsWithTextQueue(
-  existing: MessageQueueItem[],
-  queuedTexts: readonly string[],
-): MessageQueueItem[] {
-  const next: MessageQueueItem[] = [];
-  const consumed = new Set<number>();
-
-  for (const text of queuedTexts) {
-    const matchIdx = existing.findIndex((item, idx) => !consumed.has(idx) && item.message === text);
-
-    if (matchIdx !== -1) {
-      consumed.add(matchIdx);
-      next.push(cloneQueueItem(existing[matchIdx]));
-      continue;
-    }
-
-    next.push({
-      id: randomUUID(),
-      message: text,
-      createdAt: Date.now(),
-      images: undefined,
-    });
-  }
-
-  return next;
 }

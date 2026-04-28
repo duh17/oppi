@@ -147,7 +147,7 @@ struct ContentView: View {
 
                 // Unpack auto-send data for ChatView consumption.
                 navigation.pendingQuickSessionMessage = pending.autoSendMessage
-                navigation.pendingQuickSessionImages = pending.autoSendImages
+                navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
 
                 // Deep-link: push workspace + session in one path update.
                 // NavigationPath resolves step-by-step — WorkspaceDetailView

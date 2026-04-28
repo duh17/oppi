@@ -16,6 +16,7 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let configVersion: Int
     let identity: IdentityInfo?
     let runtimeUpdate: RuntimeUpdateInfo?
+    let uploadProtocol: UploadProtocolInfo?
     let stats: ServerStats
 
     struct IdentityInfo: Codable, Sendable, Equatable {
@@ -38,6 +39,12 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let checkError: String?
         let lastUpdatedAt: Int?
         let lastUpdateError: String?
+    }
+
+    struct UploadProtocolInfo: Codable, Sendable, Equatable {
+        let version: Int
+        let maxFileBytes: Int
+        let maxTurnBytes: Int
     }
 
     struct ServerStats: Codable, Sendable, Equatable {

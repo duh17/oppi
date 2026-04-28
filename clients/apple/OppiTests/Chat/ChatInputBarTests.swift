@@ -85,4 +85,16 @@ struct ChatInputBarTests {
 
         #expect(displayText == "existing typed text")
     }
+
+    @Test("Expand affordance reserves only a tight trailing gutter")
+    func expandAffordanceUsesTightTrailingGutter() {
+        #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: false) == 0)
+        #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: true) == 10)
+    }
+
+    @Test("Expand affordance no longer reserves a full button width")
+    func expandAffordanceDoesNotReserveFullButtonWidth() {
+        let reserved = ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: true)
+        #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
+    }
 }

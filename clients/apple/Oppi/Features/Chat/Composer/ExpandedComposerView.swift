@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Full-screen composer for long-form text input.
 ///
@@ -27,8 +28,8 @@ import UIKit
 struct ExpandedComposerView: View {
     @Binding var text: String
     @Binding var textBeforeRecording: String?
-    @Binding var pendingImages: [PendingImage]
-    @Binding var pendingFiles: [PendingFileReference]
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var pendingRepoPointers: [PendingFileReference]
     let isBusy: Bool
     let busyStreamingBehavior: StreamingBehavior
     let slashCommands: [SlashCommand]
@@ -47,6 +48,7 @@ struct ExpandedComposerView: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
+    @State private var showFileImporter = false
 
     /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated by FullSizeTextView while editing.
@@ -68,8 +70,8 @@ struct ExpandedComposerView: View {
     }
 
     private var canSend: Bool {
-        let hasImages = !pendingImages.isEmpty
-        let hasFiles = !pendingFiles.isEmpty
+        let hasImages = pendingAttachments.contains { $0.source == .image }
+        let hasFiles = pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty
         let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages || hasFiles
     }
@@ -149,7 +151,7 @@ struct ExpandedComposerView: View {
                     volatileSuffixLength: voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0,
                     correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,
-                    onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },
+                    onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
                     onCommandEnter: handleSend,
                     onAlternateEnter: handleSend,
                     autoFocusOnAppear: false,
@@ -175,7 +177,7 @@ struct ExpandedComposerView: View {
 
                 if !fileSuggestions.isEmpty, case .atFile = autocompleteContext {
                     FileSuggestionList(suggestions: fileSuggestions) { suggestion in
-                        ComposerShared.insertFileSuggestion(suggestion, text: $text, pendingFiles: $pendingFiles)
+                        ComposerShared.insertFileSuggestion(suggestion, text: $text, pendingRepoPointers: $pendingRepoPointers)
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
@@ -218,7 +220,7 @@ struct ExpandedComposerView: View {
             )
         }
         .onChange(of: photoSelection) { _, items in
-            ComposerShared.loadSelectedPhotos(items, into: $pendingImages)
+            ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
             photoSelection = []
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
@@ -235,18 +237,25 @@ struct ExpandedComposerView: View {
                 )
             }
         }
-        .composerCameraCover(isPresented: $showCamera, pendingImages: $pendingImages)
+        .composerCameraCover(isPresented: $showCamera, pendingAttachments: $pendingAttachments)
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            ComposerShared.loadSelectedFiles(result, into: $pendingAttachments)
+        }
     }
 
     // MARK: - Subviews
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
-            if !pendingImages.isEmpty {
-                imageStrip
+            if !pendingAttachments.isEmpty {
+                attachmentStrip
             }
 
-            if !pendingFiles.isEmpty {
+            if !pendingRepoPointers.isEmpty {
                 filePillStrip
             }
 
@@ -289,30 +298,36 @@ struct ExpandedComposerView: View {
         .background(Color.themeBgDark)
     }
 
-    private var imageStrip: some View {
+    private var attachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(pendingImages) { pending in
-                    ZStack(alignment: .topTrailing) {
-                        Image(uiImage: pending.thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
-                            )
+                ForEach(pendingAttachments) { attachment in
+                    if attachment.source == .image, let thumbnail = attachment.thumbnail {
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+                                )
 
-                        Button {
-                            ComposerShared.removeImage(pending.id, from: $pendingImages)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.themeFg)
-                                .background(Circle().fill(.themeScrim))
+                            Button {
+                                ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.themeFg)
+                                    .background(Circle().fill(.themeScrim))
+                            }
+                            .offset(x: 4, y: -4)
                         }
-                        .offset(x: 4, y: -4)
+                    } else {
+                        ComposerAttachmentPill(name: attachment.displayName) {
+                            ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
+                        }
                     }
                 }
             }
@@ -323,9 +338,9 @@ struct ExpandedComposerView: View {
     private var filePillStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(pendingFiles) { file in
+                ForEach(pendingRepoPointers) { file in
                     ComposerFilePill(file: file) {
-                        ComposerShared.removeFile(file.id, from: $pendingFiles)
+                        ComposerShared.removeFile(file.id, from: $pendingRepoPointers)
                     }
                 }
             }
@@ -345,6 +360,12 @@ struct ExpandedComposerView: View {
                 showCamera = true
             } label: {
                 Label("Camera", systemImage: "camera")
+            }
+
+            Button {
+                showFileImporter = true
+            } label: {
+                Label("Choose File", systemImage: "paperclip")
             }
         } label: {
             ZStack {

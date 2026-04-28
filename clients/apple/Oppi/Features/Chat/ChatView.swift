@@ -41,9 +41,11 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var composerTextBeforeRecording: String?
-    @State private var pendingImages: [PendingImage] = []
-    @State private var pendingFiles: [PendingFileReference] = []
+    @State private var pendingAttachments: [PendingAttachment] = []
+    @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var busyStreamingBehavior: StreamingBehavior = .steer
+    @State private var isPreparingAttachments = false
+    @State private var attachmentPreparationText: String?
 
     @State private var showOutline = false
     @State private var showModelPicker = false
@@ -77,7 +79,7 @@ struct ChatView: View {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
         _inputText = State(initialValue: initialInputText)
-        _pendingFiles = State(initialValue: initialPendingFiles)
+        _pendingRepoPointers = State(initialValue: initialPendingFiles)
     }
 
     private struct ForkRoute: Identifiable, Hashable {
@@ -293,16 +295,15 @@ struct ChatView: View {
             }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
-            .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
+            .alert("Switch model in active session?", isPresented: $showModelSwitchWarning) {
                 Button("Keep Current", role: .cancel) {
                     pendingModelSwitch = nil
                 }
                 Button("Switch Anyway") {
-                    applyModelSelection(model)
-                    pendingModelSwitch = nil
+                    applyPendingModelSwitch()
                 }
-            } message: { model in
-                Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
+            } message: {
+                Text(pendingModelSwitchWarningMessage)
             }
             .alert("Compact Context", isPresented: $showCompactConfirmation) {
                 Button("Compact", role: .destructive) {
@@ -340,15 +341,14 @@ struct ChatView: View {
                 // Keyed on sessionId so it re-fires if the view is reused
                 // for a different session (onChange self-healing path).
                 guard let message = appNavigation.pendingQuickSessionMessage else { return }
-                let images = appNavigation.pendingQuickSessionImages ?? []
-
+                let attachments = appNavigation.pendingQuickSessionAttachments ?? []
                 // Consume immediately so it doesn't re-fire
                 appNavigation.pendingQuickSessionMessage = nil
-                appNavigation.pendingQuickSessionImages = nil
+                appNavigation.pendingQuickSessionAttachments = nil
 
                 // Pre-fill the composer so the user sees their message while connecting
                 inputText = message
-                pendingImages = images
+                pendingAttachments = attachments
 
                 // Wait for the session stream to be established AND the WebSocket
                 // to be connected. The stream can briefly reach .streaming then
@@ -357,9 +357,7 @@ struct ChatView: View {
                 while true {
                     if Task.isCancelled { return }
                     if ContinuousClock.now >= deadline { return } // Timeout — user can send manually
-                    let isStreaming = sessionManager.entryState == .streaming
-                    let wsConnected = connection.wsClient?.status == .connected
-                    if isStreaming && wsConnected { break }
+                    if isReadyForQuickSend { break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
 
@@ -371,32 +369,10 @@ struct ChatView: View {
                 sendPrompt()
             }
             .onAppear {
-                sessionManager.markAppeared()
-                voiceInputManager.loadPreferences()
-                if sessionManager.hasAppeared, let draft = chatState.composerDraft, !draft.isEmpty {
-                    inputText = draft
-                    chatState.composerDraft = nil
-                }
-                // Load initial git status for the workspace
-                if let wsId = session?.workspaceId, let api = connection.apiClient {
-                    let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
-                    gitStatusStore.loadInitial(
-                        workspaceId: wsId,
-                        apiClient: api,
-                        gitStatusEnabled: ws?.gitStatusEnabled ?? true
-                    )
-                }
-                // Pre-load file index for @file fuzzy search
-                if let wsId = session?.workspaceId, let api = connection.apiClient {
-                    fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
-                }
+                handleAppear()
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
-                guard let update = chatState.extensionEditorTextUpdate,
-                      update.sessionId == sessionId else {
-                    return
-                }
-                applyExtensionEditorText(update.text)
+                handleExtensionEditorTextUpdate()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 isKeyboardVisible = true
@@ -406,43 +382,16 @@ struct ChatView: View {
                 isKeyboardVisible = false
             }
             .onChange(of: session?.status) { _, newStatus in
-                if newStatus != .stopping {
-                    actionHandler.resetStopState()
-                    sessionManager.cancelReconciliation()
-                }
-
-                if newStatus == .busy {
-                    Task {
-                        try? await connection.requestMessageQueue()
-                    }
-                }
+                handleSessionStatusChange(newStatus)
             }
             .onChange(of: sessionManager.entryState) { _, newState in
-                if newState == .streaming {
-                    actionHandler.clearReconnectFailure()
-                }
+                handleEntryStateChange(newState)
             }
             .onChange(of: scenePhase) { _, phase in
-                switch phase {
-                case .background:
-                    sessionManager.coalescer.pause()
-                    Task {
-                        await sessionManager.flushSnapshotIfNeeded(connection: connection)
-                    }
-                case .active:
-                    sessionManager.coalescer.resume()
-                default:
-                    break
-                }
+                handleScenePhaseChange(phase)
             }
             .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { notification in
-                guard notification.object as? AudioPlayerService === audioPlayer else { return }
-                let playing = notification.userInfo?[AudioPlayerService.playingItemIDUserInfoKey] as? String
-                let loading = notification.userInfo?[AudioPlayerService.loadingItemIDUserInfoKey] as? String
-                audioLifecycleCoordinator.syncPlaybackState(
-                    playingItemID: playing?.isEmpty == false ? playing : nil,
-                    loadingItemID: loading?.isEmpty == false ? loading : nil
-                )
+                handleAudioPlayerStateChange(notification)
             }
             .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
@@ -465,8 +414,8 @@ struct ChatView: View {
                 sessionManager = ChatSessionManager(sessionId: newId)
                 scrollController = ChatScrollController()
                 inputText = ""
-                pendingImages = []
-                pendingFiles = []
+                pendingAttachments = []
+                pendingRepoPointers = []
                 contextBarExpanded = false
                 showOutline = false
                 showContextInspector = false
@@ -481,36 +430,41 @@ struct ChatView: View {
                 Task {
                     await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
                 }
-                if connection.activeSessionId == sessionId
-                    || connection.activeSessionId == nil {
-                    connection.disconnectSession()
-                }
+                disconnectIfCurrentSession()
             }
     }
 
     private var configuredChatContent: some View {
+        configuredChatToolbarContent
+    }
+
+    private var configuredChatToolbarContent: some View {
+        configuredChatNavigationContent
+            .toolbar(.hidden, for: .tabBar)
+            .toolbar(.hidden, for: .bottomBar)
+            .toolbar(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    chatPrincipalToolbarItem
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    chatTrailingToolbarItem
+                }
+            }
+    }
+
+    private var configuredChatNavigationContent: some View {
         chatTimelineScaffold
             .background(Color.themeBg.ignoresSafeArea())
-        .navigationTitle(sessionDisplayName)
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $forkedSessionToOpen) { route in
-            Self(sessionId: route.id)
-        }
-        .navigationDestination(item: $childSessionToOpen) { route in
-            Self(sessionId: route.id)
-        }
-        .toolbar(.hidden, for: .tabBar)
-        .toolbar(.hidden, for: .bottomBar)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                chatPrincipalToolbarItem
+            .navigationTitle(sessionDisplayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $forkedSessionToOpen) { route in
+                Self(sessionId: route.id)
             }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                chatTrailingToolbarItem
+            .navigationDestination(item: $childSessionToOpen) { route in
+                Self(sessionId: route.id)
             }
-        }
     }
 
     @ViewBuilder
@@ -590,14 +544,14 @@ struct ChatView: View {
                 ChatInputBar(
                     text: $inputText,
                     textBeforeRecording: $composerTextBeforeRecording,
-                    pendingImages: $pendingImages,
-                    pendingFiles: $pendingFiles,
+                    pendingAttachments: $pendingAttachments,
+                    pendingRepoPointers: $pendingRepoPointers,
 
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
-                    isSending: actionHandler.isSending,
+                    isSending: isPreparingAttachments || actionHandler.isSending,
                     pendingReviewCommentCount: reviewComments.stagedCount,
-                    sendProgressText: actionHandler.sendProgressText,
+                    sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
@@ -647,6 +601,7 @@ struct ChatView: View {
                     onExpand: presentComposer,
                     externalFocusRequestID: composerExternalFocusRequestID,
                     appliesOuterPadding: true,
+                    alwaysShowActionRow: true,
                     actionRow: {
                         SessionToolbar(
                             session: session,
@@ -936,6 +891,121 @@ struct ChatView: View {
     }
 
     @MainActor
+    private func handleAppear() {
+        sessionManager.markAppeared()
+        voiceInputManager.loadPreferences()
+        if sessionManager.hasAppeared, let draft = chatState.composerDraft, !draft.isEmpty {
+            inputText = draft
+            chatState.composerDraft = nil
+        }
+        // Load initial git status for the workspace
+        if let wsId = session?.workspaceId, let api = connection.apiClient {
+            let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
+            gitStatusStore.loadInitial(
+                workspaceId: wsId,
+                apiClient: api,
+                gitStatusEnabled: ws?.gitStatusEnabled ?? true
+            )
+        }
+        // Pre-load file index for @file fuzzy search
+        if let wsId = session?.workspaceId, let api = connection.apiClient {
+            fileIndexStore.ensureLoaded(workspaceId: wsId, apiClient: api)
+        }
+    }
+
+    private var pendingModelSwitchWarningMessage: String {
+        guard let pendingModelSwitch else {
+            return "Switching now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session."
+        }
+        let modelName = shortModelName(ModelSwitchPolicy.fullModelID(for: pendingModelSwitch))
+        return "Switching to \(modelName) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session."
+    }
+
+    @MainActor
+    private func applyPendingModelSwitch() {
+        guard let model = pendingModelSwitch else { return }
+        applyModelSelection(model)
+        pendingModelSwitch = nil
+    }
+
+    @MainActor
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            sessionManager.coalescer.pause()
+            Task {
+                await sessionManager.flushSnapshotIfNeeded(connection: connection)
+            }
+        case .active:
+            sessionManager.coalescer.resume()
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    private func handleExtensionEditorTextUpdate() {
+        guard let update = chatState.extensionEditorTextUpdate,
+              update.sessionId == sessionId else {
+            return
+        }
+        applyExtensionEditorText(update.text)
+    }
+
+    @MainActor
+    private func handleSessionStatusChange(_ newStatus: SessionStatus?) {
+        if newStatus != .stopping {
+            actionHandler.resetStopState()
+            sessionManager.cancelReconciliation()
+        }
+
+        guard newStatus == .busy else { return }
+        Task {
+            try? await connection.requestMessageQueue()
+        }
+    }
+
+    @MainActor
+    private func handleEntryStateChange(_ newState: ChatSessionManager.SessionEntryState) {
+        if newState == .streaming {
+            actionHandler.clearReconnectFailure()
+        }
+    }
+
+    @MainActor
+    private func disconnectIfCurrentSession() {
+        let activeSessionId = connection.activeSessionId
+        if activeSessionId == sessionId || activeSessionId == nil {
+            connection.disconnectSession()
+        }
+    }
+
+    @MainActor
+    private var isReadyForQuickSend: Bool {
+        guard sessionManager.entryState == .streaming else { return false }
+        return connection.wsClient?.status == .connected
+    }
+
+    private var composerIsSending: Bool {
+        isPreparingAttachments || actionHandler.isSending
+    }
+
+    private var composerSendProgressText: String? {
+        attachmentPreparationText ?? actionHandler.sendProgressText
+    }
+
+    @MainActor
+    private func handleAudioPlayerStateChange(_ notification: Notification) {
+        guard notification.object as? AudioPlayerService === audioPlayer else { return }
+        let playing = notification.userInfo?[AudioPlayerService.playingItemIDUserInfoKey] as? String
+        let loading = notification.userInfo?[AudioPlayerService.loadingItemIDUserInfoKey] as? String
+        audioLifecycleCoordinator.syncPlaybackState(
+            playingItemID: playing?.isEmpty == false ? playing : nil,
+            loadingItemID: loading?.isEmpty == false ? loading : nil
+        )
+    }
+
+    @MainActor
     private func handleContextBarExpandedChanged(_ expanded: Bool) {
         contextBarExpanded = expanded
         guard expanded else { return }
@@ -948,6 +1018,64 @@ struct ChatView: View {
             from: nil,
             for: nil
         )
+    }
+
+    private func uploadPendingLocalAttachments() async throws -> [ChatAttachmentRef] {
+        let localAttachments = pendingAttachments.filter { $0.source == .image || $0.source == .localFile }
+        guard !localAttachments.isEmpty else { return [] }
+        guard let workspaceId = session?.workspaceId else {
+            throw APIError.server(status: 400, message: "Attachments require a workspace-backed session")
+        }
+        guard let api = connection.apiClient else {
+            throw APIError.server(status: 503, message: "No server connection available")
+        }
+
+        var uploaded: [ChatAttachmentRef] = []
+        for (index, pending) in localAttachments.enumerated() {
+            attachmentPreparationText = "Uploading attachment \(index + 1) of \(localAttachments.count)…"
+
+            let payload: (data: Data, mimeType: String, name: String)
+            switch pending.source {
+            case .image:
+                guard let imageAttachment = pending.imageAttachment,
+                      let data = Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters) else {
+                    throw APIError.server(status: 400, message: "Invalid pending image data")
+                }
+                let name = pending.displayName.lowercased().hasSuffix(".jpg") ? pending.displayName : "image-\(index + 1).jpg"
+                payload = (data, imageAttachment.mimeType, name)
+            case .localFile:
+                guard let data = pending.localFileData,
+                      let mimeType = pending.localMimeType else {
+                    throw APIError.server(status: 400, message: "Invalid pending file data")
+                }
+                payload = (data, mimeType, pending.displayName)
+            }
+
+            let upload = try await api.createUpload(
+                workspaceId: workspaceId,
+                name: payload.name,
+                mimeType: payload.mimeType,
+                sizeBytes: payload.data.count
+            )
+            let attachment = try await api.uploadAttachmentContent(
+                workspaceId: workspaceId,
+                uploadId: upload.uploadId,
+                data: payload.data,
+                contentType: payload.mimeType
+            )
+            uploaded.append(attachment)
+        }
+        return uploaded
+    }
+
+    private func uploadPreparationErrorMessage(_ error: Error) -> String {
+        if case let APIError.server(status, message) = error {
+            if status == 404 {
+                return "This server does not support attachment uploads yet."
+            }
+            return message
+        }
+        return error.localizedDescription
     }
 
     private func sendPrompt() {
@@ -964,53 +1092,78 @@ struct ChatView: View {
             return
         }
 
-        // Inject pending file references as @path prefixes
-        let originalInputText = inputText
-        let originalPendingFiles = pendingFiles
-        var text = reviewComments.appendReviewBlock(to: inputText)
-        let stagedReviewCommentIds = reviewComments.stagedCommentIds
-        if !pendingFiles.isEmpty {
-            let fileRefs = pendingFiles.map { "@\($0.path)" }.joined(separator: " ")
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            text = trimmed.isEmpty ? fileRefs : "\(fileRefs) \(trimmed)"
-        }
-        let images = pendingImages
+        guard !isPreparingAttachments, !actionHandler.isSending else { return }
 
+        let originalInputText = inputText
+        let originalPendingAttachments = pendingAttachments
+        let originalPendingRepoPointers = pendingRepoPointers
+        let reviewText = reviewComments.appendReviewBlock(to: inputText)
+        let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: pendingRepoPointers)
+        let stagedReviewCommentIds = reviewComments.stagedCommentIds
         let sessionManagerRef = sessionManager
         let scrollRef = scrollController
 
-        let restored = actionHandler.sendPrompt(
-            text: text,
-            images: images,
-            isBusy: isBusy,
-            busyStreamingBehavior: busyStreamingBehavior,
-            connection: connection,
-            reducer: reducer,
-            sessionId: sessionId,
-            sessionStore: sessionStore,
-            sessionManager: sessionManager,
-            onDispatchStarted: {
-                inputText = ""
-                pendingImages = []
-                pendingFiles = []
+        Task { @MainActor in
+            do {
+                let pendingLocalAttachments = pendingAttachments.filter { $0.source == .image || $0.source == .localFile }
+                isPreparingAttachments = true
+                attachmentPreparationText = pendingLocalAttachments.isEmpty ? nil : "Uploading attachments…"
 
-                // Scroll to bottom after sending
-                scrollRef.requestScrollToBottom()
-            },
-            onSendSucceeded: {
-                markReviewCommentsSentIfPossible(ids: stagedReviewCommentIds)
-            },
-            onAsyncFailure: { _, failedImages in
-                inputText = originalInputText
-                pendingImages = failedImages
-                pendingFiles = originalPendingFiles
-            },
-            onNeedsReconnect: {
-                sessionManagerRef.reconnect()
+                let uploadedAttachments = try await self.uploadPendingLocalAttachments()
+                let attachments = uploadedAttachments
+                let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
+                    text: reviewText,
+                    pendingAttachments: originalPendingAttachments,
+                    pendingRepoPointers: originalPendingRepoPointers,
+                    uploadedAttachments: attachments
+                )
+
+                isPreparingAttachments = false
+                attachmentPreparationText = nil
+
+                let optimisticImages = originalPendingAttachments.compactMap(\.imageAttachment)
+                let restored = actionHandler.sendPrompt(
+                    text: text,
+                    attachments: attachments,
+                    optimisticDisplayText: optimisticDisplayText,
+                    optimisticImages: optimisticImages,
+                    isBusy: isBusy,
+                    busyStreamingBehavior: busyStreamingBehavior,
+                    connection: connection,
+                    reducer: reducer,
+                    sessionId: sessionId,
+                    sessionStore: sessionStore,
+                    sessionManager: sessionManager,
+                    onDispatchStarted: {
+                        inputText = ""
+                        pendingAttachments = []
+                        pendingRepoPointers = []
+
+                        // Scroll to bottom after sending
+                        scrollRef.requestScrollToBottom()
+                    },
+                    onSendSucceeded: {
+                        markReviewCommentsSentIfPossible(ids: stagedReviewCommentIds)
+                    },
+                    onAsyncFailure: { _, failedAttachments in
+                        inputText = originalInputText
+                        pendingAttachments = originalPendingAttachments
+                        pendingRepoPointers = originalPendingRepoPointers
+                    },
+                    onNeedsReconnect: {
+                        sessionManagerRef.reconnect()
+                    }
+                )
+                if !restored.isEmpty {
+                    inputText = restored
+                }
+            } catch {
+                isPreparingAttachments = false
+                attachmentPreparationText = nil
+                pendingAttachments = originalPendingAttachments
+                pendingRepoPointers = originalPendingRepoPointers
+                reducer.process(.error(sessionId: sessionId, message: self.uploadPreparationErrorMessage(error)))
             }
-        )
-        if !restored.isEmpty {
-            inputText = restored
         }
     }
 
@@ -1083,8 +1236,8 @@ struct ChatView: View {
             onDispatchStarted: {
                 guard clearComposer else { return }
                 inputText = ""
-                pendingImages = []
-                pendingFiles = []
+                pendingAttachments = []
+                pendingRepoPointers = []
             },
             onAsyncFailure: {
                 if let restoreInputOnFailure {
@@ -1247,8 +1400,8 @@ struct ChatView: View {
 
         scrollController.scrollTargetID = viewUpdate.scrollTargetID
         inputText = viewUpdate.inputText
-        pendingImages = []
-        pendingFiles = []
+        pendingAttachments = []
+        pendingRepoPointers = []
 
         if viewUpdate.shouldFocusComposer {
             composerExternalFocusRequestID &+= 1
@@ -1322,8 +1475,8 @@ struct ChatView: View {
         ExpandedComposerView(
             text: $inputText,
             textBeforeRecording: $composerTextBeforeRecording,
-            pendingImages: $pendingImages,
-            pendingFiles: $pendingFiles,
+            pendingAttachments: $pendingAttachments,
+            pendingRepoPointers: $pendingRepoPointers,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
             slashCommands: chatState.slashCommands,

@@ -25,7 +25,7 @@ import {
   validateLocalSessionPath,
   validateCwdAlignment,
 } from "../local-sessions.js";
-import { type Session } from "../types.js";
+import { type ChatAttachmentRef, type Session } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
@@ -140,6 +140,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       parentSessionId?: string;
       ephemeral?: boolean;
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
     }>(req);
 
     // ── Local session import: validate path confinement + CWD alignment ──
@@ -225,7 +226,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
           session.thinkingLevel = body.thinking;
         }
         await ctx.sessions.sendPrompt(session.id, prompt, {
-          images: body.images,
+          ...(body.images ? { images: body.images } : {}),
+          ...(body.attachments ? { attachments: body.attachments } : {}),
         });
         session.firstMessage = prompt.slice(0, 200);
         ctx.storage.saveSession(session);

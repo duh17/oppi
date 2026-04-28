@@ -2,6 +2,7 @@ import Foundation
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Shared logic between ChatInputBar and ExpandedComposerView.
 ///
@@ -35,7 +36,7 @@ enum ComposerShared {
 
     static func loadSelectedPhotos(
         _ items: [PhotosPickerItem],
-        into pendingImages: Binding<[PendingImage]>
+        into pendingAttachments: Binding<[PendingAttachment]>
     ) {
         for item in items {
             Task {
@@ -43,7 +44,7 @@ enum ComposerShared {
                 guard let uiImage = UIImage(data: data) else { return }
                 let pending = PendingImage.from(uiImage)
                 await MainActor.run {
-                    pendingImages.wrappedValue.append(pending)
+                    pendingAttachments.wrappedValue.append(pending.pendingAttachment)
                 }
             }
         }
@@ -51,32 +52,68 @@ enum ComposerShared {
 
     static func addCapturedImage(
         _ image: UIImage,
-        to pendingImages: Binding<[PendingImage]>
+        to pendingAttachments: Binding<[PendingAttachment]>
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             let pending = PendingImage.from(image)
             DispatchQueue.main.async {
-                pendingImages.wrappedValue.append(pending)
+                pendingAttachments.wrappedValue.append(pending.pendingAttachment)
             }
         }
     }
 
-    static func removeImage(
+    static func removeAttachment(
         _ id: String,
-        from pendingImages: Binding<[PendingImage]>
+        from pendingAttachments: Binding<[PendingAttachment]>
     ) {
-        pendingImages.wrappedValue.removeAll { $0.id == id }
+        pendingAttachments.wrappedValue.removeAll { $0.id == id }
     }
 
     static func handlePastedImages(
         _ images: [UIImage],
-        into pendingImages: Binding<[PendingImage]>
+        into pendingAttachments: Binding<[PendingAttachment]>
     ) {
         for image in images {
             DispatchQueue.global(qos: .userInitiated).async {
                 let pending = PendingImage.from(image)
                 DispatchQueue.main.async {
-                    pendingImages.wrappedValue.append(pending)
+                    pendingAttachments.wrappedValue.append(pending.pendingAttachment)
+                }
+            }
+        }
+    }
+
+    static func loadSelectedFiles(
+        _ result: Result<[URL], Error>,
+        into pendingAttachments: Binding<[PendingAttachment]>
+    ) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            Task {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                guard let data = try? Data(contentsOf: url) else { return }
+                let values = try? url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
+                let mimeType = PendingAttachment.mimeType(for: url, contentType: values?.contentType)
+                let displayName = values?.name ?? url.lastPathComponent
+                let thumbnail: UIImage? = if mimeType.hasPrefix("image/") {
+                    UIImage(data: data)
+                } else {
+                    nil
+                }
+                let attachment = PendingAttachment.localFile(
+                    name: displayName,
+                    data: data,
+                    mimeType: mimeType,
+                    thumbnail: thumbnail
+                )
+                await MainActor.run {
+                    pendingAttachments.wrappedValue.append(attachment)
                 }
             }
         }
@@ -94,25 +131,27 @@ enum ComposerShared {
     static func insertFileSuggestion(
         _ suggestion: FileSuggestion,
         text: Binding<String>,
-        pendingFiles: Binding<[PendingFileReference]>
+        pendingRepoPointers: Binding<[PendingFileReference]>
     ) {
         if let tokenRange = ComposerAutocomplete.activeAtTokenRange(in: text.wrappedValue) {
             text.wrappedValue.replaceSubrange(tokenRange, with: "")
         }
-        let ref = PendingFileReference(path: suggestion.path, isDirectory: suggestion.isDirectory)
-        if !pendingFiles.wrappedValue.contains(where: { $0.path == ref.path }) {
-            pendingFiles.wrappedValue.append(ref)
-        }
         if suggestion.isDirectory {
             text.wrappedValue += "@\(suggestion.path)"
+            return
+        }
+
+        let ref = PendingFileReference(path: suggestion.path, isDirectory: false, kind: .workspaceFile)
+        if !pendingRepoPointers.wrappedValue.contains(where: { $0.id == ref.id }) {
+            pendingRepoPointers.wrappedValue.append(ref)
         }
     }
 
     static func removeFile(
         _ id: String,
-        from pendingFiles: Binding<[PendingFileReference]>
+        from pendingRepoPointers: Binding<[PendingFileReference]>
     ) {
-        pendingFiles.wrappedValue.removeAll { $0.id == id }
+        pendingRepoPointers.wrappedValue.removeAll { $0.id == id }
     }
 
     static func notifyFileSuggestionContext(
@@ -162,10 +201,28 @@ enum ComposerShared {
 
 // MARK: - Composer File Pill
 
-/// Reusable file reference pill used by both inline and expanded composers.
+/// Reusable repo-pointer pill used by both inline and expanded composers.
 struct ComposerFilePill: View {
     let file: PendingFileReference
     let onRemove: () -> Void
+
+    private var accent: Color {
+        switch file.kind {
+        case .reviewFile:
+            return .themeCyan
+        case .workspaceFile:
+            return .themePurple
+        }
+    }
+
+    private var labelPrefix: String {
+        switch file.kind {
+        case .reviewFile:
+            return "Review"
+        case .workspaceFile:
+            return "Repo"
+        }
+    }
 
     var body: some View {
         let icon = file.isDirectory
@@ -173,9 +230,47 @@ struct ComposerFilePill: View {
             : FileIcon.forPath(file.path)
 
         HStack(spacing: 4) {
+            Text(labelPrefix)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(accent)
+
             icon.iconView(size: 12, font: .appTag)
 
             Text(file.displayName)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .fixedSize()
+
+            Button {
+                onRemove()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.appBadge)
+                    .foregroundStyle(.themeComment)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(accent.opacity(0.10), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(accent.opacity(0.18), lineWidth: 1)
+        )
+    }
+}
+
+struct ComposerAttachmentPill: View {
+    let name: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            FileIcon.forPath(name).iconView(size: 12, font: .appTag)
+
+            Text(name)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
@@ -203,12 +298,12 @@ extension View {
     /// Camera full-screen cover shared by inline and expanded composers.
     func composerCameraCover(
         isPresented: Binding<Bool>,
-        pendingImages: Binding<[PendingImage]>
+        pendingAttachments: Binding<[PendingAttachment]>
     ) -> some View {
         fullScreenCover(isPresented: isPresented) {
             CameraPicker(
                 onCapture: { image in
-                    ComposerShared.addCapturedImage(image, to: pendingImages)
+                    ComposerShared.addCapturedImage(image, to: pendingAttachments)
                     isPresented.wrappedValue = false
                 },
                 onCancel: {

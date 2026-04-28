@@ -134,7 +134,11 @@ final class TestEventPipeline {
             conn.messageQueueStore.apply(queue, for: sessionId)
         case .queueItemStarted(let kind, let item, let queueVersion):
             conn.messageQueueStore.applyQueueItemStarted(for: sessionId, kind: kind, item: item, queueVersion: queueVersion)
-            reducer.appendUserMessage(item.message, images: item.images ?? [])
+            let displayText = UserMessageAttachmentPresentation.makeTimelineText(
+                text: item.message,
+                uploadedAttachments: item.attachments ?? []
+            )
+            reducer.appendUserMessage(displayText, images: item.images ?? [])
         case .state(let session):
             let result = conn.applySharedStoreUpdate(for: message, sessionId: sessionId)
             conn.handleActiveSessionUI(message, sessionId: sessionId, storeResult: result)

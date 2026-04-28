@@ -987,6 +987,7 @@ struct ServerStatsTests {
             configVersion: 1,
             identity: nil,
             runtimeUpdate: nil,
+            uploadProtocol: nil,
             stats: ServerInfo.ServerStats(
                 workspaceCount: 0,
                 activeSessionCount: 0,

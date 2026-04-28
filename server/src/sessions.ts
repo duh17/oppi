@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import { type ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
 import type {
+  ChatAttachmentRef,
   MessageQueueDraftItem,
   MessageQueueState,
   Session,
@@ -281,6 +282,7 @@ export class SessionManager extends EventEmitter {
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
       requestId?: string;
@@ -306,6 +308,7 @@ export class SessionManager extends EventEmitter {
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -324,6 +327,7 @@ export class SessionManager extends EventEmitter {
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },

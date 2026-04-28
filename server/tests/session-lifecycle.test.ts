@@ -3,13 +3,16 @@
  * cleanup, prompt/steer/follow_up commands, extension UI protocol, and
  * turn dedupe. Complements stop-lifecycle.test.ts (stop/abort flows).
  */
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
-import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
+import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const TEST_CONFIG: ServerConfig = {
@@ -38,14 +41,17 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
+function makeManagerHarness(
+  sessionOverrides: Partial<Session> = {},
+  options: { workspace?: Workspace } = {},
+) {
   let sessionRef: Session | null = null;
   const storage = {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
     addSessionMessage: vi.fn(),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
-    getWorkspace: vi.fn(() => null),
+    getWorkspace: vi.fn(() => options.workspace ?? null),
     getSession: vi.fn((id: string) => (sessionRef && sessionRef.id === id ? sessionRef : null)),
   } as unknown as Storage;
 
@@ -554,6 +560,17 @@ describe("SessionManager prompt", () => {
     );
   });
 
+  it("forwards busy prompt streamingBehavior to SDK", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendPrompt("s1", "interrupt", { streamingBehavior: "steer" });
+
+    expect(sdkBackend.prompt).toHaveBeenCalledWith(
+      "interrupt",
+      expect.objectContaining({ streamingBehavior: "steer" }),
+    );
+  });
+
   it("throws for nonexistent session", async () => {
     const { manager } = makeManagerHarness();
     await expect(manager.sendPrompt("nonexistent", "hi")).rejects.toThrow("not active");
@@ -713,6 +730,121 @@ describe("SessionManager message queue", () => {
     expect(sdkBackend.session.followUp).toHaveBeenCalledWith("new follow", undefined);
     expect(after.steering.map((item) => item.message)).toEqual(["new steer"]);
     expect(after.followUp.map((item) => item.message)).toEqual(["new follow"]);
+  });
+
+  it("keeps queued attachment state raw after busy send and unchanged queue save", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-busy-queue-attachments-"));
+    await writeFile(join(workspaceRoot, "note.txt"), "hello from queue");
+    const workspace: Workspace = {
+      id: "w1",
+      name: "test",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: workspaceRoot,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" }, { workspace });
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.sendSteer("s1", "read this", {
+      clientTurnId: "turn-busy-file",
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-note",
+          source: "workspace",
+          name: "note.txt",
+          mimeType: "text/plain",
+          sizeBytes: 16,
+          workspacePath: "note.txt",
+        },
+      ],
+    });
+
+    const queued = manager.getMessageQueue("s1");
+    expect(queued.steering[0]?.message).toBe("read this");
+    expect(queued.steering[0]?.attachments?.[0]?.id).toBe("att-note");
+
+    const saved = await manager.setMessageQueue("s1", {
+      baseVersion: queued.version,
+      steering: queued.steering,
+      followUp: queued.followUp,
+    });
+
+    const lastPromptMessage = (sdkBackend.prompt as ReturnType<typeof vi.fn>).mock.calls.at(
+      -1,
+    )?.[0] as string;
+    const savedSteerMessage = (sdkBackend.session.steer as ReturnType<typeof vi.fn>).mock.calls.at(
+      -1,
+    )?.[0] as string;
+    expect(lastPromptMessage.match(/Attached files:/g)).toHaveLength(1);
+    expect(savedSteerMessage.match(/Attached files:/g)).toHaveLength(1);
+    expect(saved.steering[0]?.message).toBe("read this");
+  });
+
+  it("materializes attachments when replacing queue", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-queue-attachments-"));
+    await writeFile(join(workspaceRoot, "note.txt"), "hello from queue");
+    const workspace: Workspace = {
+      id: "w1",
+      name: "test",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: workspaceRoot,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" }, { workspace });
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    const before = manager.getMessageQueue("s1");
+    const after = await manager.setMessageQueue("s1", {
+      baseVersion: before.version,
+      steering: [
+        {
+          id: "turn-with-file",
+          message: "read this",
+          attachments: [
+            {
+              type: "attachment",
+              id: "att-note",
+              source: "workspace",
+              name: "note.txt",
+              mimeType: "text/plain",
+              sizeBytes: 16,
+              workspacePath: "note.txt",
+            },
+          ],
+        },
+      ],
+      followUp: [],
+    });
+
+    expect(sdkBackend.session.steer).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Attached files:\n- note.txt: .pi/attachments/s1/turn-with-file/note.txt",
+      ),
+      undefined,
+    );
+    expect(after.steering[0]).toMatchObject({
+      id: "turn-with-file",
+      message: "read this",
+      attachments: [expect.objectContaining({ id: "att-note" })],
+    });
+
+    const second = await manager.setMessageQueue("s1", {
+      baseVersion: after.version,
+      steering: after.steering,
+      followUp: after.followUp,
+    });
+
+    const secondSteerCall = (sdkBackend.session.steer as ReturnType<typeof vi.fn>).mock.calls.at(
+      -1,
+    );
+    const secondMessage = secondSteerCall?.[0] as string;
+    expect(secondMessage.match(/Attached files:/g)).toHaveLength(1);
+    expect(second.steering[0]?.message).toBe("read this");
   });
 
   it("rejects stale queue replacement versions", async () => {

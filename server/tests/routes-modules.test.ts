@@ -10,6 +10,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createPolicyRoutes } from "../src/routes/policy.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
+import { createUploadRoutes } from "../src/routes/uploads.js";
 import { createSkillRoutes } from "../src/routes/skills.js";
 import { createStreamingRoutes } from "../src/routes/streaming.js";
 import { createThemeRoutes } from "../src/routes/themes.js";
@@ -55,6 +56,14 @@ function makeRequest(body?: unknown): IncomingMessage {
   return req;
 }
 
+function makeRawRequest(body: Buffer | string): IncomingMessage {
+  const req = Readable.from([body]) as unknown as IncomingMessage & {
+    socket?: { remoteAddress?: string };
+  };
+  req.socket = { remoteAddress: "127.0.0.1" };
+  return req;
+}
+
 describe("routes modules", () => {
   describe("shared telemetry constants", () => {
     it("keeps chat metric names unique", () => {
@@ -79,7 +88,12 @@ describe("routes modules", () => {
       const source = readFileSync(metricModelsPath, "utf8");
       const iosMetricNames = [...source.matchAll(/case\s+\w+\s*=\s*"([^"]+)"/g)]
         .map((match) => match[1])
-        .filter((metric) => metric.startsWith("chat.") || metric.startsWith("plot.") || metric.startsWith("device."));
+        .filter(
+          (metric) =>
+            metric.startsWith("chat.") ||
+            metric.startsWith("plot.") ||
+            metric.startsWith("device."),
+        );
 
       expect([...new Set(iosMetricNames)].sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());
     });
@@ -214,6 +228,194 @@ describe("routes modules", () => {
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.body)).toEqual({ error: "pairingToken required" });
+    });
+
+    it("includes uploadProtocol in GET /server/info", async () => {
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({
+            configVersion: 2,
+            uploadStore: {
+              maxFileBytes: 123,
+              maxTurnBytes: 456,
+            },
+          })),
+          listWorkspaces: vi.fn(() => []),
+          listSessions: vi.fn(() => []),
+        },
+        sessions: {
+          getActiveSessionIds: vi.fn(() => new Set()),
+        },
+        skillRegistry: {
+          list: vi.fn(() => []),
+        },
+        getRuntimeUpdateStatus: vi.fn().mockResolvedValue({ upToDate: true }),
+        getModelCatalog: vi.fn(() => []),
+        serverStartedAt: Date.now(),
+        serverVersion: "test",
+        piVersion: "test",
+      } as unknown as RouteContext;
+
+      const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/server/info",
+        url: new URL("http://localhost/server/info"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        uploadProtocol: { version: number; maxFileBytes: number; maxTurnBytes: number };
+      };
+      expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
+    });
+
+    it("handles GET /server/subagents in isolation", async () => {
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({
+            extensions: {
+              subagents: {
+                maxDepth: 1,
+                autoStopWhenDone: false,
+                childIdleTimeoutMs: 300_000,
+                startupGraceMs: 60_000,
+                defaultWaitTimeoutMs: 1_800_000,
+                modelPolicy: {
+                  approvedModels: ["openai-codex/gpt-5.4-mini"],
+                },
+              },
+            },
+          })),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/server/subagents",
+        url: new URL("http://localhost/server/subagents"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).modelPolicy.approvedModels).toEqual([
+        "openai-codex/gpt-5.4-mini",
+      ]);
+    });
+
+    it("handles PUT /server/subagents in isolation", async () => {
+      const updateConfig = vi.fn();
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({
+            extensions: {
+              subagents: {
+                maxDepth: 1,
+                autoStopWhenDone: false,
+                childIdleTimeoutMs: 300_000,
+                startupGraceMs: 60_000,
+                defaultWaitTimeoutMs: 1_800_000,
+                modelPolicy: {
+                  approvedModels: ["openai-codex/gpt-5.4-mini"],
+                  profiles: {
+                    discovery: {
+                      model: "openai-codex/gpt-5.4-mini",
+                    },
+                  },
+                },
+              },
+            },
+          })),
+          updateConfig,
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "PUT",
+        path: "/server/subagents",
+        url: new URL("http://localhost/server/subagents"),
+        req: makeRequest({
+          modelPolicy: {
+            defaultModel: "openai-codex/gpt-5.4-mini",
+            profiles: {
+              review: {
+                model: "openai-codex/gpt-5.4-mini",
+              },
+            },
+          },
+        }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(updateConfig).toHaveBeenCalled();
+      expect(updateConfig.mock.calls[0][0].extensions.subagents.modelPolicy.defaultModel).toBe(
+        "openai-codex/gpt-5.4-mini",
+      );
+      expect(
+        updateConfig.mock.calls[0][0].extensions.subagents.modelPolicy.profiles.discovery,
+      ).toBeUndefined();
+      expect(
+        updateConfig.mock.calls[0][0].extensions.subagents.modelPolicy.profiles.review.model,
+      ).toBe("openai-codex/gpt-5.4-mini");
+    });
+
+    it("clears subagent model policy when PUT sends an empty policy object", async () => {
+      const updateConfig = vi.fn();
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({
+            extensions: {
+              subagents: {
+                maxDepth: 1,
+                autoStopWhenDone: false,
+                childIdleTimeoutMs: 300_000,
+                startupGraceMs: 60_000,
+                defaultWaitTimeoutMs: 1_800_000,
+                modelPolicy: {
+                  approvedModels: ["openai-codex/gpt-5.4-mini"],
+                  defaultModel: "openai-codex/gpt-5.4-mini",
+                  defaultThinking: "medium",
+                  profiles: {
+                    discovery: {
+                      model: "openai-codex/gpt-5.4-mini",
+                    },
+                  },
+                },
+              },
+            },
+          })),
+          updateConfig,
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "PUT",
+        path: "/server/subagents",
+        url: new URL("http://localhost/server/subagents"),
+        req: makeRequest({ modelPolicy: {} }) as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(updateConfig).toHaveBeenCalled();
+      expect(updateConfig.mock.calls[0][0].extensions.subagents.modelPolicy).toEqual({});
     });
 
     it("returns false for unrelated routes", async () => {
@@ -489,6 +691,82 @@ describe("routes modules", () => {
       });
 
       expect(handled).toBe(false);
+    });
+  });
+
+  describe("uploads module", () => {
+    it("creates, uploads, and fetches upload metadata in isolation", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-upload-routes-test-"));
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Workspace" })),
+          getConfig: vi.fn(() => ({
+            dataDir: root,
+            uploadStore: {
+              path: join(root, "uploads"),
+              maxFileBytes: 1024 * 1024,
+              maxTurnBytes: 2 * 1024 * 1024,
+              unusedTtlMs: 60_000,
+            },
+          })),
+        },
+      } as unknown as RouteContext;
+
+      const dispatch = createUploadRoutes(ctx, createRouteHelpers());
+
+      const createRes = makeResponse();
+      const created = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/uploads",
+        url: new URL("http://localhost/workspaces/ws-1/uploads"),
+        req: makeRequest({
+          name: "note.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+          purpose: "chat_attachment",
+        }) as never,
+        res: createRes as never,
+      });
+
+      expect(created).toBe(true);
+      expect(createRes.statusCode).toBe(201);
+      const createBody = JSON.parse(createRes.body) as { uploadId: string };
+      expect(createBody.uploadId).toMatch(/^upl_/);
+
+      const contentRes = makeResponse();
+      const uploaded = await dispatch({
+        method: "PUT",
+        path: `/workspaces/ws-1/uploads/${createBody.uploadId}/content`,
+        url: new URL(`http://localhost/workspaces/ws-1/uploads/${createBody.uploadId}/content`),
+        req: makeRawRequest("hello") as never,
+        res: contentRes as never,
+      });
+
+      expect(uploaded).toBe(true);
+      expect(contentRes.statusCode).toBe(200);
+      const contentBody = JSON.parse(contentRes.body) as {
+        attachment: { source: string; sizeBytes: number; sha256?: string };
+      };
+      expect(contentBody.attachment.source).toBe("upload");
+      expect(contentBody.attachment.sizeBytes).toBe(5);
+      expect(contentBody.attachment.sha256).toBeTruthy();
+
+      const getRes = makeResponse();
+      const fetched = await dispatch({
+        method: "GET",
+        path: `/workspaces/ws-1/uploads/${createBody.uploadId}`,
+        url: new URL(`http://localhost/workspaces/ws-1/uploads/${createBody.uploadId}`),
+        req: {} as never,
+        res: getRes as never,
+      });
+
+      expect(fetched).toBe(true);
+      expect(getRes.statusCode).toBe(200);
+      const getBody = JSON.parse(getRes.body) as { upload: { status: string; sizeBytes: number } };
+      expect(getBody.upload.status).toBe("complete");
+      expect(getBody.upload.sizeBytes).toBe(5);
+
+      rmSync(root, { recursive: true, force: true });
     });
   });
 

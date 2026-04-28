@@ -10,9 +10,9 @@ import UIKit
 /// returns `command_result` with the same `requestId` for forwarded commands.
 enum ClientMessage: Sendable {
     // ── Prompting ──
-    case prompt(message: String, images: [ImageAttachment]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)
-    case steer(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
-    case followUp(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case prompt(message: String, attachments: [ChatAttachmentRef]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case steer(message: String, attachments: [ChatAttachmentRef]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case followUp(message: String, attachments: [ChatAttachmentRef]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
     case stop(requestId: String? = nil)       // Abort current turn only
     case abort(requestId: String? = nil)
     case stopSession(requestId: String? = nil) // Kill session process entirely
@@ -108,6 +108,54 @@ enum StreamSubscriptionLevel: String, Codable, Sendable {
 
 // MARK: - Supporting Types
 
+enum AttachmentSource: String, Codable, Sendable {
+    case upload
+    case workspace
+}
+
+enum AttachmentKind: String, Codable, Sendable {
+    case image
+    case text
+    case pdf
+    case audio
+    case video
+    case archive
+    case unknown
+}
+
+struct ChatAttachmentRef: Codable, Sendable, Equatable, Identifiable {
+    let type: String
+    let id: String
+    let source: AttachmentSource
+    let name: String
+    let mimeType: String
+    let sizeBytes: Int
+    let sha256: String?
+    let kind: AttachmentKind?
+    let workspacePath: String?
+
+    init(
+        id: String,
+        source: AttachmentSource,
+        name: String,
+        mimeType: String,
+        sizeBytes: Int,
+        sha256: String? = nil,
+        kind: AttachmentKind? = nil,
+        workspacePath: String? = nil
+    ) {
+        self.type = "attachment"
+        self.id = id
+        self.source = source
+        self.name = name
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.kind = kind
+        self.workspacePath = workspacePath
+    }
+}
+
 struct ImageAttachment: Codable, Sendable, Equatable {
     let data: String      // base64
     let mimeType: String  // image/jpeg, image/png, etc.
@@ -187,25 +235,25 @@ extension ClientMessage: Encodable {
 
         switch self {
         // ── Prompting ──
-        case .prompt(let message, let images, let behavior, let reqId, let turnId):
+        case .prompt(let message, let attachments, let behavior, let reqId, let turnId):
             try c.encode("prompt", forKey: .type)
             try c.encode(message, forKey: .message)
-            try c.encodeIfPresent(images, forKey: .images)
+            try c.encodeIfPresent(attachments, forKey: .attachments)
             try c.encodeIfPresent(behavior, forKey: .streamingBehavior)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .steer(let message, let images, let reqId, let turnId):
+        case .steer(let message, let attachments, let reqId, let turnId):
             try c.encode("steer", forKey: .type)
             try c.encode(message, forKey: .message)
-            try c.encodeIfPresent(images, forKey: .images)
+            try c.encodeIfPresent(attachments, forKey: .attachments)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .followUp(let message, let images, let reqId, let turnId):
+        case .followUp(let message, let attachments, let reqId, let turnId):
             try c.encode("follow_up", forKey: .type)
             try c.encode(message, forKey: .message)
-            try c.encodeIfPresent(images, forKey: .images)
+            try c.encodeIfPresent(attachments, forKey: .attachments)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
@@ -411,7 +459,7 @@ extension ClientMessage: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, message, images, streamingBehavior, requestId, clientTurnId
+        case type, message, attachments, images, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command, query, filterMode

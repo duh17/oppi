@@ -341,6 +341,27 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(promptCall[2]).toEqual({ images });
   });
 
+  it("passes attachments to sendPrompt when provided", async () => {
+    const mock = createMockContext();
+    const attachments = [
+      {
+        type: "attachment" as const,
+        id: "att-1",
+        source: "workspace" as const,
+        name: "README.md",
+        mimeType: "text/markdown",
+        sizeBytes: 123,
+        workspacePath: "README.md",
+      },
+    ];
+
+    await dispatchCreate(mock, { prompt: "use this file", attachments });
+
+    expect(mock.sessions.sendPrompt).toHaveBeenCalledTimes(1);
+    const promptCall = mock.sessions.sendPrompt.mock.calls[0]!;
+    expect(promptCall[2]).toEqual({ attachments });
+  });
+
   it("persists ephemeral flag for incognito sessions", async () => {
     const mock = createMockContext();
 

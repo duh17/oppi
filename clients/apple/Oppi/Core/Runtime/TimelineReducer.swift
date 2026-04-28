@@ -133,18 +133,31 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // window. When the trace arrives, we apply loadSession(trace) then
     // processBatch(buffer) in a single @MainActor turn — no interleaving.
 
-    /// When non-nil, `processBatch` appends events to this buffer in addition
-    /// to processing them normally. Set by `startReplayBuffer()`, consumed by
-    /// `applyTraceWithLiveReplay()`.
-    private var liveEventReplayBuffer: [AgentEvent]?
+    private struct LiveReplayBuffer {
+        let id: UUID
+        var events: [AgentEvent]
+    }
 
-    /// True when replay buffering is active.
+    /// When non-nil, `processBatch` appends events to this buffer in addition
+    /// to processing them normally. Set when a history reload starts and
+    /// consumed or discarded when that reload finishes.
+    private var liveEventReplayBuffer: LiveReplayBuffer?
+
+    /// True when any replay buffering is active.
     var isReplayBuffering: Bool { liveEventReplayBuffer != nil }
 
-    /// Start capturing live events for later replay after trace load.
-    /// Call after transitioning to streaming state, before history reload completes.
-    func startReplayBuffer() {
-        liveEventReplayBuffer = []
+    func isReplayBuffering(id: UUID) -> Bool {
+        liveEventReplayBuffer?.id == id
+    }
+
+    /// Start capturing live events for a scoped history reload.
+    func beginHistoryReplayBuffer(id: UUID) {
+        liveEventReplayBuffer = LiveReplayBuffer(id: id, events: [])
+    }
+
+    func discardHistoryReplayBuffer(id: UUID) {
+        guard liveEventReplayBuffer?.id == id else { return }
+        liveEventReplayBuffer = nil
     }
 
     /// Apply a trace and replay any buffered live events on top.
@@ -158,9 +171,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///
     /// Returns true if the trace was applied (false if no-op/skipped).
     @discardableResult
-    func applyTraceWithLiveReplay(_ events: [TraceEvent]) -> Bool {
-        let buffer = liveEventReplayBuffer ?? []
-        liveEventReplayBuffer = nil
+    func applyTraceWithLiveReplay(_ events: [TraceEvent], replayID: UUID) -> Bool {
+        let buffer = liveEventReplayBuffer?.id == replayID ? liveEventReplayBuffer?.events ?? [] : []
+        discardHistoryReplayBuffer(id: replayID)
 
         // Fresh trace is authoritative — orphan detection disabled.
         // The replay buffer re-creates any live items on top.
@@ -588,7 +601,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // Events are still processed normally below — the buffer is
         // only consumed later by applyTraceWithLiveReplay().
         if liveEventReplayBuffer != nil {
-            liveEventReplayBuffer?.append(contentsOf: events)
+            liveEventReplayBuffer?.events.append(contentsOf: events)
         }
 
         var hasPendingAssistantUpsert = false
@@ -1089,9 +1102,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Check if a user message with the given text already exists in the timeline.
     /// Used to avoid duplicating the user bubble when a server-side prompt is echoed back.
     func hasUserMessage(matching text: String) -> Bool {
-        items.contains { item in
+        let comparable = UserMessageAttachmentPresentation.comparableText(text)
+        return items.contains { item in
             if case .userMessage(_, let existingText, _, _) = item {
-                return existingText == text
+                return UserMessageAttachmentPresentation.comparableText(existingText) == comparable
             }
             return false
         }

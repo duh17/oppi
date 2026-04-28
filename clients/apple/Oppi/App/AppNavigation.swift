@@ -58,9 +58,9 @@ final class AppNavigation {
     /// Consumed once by ChatView, then cleared.
     var pendingQuickSessionMessage: String?
 
-    /// Images to attach when auto-sending the quick session message.
+    /// Attachments to auto-send when the quick session message opens.
     /// Extracted from `pendingQuickSessionNav` by ContentView.onDismiss.
-    var pendingQuickSessionImages: [PendingImage]?
+    var pendingQuickSessionAttachments: [PendingAttachment]?
 
     // MARK: - Pi Quick Actions
 
@@ -96,13 +96,22 @@ struct QuickSessionNav {
     let target: WorkspaceNavTarget
     let sessionId: String
     let autoSendMessage: String?
-    let autoSendImages: [PendingImage]?
+    let autoSendAttachments: [PendingAttachment]?
 
-    init(target: WorkspaceNavTarget, sessionId: String, autoSendMessage: String? = nil, autoSendImages: [PendingImage]? = nil) {
+    init(target: WorkspaceNavTarget, sessionId: String, autoSendMessage: String? = nil, autoSendAttachments: [PendingAttachment]? = nil) {
         self.target = target
         self.sessionId = sessionId
         self.autoSendMessage = autoSendMessage
-        self.autoSendImages = autoSendImages
+        self.autoSendAttachments = autoSendAttachments
+    }
+
+    var autoSendImages: [PendingImage]? {
+        autoSendAttachments?.compactMap { attachment in
+            guard attachment.source == .image,
+                  let thumbnail = attachment.thumbnail,
+                  let imageAttachment = attachment.imageAttachment else { return nil }
+            return PendingImage(id: attachment.id, thumbnail: thumbnail, attachment: imageAttachment)
+        }
     }
 }
 

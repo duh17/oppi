@@ -21,12 +21,12 @@ actor APIClient {
     init(baseURL: URL, token: String, tlsCertFingerprint: String? = nil) {
         self.baseURL = baseURL
         self.token = token
-        self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
-        self.session = URLSession(
+        session = URLSession(
             configuration: config,
             delegate: trustDelegate,
             delegateQueue: nil
@@ -43,8 +43,8 @@ actor APIClient {
     ) {
         self.baseURL = baseURL
         self.token = token
-        self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
-        self.session = URLSession(
+        trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        session = URLSession(
             configuration: configuration,
             delegate: trustDelegate,
             delegateQueue: nil
@@ -112,6 +112,19 @@ actor APIClient {
         let ok: Bool
         let result: RuntimeUpdateResult
         let status: ServerInfo.RuntimeUpdateInfo
+    }
+
+    // MARK: - Server-managed agent config
+
+    func getSubagentConfig() async throws -> SubagentConfig {
+        let data = try await get("/server/subagents")
+        return try JSONDecoder().decode(SubagentConfig.self, from: data)
+    }
+
+    func setSubagentConfig(_ config: SubagentConfig) async throws -> SubagentConfig {
+        let (data, response) = try await request("PUT", path: "/server/subagents", body: config)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(SubagentConfig.self, from: data)
     }
 
     /// Trigger a server runtime update (`npm install -g <runtime>@latest`).
@@ -480,7 +493,7 @@ actor APIClient {
         var query: [String] = []
 
         if let sessionId, !sessionId.isEmpty {
-            query.append("sessionId=\(try encodeQueryPath(sessionId))")
+            try query.append("sessionId=\(encodeQueryPath(sessionId))")
         }
 
         if includeEntryGraph {
@@ -488,7 +501,7 @@ actor APIClient {
         }
 
         if let entrySessionId, !entrySessionId.isEmpty {
-            query.append("entrySessionId=\(try encodeQueryPath(entrySessionId))")
+            try query.append("entrySessionId=\(encodeQueryPath(entrySessionId))")
         }
 
         if includePaths {
@@ -572,7 +585,7 @@ actor APIClient {
     ) async throws -> [ReviewComment] {
         var query: [String] = []
         if let sessionId {
-            query.append("sessionId=\(try encodeQueryPath(sessionId))")
+            try query.append("sessionId=\(encodeQueryPath(sessionId))")
         }
         if let status {
             query.append("status=\(status.rawValue)")
@@ -672,7 +685,7 @@ actor APIClient {
     func listPolicyRules(workspaceId: String? = nil) async throws -> [PolicyRuleRecord] {
         var route = "/policy/rules"
         if let workspaceId {
-            route += "?workspaceId=\(try encodeQueryPath(workspaceId))"
+            try route += "?workspaceId=\(encodeQueryPath(workspaceId))"
         }
         let data = try await get(route)
         struct Response: Decodable { let rules: [PolicyRuleRecord] }
@@ -706,12 +719,12 @@ actor APIClient {
         limit: Int = 50,
         before: Date? = nil
     ) async throws -> [PolicyAuditEntry] {
-        var query: [String] = ["limit=\(limit)"]
+        var query = ["limit=\(limit)"]
         if let workspaceId {
-            query.append("workspaceId=\(try encodeQueryPath(workspaceId))")
+            try query.append("workspaceId=\(encodeQueryPath(workspaceId))")
         }
         if let sessionId {
-            query.append("sessionId=\(try encodeQueryPath(sessionId))")
+            try query.append("sessionId=\(encodeQueryPath(sessionId))")
         }
         if let before {
             let ms = Int(before.timeIntervalSince1970 * 1000)
@@ -778,7 +791,7 @@ actor APIClient {
 
     /// Get a single file's content from a skill directory.
     func getSkillFile(name: String, path: String) async throws -> String {
-        let data = try await get("/skills/\(name)/file?path=\(try encodeQueryPath(path))")
+        let data = try await get("/skills/\(name)/file?path=\(encodeQueryPath(path))")
         struct Response: Decodable { let content: String }
         return try JSONDecoder().decode(Response.self, from: data).content
     }
@@ -837,6 +850,7 @@ actor APIClient {
         prompt: String? = nil,
         thinking: String? = nil,
         ephemeral: Bool? = nil,
+        attachments: [ChatAttachmentRef]? = nil,
         images: [ImageAttachment]? = nil
     ) async throws -> CreateSessionResponse {
         struct ImageBody: Encodable {
@@ -850,6 +864,7 @@ actor APIClient {
             let prompt: String?
             let thinking: String?
             let ephemeral: Bool?
+            let attachments: [ChatAttachmentRef]?
             let images: [ImageBody]?
         }
         let imagesBodies = images?.map { ImageBody(type: "image", data: $0.data, mimeType: $0.mimeType) }
@@ -861,6 +876,7 @@ actor APIClient {
                 prompt: prompt,
                 thinking: thinking,
                 ephemeral: ephemeral,
+                attachments: attachments,
                 images: imagesBodies
             )
         )
@@ -871,6 +887,77 @@ actor APIClient {
     struct CreateSessionResponse: Decodable, Sendable {
         let session: Session
         let prompted: Bool?
+    }
+
+    struct CreateUploadResponse: Decodable, Sendable {
+        let uploadId: String
+        let contentUrl: String
+        let maxFileBytes: Int
+        let expiresAt: Int
+    }
+
+    struct UploadContentResponse: Decodable, Sendable {
+        let attachment: ChatAttachmentRef
+    }
+
+    struct UploadMetadataResponse: Decodable, Sendable {
+        struct Upload: Decodable, Sendable {
+            let id: String
+            let status: String
+            let name: String
+            let mimeType: String
+            let detectedMimeType: String?
+            let sizeBytes: Int?
+            let sha256: String?
+            let kind: AttachmentKind?
+            let createdAt: Int
+            let expiresAt: Int
+        }
+
+        let upload: Upload
+    }
+
+    func createUpload(
+        workspaceId: String,
+        name: String,
+        mimeType: String,
+        sizeBytes: Int,
+        purpose: String = "chat_attachment"
+    ) async throws -> CreateUploadResponse {
+        struct Body: Encodable {
+            let name: String
+            let mimeType: String
+            let sizeBytes: Int
+            let purpose: String
+        }
+
+        let data = try await post(
+            "/workspaces/\(workspaceId)/uploads",
+            body: Body(name: name, mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose)
+        )
+        return try JSONDecoder().decode(CreateUploadResponse.self, from: data)
+    }
+
+    func uploadAttachmentContent(
+        workspaceId: String,
+        uploadId: String,
+        data body: Data,
+        contentType: String = "application/octet-stream"
+    ) async throws -> ChatAttachmentRef {
+        let (data, response) = try await request(
+            "PUT",
+            path: "/workspaces/\(workspaceId)/uploads/\(uploadId)/content",
+            body: body,
+            contentType: contentType
+        )
+        try checkStatus(response, data: data)
+        let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
+        return parsed.attachment
+    }
+
+    func getUploadMetadata(workspaceId: String, uploadId: String) async throws -> UploadMetadataResponse {
+        let data = try await get("/workspaces/\(workspaceId)/uploads/\(uploadId)")
+        return try JSONDecoder().decode(UploadMetadataResponse.self, from: data)
     }
 
     /// Create a session that resumes an existing local pi TUI session.
@@ -957,7 +1044,7 @@ actor APIClient {
             struct Response: Decodable { let output: String }
             let response = try JSONDecoder().decode(Response.self, from: data)
             return response.output
-        } catch APIError.server(let status, _) where status == 404 {
+        } catch let APIError.server(status, _) where status == 404 {
             return nil
         }
     }
@@ -986,7 +1073,7 @@ actor APIClient {
     /// in a tool call row to view the current file on disk.
     // periphery:ignore - used by APIClientTests + RemoteFileView (transitively unused)
     func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(encodeQueryPath(path))")
         // File content is returned as raw bytes — decode as UTF-8 text
         guard let text = String(data: data, encoding: .utf8) else {
             throw APIError.server(status: 422, message: "File is not text (binary content)")
@@ -997,7 +1084,7 @@ actor APIClient {
     // periphery:ignore - used by RemoteFileView (transitively unused)
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
+        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(encodeQueryPath(path))")
     }
 
     /// Fetch a workspace file by path (images, etc.) from the workspace file endpoint.
@@ -1054,7 +1141,7 @@ actor APIClient {
     /// Works for both workspace-relative paths and absolute paths (e.g. ~/.agent/diagrams/).
     /// The server validates the path exists in the session's `changeStats.changedFiles`.
     func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/touched-file?path=\(try encodeQueryPath(path))")
+        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/touched-file?path=\(encodeQueryPath(path))")
     }
 
     // MARK: - Device Token
@@ -1075,7 +1162,6 @@ actor APIClient {
 
     // MARK: - Diagnostics
 
-
     /// Upload raw MetricKit payloads for backend trend dashboards.
     func uploadMetricKitPayload(request body: MetricKitUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
@@ -1094,7 +1180,7 @@ actor APIClient {
 
     func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
         guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        var req = URLRequest(url: try makeURL(path: "/telemetry/chat-metrics"))
+        var req = try URLRequest(url: makeURL(path: "/telemetry/chat-metrics"))
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1125,7 +1211,7 @@ actor APIClient {
     }
 
     private func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: try makeURL(path: path))
+        var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         logger.debug("\(method) \(path)")
@@ -1133,7 +1219,7 @@ actor APIClient {
     }
 
     private func request<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: try makeURL(path: path))
+        var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1142,8 +1228,18 @@ actor APIClient {
         return try await session.data(for: req)
     }
 
+    private func request(_ method: String, path: String, body: Data, contentType: String) async throws -> (Data, URLResponse) {
+        var req = try URLRequest(url: makeURL(path: path))
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        logger.debug("\(method) \(path)")
+        return try await session.data(for: req)
+    }
+
     private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: try makeURL(path: path))
+        var req = try URLRequest(url: makeURL(path: path))
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
@@ -1197,7 +1293,7 @@ actor APIClient {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
-        guard (200...299).contains(http.statusCode) else {
+        guard (200 ... 299).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
             // Try to extract server error message
             if let parsed = try? JSONDecoder().decode(ServerError.self, from: data) {

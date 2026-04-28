@@ -87,6 +87,7 @@ struct ServerInfoTests {
             configVersion: 1,
             identity: nil,
             runtimeUpdate: nil,
+            uploadProtocol: nil,
             stats: .init(workspaceCount: 0, activeSessionCount: 0, totalSessionCount: 0, skillCount: 0, modelCount: 0)
         )
     }

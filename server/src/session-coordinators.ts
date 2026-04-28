@@ -33,6 +33,8 @@ import { SessionStopCoordinator } from "./session-stop.js";
 import { SessionTurnCoordinator, type TurnSessionState } from "./session-turns.js";
 import { SessionUICoordinator } from "./session-ui.js";
 import type { Storage } from "./storage.js";
+import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
@@ -222,9 +224,26 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
   });
 
+  const resolveWorkspaceRoot = (session: Session): string | null => {
+    if (!session.workspaceId) {
+      return null;
+    }
+    const workspace = deps.storage.getWorkspace(session.workspaceId);
+    if (!workspace?.hostMount) {
+      return null;
+    }
+    return resolveSdkSessionCwd(workspace);
+  };
+
+  const uploadStoreConfig = resolveUploadStoreConfig(deps.config);
+  const maxTurnAttachmentBytes = deps.config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024;
+
   const queueCoordinator = new SessionMessageQueueCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionMessageQueueState | undefined,
     broadcast: (key, message) => deps.broadcast(key, message),
+    resolveWorkspaceRoot,
+    maxTurnAttachmentBytes,
+    uploadStoreConfig,
   });
 
   const inputCoordinator = new SessionInputCoordinator({
@@ -241,8 +260,29 @@ export function createSessionCoordinatorBundle(
     markTurnDispatched: (key, active, command, turn, requestId) =>
       turnCoordinator.markTurnDispatched(key, active as TurnSessionState, command, turn, requestId),
     sendCommand: (key, command) => deps.sendCommand(key, command),
-    enqueueQueuedMessage: (key, kind, message, images, idHint) =>
-      queueCoordinator.enqueueQueuedMessage(key, kind, message, images, idHint),
+    enqueueQueuedMessage: (
+      key,
+      kind,
+      message,
+      images,
+      attachments,
+      idHint,
+      sdkMessage,
+      sdkImages,
+    ) =>
+      queueCoordinator.enqueueQueuedMessage(
+        key,
+        kind,
+        message,
+        images,
+        attachments,
+        idHint,
+        sdkMessage,
+        sdkImages,
+      ),
+    resolveWorkspaceRoot,
+    maxTurnAttachmentBytes,
+    uploadStoreConfig,
     onFirstMessage: deps.onFirstMessage,
   });
 

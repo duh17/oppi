@@ -1,7 +1,9 @@
 import { appendSessionMessage } from "./session-protocol.js";
 import type { TurnSessionState } from "./session-turns.js";
-import type { Session, TurnCommand } from "./types.js";
+import type { ChatAttachmentRef, Session, TurnCommand } from "./types.js";
 import { createLogger } from "./logger.js";
+import { materializeChatAttachments } from "./chat-attachments.js";
+import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
 
 export interface SessionInputSessionState extends TurnSessionState {
   session: Session;
@@ -32,19 +34,68 @@ export interface SessionInputCoordinatorDeps {
     kind: "steer" | "follow_up",
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    attachments?: ChatAttachmentRef[],
     idHint?: string,
+    sdkMessage?: string,
+    sdkImages?: Array<{ type: "image"; data: string; mimeType: string }>,
   ) => void;
+  resolveWorkspaceRoot?: (session: Session) => string | null;
+  maxTurnAttachmentBytes?: number;
+  uploadStoreConfig?: UploadStoreConfigResolved;
   onFirstMessage?: (session: Session) => void;
 }
 
 export class SessionInputCoordinator {
   constructor(private readonly deps: SessionInputCoordinatorDeps) {}
 
+  private async prepareMessageWithAttachments(
+    active: SessionInputSessionState,
+    message: string,
+    opts?: {
+      attachments?: ChatAttachmentRef[];
+      clientTurnId?: string;
+      requestId?: string;
+    },
+  ): Promise<{
+    message: string;
+    images: Array<{ type: "image"; data: string; mimeType: string }>;
+  }> {
+    if (!opts?.attachments?.length) {
+      return { message, images: [] };
+    }
+
+    const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
+    if (!workspaceRoot) {
+      throw new Error("Attachments require a workspace-backed session");
+    }
+
+    if (!active.session.workspaceId) {
+      throw new Error("Attachments require a workspace-backed session");
+    }
+
+    const materialized = await materializeChatAttachments({
+      workspaceRoot,
+      workspaceId: active.session.workspaceId,
+      sessionId: active.session.id,
+      turnId: opts.clientTurnId ?? opts.requestId,
+      message,
+      attachments: opts.attachments,
+      maxTurnBytes: this.deps.maxTurnAttachmentBytes,
+      uploadStore: this.deps.uploadStoreConfig,
+    });
+
+    return {
+      message: materialized.message,
+      images: materialized.imageInputs,
+    };
+  }
+
   async sendPrompt(
     key: string,
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
       requestId?: string;
@@ -63,6 +114,7 @@ export class SessionInputCoordinator {
       {
         message,
         images: opts?.images ?? [],
+        attachments: opts?.attachments ?? [],
         streamingBehavior: opts?.streamingBehavior,
       },
       opts?.clientTurnId,
@@ -73,9 +125,17 @@ export class SessionInputCoordinator {
       return;
     }
 
+    const prepared = await this.prepareMessageWithAttachments(active, message, {
+      attachments: opts?.attachments,
+      clientTurnId: opts?.clientTurnId,
+      requestId: opts?.requestId,
+    });
+    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
+    const dispatchMessage = prepared.message;
+
     const capturedFirst = appendSessionMessage(active.session, {
       role: "user",
-      content: message,
+      content: dispatchMessage,
       timestamp: opts?.timestamp ?? Date.now(),
     });
 
@@ -85,12 +145,12 @@ export class SessionInputCoordinator {
 
     const cmd: Record<string, unknown> = {
       type: "prompt",
-      message,
+      message: dispatchMessage,
     };
 
     // SDK image format: {type:"image", data:"base64...", mimeType:"image/png"}
-    if (opts?.images?.length) {
-      cmd.images = opts.images;
+    if (dispatchImages.length) {
+      cmd.images = dispatchImages;
     }
 
     // If agent is busy, add streaming behavior
@@ -108,7 +168,16 @@ export class SessionInputCoordinator {
 
     if (active.session.status === "busy" && opts?.streamingBehavior) {
       const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
-      this.deps.enqueueQueuedMessage?.(key, kind, message, opts.images, turn.clientTurnId);
+      this.deps.enqueueQueuedMessage?.(
+        key,
+        kind,
+        message,
+        dispatchImages,
+        opts.attachments,
+        turn.clientTurnId,
+        dispatchMessage,
+        dispatchImages,
+      );
     }
   }
 
@@ -117,6 +186,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -137,6 +207,7 @@ export class SessionInputCoordinator {
       {
         message,
         images: opts?.images ?? [],
+        attachments: opts?.attachments ?? [],
       },
       opts?.clientTurnId,
       opts?.requestId,
@@ -146,14 +217,31 @@ export class SessionInputCoordinator {
       return;
     }
 
-    const cmd: Record<string, unknown> = { type: "steer", message };
-    if (opts?.images?.length) {
-      cmd.images = opts.images;
+    const prepared = await this.prepareMessageWithAttachments(active, message, {
+      attachments: opts?.attachments,
+      clientTurnId: opts?.clientTurnId,
+      requestId: opts?.requestId,
+    });
+    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
+    const dispatchMessage = prepared.message;
+
+    const cmd: Record<string, unknown> = { type: "steer", message: dispatchMessage };
+    if (dispatchImages.length) {
+      cmd.images = dispatchImages;
     }
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "steer", turn, opts?.requestId);
-    this.deps.enqueueQueuedMessage?.(key, "steer", message, opts?.images, turn.clientTurnId);
+    this.deps.enqueueQueuedMessage?.(
+      key,
+      "steer",
+      message,
+      dispatchImages,
+      opts?.attachments,
+      turn.clientTurnId,
+      dispatchMessage,
+      dispatchImages,
+    );
   }
 
   async sendFollowUp(
@@ -161,6 +249,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -181,6 +270,7 @@ export class SessionInputCoordinator {
       {
         message,
         images: opts?.images ?? [],
+        attachments: opts?.attachments ?? [],
       },
       opts?.clientTurnId,
       opts?.requestId,
@@ -190,13 +280,30 @@ export class SessionInputCoordinator {
       return;
     }
 
-    const cmd: Record<string, unknown> = { type: "follow_up", message };
-    if (opts?.images?.length) {
-      cmd.images = opts.images;
+    const prepared = await this.prepareMessageWithAttachments(active, message, {
+      attachments: opts?.attachments,
+      clientTurnId: opts?.clientTurnId,
+      requestId: opts?.requestId,
+    });
+    const dispatchImages = [...(opts?.images ?? []), ...prepared.images];
+    const dispatchMessage = prepared.message;
+
+    const cmd: Record<string, unknown> = { type: "follow_up", message: dispatchMessage };
+    if (dispatchImages.length) {
+      cmd.images = dispatchImages;
     }
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
-    this.deps.enqueueQueuedMessage?.(key, "follow_up", message, opts?.images, turn.clientTurnId);
+    this.deps.enqueueQueuedMessage?.(
+      key,
+      "follow_up",
+      message,
+      dispatchImages,
+      opts?.attachments,
+      turn.clientTurnId,
+      dispatchMessage,
+      dispatchImages,
+    );
   }
 }

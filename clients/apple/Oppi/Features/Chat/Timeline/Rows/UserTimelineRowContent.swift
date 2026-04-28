@@ -1,9 +1,12 @@
+import SwiftUI
 import UIKit
 
-/// Native UIKit user row — handles both text-only and image-bearing messages.
+/// Native UIKit user row — handles text, upload badges, repo-pointer badges, and image messages.
 struct UserTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let images: [ImageAttachment]
+    var fetchWorkspaceFileData: ((_ path: String) async throws -> Data)? = nil
+    var onOpenPathPill: ((UserMessagePathPill, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
     var interactionContext: TimelineInteractionContext? = nil
@@ -18,8 +21,25 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
+    private final class PathPillTapHandler: NSObject {
+        weak var owner: UserTimelineRowContentView?
+        let pill: UserMessagePathPill
+
+        init(owner: UserTimelineRowContentView, pill: UserMessagePathPill) {
+            self.owner = owner
+            self.pill = pill
+        }
+
+        @objc func handleTap() {
+            owner?.openPathPill(pill)
+        }
+    }
+
     private let outerStack = UIStackView()
     private let bubbleContainer = UIView()
+    private let bubbleStack = UIStackView()
+    private let attachmentBadgeRow = UIStackView()
+    private let pathPillRow = UIStackView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
     private let messageTextView = UITextView()
@@ -36,14 +56,16 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private var currentConfiguration: UserTimelineRowConfiguration
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
+    private var thumbnailHostingControllers: [UIHostingController<DataImagePreviewView>] = []
     private var hasAppliedConfiguration = false
     private var previousThemeID: ThemeID?
     private var interactionHandlers: TimelineRowInteractionHandlers?
+    private var pathPillTapHandlers: [PathPillTapHandler] = []
 
     // MARK: - TimelineRowInteractionProvider
 
     var copyableText: String? {
-        let text = currentConfiguration.text
+        let text = UserMessageAttachmentPresentation.parse(rawText: currentConfiguration.text).visibleText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return text
     }
@@ -112,6 +134,21 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
 
+        bubbleStack.translatesAutoresizingMaskIntoConstraints = false
+        bubbleStack.axis = .vertical
+        bubbleStack.alignment = .fill
+        bubbleStack.spacing = 6
+
+        attachmentBadgeRow.translatesAutoresizingMaskIntoConstraints = false
+        attachmentBadgeRow.axis = .horizontal
+        attachmentBadgeRow.alignment = .leading
+        attachmentBadgeRow.spacing = 6
+
+        pathPillRow.translatesAutoresizingMaskIntoConstraints = false
+        pathPillRow.axis = .vertical
+        pathPillRow.alignment = .leading
+        pathPillRow.spacing = 6
+
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
         textRow.axis = .horizontal
@@ -139,12 +176,15 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         textRow.addArrangedSubview(iconLabel)
         textRow.addArrangedSubview(messageTextView)
 
-        bubbleContainer.addSubview(textRow)
+        bubbleStack.addArrangedSubview(attachmentBadgeRow)
+        bubbleStack.addArrangedSubview(pathPillRow)
+        bubbleStack.addArrangedSubview(textRow)
+        bubbleContainer.addSubview(bubbleStack)
         NSLayoutConstraint.activate([
-            textRow.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
-            textRow.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
-            textRow.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
-            textRow.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
+            bubbleStack.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
+            bubbleStack.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
+            bubbleStack.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
+            bubbleStack.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
         ])
 
         outerStack.addArrangedSubview(imageStrip)
@@ -198,7 +238,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         // push them warmer/cooler than the rest of the chrome.
         bubbleContainer.backgroundColor = UIColor(palette.userMessageBg)
 
-        let displayText = Self.displayText(for: configuration.text)
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
+        let displayText = Self.displayText(for: parsed.visibleText)
         if displayText.text.isEmpty {
             messageTextView.attributedText = nil
         } else {
@@ -208,24 +249,42 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 palette: palette
             )
         }
-        messageTextView.isHidden = displayText.text.isEmpty
-        bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
-        iconLabel.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
-        textRow.isHidden = false
-
-        // If text is empty but images exist, show just the ❯ prompt.
-        if displayText.text.isEmpty && !configuration.images.isEmpty {
-            iconLabel.isHidden = false
+        let inlineImagePathPills = parsed.pathPills.filter { pill in
+            guard pill.supportsInlinePreview else { return false }
+            // Uploaded image attachments can arrive in two forms for the same
+            // user message: optimistic local image data plus the uploaded
+            // workspace path pill. When both are present, prefer the real image
+            // attachment and suppress the redundant inline file preview.
+            if !configuration.images.isEmpty, pill.kind == .uploadedFile {
+                return false
+            }
+            return true
         }
+        let nonImagePathPills = parsed.pathPills.filter { !$0.supportsInlinePreview }
+        let visibleBadges = filteredAttachmentBadges(
+            parsed.badges,
+            images: configuration.images,
+            inlineImagePathPills: inlineImagePathPills,
+            pathPills: parsed.pathPills
+        )
+
+        updateAttachmentBadges(visibleBadges, palette: palette)
+        updatePathPills(nonImagePathPills, palette: palette)
+        messageTextView.isHidden = displayText.text.isEmpty
+        textRow.isHidden = displayText.text.isEmpty
+        bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty && visibleBadges.isEmpty && parsed.pathPills.isEmpty
+        iconLabel.isHidden = displayText.text.isEmpty
 
         updateSelectedTextInteractionPolicy()
 
         let currentThemeID = ThemeRuntimeState.currentThemeID()
         let imagesChanged = previousConfiguration.images != configuration.images
+        let inlineImagePillsChanged = UserMessageAttachmentPresentation.parse(rawText: previousConfiguration.text).pathPills.filter(\.supportsInlinePreview) != inlineImagePathPills
+        let fetchChanged = previousConfiguration.fetchWorkspaceFileData == nil && configuration.fetchWorkspaceFileData != nil
         let paletteChanged = previousThemeID != currentThemeID
-        let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || paletteChanged
+        let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || inlineImagePillsChanged || fetchChanged || paletteChanged
         if shouldRefreshImages {
-            updateImageStrip(images: configuration.images, palette: palette)
+            updateImageStrip(images: configuration.images, inlineImagePathPills: inlineImagePathPills, palette: palette)
         }
 
         previousThemeID = currentThemeID
@@ -310,12 +369,173 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         interactionHandlers?.gesture.isEnabled = !selectionEnabled
     }
 
+    private func filteredAttachmentBadges(
+        _ badges: [UserMessageAttachmentBadge],
+        images: [ImageAttachment],
+        inlineImagePathPills: [UserMessagePathPill],
+        pathPills: [UserMessagePathPill]
+    ) -> [UserMessageAttachmentBadge] {
+        let hasVisibleInlineImages = !images.isEmpty || !inlineImagePathPills.isEmpty
+        let hasVisibleUploadedFilePills = pathPills.contains { $0.kind == .uploadedFile }
+
+        return badges.filter { badge in
+            switch badge.kind {
+            case .photos:
+                return !hasVisibleInlineImages
+            case .uploadedFiles:
+                return !hasVisibleUploadedFilePills
+            }
+        }
+    }
+
+    private func updateAttachmentBadges(_ badges: [UserMessageAttachmentBadge], palette: ThemePalette) {
+        clearArrangedSubviews(in: attachmentBadgeRow)
+
+        attachmentBadgeRow.isHidden = badges.isEmpty
+        guard !badges.isEmpty else { return }
+
+        for badge in badges {
+            attachmentBadgeRow.addArrangedSubview(
+                makeCapsuleView(
+                    prefix: nil,
+                    text: badge.label,
+                    symbolName: badge.symbolName,
+                    tint: UIColor(palette.userMessageText).withAlphaComponent(0.72),
+                    background: UIColor(palette.bg).withAlphaComponent(0.35),
+                    textColor: UIColor(palette.userMessageText).withAlphaComponent(0.9),
+                    font: AppFont.systemSmall,
+                    monospaced: false
+                )
+            )
+        }
+    }
+
+    private func updatePathPills(_ pathPills: [UserMessagePathPill], palette: ThemePalette) {
+        clearArrangedSubviews(in: pathPillRow)
+        pathPillTapHandlers.removeAll()
+
+        pathPillRow.isHidden = pathPills.isEmpty
+        guard !pathPills.isEmpty else { return }
+
+        for pill in pathPills {
+            let tint: UIColor = switch pill.kind {
+            case .uploadedFile:
+                UIColor(palette.blue)
+            case .reviewFile:
+                UIColor(palette.cyan)
+            case .repoFile:
+                UIColor(palette.purple)
+            }
+
+            let pillView = makeCapsuleView(
+                prefix: pill.prefix,
+                text: pill.label,
+                symbolName: pill.symbolName,
+                tint: tint,
+                background: tint.withAlphaComponent(0.10),
+                textColor: UIColor(palette.userMessageText),
+                font: AppFont.monoSmall,
+                monospaced: true
+            )
+            pillView.accessibilityIdentifier = "chat.user.path-pill.\(pill.path)"
+            pillView.isUserInteractionEnabled = true
+            let tapHandler = PathPillTapHandler(owner: self, pill: pill)
+            let tap = UITapGestureRecognizer(target: tapHandler, action: #selector(PathPillTapHandler.handleTap))
+            pillView.addGestureRecognizer(tap)
+            pathPillTapHandlers.append(tapHandler)
+            pathPillRow.addArrangedSubview(pillView)
+        }
+    }
+
+    private func clearArrangedSubviews(in stackView: UIStackView) {
+        for view in stackView.arrangedSubviews {
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+    }
+
+    private func openPathPill(_ pill: UserMessagePathPill) {
+        currentConfiguration.onOpenPathPill?(pill, self)
+    }
+
+    private func makeCapsuleView(
+        prefix: String?,
+        text: String,
+        symbolName: String,
+        tint: UIColor,
+        background: UIColor,
+        textColor: UIColor,
+        font: UIFont,
+        monospaced: Bool
+    ) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = background
+        container.layer.cornerRadius = 11
+        container.layer.borderWidth = 1
+        container.layer.borderColor = tint.withAlphaComponent(0.22).cgColor
+        container.clipsToBounds = true
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 4
+
+        let icon = UIImageView(image: UIImage(systemName: symbolName))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = tint
+        icon.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 12),
+            icon.heightAnchor.constraint(equalToConstant: 12),
+        ])
+        stack.addArrangedSubview(icon)
+
+        if let prefix, !prefix.isEmpty {
+            let prefixLabel = UILabel()
+            prefixLabel.translatesAutoresizingMaskIntoConstraints = false
+            prefixLabel.font = AppFont.systemSmall
+            prefixLabel.textColor = tint
+            prefixLabel.text = prefix
+            prefixLabel.adjustsFontForContentSizeCategory = true
+            stack.addArrangedSubview(prefixLabel)
+        }
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = font
+        label.textColor = textColor
+        label.text = text
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingMiddle
+        label.adjustsFontForContentSizeCategory = true
+        if monospaced {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        stack.addArrangedSubview(label)
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
+        ])
+        return container
+    }
+
     // MARK: - Image strip
 
-    private func updateImageStrip(images: [ImageAttachment], palette: ThemePalette) {
+    private func updateImageStrip(
+        images: [ImageAttachment],
+        inlineImagePathPills: [UserMessagePathPill],
+        palette: ThemePalette
+    ) {
         // Cancel outstanding decodes.
         for task in decodeTasks { task.cancel() }
         decodeTasks.removeAll()
+        thumbnailHostingControllers.removeAll()
 
         // Clear previous thumbnails.
         for view in thumbnailViews {
@@ -324,39 +544,26 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
         thumbnailViews.removeAll()
 
-        imageStrip.isHidden = images.isEmpty
-        guard !images.isEmpty else { return }
+        let hasAnyInlineMedia = !images.isEmpty || !inlineImagePathPills.isEmpty
+        imageStrip.isHidden = !hasAnyInlineMedia
+        guard hasAnyInlineMedia else { return }
 
         let borderColor = UIColor(palette.comment).withAlphaComponent(TimelineBubbleStyle.thumbnailBorderAlpha).cgColor
 
         for (index, attachment) in images.enumerated() {
-            let container = UIView()
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.layer.cornerRadius = Self.thumbnailCornerRadius
-            container.layer.borderWidth = 1
-            container.layer.borderColor = borderColor
-            container.clipsToBounds = true
-            container.backgroundColor = UIColor(palette.bgHighlight)
-            container.isAccessibilityElement = true
-            container.accessibilityIdentifier = "chat.user.thumbnail.\(index)"
-            container.accessibilityLabel = "Attached image \(index + 1)"
+            let container = makeThumbnailContainer(
+                borderColor: borderColor,
+                accessibilityIdentifier: "chat.user.thumbnail.\(index)",
+                accessibilityLabel: "Attached image \(index + 1)"
+            )
 
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             container.addSubview(imageView)
+            pinThumbnailContent(imageView, in: container)
 
-            NSLayoutConstraint.activate([
-                container.widthAnchor.constraint(equalToConstant: Self.thumbnailSize),
-                container.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
-                imageView.topAnchor.constraint(equalTo: container.topAnchor),
-                imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ])
-
-            // Tap to fullscreen.
             let tap = UITapGestureRecognizer(target: self, action: #selector(thumbnailTapped(_:)))
             container.addGestureRecognizer(tap)
             container.isUserInteractionEnabled = true
@@ -364,7 +571,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             imageStack.addArrangedSubview(container)
             thumbnailViews.append(container)
 
-            // Async decode.
             let task = Task { [weak imageView] in
                 let decoded = await Task.detached(priority: .userInitiated) {
                     guard let data = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters) else {
@@ -377,6 +583,90 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             }
             decodeTasks.append(task)
         }
+
+        for (offset, pill) in inlineImagePathPills.enumerated() {
+            let container = makeThumbnailContainer(
+                borderColor: borderColor,
+                accessibilityIdentifier: "chat.user.inline-path-thumbnail.\(offset)",
+                accessibilityLabel: pill.label
+            )
+            let tapHandler = PathPillTapHandler(owner: self, pill: pill)
+            let tap = UITapGestureRecognizer(target: tapHandler, action: #selector(PathPillTapHandler.handleTap))
+            container.addGestureRecognizer(tap)
+            container.isUserInteractionEnabled = true
+            pathPillTapHandlers.append(tapHandler)
+
+            imageStack.addArrangedSubview(container)
+            thumbnailViews.append(container)
+
+            guard let fetch = currentConfiguration.fetchWorkspaceFileData else { continue }
+            let ext = (pill.path as NSString).pathExtension.lowercased()
+            let mimeType = MediaMimeType.imageMimeType(forPathExtension: ext) ?? "application/octet-stream"
+            let task = Task { [weak self, weak container] in
+                do {
+                    let data = try await fetch(pill.path)
+                    guard !Task.isCancelled, let self, let container else { return }
+                    await MainActor.run {
+                        let host = UIHostingController(
+                            rootView: DataImagePreviewView(
+                                data: data,
+                                mimeType: mimeType,
+                                maxPixelSize: 512,
+                                maxHeight: Self.thumbnailSize,
+                                allowsFullscreenStaticImage: false
+                            )
+                        )
+                        host.view.translatesAutoresizingMaskIntoConstraints = false
+                        host.view.backgroundColor = .clear
+                        container.addSubview(host.view)
+                        self.pinThumbnailContent(host.view, in: container)
+                        self.thumbnailHostingControllers.append(host)
+                    }
+                } catch {
+                    guard !Task.isCancelled, let container else { return }
+                    await MainActor.run {
+                        let fallback = UIImageView(image: UIImage(systemName: "photo"))
+                        fallback.translatesAutoresizingMaskIntoConstraints = false
+                        fallback.tintColor = UIColor(palette.comment)
+                        fallback.contentMode = .scaleAspectFit
+                        container.addSubview(fallback)
+                        self?.pinThumbnailContent(fallback, in: container, inset: 18)
+                    }
+                }
+            }
+            decodeTasks.append(task)
+        }
+    }
+
+    private func makeThumbnailContainer(
+        borderColor: CGColor,
+        accessibilityIdentifier: String,
+        accessibilityLabel: String
+    ) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.layer.cornerRadius = Self.thumbnailCornerRadius
+        container.layer.borderWidth = 1
+        container.layer.borderColor = borderColor
+        container.clipsToBounds = true
+        container.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        container.isAccessibilityElement = true
+        container.accessibilityIdentifier = accessibilityIdentifier
+        container.accessibilityLabel = accessibilityLabel
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: Self.thumbnailSize),
+            container.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
+        ])
+        return container
+    }
+
+    private func pinThumbnailContent(_ view: UIView, in container: UIView, inset: CGFloat = 0) {
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
+        ])
     }
 
     @objc private func thumbnailTapped(_ gesture: UITapGestureRecognizer) {

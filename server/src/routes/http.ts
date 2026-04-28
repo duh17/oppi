@@ -4,12 +4,24 @@ import { gzipSync } from "node:zlib";
 import type { ApiError } from "../types.js";
 import type { RouteHelpers } from "./types.js";
 
-async function parseBody<T>(req: IncomingMessage): Promise<T> {
+async function parseBody<T>(req: IncomingMessage, options?: { maxBytes?: number }): Promise<T> {
   return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk: Buffer) => (body += chunk));
+    const maxBytes = options?.maxBytes ?? 8 * 1024 * 1024;
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    req.on("data", (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(buffer);
+    });
     req.on("end", () => {
       try {
+        const body = Buffer.concat(chunks).toString("utf8");
         resolve(body ? JSON.parse(body) : {});
       } catch {
         reject(new Error("Invalid JSON"));

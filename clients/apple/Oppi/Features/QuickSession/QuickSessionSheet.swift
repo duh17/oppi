@@ -23,8 +23,8 @@ struct QuickSessionSheet: View {
 
     @State private var text = ""
     @State private var composerTextBeforeRecording: String?
-    @State private var pendingImages: [PendingImage] = []
-    @State private var pendingFiles: [PendingFileReference] = []
+    @State private var pendingAttachments: [PendingAttachment] = []
+    @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var selectedWorkspace: Workspace?
     @State private var selectedServerId: String?
     @State private var selectedModelId: String?
@@ -127,8 +127,8 @@ struct QuickSessionSheet: View {
             ChatInputBar(
             text: $text,
             textBeforeRecording: $composerTextBeforeRecording,
-            pendingImages: $pendingImages,
-            pendingFiles: $pendingFiles,
+            pendingAttachments: $pendingAttachments,
+            pendingRepoPointers: $pendingRepoPointers,
             isBusy: false,
             busyStreamingBehavior: $busyStreamingBehavior,
             isSending: isCreating,
@@ -178,8 +178,8 @@ struct QuickSessionSheet: View {
             ExpandedComposerView(
                 text: $text,
                 textBeforeRecording: $composerTextBeforeRecording,
-                pendingImages: $pendingImages,
-                pendingFiles: $pendingFiles,
+                pendingAttachments: $pendingAttachments,
+                pendingRepoPointers: $pendingRepoPointers,
                 isBusy: false,
                 busyStreamingBehavior: .followUp,
                 slashCommands: [],
@@ -408,7 +408,10 @@ struct QuickSessionSheet: View {
         guard let workspace = selectedWorkspace, !isCreating else { return }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = pendingImages
+        let transportText = PendingFileReference.appendReferenceBlock(
+            to: trimmed,
+            files: pendingRepoPointers
+        )
         let modelId = effectiveModelId
         let thinking = thinkingLevel
 
@@ -446,8 +449,8 @@ struct QuickSessionSheet: View {
                 nav.pendingQuickSessionNav = QuickSessionNav(
                     target: WorkspaceNavTarget(serverId: serverId, workspace: workspace),
                     sessionId: session.id,
-                    autoSendMessage: trimmed,
-                    autoSendImages: images.isEmpty ? nil : images
+                    autoSendMessage: transportText,
+                    autoSendAttachments: pendingAttachments
                 )
 
                 dismiss()

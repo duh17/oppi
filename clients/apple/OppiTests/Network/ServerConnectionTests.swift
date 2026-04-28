@@ -1692,7 +1692,7 @@ struct StreamLifecycleTests {
                 "Should not replace an active consumption task")
     }
 
-    // MARK: - routeStreamMessage resolves subscribe waiter eagerly
+    // MARK: - routeStreamMessage resolves command waiters at stream boundary
 
     @Test func routeStreamMessageResolvesSubscribeWaiterBeforePerSessionRouting() async {
         let (conn, pipe) = makeTestConnection()
@@ -1725,11 +1725,10 @@ struct StreamLifecycleTests {
         #expect(result != nil, "Subscribe waiter should be resolved eagerly by routeStreamMessage")
     }
 
-    @Test func routeStreamMessageDoesNotEagerlyResolveNonSubscribeCommands() {
+    @Test func routeStreamMessageResolvesNonSubscribeCommandsAtBoundary() async {
         let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
-        // Non-subscribe commands resolve through the normal consumer path
         let pending = PendingCommand(command: "set_model", requestId: "req-m")
         conn.commands.registerCommand(pending)
 
@@ -1749,9 +1748,9 @@ struct StreamLifecycleTests {
         )
         conn.routeStreamMessage(streamMsg)
 
-        // Should still be pending — resolved later by handleCommandResult in the consumer
-        #expect(conn.commands.pendingCommandsByRequestId["req-m"] != nil,
-                "Non-subscribe commands should not be resolved by routeStreamMessage")
+        let result = try? await pending.waiter.wait()
+        #expect(result != nil, "All requestId command results should resolve at stream boundary")
+        _ = pipe
     }
 
     // MARK: - Pending unsubscribe cancelled on resubscribe

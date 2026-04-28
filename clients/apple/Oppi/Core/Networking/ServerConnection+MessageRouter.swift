@@ -358,47 +358,15 @@ extension ServerConnection {
     }
 
     func decodeQueueStateFromCommandData(_ data: JSONValue?) -> MessageQueueState? {
-        guard let object = data?.objectValue,
-              let versionNumber = object["version"]?.numberValue,
-              let version = Int(exactly: versionNumber) else {
+        guard let data else { return nil }
+
+        do {
+            let encoded = try JSONEncoder().encode(data)
+            return try JSONDecoder().decode(MessageQueueState.self, from: encoded)
+        } catch {
+            logger.warning("Failed to decode queue command_result: \(error.localizedDescription, privacy: .public)")
             return nil
         }
-
-        let steering = decodeQueueItems(object["steering"]?.arrayValue)
-        let followUp = decodeQueueItems(object["followUp"]?.arrayValue)
-        return MessageQueueState(version: version, steering: steering, followUp: followUp)
-    }
-
-    private func decodeQueueItems(_ values: [JSONValue]?) -> [MessageQueueItem] {
-        guard let values else { return [] }
-
-        return values.compactMap { value in
-            guard let object = value.objectValue,
-                  let id = object["id"]?.stringValue,
-                  let message = object["message"]?.stringValue,
-                  let createdAtNumber = object["createdAt"]?.numberValue,
-                  let createdAt = Int(exactly: createdAtNumber) else {
-                return nil
-            }
-
-            let images = decodeQueueImages(object["images"]?.arrayValue)
-            return MessageQueueItem(id: id, message: message, images: images, createdAt: createdAt)
-        }
-    }
-
-    private func decodeQueueImages(_ values: [JSONValue]?) -> [ImageAttachment]? {
-        guard let values else { return nil }
-
-        let images: [ImageAttachment] = values.compactMap { value in
-            guard let object = value.objectValue,
-                  let data = object["data"]?.stringValue,
-                  let mimeType = object["mimeType"]?.stringValue else {
-                return nil
-            }
-            return ImageAttachment(data: data, mimeType: mimeType)
-        }
-
-        return images.isEmpty ? nil : images
     }
 
     // MARK: - Stop Lifecycle
@@ -441,11 +409,10 @@ extension ServerConnection {
         error: String?,
         sessionId: String
     ) -> Bool {
-        // Resolve prompt/steer/follow-up acceptance acks first.
-        // These are local send-path control messages, not timeline events.
-        if let requestId,
-           command == "prompt" || command == "steer" || command == "follow_up",
-           commands.resolveTurnCommandResult(command: command, requestId: requestId, success: success, error: error) {
+        // Prompt/steer/follow-up acceptance acks are local send-path control
+        // messages, not timeline events. Their waiters resolve at the stream
+        // boundary before this semantic handler runs.
+        if command == "prompt" || command == "steer" || command == "follow_up" {
             return true
         }
 
@@ -453,22 +420,10 @@ extension ServerConnection {
             if success, let queue = decodeQueueStateFromCommandData(data) {
                 messageQueueStore.apply(queue, for: sessionId)
             }
-            if let requestId {
-                _ = commands.resolveCommandResult(
-                    command: command, requestId: requestId,
-                    success: success, data: data, error: error
-                )
-            }
             return true
         }
 
         if command == "subscribe" || command == "unsubscribe" {
-            if let requestId {
-                _ = commands.resolveCommandResult(
-                    command: command, requestId: requestId,
-                    success: success, data: data, error: error
-                )
-            }
             return true
         }
 
@@ -483,20 +438,16 @@ extension ServerConnection {
             return true
         }
 
-        if let requestId,
-           commands.resolveCommandResult(
-            command: command,
-            requestId: requestId,
-            success: success,
-            data: data,
-            error: error
-           ) {
+        syncThinkingLevelFromCommand(command: command, success: success, data: data)
+
+        // Boundary-correlated command results are control-plane responses. They
+        // have already resolved their waiter; keep them out of the timeline.
+        if requestId != nil {
             return true
         }
 
-        syncThinkingLevelFromCommand(command: command, success: success, data: data)
-
-        // Not consumed — caller should forward to per-session coalescer.
+        // Uncorrelated command results may still be useful as timeline/debug
+        // events, so let the caller forward them to the per-session coalescer.
         return false
     }
 

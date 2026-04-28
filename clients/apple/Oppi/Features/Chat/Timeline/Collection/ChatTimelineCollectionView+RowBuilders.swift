@@ -1,4 +1,18 @@
+import SwiftUI
 import UIKit
+
+private extension UIView {
+    func nearestViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+}
 
 // MARK: - Row Configuration Builders
 
@@ -46,6 +60,36 @@ extension ChatTimelineCollectionHost.Controller {
         return UserTimelineRowConfiguration(
             text: text,
             images: images,
+            fetchWorkspaceFileData: connection?.apiClient.flatMap { client in
+                guard let workspaceId else { return nil }
+                return { path in
+                    try await client.getSessionFileData(
+                        workspaceId: workspaceId,
+                        sessionId: self.sessionId,
+                        path: path
+                    )
+                }
+            },
+            onOpenPathPill: { [workspaceId, weak apiClient = connection?.apiClient] pill, sourceView in
+                guard let workspaceId, !workspaceId.isEmpty,
+                      let apiClient,
+                      let presenter = sourceView.nearestViewController() else {
+                    return
+                }
+
+                let view = FileBrowserContentView(
+                    workspaceId: workspaceId,
+                    filePath: pill.path,
+                    fileName: pill.label,
+                    fileSize: nil
+                )
+                .environment(\.apiClient, apiClient)
+
+                let host = UIHostingController(rootView: view)
+                let navigation = UINavigationController(rootViewController: host)
+                navigation.modalPresentationStyle = .pageSheet
+                presenter.present(navigation, animated: true)
+            },
             canFork: canFork,
             onFork: forkAction,
             interactionContext: interactionContext

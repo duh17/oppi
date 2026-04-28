@@ -25,7 +25,8 @@ export interface Workspace {
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
 
   // Extensions
-  extensions?: string[]; // Extension allowlist (host extensions + first-party names like ask/subagents)
+  // Undefined = discovered pi extensions only. Defined = authoritative allowlist.
+  extensions?: string[]; // Extension allowlist (host extensions + Oppi names like ask/subagents/voice)
 
   // Git status
   gitStatusEnabled?: boolean; // Show git status context bar (default: true)
@@ -190,6 +191,16 @@ export interface TlsConfig {
   caPath?: string;
 }
 
+export interface UploadStoreConfig {
+  mode?: "local";
+  path?: string;
+  maxFileBytes?: number;
+  maxTurnBytes?: number;
+  unusedTtlMs?: number;
+  retainedTtlMs?: number;
+  allowedMimeTypes?: string[];
+}
+
 export interface ServerConfig {
   configVersion?: number;
   port: number;
@@ -246,6 +257,9 @@ export interface ServerConfig {
     sttEndpoint?: string;
   };
 
+  /** Local upload store config for chat attachments. */
+  uploadStore?: UploadStoreConfig;
+
   /**
    * Server-managed extension configuration and lightweight persisted state.
    */
@@ -255,6 +269,28 @@ export interface ServerConfig {
     };
     subagents?: SubagentConfig;
   };
+}
+
+export interface SubagentModelProfileConfig {
+  /** Human-readable summary of what this profile is for. */
+  description?: string;
+  /** Model to use when this profile is selected and spawn_agent omits model. */
+  model?: string;
+  /** Thinking level to use when this profile is selected and spawn_agent omits thinking. */
+  thinking?: string;
+  /** Extra instructions injected ahead of the child prompt for this profile. */
+  guidelines?: string[];
+}
+
+export interface SubagentModelPolicyConfig {
+  /** Approved full model IDs for subagents. Empty/omitted means any available model. */
+  approvedModels?: string[];
+  /** Default model when spawn_agent omits model. */
+  defaultModel?: string;
+  /** Default thinking level when spawn_agent omits thinking. */
+  defaultThinking?: string;
+  /** Named presets such as discovery/research/coding/review. */
+  profiles?: Record<string, SubagentModelProfileConfig>;
 }
 
 export interface SubagentConfig {
@@ -280,6 +316,9 @@ export interface SubagentConfig {
    *  doesn't specify timeout_seconds.
    *  Default: 1800000 (30 min) */
   defaultWaitTimeoutMs: number;
+  /** Optional model governance for subagents: approved model IDs,
+   *  default model/thinking, and named usage profiles. */
+  modelPolicy?: SubagentModelPolicyConfig;
 }
 
 // ─── API Types ───
@@ -1004,12 +1043,29 @@ export interface ImageAttachment {
   mimeType: string; // image/jpeg, image/png, etc.
 }
 
+export type AttachmentKind = "image" | "text" | "pdf" | "audio" | "video" | "archive" | "unknown";
+
+export type AttachmentSource = "upload" | "workspace";
+
+export interface ChatAttachmentRef {
+  type: "attachment";
+  id: string;
+  source: AttachmentSource;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256?: string;
+  kind?: AttachmentKind;
+  workspacePath?: string;
+}
+
 export type MessageQueueKind = "steer" | "follow_up";
 
 export interface MessageQueueItem {
   id: string;
   message: string;
   images?: ImageAttachment[];
+  attachments?: ChatAttachmentRef[];
   createdAt: number;
 }
 
@@ -1023,6 +1079,7 @@ export interface MessageQueueDraftItem {
   id?: string;
   message: string;
   images?: ImageAttachment[];
+  attachments?: ChatAttachmentRef[];
   createdAt?: number;
 }
 
@@ -1065,6 +1122,7 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
         type: "prompt";
         message: string;
         images?: ImageAttachment[];
+        attachments?: ChatAttachmentRef[];
         streamingBehavior?: "steer" | "followUp";
         requestId?: string;
         clientTurnId?: string;
@@ -1073,6 +1131,7 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
         type: "steer";
         message: string;
         images?: ImageAttachment[];
+        attachments?: ChatAttachmentRef[];
         requestId?: string;
         clientTurnId?: string;
       }
@@ -1080,6 +1139,7 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
         type: "follow_up";
         message: string;
         images?: ImageAttachment[];
+        attachments?: ChatAttachmentRef[];
         requestId?: string;
         clientTurnId?: string;
       }

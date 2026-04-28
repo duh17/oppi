@@ -179,6 +179,66 @@ struct ServerConnectionRoutingTests {
         #expect(images.isEmpty)
     }
 
+    @Test func boundaryResolvedGetQueueCommandResultStillAppliesSemanticQueueEffectOnce() async {
+        let (conn, pipe) = makeTestConnection()
+        let pending = PendingCommand(command: "get_queue", requestId: "req-boundary")
+        conn.commands.registerCommand(pending)
+
+        let message = ServerMessage.commandResult(
+            command: "get_queue",
+            requestId: "req-boundary",
+            success: true,
+            data: [
+                "version": 7,
+                "steering": [
+                    [
+                        "id": "q-boundary",
+                        "message": "from boundary",
+                        "createdAt": 7,
+                    ],
+                ],
+                "followUp": [],
+            ],
+            error: nil
+        )
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: message
+        ))
+
+        let resolved = try? await pending.waiter.wait()
+        #expect(resolved != nil, "Boundary should resolve command waiter")
+
+        pipe.handle(message, sessionId: "s1")
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 7)
+        #expect(stored.steering.map(\.message) == ["from boundary"])
+    }
+
+    @Test func routeCorrelatedNonSemanticCommandResultDoesNotLeakToTimeline() {
+        let (conn, pipe) = makeTestConnection()
+        _ = conn
+
+        pipe.handle(
+            .commandResult(
+                command: "set_model",
+                requestId: "req-model",
+                success: true,
+                data: nil,
+                error: nil
+            ),
+            sessionId: "s1"
+        )
+
+        pipe.flushNow()
+        #expect(pipe.reducer.items.isEmpty, "Correlated control-plane command_result should not leak to timeline")
+    }
+
     @Test func routeGetQueueCommandResultUpdatesQueueStore() {
         let (conn, pipe) = makeTestConnection()
 
@@ -193,6 +253,24 @@ struct ServerConnectionRoutingTests {
                         [
                             "id": "q1",
                             "message": "steer one",
+                            "attachments": [
+                                [
+                                    "type": "attachment",
+                                    "id": "att-1",
+                                    "source": "upload",
+                                    "name": "notes.pdf",
+                                    "mimeType": "application/pdf",
+                                    "sizeBytes": 1234,
+                                    "sha256": "abc",
+                                    "kind": "pdf",
+                                ],
+                            ],
+                            "images": [
+                                [
+                                    "data": "base64-data",
+                                    "mimeType": "image/png",
+                                ],
+                            ],
                             "createdAt": 1,
                         ],
                     ],
@@ -212,7 +290,46 @@ struct ServerConnectionRoutingTests {
         let stored = conn.messageQueueStore.queue(for: "s1")
         #expect(stored.version == 11)
         #expect(stored.steering.count == 1)
+        #expect(stored.steering.first?.attachments?.first?.id == "att-1")
+        #expect(stored.steering.first?.attachments?.first?.kind == .pdf)
+        #expect(stored.steering.first?.images?.first?.mimeType == "image/png")
         #expect(stored.followUp.count == 1)
+    }
+
+    @Test func routeGetQueueCommandResultWithMalformedQueueDoesNotReplaceStore() {
+        let (conn, pipe) = makeTestConnection()
+        conn.messageQueueStore.apply(
+            MessageQueueState(
+                version: 12,
+                steering: [MessageQueueItem(id: "q12", message: "fresh steer", images: nil, createdAt: 12)],
+                followUp: []
+            ),
+            for: "s1"
+        )
+
+        pipe.handle(
+            .commandResult(
+                command: "get_queue",
+                requestId: "req-bad",
+                success: true,
+                data: [
+                    "version": 13,
+                    "steering": [
+                        [
+                            "id": "bad",
+                            "createdAt": 13,
+                        ],
+                    ],
+                    "followUp": [],
+                ],
+                error: nil
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 12)
+        #expect(stored.steering.map(\.message) == ["fresh steer"])
     }
 
     @Test func routeGetQueueCommandResultIgnoresStaleVersion() {

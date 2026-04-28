@@ -100,9 +100,8 @@ final class ChatActionHandler {
 
     // MARK: - Prompt / Steer
 
-    /// Send a user prompt or steer the running agent.
-    ///
-    /// Returns the input text to restore on failure, or empty string on success.
+    /// Legacy adapter kept for test harnesses still passing `PendingImage`.
+    /// Base64 image transport is intentionally disabled in this path.
     func sendPrompt(
         text: String,
         images: [PendingImage],
@@ -118,25 +117,75 @@ final class ChatActionHandler {
         onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)? = nil,
         onNeedsReconnect: (() -> Void)? = nil
     ) -> String {
+        if !images.isEmpty {
+            reducer.process(
+                .error(
+                    sessionId: sessionId,
+                    message: "Image upload refs are not wired on this server yet. Remove image chips and try again."
+                )
+            )
+            onAsyncFailure?(text, images)
+            return text
+        }
+
+        return sendPrompt(
+            text: text,
+            attachments: [],
+            isBusy: isBusy,
+            busyStreamingBehavior: busyStreamingBehavior,
+            connection: connection,
+            reducer: reducer,
+            sessionId: sessionId,
+            sessionStore: sessionStore,
+            sessionManager: sessionManager,
+            onDispatchStarted: onDispatchStarted,
+            onSendSucceeded: onSendSucceeded,
+            onAsyncFailure: { failedText, _ in
+                onAsyncFailure?(failedText, images)
+            },
+            onNeedsReconnect: onNeedsReconnect
+        )
+    }
+
+    /// Send a user prompt or steer the running agent.
+    ///
+    /// Returns the input text to restore on failure, or empty string on success.
+    func sendPrompt(
+        text: String,
+        attachments: [ChatAttachmentRef],
+        optimisticDisplayText: String? = nil,
+        optimisticImages: [ImageAttachment] = [],
+        isBusy: Bool,
+        busyStreamingBehavior: StreamingBehavior = .steer,
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionId: String,
+        sessionStore: SessionStore? = nil,
+        sessionManager: ChatSessionManager? = nil,
+        onDispatchStarted: (() -> Void)? = nil,
+        onSendSucceeded: (() -> Void)? = nil,
+        onAsyncFailure: ((_ text: String, _ attachments: [ChatAttachmentRef]) -> Void)? = nil,
+        onNeedsReconnect: (() -> Void)? = nil
+    ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = images.map(\.attachment)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return text }
         guard !isSending else { return text }
 
-        // Set synchronously before the async task to prevent double-send
-        // from rapid taps or voice-dictation submit races.
         isSending = true
 
         if isBusy {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
 
-            let queuedImages = attachments.isEmpty ? nil : attachments
+            let queuedAttachments = attachments.isEmpty ? nil : attachments
             let queuedKind: MessageQueueKind = busyStreamingBehavior == .steer ? .steer : .followUp
+            let queueTurnId = UUID().uuidString
             let optimisticQueueItem = connection.messageQueueStore.enqueueOptimisticItem(
                 for: sessionId,
                 kind: queuedKind,
                 message: trimmed,
-                images: queuedImages
+                attachments: queuedAttachments,
+                images: optimisticImages.isEmpty ? nil : optimisticImages,
+                id: queueTurnId
             )
 
             launchTask { @MainActor in
@@ -147,11 +196,11 @@ final class ChatActionHandler {
                 do {
                     switch busyStreamingBehavior {
                     case .steer:
-                        try await connection.sendSteer(trimmed, images: queuedImages, onAckStage: { stage in
+                        try await connection.sendSteer(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, onAckStage: { stage in
                             self.updateSendAckStage(stage)
                         })
                     case .followUp:
-                        try await connection.sendFollowUp(trimmed, images: queuedImages, onAckStage: { stage in
+                        try await connection.sendFollowUp(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, onAckStage: { stage in
                             self.updateSendAckStage(stage)
                         })
                     }
@@ -179,7 +228,7 @@ final class ChatActionHandler {
                     if Self.isReconnectableSendError(error) {
                         onNeedsReconnect?()
                     }
-                    onAsyncFailure?(text, images)
+                    onAsyncFailure?(text, attachments)
                     reducer.process(.error(sessionId: sessionId, message: "\(errorPrefix) failed: \(error.localizedDescription)"))
                 }
             }
@@ -189,18 +238,20 @@ final class ChatActionHandler {
             launchTask { @MainActor in
                 self.beginSendTracking()
 
-                let messageId = reducer.appendUserMessage(trimmed, images: attachments)
-                // Decouple composer-clear from the optimistic timeline append.
-                // Running both in the same layout turn increases the chance of
-                // UIKit↔SwiftUI feedback loops under heavy timeline load.
+                let optimisticText = optimisticDisplayText ?? trimmed
+                let messageId: ChatItem.ID? = if !optimisticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
+                    reducer.appendUserMessage(optimisticText, images: optimisticImages)
+                } else {
+                    nil
+                }
                 if let onDispatchStarted {
                     DispatchQueue.main.async {
                         onDispatchStarted()
                     }
                 }
                 do {
-                    let promptImages = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmed, images: promptImages, onAckStage: { stage in
+                    let promptAttachments = attachments.isEmpty ? nil : attachments
+                    try await connection.sendPrompt(trimmed, attachments: promptAttachments, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     onSendSucceeded?()
@@ -216,7 +267,6 @@ final class ChatActionHandler {
                         await self.recoverPromptSendAfterReconnect(
                             text: text,
                             trimmedText: trimmed,
-                            images: images,
                             attachments: attachments,
                             messageId: messageId,
                             connection: connection,
@@ -242,8 +292,10 @@ final class ChatActionHandler {
                     if Self.isReconnectableSendError(error) {
                         onNeedsReconnect?()
                     }
-                    onAsyncFailure?(text, images)
-                    reducer.removeItem(id: messageId)
+                    onAsyncFailure?(text, attachments)
+                    if let messageId {
+                        reducer.removeItem(id: messageId)
+                    }
                     reducer.process(.error(sessionId: sessionId, message: "Failed to send: \(error.localizedDescription)"))
                 }
 
@@ -664,16 +716,15 @@ final class ChatActionHandler {
     private func recoverPromptSendAfterReconnect(
         text: String,
         trimmedText: String,
-        images: [PendingImage],
-        attachments: [ImageAttachment],
-        messageId: ChatItem.ID,
+        attachments: [ChatAttachmentRef],
+        messageId: ChatItem.ID?,
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionStore: SessionStore?,
         sessionManager: ChatSessionManager,
         sessionId: String,
         onSendSucceeded: (() -> Void)?,
-        onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)?,
+        onAsyncFailure: ((_ text: String, _ attachments: [ChatAttachmentRef]) -> Void)?,
         onNeedsReconnect: (() -> Void)?
     ) async {
         clearSendStageNow()
@@ -709,7 +760,7 @@ final class ChatActionHandler {
                 completeRecoveredPromptFailure(
                     message: message,
                     originalText: text,
-                    originalImages: images,
+                    originalAttachments: attachments,
                     messageId: messageId,
                     reducer: reducer,
                     sessionId: sessionId,
@@ -724,8 +775,8 @@ final class ChatActionHandler {
                 sessionId: sessionId
             ) {
                 do {
-                    let promptImages = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmedText, images: promptImages, onAckStage: { stage in
+                    let promptAttachments = attachments.isEmpty ? nil : attachments
+                    try await connection.sendPrompt(trimmedText, attachments: promptAttachments, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     sendRecoveryText = nil
@@ -757,7 +808,7 @@ final class ChatActionHandler {
                     completeRecoveredPromptFailure(
                         message: message,
                         originalText: text,
-                        originalImages: images,
+                        originalAttachments: attachments,
                         messageId: messageId,
                         reducer: reducer,
                         sessionId: sessionId,
@@ -781,7 +832,7 @@ final class ChatActionHandler {
         completeRecoveredPromptFailure(
             message: message,
             originalText: text,
-            originalImages: images,
+            originalAttachments: attachments,
             messageId: messageId,
             reducer: reducer,
             sessionId: sessionId,
@@ -792,11 +843,11 @@ final class ChatActionHandler {
     private func completeRecoveredPromptFailure(
         message: String,
         originalText: String,
-        originalImages: [PendingImage],
-        messageId: ChatItem.ID,
+        originalAttachments: [ChatAttachmentRef],
+        messageId: ChatItem.ID?,
         reducer: TimelineReducer,
         sessionId: String,
-        onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)?
+        onAsyncFailure: ((_ text: String, _ attachments: [ChatAttachmentRef]) -> Void)?
     ) {
         clearSendStageNow()
         sendRecoveryText = nil
@@ -809,8 +860,10 @@ final class ChatActionHandler {
             metadata: ["sessionId": sessionId, "reason": message]
         )
 
-        onAsyncFailure?(originalText, originalImages)
-        reducer.removeItem(id: messageId)
+        onAsyncFailure?(originalText, originalAttachments)
+        if let messageId {
+            reducer.removeItem(id: messageId)
+        }
     }
 
     private static func canRetryRecoveredPrompt(

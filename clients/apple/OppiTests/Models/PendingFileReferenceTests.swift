@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -202,5 +203,105 @@ struct PendingFileReferenceTests {
         let ref = PendingFileReference(path: "test.txt", isDirectory: false)
         let sendable: any Sendable = ref
         #expect(sendable is PendingFileReference)
+    }
+
+    @Test func attachmentPresentationSeparatesUploadsFromRepoPointers() {
+        let display = UserMessageAttachmentPresentation.makeDisplayText(
+            text: "Please check these",
+            pendingAttachments: [
+                PendingAttachment.localFile(name: "error.log", data: Data("oops".utf8), mimeType: "text/plain")
+            ],
+            pendingRepoPointers: [
+                PendingFileReference(path: "Sources/App.swift", isDirectory: false, kind: .workspaceFile),
+                PendingFileReference(path: "Tests/AppTests.swift", isDirectory: false, kind: .reviewFile)
+            ]
+        )
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: display)
+        #expect(parsed.visibleText == "Please check these")
+        #expect(parsed.badges.map { $0.label } == ["1 upload"])
+        #expect(parsed.pathPills.map { $0.label } == ["Sources/App.swift", "Tests/AppTests.swift"])
+    }
+
+    @Test func attachmentPresentationHidesReferenceBlockFromVisibleText() {
+        let raw = "Question about these files\n\nReferenced workspace files:\n- src/main.swift\n- README.md"
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "Question about these files")
+        #expect(parsed.badges.isEmpty)
+        #expect(parsed.pathPills.map { $0.label } == ["src/main.swift", "README.md"])
+    }
+
+    @Test func attachmentPresentationExtractsMaterializedAttachmentPaths() {
+        let raw = "testing\n\nAttached files:\n- image-1.jpg: .pi/attachments/s1/t1/image-1.jpg\n  MIME: image/jpeg\n  Size: 1 MB"
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: raw)
+
+        #expect(parsed.visibleText == "testing")
+        #expect(parsed.pathPills.map { $0.label } == ["image-1.jpg"])
+    }
+
+    @Test func attachmentPresentationAppendsUploadedAttachmentPathsToDisplayText() {
+        let display = UserMessageAttachmentPresentation.makeDisplayText(
+            text: "Look at this",
+            pendingAttachments: [
+                PendingAttachment.localFile(name: "image-1.jpg", data: Data("jpg".utf8), mimeType: "image/jpeg")
+            ],
+            pendingRepoPointers: [],
+            uploadedAttachments: [
+                ChatAttachmentRef(
+                    id: "att-1",
+                    source: .upload,
+                    name: "image-1.jpg",
+                    mimeType: "image/jpeg",
+                    sizeBytes: 3,
+                    workspacePath: ".pi/attachments/s1/t1/image-1.jpg"
+                )
+            ]
+        )
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: display)
+        #expect(parsed.visibleText == "Look at this")
+        #expect(parsed.pathPills.map { $0.path } == [".pi/attachments/s1/t1/image-1.jpg"])
+        #expect(parsed.pathPills.first?.supportsInlinePreview == true)
+    }
+
+    @Test func attachmentPresentationShowsNonImageUploadNameBeforeServerMaterializesPath() {
+        let display = UserMessageAttachmentPresentation.makeDisplayText(
+            text: "Read this log",
+            pendingAttachments: [
+                PendingAttachment.localFile(name: "error.log", data: Data("oops".utf8), mimeType: "text/plain")
+            ],
+            pendingRepoPointers: [],
+            uploadedAttachments: [
+                ChatAttachmentRef(
+                    id: "att-log",
+                    source: .upload,
+                    name: "error.log",
+                    mimeType: "text/plain",
+                    sizeBytes: 4
+                )
+            ]
+        )
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: display)
+        #expect(parsed.visibleText == "Read this log")
+        #expect(parsed.badges.map { $0.label } == ["1 upload"])
+        #expect(parsed.pathPills.map { $0.label } == ["error.log"])
+        #expect(parsed.pathPills.map { $0.path } == ["error.log"])
+        #expect(parsed.pathPills.first?.supportsInlinePreview == false)
+    }
+
+    @Test func referenceBlockBuilderPreservesQuickSessionRepoPointers() {
+        let transport = PendingFileReference.appendReferenceBlock(
+            to: "Please inspect",
+            files: [
+                PendingFileReference(path: "Sources/App.swift", isDirectory: false),
+                PendingFileReference(path: "Tests/AppTests.swift", isDirectory: false)
+            ]
+        )
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: transport)
+        #expect(parsed.visibleText == "Please inspect")
+        #expect(parsed.pathPills.map { $0.path } == ["Sources/App.swift", "Tests/AppTests.swift"])
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Chat input bar with full-width composer and action row.
 ///
@@ -21,8 +22,8 @@ import UIKit
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var textBeforeRecording: String?
-    @Binding var pendingImages: [PendingImage]
-    @Binding var pendingFiles: [PendingFileReference]
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var pendingRepoPointers: [PendingFileReference]
 
     let isBusy: Bool
     @Binding var busyStreamingBehavior: StreamingBehavior
@@ -52,6 +53,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
+    @State private var showFileImporter = false
     @State private var inlineVisualLineCount = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -95,8 +97,8 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var canSend: Bool {
-        let hasImages = !pendingImages.isEmpty
-        let hasFiles = !pendingFiles.isEmpty
+        let hasImages = pendingAttachments.contains { $0.source == .image }
+        let hasFiles = pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty
         let hasText = !composerDisplayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasReviewComments = pendingReviewCommentCount > 0
         return hasText || hasImages || hasFiles || hasReviewComments
@@ -145,18 +147,18 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Effective max lines — reduced when images or files are present to prevent the
     /// capsule from growing tall enough to push the send button off-screen.
     private var effectiveMaxLines: Int {
-        (pendingImages.isEmpty && pendingFiles.isEmpty) ? inlineMaxLines : inlineMaxLinesWithImages
+        (pendingAttachments.isEmpty && pendingRepoPointers.isEmpty) ? inlineMaxLines : inlineMaxLinesWithImages
     }
 
     /// Show manual expand only when input is getting long.
     private var showsExpandButton: Bool {
         inlineVisualLineCount >= expandVisibilityLineThreshold
-            || (!pendingImages.isEmpty && inlineVisualLineCount >= inlineMaxLinesWithImages)
+            || (!(pendingAttachments.isEmpty && pendingRepoPointers.isEmpty) && inlineVisualLineCount >= inlineMaxLinesWithImages)
     }
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        alwaysShowActionRow || isBusy || isInputFocused || !pendingImages.isEmpty || !pendingFiles.isEmpty
+        alwaysShowActionRow || isBusy || isInputFocused || !pendingAttachments.isEmpty || !pendingRepoPointers.isEmpty
     }
 
     /// Tapping the input while voice is active should switch back to typing:
@@ -212,7 +214,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
             if !fileSuggestions.isEmpty, case .atFile = autocompleteContext {
                 FileSuggestionList(suggestions: fileSuggestions) { suggestion in
-                    ComposerShared.insertFileSuggestion(suggestion, text: $text, pendingFiles: $pendingFiles)
+                    ComposerShared.insertFileSuggestion(suggestion, text: $text, pendingRepoPointers: $pendingRepoPointers)
                 }
             }
 
@@ -247,7 +249,7 @@ struct ChatInputBar<ActionRow: View>: View {
             )
         }
         .onChange(of: photoSelection) { _, items in
-            ComposerShared.loadSelectedPhotos(items, into: $pendingImages)
+            ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
             photoSelection = []
         }
         .onChange(of: externalFocusRequestID) { _, _ in
@@ -268,7 +270,14 @@ struct ChatInputBar<ActionRow: View>: View {
                 )
             }
         }
-        .composerCameraCover(isPresented: $showCamera, pendingImages: $pendingImages)
+        .composerCameraCover(isPresented: $showCamera, pendingAttachments: $pendingAttachments)
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            ComposerShared.loadSelectedFiles(result, into: $pendingAttachments)
+        }
     }
 
     // MARK: - Subviews
@@ -290,19 +299,17 @@ struct ChatInputBar<ActionRow: View>: View {
                 .transition(ThemeMotion.move(edge: .top, reduceMotion: reduceMotion))
             }
 
-            // Image strip inside capsule
-            if !pendingImages.isEmpty {
-                imageStrip
+            if !pendingAttachments.isEmpty {
+                attachmentStrip
                     .padding(.horizontal, composerHorizontalPadding)
                     .padding(.top, 8)
                     .padding(.bottom, 4)
             }
 
-            // File reference pills
-            if !pendingFiles.isEmpty {
+            if !pendingRepoPointers.isEmpty {
                 filePillStrip
                     .padding(.horizontal, composerHorizontalPadding)
-                    .padding(.top, pendingImages.isEmpty ? 8 : 2)
+                    .padding(.top, pendingAttachments.isEmpty ? 8 : 2)
                     .padding(.bottom, 4)
             }
 
@@ -332,7 +339,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         correctionRanges: correctionRangesForDisplay,
                         maxLines: effectiveMaxLines,
                         autocorrectionEnabled: composerAutocorrectionEnabled,
-                        onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingImages) },
+                        onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
                         onCommandEnter: handleSend,
                         onAlternateEnter: handleAlternateSend,
                         onOverflowChange: nil,
@@ -355,7 +362,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         keyboardLanguage: $keyboardLanguage
                     )
                 }
-                .padding(.trailing, showsExpandButton ? expandVisualDiameter + 4 : 0)
+                .padding(.trailing, Self.composerTextTrailingPadding(showsExpandButton: showsExpandButton))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
 
@@ -406,6 +413,12 @@ struct ChatInputBar<ActionRow: View>: View {
                 showCamera = true
             } label: {
                 Label("Camera", systemImage: "camera")
+            }
+
+            Button {
+                showFileImporter = true
+            } label: {
+                Label("Choose File", systemImage: "paperclip")
             }
         } label: {
             Image(systemName: "plus")
@@ -462,30 +475,36 @@ struct ChatInputBar<ActionRow: View>: View {
         .accessibilityLabel("Busy send mode")
     }
 
-    private var imageStrip: some View {
+    private var attachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(pendingImages) { pending in
-                    ZStack(alignment: .topTrailing) {
-                        Image(uiImage: pending.thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
-                            )
+                ForEach(pendingAttachments) { attachment in
+                    if attachment.source == .image, let thumbnail = attachment.thumbnail {
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+                                )
 
-                        Button {
-                            ComposerShared.removeImage(pending.id, from: $pendingImages)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.themeFg)
-                                .background(Circle().fill(.themeScrim))
+                            Button {
+                                ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.themeFg)
+                                    .background(Circle().fill(.themeScrim))
+                            }
+                            .offset(x: 4, y: -4)
                         }
-                        .offset(x: 4, y: -4)
+                    } else {
+                        ComposerAttachmentPill(name: attachment.displayName) {
+                            ComposerShared.removeAttachment(attachment.id, from: $pendingAttachments)
+                        }
                     }
                 }
             }
@@ -495,9 +514,9 @@ struct ChatInputBar<ActionRow: View>: View {
     private var filePillStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(pendingFiles) { file in
+                ForEach(pendingRepoPointers) { file in
                     ComposerFilePill(file: file) {
-                        ComposerShared.removeFile(file.id, from: $pendingFiles)
+                        ComposerShared.removeFile(file.id, from: $pendingRepoPointers)
                     }
                 }
             }
@@ -676,6 +695,10 @@ struct ChatInputBar<ActionRow: View>: View {
         isInputFocused = isFocused
     }
 
+    static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
+        showsExpandButton ? 10 : 0
+    }
+
     static func allowKeyboardRestoreOnTap(voiceState _: VoiceInputManager.State) -> Bool {
         true
     }
@@ -737,6 +760,18 @@ struct PendingImage: Identifiable, Sendable {
     let id: String
     let thumbnail: UIImage
     let attachment: ImageAttachment
+
+    var pendingAttachment: PendingAttachment {
+        PendingAttachment(
+            id: id,
+            source: .image,
+            displayName: "Image",
+            thumbnail: thumbnail,
+            imageAttachment: attachment,
+            localFileData: nil,
+            localMimeType: nil
+        )
+    }
 
     /// Anthropic API limit for base64 image content (bytes).
     private static let maxBase64Bytes = 5_242_880

@@ -273,7 +273,7 @@ struct ServerMessageTests {
     }
 
     @Test func decodesQueueState() throws {
-        let json = #"{"type":"queue_state","queue":{"version":4,"steering":[{"id":"q1","message":"steer one","createdAt":1}],"followUp":[{"id":"q2","message":"follow one","createdAt":2}]}}"#
+        let json = #"{"type":"queue_state","queue":{"version":4,"steering":[{"id":"q1","message":"steer one","images":[{"data":"aGVsbG8=","mimeType":"image/png"}],"attachments":[{"type":"attachment","id":"att-1","source":"upload","name":"image-1.png","mimeType":"image/png","sizeBytes":5,"workspacePath":".pi/attachments/demo/image-1.png"}],"createdAt":1}],"followUp":[{"id":"q2","message":"follow one","createdAt":2}]}}"#
         let msg = try ServerMessage.decode(from: json)
         guard case .queueState(let queue) = msg else {
             Issue.record("Expected .queueState")
@@ -282,6 +282,8 @@ struct ServerMessageTests {
         #expect(queue.version == 4)
         #expect(queue.steering.count == 1)
         #expect(queue.steering.first?.id == "q1")
+        #expect(queue.steering.first?.images?.first?.mimeType == "image/png")
+        #expect(queue.steering.first?.attachments?.first?.workspacePath == ".pi/attachments/demo/image-1.png")
         #expect(queue.followUp.count == 1)
         #expect(queue.followUp.first?.message == "follow one")
     }

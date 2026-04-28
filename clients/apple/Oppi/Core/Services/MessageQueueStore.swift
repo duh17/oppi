@@ -35,12 +35,15 @@ final class MessageQueueStore {
         for sessionId: String,
         kind: MessageQueueKind,
         message: String,
-        images: [ImageAttachment]?
+        attachments: [ChatAttachmentRef]?,
+        images: [ImageAttachment]? = nil,
+        id: String = "local-\(UUID().uuidString)"
     ) -> MessageQueueItem {
         var state = queuesBySessionId[sessionId] ?? .empty
         let item = MessageQueueItem(
-            id: "local-\(UUID().uuidString)",
+            id: id,
             message: message,
+            attachments: attachments,
             images: images,
             createdAt: Int(Date().timeIntervalSince1970 * 1_000)
         )
@@ -54,6 +57,21 @@ final class MessageQueueStore {
 
         queuesBySessionId[sessionId] = state
         return item
+    }
+
+    func enqueueOptimisticItem(
+        for sessionId: String,
+        kind: MessageQueueKind,
+        message: String,
+        images: [ImageAttachment]?
+    ) -> MessageQueueItem {
+        enqueueOptimisticItem(
+            for: sessionId,
+            kind: kind,
+            message: message,
+            attachments: nil,
+            images: images
+        )
     }
 
     func removeQueuedItem(

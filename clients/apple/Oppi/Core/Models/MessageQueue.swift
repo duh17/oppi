@@ -8,8 +8,23 @@ enum MessageQueueKind: String, Codable, Sendable {
 struct MessageQueueItem: Codable, Sendable, Equatable, Identifiable {
     let id: String
     var message: String
+    var attachments: [ChatAttachmentRef]?
     var images: [ImageAttachment]?
     var createdAt: Int
+
+    init(
+        id: String,
+        message: String,
+        attachments: [ChatAttachmentRef]? = nil,
+        images: [ImageAttachment]? = nil,
+        createdAt: Int
+    ) {
+        self.id = id
+        self.message = message
+        self.attachments = attachments
+        self.images = images
+        self.createdAt = createdAt
+    }
 }
 
 struct MessageQueueState: Codable, Sendable, Equatable {
@@ -23,6 +38,21 @@ struct MessageQueueState: Codable, Sendable, Equatable {
 struct MessageQueueDraftItem: Codable, Sendable, Equatable, Identifiable {
     var id: String?
     var message: String
+    var attachments: [ChatAttachmentRef]?
     var images: [ImageAttachment]?
     var createdAt: Int?
+
+    init(
+        id: String?,
+        message: String,
+        attachments: [ChatAttachmentRef]? = nil,
+        images: [ImageAttachment]? = nil,
+        createdAt: Int?
+    ) {
+        self.id = id
+        self.message = message
+        self.attachments = attachments
+        self.images = images
+        self.createdAt = createdAt
+    }
 }

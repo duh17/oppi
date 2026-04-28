@@ -992,6 +992,70 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
+    @Test func busyHistoryReloadWithoutCachePreservesLiveRows() async {
+        let sessionId = "busy-reload-no-cache-\(UUID().uuidString)"
+        let workspaceId = "w-live"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(120))
+            return (
+                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
+                [
+                    makeTraceEvent(id: "trace-assistant", text: "HISTORY_WITHOUT_CACHE"),
+                ]
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)))
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .textDelta(delta: "LIVE_WITHOUT_CACHE"))
+
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                manager.reducer.items.contains { item in
+                    if case .assistantMessage(_, let text, _) = item {
+                        return text.contains("LIVE_WITHOUT_CACHE")
+                    }
+                    return false
+                }
+            }
+        })
+
+        try? await Task.sleep(for: .milliseconds(220))
+
+        #expect(manager.reducer.items.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("HISTORY_WITHOUT_CACHE")
+            }
+            return false
+        })
+        #expect(manager.reducer.items.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("LIVE_WITHOUT_CACHE")
+            }
+            return false
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
+
     @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
         let sessionId = "catch-stop-ok-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)

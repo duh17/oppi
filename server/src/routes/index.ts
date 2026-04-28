@@ -6,6 +6,7 @@ import { createIdentityRoutes } from "./identity.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
 import { createSessionRoutes } from "./sessions.js";
+import { createUploadRoutes } from "./uploads.js";
 import { createStreamingRoutes } from "./streaming.js";
 import { createPolicyRoutes } from "./policy.js";
 import { createThemeRoutes } from "./themes.js";
@@ -26,6 +27,7 @@ export class RouteHandler {
       createIdentityRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
+      createUploadRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
       createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),

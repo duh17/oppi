@@ -5,6 +5,7 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type {
+  ChatAttachmentRef,
   ClientMessage,
   ImageAttachment,
   MessageQueueDraftItem,
@@ -19,6 +20,7 @@ const log = createLogger({ base: { component: "ws_message_handler" } });
 interface TurnCommandMessage {
   message: string;
   images?: ImageAttachment[];
+  attachments?: ChatAttachmentRef[];
   clientTurnId?: string;
   requestId?: string;
 }
@@ -44,6 +46,7 @@ interface WsSessionCommands {
     message: string,
     opts: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
       streamingBehavior?: "steer" | "followUp";
@@ -55,6 +58,7 @@ interface WsSessionCommands {
     message: string,
     opts: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -64,6 +68,7 @@ interface WsSessionCommands {
     message: string,
     opts: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      attachments?: ChatAttachmentRef[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -334,6 +339,7 @@ export class WsMessageHandler {
       message: string,
       opts: {
         images?: Array<{ type: "image"; data: string; mimeType: string }>;
+        attachments?: ChatAttachmentRef[];
         clientTurnId?: string;
         requestId?: string;
       },
@@ -349,6 +355,8 @@ export class WsMessageHandler {
       mimeType: img.mimeType,
     }));
     const imageCount = images?.length ?? 0;
+    const attachments = msg.attachments ? [...msg.attachments] : undefined;
+    const attachmentCount = attachments?.length ?? 0;
 
     log.info("ws.turn_command.received", {
       connId: meta.connId,
@@ -357,11 +365,13 @@ export class WsMessageHandler {
       requestId,
       chars,
       imageCount,
+      attachmentCount,
     });
 
     try {
       await handler(session.id, msg.message, {
         images,
+        attachments,
         clientTurnId: msg.clientTurnId,
         requestId,
       });

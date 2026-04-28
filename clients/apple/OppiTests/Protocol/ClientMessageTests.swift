@@ -35,6 +35,7 @@ struct ClientMessageTests {
                 MessageQueueDraftItem(
                     id: "q1",
                     message: "steer this",
+                    attachments: nil,
                     images: nil,
                     createdAt: 123
                 ),
@@ -95,16 +96,25 @@ struct ClientMessageTests {
         #expect(json["message"] as? String == "change direction")
     }
 
-    @Test func encodesPromptWithImages() throws {
-        let img = ImageAttachment(data: "base64data", mimeType: "image/jpeg")
-        let msg = ClientMessage.prompt(message: "describe this", images: [img])
+    @Test func encodesPromptWithAttachments() throws {
+        let ref = ChatAttachmentRef(
+            id: "upl_123",
+            source: .upload,
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1234,
+            sha256: "abc",
+            kind: .image
+        )
+        let msg = ClientMessage.prompt(message: "describe this", attachments: [ref])
         let json = try decode(msg)
         #expect(json["type"] as? String == "prompt")
         #expect(json["message"] as? String == "describe this")
-        let images = json["images"] as? [[String: Any]]
-        #expect(images?.count == 1)
-        #expect(images?[0]["data"] as? String == "base64data")
-        #expect(images?[0]["mimeType"] as? String == "image/jpeg")
+        let attachments = json["attachments"] as? [[String: Any]]
+        #expect(attachments?.count == 1)
+        #expect(attachments?[0]["id"] as? String == "upl_123")
+        #expect(attachments?[0]["source"] as? String == "upload")
+        #expect(attachments?[0]["name"] as? String == "screenshot.png")
     }
 
     @Test func encodesPromptWithStreamingBehavior() throws {
