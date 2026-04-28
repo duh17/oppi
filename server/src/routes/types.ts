@@ -33,7 +33,7 @@ export interface RouteContext {
 }
 
 export interface RouteHelpers {
-  parseBody<T>(req: IncomingMessage): Promise<T>;
+  parseBody<T>(req: IncomingMessage, options?: { maxBytes?: number }): Promise<T>;
   json(res: ServerResponse, data: unknown, status?: number): void;
   compressedJson(req: IncomingMessage, res: ServerResponse, data: unknown, status?: number): void;
   error(res: ServerResponse, status: number, message: string): void;

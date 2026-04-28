@@ -79,27 +79,51 @@ To inspect a child's detailed execution, use `inspect_agent` after the fact — 
 
 ## Lifecycle configuration
 
-All subagent lifecycle behavior is configurable via `config.subagents`:
+All subagent lifecycle behavior is configurable via `config.extensions.subagents`:
 
 ```json
 {
-  "subagents": {
-    "maxDepth": 1,
-    "autoStopWhenDone": true,
-    "startupGraceMs": 60000,
-    "defaultWaitTimeoutMs": 1800000
+  "extensions": {
+    "subagents": {
+      "maxDepth": 1,
+      "autoStopWhenDone": false,
+      "startupGraceMs": 60000,
+      "defaultWaitTimeoutMs": 1800000,
+      "modelPolicy": {
+        "approvedModels": ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
+        "defaultModel": "openai-codex/gpt-5.5",
+        "defaultThinking": "medium",
+        "profiles": {
+          "discovery": {
+            "description": "Fast repo and web discovery.",
+            "model": "openai-codex/gpt-5.4-mini",
+            "thinking": "minimal",
+            "guidelines": [
+              "Prefer search and inspection before edits.",
+              "Stay cheap and fast unless evidence says otherwise."
+            ]
+          }
+        }
+      }
+    }
   }
 }
 ```
 
-| Field                  | Default   | Description                                                                                                                                                                                |
-| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `maxDepth`             | `1`       | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled.                                                                       |
-| `autoStopWhenDone`     | `true`    | Whether children automatically stop after completing their work. When `false`, children stay alive for follow-up messages via `send_message`.                                              |
-| `startupGraceMs`       | `60000`   | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
-| `defaultWaitTimeoutMs` | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`.                                                                                       |
+| Field                         | Default   | Description                                                                                                                                                                                |
+| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `maxDepth`                    | `1`       | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled.                                                                       |
+| `autoStopWhenDone`            | `false`   | Whether children automatically stop after completing their work. When `false`, children stay alive for follow-up messages via `send_message`.                                              |
+| `startupGraceMs`              | `60000`   | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
+| `defaultWaitTimeoutMs`        | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`.                                                                                       |
+| `modelPolicy.approvedModels`  | none      | Optional allowlist for subagent model IDs. If set, `spawn_agent` rejects anything outside this list.                                                                                       |
+| `modelPolicy.defaultModel`    | none      | Default model for subagents when the caller omits `model`. Useful for steering work toward `openai-codex/*` variants.                                                                      |
+| `modelPolicy.defaultThinking` | none      | Default thinking level when the caller omits `thinking`.                                                                                                                                   |
+| `modelPolicy.profiles.*`      | none      | Named presets such as `discovery`, `coding`, or `review`. Each profile can set `model`, `thinking`, and extra prompt `guidelines`.                                                         |
 
-Set via CLI: `oppi config set subagents '{"maxDepth": 2, "autoStopWhenDone": false}'`. Partial updates merge with defaults.
+`spawn_agent` now also accepts an optional `profile` parameter. Profiles are a clean way to standardize lanes like discovery, code search, web research, and deep implementation work without hard-coding model choices into prompts.
+
+Set via CLI: `oppi config set extensions '{"subagents":{"modelPolicy":{"defaultModel":"openai-codex/gpt-5.5"}}}'`. Partial updates merge with defaults.
 
 ## Git safety
 

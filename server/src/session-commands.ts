@@ -1025,6 +1025,7 @@ export class SessionCommandCoordinator {
       case "prompt":
         backend.prompt(command.message as string, {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
+          streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
         });
         break;
       case "steer":

@@ -3,7 +3,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
 import { defaultPolicy } from "../policy-presets.js";
-import type { PolicyHeuristics, ServerConfig, SubagentConfig } from "../types.js";
+import type {
+  PolicyHeuristics,
+  ServerConfig,
+  SubagentConfig,
+  SubagentModelPolicyConfig,
+  SubagentModelProfileConfig,
+} from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -63,6 +69,13 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     runtimeEnv: {},
     tls: { mode: "self-signed" },
     policy: defaultPolicy(),
+    uploadStore: {
+      mode: "local",
+      path: join(dataDir, "uploads"),
+      maxFileBytes: 50 * 1024 * 1024,
+      maxTurnBytes: 100 * 1024 * 1024,
+      unusedTtlMs: 24 * 60 * 60 * 1000,
+    },
     extensions: {
       subagents: defaultSubagentConfig(),
     },
@@ -114,6 +127,7 @@ function normalizeConfig(
     "liveActivityToken",
     "autoTitle",
     "asr",
+    "uploadStore",
     "extensions",
   ]);
 
@@ -706,6 +720,93 @@ function normalizeConfig(
     }
   }
 
+  if ("uploadStore" in obj) {
+    if (!isRecord(obj.uploadStore)) {
+      errors.push("config.uploadStore: expected object");
+      changed = true;
+    } else {
+      const upload = obj.uploadStore;
+      const allowedUploadKeys = new Set([
+        "mode",
+        "path",
+        "maxFileBytes",
+        "maxTurnBytes",
+        "unusedTtlMs",
+        "retainedTtlMs",
+        "allowedMimeTypes",
+      ]);
+
+      if (strictUnknown) {
+        for (const key of Object.keys(upload)) {
+          if (!allowedUploadKeys.has(key)) {
+            errors.push(`config.uploadStore.${key}: unknown key`);
+          }
+        }
+      }
+
+      const uploadConfig: NonNullable<ServerConfig["uploadStore"]> = {};
+      if ("mode" in upload) {
+        if (upload.mode === "local") {
+          uploadConfig.mode = "local";
+        } else {
+          errors.push("config.uploadStore.mode: expected local");
+          changed = true;
+        }
+      }
+
+      const readOptionalUploadString = (key: "path"): void => {
+        if (!(key in upload)) {
+          return;
+        }
+        if (typeof upload[key] === "string" && upload[key].trim().length > 0) {
+          uploadConfig[key] = upload[key].trim();
+          return;
+        }
+        errors.push(`config.uploadStore.${key}: expected non-empty string`);
+        changed = true;
+      };
+
+      const readOptionalUploadInt = (
+        key: "maxFileBytes" | "maxTurnBytes" | "unusedTtlMs" | "retainedTtlMs",
+      ): void => {
+        if (!(key in upload) || upload[key] === undefined) {
+          return;
+        }
+        if (typeof upload[key] === "number" && Number.isInteger(upload[key]) && upload[key] >= 1) {
+          uploadConfig[key] = upload[key];
+          return;
+        }
+        errors.push(`config.uploadStore.${key}: expected positive integer`);
+        changed = true;
+      };
+
+      readOptionalUploadString("path");
+      readOptionalUploadInt("maxFileBytes");
+      readOptionalUploadInt("maxTurnBytes");
+      readOptionalUploadInt("unusedTtlMs");
+      readOptionalUploadInt("retainedTtlMs");
+
+      if ("allowedMimeTypes" in upload) {
+        if (
+          Array.isArray(upload.allowedMimeTypes) &&
+          upload.allowedMimeTypes.every(
+            (value) => typeof value === "string" && value.trim().length > 0,
+          )
+        ) {
+          uploadConfig.allowedMimeTypes = upload.allowedMimeTypes.map((value) => value.trim());
+        } else {
+          errors.push("config.uploadStore.allowedMimeTypes: expected array of non-empty strings");
+          changed = true;
+        }
+      }
+
+      config.uploadStore = {
+        ...(config.uploadStore ?? {}),
+        ...uploadConfig,
+      };
+    }
+  }
+
   const parseSubagentConfig = (value: unknown, pathPrefix: string): SubagentConfig | undefined => {
     if (!isRecord(value)) {
       if (value !== undefined) {
@@ -725,6 +826,7 @@ function normalizeConfig(
       "childIdleTimeoutMs",
       "startupGraceMs",
       "defaultWaitTimeoutMs",
+      "modelPolicy",
     ]);
 
     if (strictUnknown) {
@@ -789,6 +891,197 @@ function normalizeConfig(
       } else {
         errors.push(`${pathPrefix}.defaultWaitTimeoutMs: expected positive integer`);
         changed = true;
+      }
+    }
+
+    if ("modelPolicy" in sa) {
+      if (!isRecord(sa.modelPolicy)) {
+        errors.push(`${pathPrefix}.modelPolicy: expected object`);
+        changed = true;
+      } else {
+        const policy = sa.modelPolicy;
+        const allowedPolicyKeys = new Set([
+          "approvedModels",
+          "defaultModel",
+          "defaultThinking",
+          "profiles",
+        ]);
+
+        if (strictUnknown) {
+          for (const key of Object.keys(policy)) {
+            if (!allowedPolicyKeys.has(key)) {
+              errors.push(`${pathPrefix}.modelPolicy.${key}: unknown key`);
+            }
+          }
+        }
+
+        const parsedPolicy: SubagentModelPolicyConfig = {};
+
+        if ("approvedModels" in policy) {
+          if (
+            Array.isArray(policy.approvedModels) &&
+            policy.approvedModels.every(
+              (value) => typeof value === "string" && value.trim().length > 0,
+            )
+          ) {
+            parsedPolicy.approvedModels = Array.from(
+              new Set(policy.approvedModels.map((value) => value.trim())),
+            );
+          } else {
+            errors.push(
+              `${pathPrefix}.modelPolicy.approvedModels: expected array of non-empty strings`,
+            );
+            changed = true;
+          }
+        }
+
+        if ("defaultModel" in policy) {
+          if (typeof policy.defaultModel === "string" && policy.defaultModel.trim().length > 0) {
+            parsedPolicy.defaultModel = policy.defaultModel.trim();
+          } else {
+            errors.push(`${pathPrefix}.modelPolicy.defaultModel: expected non-empty string`);
+            changed = true;
+          }
+        }
+
+        if ("defaultThinking" in policy) {
+          const allowedThinking = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+          if (
+            typeof policy.defaultThinking === "string" &&
+            allowedThinking.has(policy.defaultThinking.trim())
+          ) {
+            parsedPolicy.defaultThinking = policy.defaultThinking.trim();
+          } else {
+            errors.push(
+              `${pathPrefix}.modelPolicy.defaultThinking: expected one of off|minimal|low|medium|high|xhigh`,
+            );
+            changed = true;
+          }
+        }
+
+        if ("profiles" in policy) {
+          if (!isRecord(policy.profiles)) {
+            errors.push(`${pathPrefix}.modelPolicy.profiles: expected object`);
+            changed = true;
+          } else {
+            const profiles: Record<string, SubagentModelProfileConfig> = {};
+            for (const [profileName, profileValue] of Object.entries(policy.profiles)) {
+              if (!isRecord(profileValue)) {
+                errors.push(`${pathPrefix}.modelPolicy.profiles.${profileName}: expected object`);
+                changed = true;
+                continue;
+              }
+
+              const allowedProfileKeys = new Set([
+                "description",
+                "model",
+                "thinking",
+                "guidelines",
+              ]);
+              if (strictUnknown) {
+                for (const key of Object.keys(profileValue)) {
+                  if (!allowedProfileKeys.has(key)) {
+                    errors.push(
+                      `${pathPrefix}.modelPolicy.profiles.${profileName}.${key}: unknown key`,
+                    );
+                  }
+                }
+              }
+
+              const profile: SubagentModelProfileConfig = {};
+              if ("description" in profileValue) {
+                if (
+                  typeof profileValue.description === "string" &&
+                  profileValue.description.trim().length > 0
+                ) {
+                  profile.description = profileValue.description.trim();
+                } else {
+                  errors.push(
+                    `${pathPrefix}.modelPolicy.profiles.${profileName}.description: expected non-empty string`,
+                  );
+                  changed = true;
+                }
+              }
+
+              if ("model" in profileValue) {
+                if (
+                  typeof profileValue.model === "string" &&
+                  profileValue.model.trim().length > 0
+                ) {
+                  profile.model = profileValue.model.trim();
+                } else {
+                  errors.push(
+                    `${pathPrefix}.modelPolicy.profiles.${profileName}.model: expected non-empty string`,
+                  );
+                  changed = true;
+                }
+              }
+
+              if ("thinking" in profileValue) {
+                const allowedThinking = new Set([
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                ]);
+                if (
+                  typeof profileValue.thinking === "string" &&
+                  allowedThinking.has(profileValue.thinking.trim())
+                ) {
+                  profile.thinking = profileValue.thinking.trim();
+                } else {
+                  errors.push(
+                    `${pathPrefix}.modelPolicy.profiles.${profileName}.thinking: expected one of off|minimal|low|medium|high|xhigh`,
+                  );
+                  changed = true;
+                }
+              }
+
+              if ("guidelines" in profileValue) {
+                if (
+                  Array.isArray(profileValue.guidelines) &&
+                  profileValue.guidelines.every(
+                    (value) => typeof value === "string" && value.trim().length > 0,
+                  )
+                ) {
+                  profile.guidelines = profileValue.guidelines.map((value) => value.trim());
+                } else {
+                  errors.push(
+                    `${pathPrefix}.modelPolicy.profiles.${profileName}.guidelines: expected array of non-empty strings`,
+                  );
+                  changed = true;
+                }
+              }
+
+              profiles[profileName] = profile;
+            }
+            parsedPolicy.profiles = profiles;
+          }
+        }
+
+        const approved = parsedPolicy.approvedModels;
+        if (approved && approved.length > 0) {
+          if (parsedPolicy.defaultModel && !approved.includes(parsedPolicy.defaultModel)) {
+            errors.push(
+              `${pathPrefix}.modelPolicy.defaultModel: must be included in approvedModels`,
+            );
+            changed = true;
+          }
+          for (const [profileName, profile] of Object.entries(parsedPolicy.profiles ?? {})) {
+            if (profile.model && !approved.includes(profile.model)) {
+              errors.push(
+                `${pathPrefix}.modelPolicy.profiles.${profileName}.model: must be included in approvedModels`,
+              );
+              changed = true;
+            }
+          }
+        }
+
+        if (Object.keys(parsedPolicy).length > 0) {
+          subagents.modelPolicy = parsedPolicy;
+        }
       }
     }
 

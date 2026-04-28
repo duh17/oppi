@@ -4,7 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 import { createSubagentsFactory, type SubagentsContext } from "./subagents.js";
-import type { Session, ServerMessage } from "../src/types.js";
+import type { Session, ServerMessage, SubagentConfig } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -216,7 +216,7 @@ function emitMessage(ctx: MockCtx, sessionId: string, msg: ServerMessage): void 
 
 function setup(
   sessionId = "parent-1",
-  options?: { childMode?: boolean },
+  options?: { childMode?: boolean; subagentConfig?: SubagentConfig },
 ): {
   ctx: MockCtx;
   api: MockExtensionAPI;
@@ -423,6 +423,121 @@ describe("subagents-extension", () => {
       await tool("spawn_agent").execute("tc1", { message: longMessage });
 
       expect(ctx.spawnChildCalls[0].name).toBe("A".repeat(80));
+    });
+
+    it("applies default subagent model policy when model/thinking are omitted", async () => {
+      const { ctx, tool } = setup("parent-1", {
+        subagentConfig: {
+          maxDepth: 1,
+          autoStopWhenDone: false,
+          childIdleTimeoutMs: 300_000,
+          startupGraceMs: 60_000,
+          defaultWaitTimeoutMs: 1_800_000,
+          modelPolicy: {
+            approvedModels: ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
+            defaultModel: "openai-codex/gpt-5.4-mini",
+            defaultThinking: "minimal",
+          },
+        },
+      });
+
+      await tool("spawn_agent").execute("tc1", {
+        message: "discover the codebase",
+      });
+
+      expect(ctx.spawnChildCalls[0].model).toBe("openai-codex/gpt-5.4-mini");
+      expect(ctx.spawnChildCalls[0].thinking).toBe("minimal");
+    });
+
+    it("applies configured profile defaults and prompt guidelines", async () => {
+      const { ctx, tool } = setup("parent-1", {
+        subagentConfig: {
+          maxDepth: 1,
+          autoStopWhenDone: false,
+          childIdleTimeoutMs: 300_000,
+          startupGraceMs: 60_000,
+          defaultWaitTimeoutMs: 1_800_000,
+          modelPolicy: {
+            approvedModels: ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
+            defaultModel: "openai-codex/gpt-5.5",
+            profiles: {
+              discovery: {
+                description: "Fast repo and web discovery lane.",
+                model: "openai-codex/gpt-5.4-mini",
+                thinking: "minimal",
+                guidelines: [
+                  "Prefer search and inspection before editing.",
+                  "Stay cheap and fast unless the evidence says otherwise.",
+                ],
+              },
+            },
+          },
+        },
+      });
+
+      await tool("spawn_agent").execute("tc1", {
+        message: "inspect the repo and summarize hotspots",
+        profile: "discovery",
+      });
+
+      expect(ctx.spawnChildCalls[0].model).toBe("openai-codex/gpt-5.4-mini");
+      expect(ctx.spawnChildCalls[0].thinking).toBe("minimal");
+      expect(ctx.spawnChildCalls[0].prompt).toContain("[Subagent profile: discovery]");
+      expect(ctx.spawnChildCalls[0].prompt).toContain(
+        "Prefer search and inspection before editing.",
+      );
+      expect(ctx.spawnChildCalls[0].prompt).toContain("inspect the repo and summarize hotspots");
+    });
+
+    it("rejects models outside the approved subagent list", async () => {
+      const { ctx, tool } = setup("parent-1", {
+        subagentConfig: {
+          maxDepth: 1,
+          autoStopWhenDone: false,
+          childIdleTimeoutMs: 300_000,
+          startupGraceMs: 60_000,
+          defaultWaitTimeoutMs: 1_800_000,
+          modelPolicy: {
+            approvedModels: ["openai-codex/gpt-5.4-mini"],
+          },
+        },
+      });
+
+      const result = await tool("spawn_agent").execute("tc1", {
+        message: "do work",
+        model: "openrouter/openai/gpt-5",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("not approved for subagents");
+      expect(ctx.spawnChildCalls.length).toBe(0);
+    });
+
+    it("rejects unknown profiles and lists configured ones", async () => {
+      const { ctx, tool } = setup("parent-1", {
+        subagentConfig: {
+          maxDepth: 1,
+          autoStopWhenDone: false,
+          childIdleTimeoutMs: 300_000,
+          startupGraceMs: 60_000,
+          defaultWaitTimeoutMs: 1_800_000,
+          modelPolicy: {
+            profiles: {
+              discovery: { model: "openai-codex/gpt-5.4-mini" },
+            },
+          },
+        },
+      });
+
+      const result = await tool("spawn_agent").execute("tc1", {
+        message: "do work",
+        profile: "review",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Unknown subagent profile");
+      expect(result.content[0].text).toContain("discovery");
+      expect(ctx.spawnChildCalls.length).toBe(0);
     });
 
     it("rejects when depth >= MAX_SPAWN_DEPTH (1)", async () => {

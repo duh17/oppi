@@ -14,7 +14,12 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import { Type, type Static } from "typebox";
-import type { ServerMessage, Session, SubagentConfig } from "../src/types.js";
+import type {
+  ServerMessage,
+  Session,
+  SubagentConfig,
+  SubagentModelProfileConfig,
+} from "../src/types.js";
 import { defaultSubagentConfig } from "../src/storage/config-store.js";
 
 // ---------------------------------------------------------------------------
@@ -134,16 +139,23 @@ const spawnAgentParams = Type.Object({
         "Display name for the child session. Defaults to a truncated version of the message.",
     }),
   ),
+  profile: Type.Optional(
+    Type.String({
+      description:
+        "Optional named subagent profile from config.extensions.subagents.modelPolicy.profiles. " +
+        "Useful for standardized lanes like discovery, coding, review, or web research.",
+    }),
+  ),
   model: Type.Optional(
     Type.String({
       description:
-        "Model override for the child session (e.g. 'anthropic/claude-sonnet-4-6'). Inherits from parent if omitted.",
+        "Model override for the child session (for example 'openai-codex/gpt-5.4-mini'). Inherits from parent or profile/default policy if omitted.",
     }),
   ),
   thinking: Type.Optional(
     Type.String({
       description:
-        "Thinking level override: off, minimal, low, medium, high, xhigh. Inherits from parent if omitted.",
+        "Thinking level override: off, minimal, low, medium, high, xhigh. Inherits from parent or profile/default policy if omitted.",
     }),
   ),
   detached: Type.Optional(
@@ -834,6 +846,60 @@ function buildAgentPreamble(ctx: SubagentsContext): string {
   return name ? `[From agent "${name}" (${ctx.sessionId})]` : `[From agent ${ctx.sessionId}]`;
 }
 
+function normalizeProfileName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function listConfiguredProfileNames(subagentConfig: SubagentConfig): string[] {
+  return Object.keys(subagentConfig.modelPolicy?.profiles ?? {}).sort();
+}
+
+function resolveProfile(
+  subagentConfig: SubagentConfig,
+  requestedProfile: string | undefined,
+): { profileName?: string; profile?: SubagentModelProfileConfig } {
+  if (!requestedProfile) return {};
+  const profiles = subagentConfig.modelPolicy?.profiles ?? {};
+  const requested = normalizeProfileName(requestedProfile);
+  const entry = Object.entries(profiles).find(([name]) => normalizeProfileName(name) === requested);
+  if (!entry) return {};
+  return { profileName: entry[0], profile: entry[1] };
+}
+
+function validateApprovedModel(
+  subagentConfig: SubagentConfig,
+  model: string | undefined,
+): string | undefined {
+  if (!model) return undefined;
+  const approved = subagentConfig.modelPolicy?.approvedModels;
+  if (!approved || approved.length === 0) return undefined;
+  return approved.includes(model)
+    ? undefined
+    : `Model "${model}" is not approved for subagents. Approved models:\n${approved
+        .map((id) => `  - ${id}`)
+        .join("\n")}`;
+}
+
+function buildProfilePrompt(
+  message: string,
+  profileName: string | undefined,
+  profile: SubagentModelProfileConfig | undefined,
+): string {
+  if (!profileName || !profile) return message;
+  const lines: string[] = [`[Subagent profile: ${profileName}]`];
+  if (profile.description) {
+    lines.push(profile.description);
+  }
+  if (profile.guidelines && profile.guidelines.length > 0) {
+    lines.push("Guidelines:");
+    for (const guideline of profile.guidelines) {
+      lines.push(`- ${guideline}`);
+    }
+  }
+  lines.push("", message);
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Factory options
 // ---------------------------------------------------------------------------
@@ -972,8 +1038,10 @@ export function createSubagentsFactory(
           "wait=true blocks your context window until the child finishes. Use fire-and-forget when the work can complete in the background.",
           "Git safety: multiple agents share the same working directory. For small, file-isolated tasks (different files, no overlapping edits), parallel spawning is safe. For larger refactors that touch many files, use git worktrees or run agents sequentially.",
           "Child sessions cannot spawn their own agents. Use detached=true to create a fully independent session with its own spawn capability.",
-          "Model selection: omit model to inherit from parent (usually best). Only specify a model when the user explicitly requests one.",
-          "Thinking selection: omit to inherit from parent (usually best). Only override when the user explicitly requests a specific thinking level.",
+          "Prefer configured subagent profiles for repeatable lanes like discovery, coding, review, or web research.",
+          "If your workspace has both openai-codex/* and plain openai/* variants, prefer the openai-codex ones for subagent work unless the user explicitly asks otherwise.",
+          "Model selection: omit model to inherit from parent (usually best) unless your workspace policy sets a subagent default or profile.",
+          "Thinking selection: omit thinking unless the task or configured profile needs a different level.",
         ],
         parameters: spawnAgentParams,
 
@@ -983,6 +1051,34 @@ export function createSubagentsFactory(
           signal: AbortSignal | undefined,
           onUpdate,
         ) {
+          const { profileName, profile } = resolveProfile(subagentConfig, params.profile);
+          if (params.profile && !profile) {
+            const configuredProfiles = listConfiguredProfileNames(subagentConfig);
+            const suffix =
+              configuredProfiles.length > 0
+                ? ` Available profiles:\n${configuredProfiles.map((name) => `  - ${name}`).join("\n")}`
+                : " No subagent profiles are configured for this workspace.";
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Unknown subagent profile "${params.profile}".${suffix}`,
+                },
+              ],
+              details: {
+                agentId: "",
+                name: params.name || params.message.slice(0, 80),
+                status: "error",
+              },
+              isError: true,
+            };
+          }
+
+          const effectiveModel =
+            params.model ?? profile?.model ?? subagentConfig.modelPolicy?.defaultModel;
+          const effectiveThinking =
+            params.thinking ?? profile?.thinking ?? subagentConfig.modelPolicy?.defaultThinking;
+          const spawnPrompt = buildProfilePrompt(params.message, profileName, profile);
           const name = params.name || params.message.slice(0, 80);
 
           // Depth check: prevent unbounded recursive spawning
@@ -1002,16 +1098,25 @@ export function createSubagentsFactory(
             };
           }
 
+          const policyError = validateApprovedModel(subagentConfig, effectiveModel);
+          if (policyError) {
+            return {
+              content: [{ type: "text" as const, text: policyError }],
+              details: { agentId: "", name, status: "error" },
+              isError: true,
+            };
+          }
+
           // Model validation: reject unknown model IDs early
-          if (params.model) {
+          if (effectiveModel) {
             const available = ctx.getAvailableModelIds();
-            if (available.length > 0 && !available.includes(params.model)) {
+            if (available.length > 0 && !available.includes(effectiveModel)) {
               return {
                 content: [
                   {
                     type: "text" as const,
                     text:
-                      `Unknown model "${params.model}". Available models:\n` +
+                      `Unknown model "${effectiveModel}". Available models:\n` +
                       available
                         .sort()
                         .map((id) => `  - ${id}`)
@@ -1029,7 +1134,7 @@ export function createSubagentsFactory(
               agentId: "",
               name,
               status: "creating",
-              model: params.model,
+              model: effectiveModel,
             },
           });
 
@@ -1051,9 +1156,9 @@ export function createSubagentsFactory(
 
             const spawnParams = {
               name,
-              model: params.model,
-              thinking: params.thinking,
-              prompt: params.message,
+              model: effectiveModel,
+              thinking: effectiveThinking,
+              prompt: spawnPrompt,
             };
             const session = params.detached
               ? await ctx.spawnDetached(spawnParams)
@@ -1068,7 +1173,7 @@ export function createSubagentsFactory(
 
               const lines = [
                 `Spawned ${isDetached ? "detached " : ""}agent "${session.name ?? name}" (${session.id}).`,
-                `Status: ${session.status}, Model: ${session.model ?? "inherited"}`,
+                `Status: ${session.status}, Model: ${session.model ?? effectiveModel ?? "inherited"}`,
               ];
               if (isDetached) {
                 lines.push(
@@ -1087,7 +1192,7 @@ export function createSubagentsFactory(
                   agentId: session.id,
                   name: session.name ?? name,
                   status: session.status,
-                  model: session.model,
+                  model: session.model ?? effectiveModel,
                   detached: isDetached,
                 },
               };
@@ -1105,7 +1210,7 @@ export function createSubagentsFactory(
                 agentId: session.id,
                 name: session.name ?? name,
                 status: "waiting",
-                model: session.model,
+                model: session.model ?? effectiveModel,
               },
             });
 
@@ -1140,7 +1245,7 @@ export function createSubagentsFactory(
                 agentId: session.id,
                 name: session.name ?? name,
                 status: result.status,
-                model: session.model,
+                model: session.model ?? effectiveModel,
                 waited: true,
                 cost: result.cost,
                 durationMs: completion.durationMs,
