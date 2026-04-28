@@ -25,6 +25,10 @@ enum DiffAttributedStringBuilder {
 
         // Segment attribute dictionaries (used during append phase)
         let headerAttrs: [NSAttributedString.Key: Any]
+        let sectionHeaderBlockAttrs: [NSAttributedString.Key: Any]
+        let sectionHeaderTitleAttrs: [NSAttributedString.Key: Any]
+        let sectionHeaderSubtitleAttrs: [NSAttributedString.Key: Any]
+        let gapSummaryAttrs: [NSAttributedString.Key: Any]
         let gutterAddedAttrs: [NSAttributedString.Key: Any]
         let gutterRemovedAttrs: [NSAttributedString.Key: Any]
         let gutterContextAttrs: [NSAttributedString.Key: Any]
@@ -70,6 +74,9 @@ enum DiffAttributedStringBuilder {
             let fgColor = UIColor(Color.themeFg)
             let fgDimColor = UIColor(Color.themeFgDim)
             let headerColor = UIColor(Color.themePurple)
+            let sectionTitleColor = UIColor(Color.themeFg)
+            let sectionSubtitleColor = UIColor(Color.themeFgDim)
+            let gapSummaryColor = UIColor(Color.themeFgDim)
 
             let lineAddedBg = UIColor(Color.themeDiffAdded.opacity(0.12))
             let lineRemovedBg = UIColor(Color.themeDiffRemoved.opacity(0.10))
@@ -86,6 +93,10 @@ enum DiffAttributedStringBuilder {
                 codeFont: codeFont,
                 paragraph: paragraph,
                 headerAttrs: [.font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
+                sectionHeaderBlockAttrs: [.paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
+                sectionHeaderTitleAttrs: [.font: AppFont.systemFeedback, .foregroundColor: sectionTitleColor, .paragraphStyle: paragraph],
+                sectionHeaderSubtitleAttrs: [.font: AppFont.systemSmall, .foregroundColor: sectionSubtitleColor, .paragraphStyle: paragraph],
+                gapSummaryAttrs: [.font: AppFont.systemSmall, .foregroundColor: gapSummaryColor, .paragraphStyle: paragraph],
                 gutterAddedAttrs: [.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
                 gutterRemovedAttrs: [.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
                 gutterContextAttrs: [.font: gutterFont, .foregroundColor: contextDim, .paragraphStyle: paragraph],
@@ -126,8 +137,10 @@ enum DiffAttributedStringBuilder {
 
     /// Header (hunk separator) position.
     private struct HeaderInfo {
-        let start: Int
-        let length: Int
+        let fullRange: NSRange
+        let titleRange: NSRange?
+        let subtitleRange: NSRange?
+        let usesSectionStyle: Bool
     }
 
     /// Stats summary line segment positions.
@@ -138,14 +151,41 @@ enum DiffAttributedStringBuilder {
         let totalRange: NSRange
     }
 
+    struct Options {
+        enum HeaderStyle {
+            case rawPatch
+            case sectioned
+        }
+
+        var includeStats = false
+        var headerStyle: HeaderStyle = .rawPatch
+        var includeGapSummary = false
+    }
+
+    struct BuildResult {
+        let attributedText: NSAttributedString
+        let headerRanges: [NSRange]
+    }
+
     // MARK: - Build
 
     static func build(hunks: [WorkspaceReviewDiffHunk], filePath: String, includeStats: Bool = false) -> NSAttributedString {
+        buildResult(
+            hunks: hunks,
+            filePath: filePath,
+            options: Options(includeStats: includeStats)
+        ).attributedText
+    }
+
+    static func buildResult(
+        hunks: [WorkspaceReviewDiffHunk],
+        filePath: String,
+        options: Options = Options()
+    ) -> BuildResult {
         let ext = (filePath as NSString).pathExtension
         let language = ext.isEmpty ? SyntaxLanguage.unknown : SyntaxLanguage.detect(ext)
         let style = StyleAttrs.current()
 
-        // --- Compute max line number for gutter width ---
         var maxLineNum = 1
         var totalLines = 0
         var totalAdded = 0
@@ -163,18 +203,12 @@ enum DiffAttributedStringBuilder {
         }
         let numDigits = max(3, String(maxLineNum).count)
 
-        // Pre-compute padded single-column number strings.
-        // Index 0 = blank (for nil line numbers).
         var paddedNums = [String](repeating: "", count: maxLineNum + 1)
         paddedNums[0] = String(repeating: " ", count: numDigits)
         for i in 1...maxLineNum {
             paddedNums[i] = paddedNumber(i, digits: numDigits)
         }
 
-        // --- Phase 1: Build entire text + batch syntax scan in one pass ---
-        // Build all text via mutableString, simultaneously building the
-        // batch code Swift String for syntax scanning. Using a Swift String
-        // avoids the NSMutableString→String bridge copy at scan time.
         let text = NSMutableString()
         var batchCode = ""
         var allTokens: [SyntaxHighlighter.TokenRange] = []
@@ -188,9 +222,8 @@ enum DiffAttributedStringBuilder {
             batchOffsets.reserveCapacity(totalLines)
         }
 
-        // --- Optional stats summary line ---
         var statsSegs: StatsSegments?
-        if includeStats, totalAdded > 0 || totalRemoved > 0 {
+        if options.includeStats, totalAdded > 0 || totalRemoved > 0 {
             let statsStart = text.length
             text.append(" ")
             var addedRange: NSRange?
@@ -224,12 +257,50 @@ enum DiffAttributedStringBuilder {
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
                 text.append("\n")
+                if options.includeGapSummary,
+                   let gap = unchangedLineGap(from: hunks[hunkIndex - 1], to: hunk),
+                   gap > 0 {
+                    let gapStart = text.length
+                    text.append(" \(gap) unchanged line")
+                    if gap != 1 {
+                        text.append("s")
+                    }
+                    text.append("\n")
+                    let gapRange = NSRange(location: gapStart, length: text.length - gapStart)
+                    headers.append(HeaderInfo(fullRange: gapRange, titleRange: nil, subtitleRange: nil, usesSectionStyle: true))
+                }
             }
+
             let headerStart = text.length
-            text.append(" ")
-            text.append(hunk.headerText)
-            text.append(" \n")
-            headers.append(HeaderInfo(start: headerStart, length: text.length - headerStart))
+            switch options.headerStyle {
+            case .rawPatch:
+                text.append(" ")
+                text.append(hunk.headerText)
+                text.append(" \n")
+                headers.append(
+                    HeaderInfo(
+                        fullRange: NSRange(location: headerStart, length: text.length - headerStart),
+                        titleRange: nil,
+                        subtitleRange: nil,
+                        usesSectionStyle: false
+                    )
+                )
+            case .sectioned:
+                let titleStart = text.length
+                text.append(" Change \(hunkIndex + 1) of \(hunks.count)\n")
+                let titleRange = NSRange(location: titleStart, length: text.length - titleStart)
+                let subtitleStart = text.length
+                text.append(" \(hunk.displayLineRangeText) • \(hunk.changeSummaryText)\n")
+                let subtitleRange = NSRange(location: subtitleStart, length: text.length - subtitleStart)
+                headers.append(
+                    HeaderInfo(
+                        fullRange: NSRange(location: headerStart, length: text.length - headerStart),
+                        titleRange: titleRange,
+                        subtitleRange: subtitleRange,
+                        usesSectionStyle: true
+                    )
+                )
+            }
 
             for line in hunk.lines {
                 let displayLineNumber = displayedLineNumber(for: line)
@@ -283,16 +354,25 @@ enum DiffAttributedStringBuilder {
             allTokens = SyntaxHighlighter.scanTokenRangesUTF8(batchCode, language: language)
         }
 
-        // --- Phase 2: Create attributed string and apply segment attributes ---
         let result = NSMutableAttributedString(string: text as String, attributes: style.codeDefaultAttrs)
         result.beginEditing()
 
-        // Headers
         for header in headers {
-            result.setAttributes(style.headerAttrs, range: NSRange(location: header.start, length: header.length))
+            if header.usesSectionStyle {
+                result.setAttributes(style.sectionHeaderBlockAttrs, range: header.fullRange)
+                if let titleRange = header.titleRange {
+                    result.addAttributes(style.sectionHeaderTitleAttrs, range: titleRange)
+                } else {
+                    result.addAttributes(style.gapSummaryAttrs, range: header.fullRange)
+                }
+                if let subtitleRange = header.subtitleRange {
+                    result.addAttributes(style.sectionHeaderSubtitleAttrs, range: subtitleRange)
+                }
+            } else {
+                result.setAttributes(style.headerAttrs, range: header.fullRange)
+            }
         }
 
-        // Stats summary line
         if let stats = statsSegs {
             result.setAttributes(style.headerAttrs, range: stats.fullRange)
             if let r = stats.addedRange {
@@ -307,7 +387,6 @@ enum DiffAttributedStringBuilder {
             result.addAttribute(.font, value: AppFont.systemSmall, range: stats.totalRange)
         }
 
-        // Per-line segments: leading gutter, line number, marker, code
         for info in lineInfos {
             let gutterAttrs: [NSAttributedString.Key: Any]
             let numAttrs: [NSAttributedString.Key: Any]
@@ -334,8 +413,6 @@ enum DiffAttributedStringBuilder {
             result.setAttributes(numAttrs, range: NSRange(location: info.numStart, length: info.markerStart - info.numStart))
             result.setAttributes(gutterAttrs, range: NSRange(location: info.markerStart, length: info.codeStart - info.markerStart))
 
-            // Context: code + newline share the same dim attrs → one call.
-            // Non-context: newline keeps default attrs (no bg leak).
             if info.kind == .context {
                 result.setAttributes(codeAttrs, range: NSRange(location: info.codeStart, length: info.codeLen + 1))
             } else {
@@ -347,7 +424,6 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        // --- Phase 3: Word-level span backgrounds ---
         for info in lineInfos {
             guard let spans = info.spans, !spans.isEmpty else { continue }
             let wordBg = info.kind == .removed ? style.wordRemovedBg : style.wordAddedBg
@@ -360,7 +436,6 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        // --- Phase 4: Syntax highlighting ---
         if !allTokens.isEmpty {
             let colorArray = style.syntaxColorArray
             var lineIdx = 0
@@ -375,13 +450,13 @@ enum DiffAttributedStringBuilder {
 
                 let offsetInLine = token.location - batchOffsets[lineIdx]
                 result.addAttribute(
-                    .foregroundColor, value: color,
+                    .foregroundColor,
+                    value: color,
                     range: NSRange(location: lineInfos[lineIdx].codeStart + offsetInLine, length: token.length)
                 )
             }
         }
 
-        // --- Phase 5: Word-level foreground override ---
         let fgColor = style.fgColor
         for info in lineInfos {
             guard let spans = info.spans, !spans.isEmpty else { continue }
@@ -395,7 +470,15 @@ enum DiffAttributedStringBuilder {
         }
 
         result.endEditing()
-        return result
+        return BuildResult(
+            attributedText: result,
+            headerRanges: headers.compactMap { header in
+                if let titleRange = header.titleRange {
+                    return titleRange
+                }
+                return header.usesSectionStyle ? nil : header.fullRange
+            }
+        )
     }
 
     private static func displayedLineNumber(for line: WorkspaceReviewDiffLine) -> Int? {
@@ -407,6 +490,18 @@ enum DiffAttributedStringBuilder {
         case .added:
             line.newLine
         }
+    }
+
+    private static func unchangedLineGap(
+        from previous: WorkspaceReviewDiffHunk,
+        to next: WorkspaceReviewDiffHunk
+    ) -> Int? {
+        let previousStart = previous.newStart > 0 ? previous.newStart : previous.oldStart
+        let previousCount = previous.newCount > 0 ? previous.newCount : previous.oldCount
+        let nextStart = next.newStart > 0 ? next.newStart : next.oldStart
+        guard previousStart > 0, previousCount > 0, nextStart > 0 else { return nil }
+        let previousEnd = previousStart + previousCount - 1
+        return max(0, nextStart - previousEnd - 1)
     }
 
     /// Pad a number to the given digit width. Uses a fixed padding table

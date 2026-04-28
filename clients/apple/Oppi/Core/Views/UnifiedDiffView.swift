@@ -51,13 +51,17 @@ struct UnifiedDiffView: View {
             let h = hunks
             let fp = filePath
             let result = await Task.detached(priority: .userInitiated) {
-                let attrText = DiffAttributedStringBuilder.build(hunks: h, filePath: fp)
-                let measured = attrText.boundingRect(
+                let build = DiffAttributedStringBuilder.buildResult(
+                    hunks: h,
+                    filePath: fp,
+                    options: .init(includeStats: false, headerStyle: .sectioned, includeGapSummary: true)
+                )
+                let measured = build.attributedText.boundingRect(
                     with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin],
                     context: nil
                 )
-                return BuiltDiff(attributedText: attrText, contentWidth: ceil(measured.width) + 20)
+                return BuiltDiff(attributedText: build.attributedText, contentWidth: ceil(measured.width) + 20)
             }.value
             built = result
         }

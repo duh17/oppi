@@ -173,10 +173,22 @@ extension NativeFullScreenCodeBody: UITextViewDelegate {
 // MARK: - Diff Body
 
 final class NativeFullScreenDiffBody: UIView {
+    private let headerView = UIView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let statsLabel = UILabel()
     private let scrollView = UIScrollView()
     private let diffTextView = UITextView()
+    private let footerView = UIView()
+    private let previousButton = UIButton(type: .system)
+    private let nextButton = UIButton(type: .system)
+    private let positionLabel = UILabel()
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private let headerRanges: [NSRange]
+    private var currentSectionIndex = 0 {
+        didSet { updateSectionControls() }
+    }
 
     init(
         oldText: String,
@@ -189,16 +201,72 @@ final class NativeFullScreenDiffBody: UIView {
     ) {
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
+
+        let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let build = DiffAttributedStringBuilder.buildResult(
+            hunks: hunks,
+            filePath: filePath ?? "diff.txt",
+            options: .init(includeStats: true, headerStyle: .sectioned, includeGapSummary: true)
+        )
+        headerRanges = build.headerRanges
+
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
-        let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
+        let fileName = filePath.map { ($0 as NSString).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
+        let relativePath = filePath.flatMap { path -> String? in
+            guard let fileName else { return nil }
+            let parent = (path as NSString).deletingLastPathComponent
+            return parent == path || parent.isEmpty || parent == "/" ? fileName : parent
+        }
+        let addedCount = lines.reduce(into: 0) { total, line in
+            if line.kind == .added { total += 1 }
+        }
+        let removedCount = lines.reduce(into: 0) { total, line in
+            if line.kind == .removed { total += 1 }
+        }
 
-        // Scroll view with selectable diff text.
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        headerView.backgroundColor = UIColor(palette.bgDark)
+        addSubview(headerView)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = AppFont.systemFeedbackMedium
+        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.text = fileName ?? String(localized: "Changes")
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = AppFont.systemSmall
+        subtitleLabel.textColor = UIColor(palette.fgDim)
+        subtitleLabel.text = relativePath ?? String(localized: "Review changes")
+        subtitleLabel.numberOfLines = 1
+
+        statsLabel.translatesAutoresizingMaskIntoConstraints = false
+        statsLabel.font = AppFont.systemFeedback
+        statsLabel.textColor = UIColor(palette.fgDim)
+        statsLabel.textAlignment = .right
+        statsLabel.text = "\(addedCount > 0 ? "+\(addedCount)" : "0")  \(removedCount > 0 ? "-\(removedCount)" : "0")"
+
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .fill
+
+        let headerStack = UIStackView(arrangedSubviews: [textStack, statsLabel])
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.axis = .horizontal
+        headerStack.alignment = .center
+        headerStack.spacing = 12
+        headerView.addSubview(headerStack)
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.alwaysBounceHorizontal = true
         scrollView.backgroundColor = UIColor(palette.bgDark)
+        addSubview(scrollView)
 
         diffTextView.translatesAutoresizingMaskIntoConstraints = false
         diffTextView.font = FullScreenCodeTypography.codeFont
@@ -207,17 +275,15 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.isEditable = false
         diffTextView.isSelectable = true
         diffTextView.isScrollEnabled = false
-        diffTextView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 14, right: 12)
+        diffTextView.textContainerInset = UIEdgeInsets(top: 6, left: 12, bottom: 16, right: 12)
         diffTextView.textContainer.lineFragmentPadding = 0
         diffTextView.textContainer.lineBreakMode = .byClipping
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
-        let diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: filePath ?? "diff.txt", includeStats: true)
-        diffTextView.attributedText = diffText
+        diffTextView.attributedText = build.attributedText
 
-        let measured = diffText.boundingRect(
+        let measured = build.attributedText.boundingRect(
             with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin],
             context: nil
@@ -225,13 +291,58 @@ final class NativeFullScreenDiffBody: UIView {
         let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: ceil(measured.width) + 24)
 
         scrollView.addSubview(diffTextView)
-        addSubview(scrollView)
+
+        footerView.translatesAutoresizingMaskIntoConstraints = false
+        footerView.backgroundColor = UIColor(palette.bgDark)
+        addSubview(footerView)
+
+        previousButton.translatesAutoresizingMaskIntoConstraints = false
+        previousButton.setTitle(String(localized: "Previous"), for: .normal)
+        previousButton.titleLabel?.font = AppFont.systemFeedback
+        previousButton.tintColor = UIColor(palette.blue)
+        previousButton.addTarget(self, action: #selector(previousSectionTapped), for: .touchUpInside)
+
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+        nextButton.setTitle(String(localized: "Next"), for: .normal)
+        nextButton.titleLabel?.font = AppFont.systemFeedback
+        nextButton.tintColor = UIColor(palette.blue)
+        nextButton.addTarget(self, action: #selector(nextSectionTapped), for: .touchUpInside)
+
+        positionLabel.translatesAutoresizingMaskIntoConstraints = false
+        positionLabel.font = AppFont.systemSmall
+        positionLabel.textColor = UIColor(palette.fgDim)
+        positionLabel.textAlignment = .center
+
+        let footerStack = UIStackView(arrangedSubviews: [previousButton, positionLabel, nextButton])
+        footerStack.translatesAutoresizingMaskIntoConstraints = false
+        footerStack.axis = .horizontal
+        footerStack.alignment = .center
+        footerStack.distribution = .equalCentering
+        footerView.addSubview(footerStack)
 
         NSLayoutConstraint.activate([
+            headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
+
+            headerStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            headerStack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            headerStack.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 8),
+            headerStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
+
+            footerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            footerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            footerView.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor),
+
+            footerStack.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 16),
+            footerStack.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -16),
+            footerStack.topAnchor.constraint(equalTo: footerView.topAnchor, constant: 8),
+            footerStack.bottomAnchor.constraint(equalTo: footerView.bottomAnchor, constant: -10),
+
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: footerView.topAnchor),
 
             diffTextView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             diffTextView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -240,10 +351,48 @@ final class NativeFullScreenDiffBody: UIView {
             widthConstraint,
             diffTextView.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor),
         ])
+
+        updateSectionControls()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    @objc private func previousSectionTapped() {
+        guard currentSectionIndex > 0 else { return }
+        currentSectionIndex -= 1
+        scrollToCurrentSection(animated: true)
+    }
+
+    @objc private func nextSectionTapped() {
+        guard currentSectionIndex + 1 < headerRanges.count else { return }
+        currentSectionIndex += 1
+        scrollToCurrentSection(animated: true)
+    }
+
+    private func updateSectionControls() {
+        let total = headerRanges.count
+        if total == 0 {
+            positionLabel.text = String(localized: "No changes")
+            previousButton.isEnabled = false
+            nextButton.isEnabled = false
+            return
+        }
+
+        positionLabel.text = String(localized: "Change \(currentSectionIndex + 1) of \(total)")
+        previousButton.isEnabled = currentSectionIndex > 0
+        nextButton.isEnabled = currentSectionIndex + 1 < total
+    }
+
+    private func scrollToCurrentSection(animated: Bool) {
+        guard headerRanges.indices.contains(currentSectionIndex) else { return }
+        diffTextView.scrollRangeToVisible(headerRanges[currentSectionIndex])
+        if animated {
+            UIView.animate(withDuration: 0.2) {
+                self.layoutIfNeeded()
+            }
+        }
+    }
 }
 
 extension NativeFullScreenDiffBody: UITextViewDelegate {

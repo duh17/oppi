@@ -244,4 +244,51 @@ struct DiffGutterAttributeTests {
         let kind = result.attribute(diffLineKindAttributeKey, at: gutterRange.location, effectiveRange: nil) as? String
         #expect(kind == "removed", "Removed gutter must have diffLineKindAttributeKey='removed'")
     }
+
+    @Test func sectionedHeadersHideRawPatchMarkers() throws {
+        let result = DiffAttributedStringBuilder.buildResult(
+            hunks: makeHunks(),
+            filePath: "test.swift",
+            options: .init(includeStats: true, headerStyle: .sectioned, includeGapSummary: true)
+        )
+
+        #expect(result.attributedText.string.contains("Change 1 of 1"))
+        #expect(result.attributedText.string.contains("Lines 1–3"))
+        #expect(!result.attributedText.string.contains("@@ -1,3 +1,3 @@"))
+        #expect(result.headerRanges.count == 1)
+    }
+
+    @Test func sectionedHeadersShowCollapsedGapSummary() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 10,
+                oldCount: 2,
+                newStart: 10,
+                newCount: 2,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .context, text: "alpha", oldLine: 10, newLine: 10, spans: nil),
+                    WorkspaceReviewDiffLine(kind: .added, text: "beta", oldLine: nil, newLine: 11, spans: nil),
+                ]
+            ),
+            WorkspaceReviewDiffHunk(
+                oldStart: 30,
+                oldCount: 2,
+                newStart: 30,
+                newCount: 2,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .context, text: "gamma", oldLine: 30, newLine: 30, spans: nil),
+                    WorkspaceReviewDiffLine(kind: .removed, text: "delta", oldLine: 31, newLine: nil, spans: nil),
+                ]
+            ),
+        ]
+
+        let result = DiffAttributedStringBuilder.buildResult(
+            hunks: hunks,
+            filePath: "test.swift",
+            options: .init(includeStats: false, headerStyle: .sectioned, includeGapSummary: true)
+        )
+
+        #expect(result.attributedText.string.contains("18 unchanged lines"))
+        #expect(result.headerRanges.count == 2, "Gap summaries should not become navigation anchors")
+    }
 }

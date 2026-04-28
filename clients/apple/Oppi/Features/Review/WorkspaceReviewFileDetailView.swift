@@ -50,11 +50,18 @@ struct WorkspaceReviewFileDetailView: View {
         )
     }
 
-    private enum DetailTab: String, CaseIterable, Identifiable {
-        case diff = "Diff"
-        case current = "Current"
+    private enum DetailTab: CaseIterable, Identifiable {
+        case diff
+        case current
 
-        var id: String { rawValue }
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .diff: return "Changes"
+            case .current: return "File"
+            }
+        }
     }
 
     var body: some View {
@@ -84,7 +91,7 @@ struct WorkspaceReviewFileDetailView: View {
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false) }
+                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
             )
         }
         .overlay {
@@ -196,7 +203,7 @@ struct WorkspaceReviewFileDetailView: View {
             } else {
                 Picker("View", selection: $selectedTab) {
                     ForEach(DetailTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text(tab.title).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
