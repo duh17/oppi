@@ -237,6 +237,200 @@ struct KeyboardSuppressionTests {
 
     // MARK: - Cursor Retention During Programmatic Updates
 
+    @Test("IME composition defers attributed text replacement for matching preedit text")
+    func imeCompositionDefersAttributedReplacement() {
+        #expect(
+            PastableUITextView.shouldDeferStyledTextUpdateWhileComposing(
+                hasMarkedText: true,
+                currentText: "jiugongge",
+                incomingText: "jiugongge"
+            )
+        )
+        #expect(
+            PastableUITextView.shouldDeferStyledTextUpdateWhileComposing(
+                hasMarkedText: true,
+                currentText: "nvhai",
+                incomingText: "nvhai"
+            )
+        )
+        #expect(
+            !PastableUITextView.shouldDeferStyledTextUpdateWhileComposing(
+                hasMarkedText: true,
+                currentText: "jiugongge",
+                incomingText: "九宫格"
+            )
+        )
+        #expect(
+            !PastableUITextView.shouldDeferStyledTextUpdateWhileComposing(
+                hasMarkedText: true,
+                currentText: "jiugongge",
+                incomingText: "jiugongge "
+            )
+        )
+        #expect(
+            !PastableUITextView.shouldDeferStyledTextUpdateWhileComposing(
+                hasMarkedText: false,
+                currentText: "jiugongge",
+                incomingText: "jiugongge"
+            )
+        )
+    }
+
+    @Test("Active IME composition preserves existing attributes for matching preedit text")
+    func activeImeCompositionPreservesExistingAttributes() throws {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let incoming = "jiugongge"
+        let original = NSMutableAttributedString(
+            string: incoming,
+            attributes: [
+                .font: font,
+                .foregroundColor: UIColor.systemRed,
+            ]
+        )
+        textView.attributedText = original
+        textView.typingAttributes = [
+            .font: font,
+            .foregroundColor: UIColor.systemRed,
+        ]
+        textView.selectedRange = NSRange(location: 3, length: 0)
+        textView.markedTextRangeOverrideForTesting = FakeTextRange()
+
+        textView.applyStyledText(
+            incoming,
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 4,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2),
+            correctionRanges: [NSRange(location: 1, length: 3)],
+            correctionUnderlineColor: .systemOrange
+        )
+
+        let attributed = try #require(textView.attributedText)
+        let foreground = attributed.attribute(.foregroundColor, at: incoming.count - 1, effectiveRange: nil) as? UIColor
+        let background = attributed.attribute(.backgroundColor, at: incoming.count - 1, effectiveRange: nil) as? UIColor
+        let underline = attributed.attribute(.underlineStyle, at: 2, effectiveRange: nil) as? Int
+
+        #expect(attributed.string == incoming)
+        #expect(foreground?.isEqual(UIColor.systemRed) == true, "Deferred update must not repaint active preedit text")
+        #expect(background == nil, "Deferred update must not add volatile background during composition")
+        #expect(underline == nil, "Deferred update must not add correction underlines during composition")
+        #expect(textView.selectedRange == NSRange(location: 3, length: 0), "Deferred update must not move the caret")
+        #expect((textView.typingAttributes[.foregroundColor] as? UIColor)?.isEqual(UIColor.systemRed) == true)
+    }
+
+    @Test("Committed Chinese text still applies styled update even if marked text was active")
+    func committedChineseTextStillAppliesStyledUpdate() throws {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = "jiugongge"
+        textView.markedTextRangeOverrideForTesting = FakeTextRange()
+
+        textView.applyStyledText(
+            "九宫格",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 1,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2),
+            correctionRanges: [NSRange(location: 0, length: 2)],
+            correctionUnderlineColor: .systemOrange
+        )
+
+        let attributed = try #require(textView.attributedText)
+        let foreground = attributed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? UIColor
+        let background = attributed.attribute(.backgroundColor, at: 2, effectiveRange: nil) as? UIColor
+        let underline = attributed.attribute(.underlineStyle, at: 1, effectiveRange: nil) as? Int
+
+        #expect(attributed.string == "九宫格")
+        #expect(foreground?.isEqual(UIColor.systemBlue) == true)
+        #expect(background != nil)
+        #expect(underline == NSUnderlineStyle.single.rawValue)
+    }
+
+    @Test("Different preedit text still updates while marked text is active")
+    func differentPreeditTextStillUpdates() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = "jiu"
+        textView.markedTextRangeOverrideForTesting = FakeTextRange()
+
+        textView.applyStyledText(
+            "jiugong",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 4,
+            volatileColor: .systemBlue
+        )
+
+        #expect(textView.attributedText?.string == "jiugong")
+    }
+
+    @Test("Once composition ends the same text can be restyled normally")
+    func restyleRunsAfterCompositionEnds() {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = "jiugongge"
+        textView.markedTextRangeOverrideForTesting = FakeTextRange()
+
+        textView.applyStyledText(
+            "jiugongge",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 4,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2)
+        )
+        let deferredBackground = textView.attributedText?.attribute(.backgroundColor, at: 7, effectiveRange: nil) as? UIColor
+        #expect(deferredBackground == nil)
+
+        textView.markedTextRangeOverrideForTesting = nil
+        textView.applyStyledText(
+            "jiugongge",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 4,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2)
+        )
+
+        let appliedBackground = textView.attributedText?.attribute(.backgroundColor, at: 7, effectiveRange: nil) as? UIColor
+        #expect(appliedBackground != nil, "Styling should resume after IME composition finishes")
+    }
+
+    @Test("Deferred IME update does not poison the cache for the later real style pass")
+    func deferredImeUpdateDoesNotPoisonStyleCache() throws {
+        let textView = PastableUITextView()
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let volatileBackground = UIColor.systemBlue.withAlphaComponent(0.2)
+        textView.text = "nvhai"
+        textView.markedTextRangeOverrideForTesting = FakeTextRange()
+
+        textView.applyStyledText(
+            "nvhai",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 2,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: volatileBackground
+        )
+
+        textView.markedTextRangeOverrideForTesting = nil
+        textView.applyStyledText(
+            "nvhai",
+            font: font,
+            baseColor: .label,
+            volatileSuffixLength: 2,
+            volatileColor: .systemBlue,
+            volatileBackgroundColor: volatileBackground
+        )
+
+        let attributed = try #require(textView.attributedText)
+        let background = attributed.attribute(.backgroundColor, at: 4, effectiveRange: nil) as? UIColor
+        #expect(background?.isEqual(volatileBackground) == true)
+    }
+
     @Test("Programmatic transcript updates keep a trailing caret pinned to the end")
     func programmaticUpdatesKeepTrailingCaretAtEnd() {
         let textView = PastableUITextView()
@@ -406,4 +600,12 @@ struct KeyboardSuppressionTests {
         let otherResult = textView.gestureRecognizer(otherGesture, shouldRecognizeSimultaneouslyWith: tap)
         #expect(otherResult == false, "Should only return true for the keyboard restore gesture")
     }
+}
+
+private final class FakeTextPosition: UITextPosition {}
+
+private final class FakeTextRange: UITextRange {
+    override var start: UITextPosition { FakeTextPosition() }
+    override var end: UITextPosition { FakeTextPosition() }
+    override var isEmpty: Bool { false }
 }

@@ -677,6 +677,12 @@ final class PastableUITextView: UITextView {
     var onAlternateEnter: (() -> Void)?
     var onKeyboardRestoreRequest: (() -> Void)?
 
+    #if DEBUG
+    /// Test-only hook for simulating active IME composition in unit tests.
+    /// Kept out of Release builds so the production type surface stays clean.
+    var markedTextRangeOverrideForTesting: UITextRange?
+    #endif
+
     private var renderedTextCache = ""
     private var renderedVolatileSuffixLengthCache = -1
     private var renderedCorrectionRangesCache: [NSRange] = []
@@ -732,6 +738,19 @@ final class PastableUITextView: UITextView {
             && (renderedCorrectionUnderlineColorCache?.isEqual(correctionUnderlineColor) ?? false)
 
         guard !styleUnchanged else { return }
+
+        // Do not replace attributedText while an IME composition is active
+        // (e.g. Chinese Pinyin preedit text). Reassigning attributedText here
+        // commits the marked text prematurely, which turns the candidate buffer
+        // into raw latin letters like "jiugongge" instead of keeping the
+        // composition open for selection.
+        if Self.shouldDeferStyledTextUpdateWhileComposing(
+            hasMarkedText: effectiveMarkedTextRange != nil,
+            currentText: self.text,
+            incomingText: text
+        ) {
+            return
+        }
 
         let previousSelection = self.selectedRange
         let previousTextLength = textStorage.length
@@ -794,6 +813,24 @@ final class PastableUITextView: UITextView {
         renderedVolatileColorCache = volatileColor
         renderedVolatileBackgroundColorCache = volatileBackgroundColor
         renderedCorrectionUnderlineColorCache = correctionUnderlineColor
+    }
+
+    private var effectiveMarkedTextRange: UITextRange? {
+        #if DEBUG
+        if let markedTextRangeOverrideForTesting {
+            return markedTextRangeOverrideForTesting
+        }
+        #endif
+        return markedTextRange
+    }
+
+    static func shouldDeferStyledTextUpdateWhileComposing(
+        hasMarkedText: Bool,
+        currentText: String,
+        incomingText: String
+    ) -> Bool {
+        guard hasMarkedText else { return false }
+        return currentText == incomingText
     }
 
     override var intrinsicContentSize: CGSize {
