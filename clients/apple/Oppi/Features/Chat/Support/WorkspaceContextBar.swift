@@ -287,7 +287,7 @@ struct WorkspaceContextBar: View {
             ChatView(
                 sessionId: dest.id,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false) }
+                initialPendingFiles: dest.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
             )
         }
     }
