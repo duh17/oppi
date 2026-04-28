@@ -19,6 +19,7 @@ export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = [
 ];
 
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);
+const FIRST_PARTY_EXTENSION_NAME_SET = new Set<string>(FIRST_PARTY_EXTENSION_NAMES);
 
 /**
  * Managed by oppi-server itself, not loaded from pi file-based extension paths.
@@ -30,21 +31,20 @@ export function isManagedExtensionName(name: string): boolean {
   return MANAGED_EXTENSION_NAME_SET.has(name);
 }
 
+export function isFirstPartyExtensionName(name: string): name is FirstPartyExtensionName {
+  return FIRST_PARTY_EXTENSION_NAME_SET.has(name);
+}
+
 /**
- * First-party factory extensions default to enabled.
+ * First-party extension enablement.
  *
- * If a workspace sets an explicit `extensions` allowlist, that list becomes
- * authoritative. This means `extensions: []` disables all optional extensions,
- * including first-party ones like ask and subagents.
+ * Oppi-owned extension names respect the workspace allowlist exactly.
+ * When `workspace.extensions` is unset, they stay off by default.
+ * When it is set, only explicitly listed names are enabled.
  */
 export function isWorkspaceExtensionEnabled(
   workspace: Workspace | undefined,
   extensionName: FirstPartyExtensionName,
 ): boolean {
-  const allowedNames = workspace?.extensions;
-  if (allowedNames === undefined) {
-    return true;
-  }
-
-  return allowedNames.includes(extensionName);
+  return workspace?.extensions?.includes(extensionName) ?? false;
 }

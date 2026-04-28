@@ -31,7 +31,18 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       kind: "built-in" as const,
       source: "oppi" as const,
     }));
-    helpers.json(res, { extensions: [...oppiExtensions, ...piExtensions] });
+
+    const byName = new Map<
+      string,
+      (typeof oppiExtensions)[number] | (typeof piExtensions)[number]
+    >();
+    for (const ext of [...oppiExtensions, ...piExtensions]) {
+      if (!byName.has(ext.name)) {
+        byName.set(ext.name, ext);
+      }
+    }
+
+    helpers.json(res, { extensions: Array.from(byName.values()) });
   }
 
   function handleGetSkillDetail(name: string, res: ServerResponse): void {

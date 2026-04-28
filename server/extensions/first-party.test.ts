@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isManagedExtensionName, isWorkspaceExtensionEnabled } from "./first-party.js";
+import {
+  isFirstPartyExtensionName,
+  isManagedExtensionName,
+  isWorkspaceExtensionEnabled,
+} from "./first-party.js";
 import type { Workspace } from "../src/types.js";
 
 function makeWorkspace(extensions?: string[]): Workspace {
@@ -29,11 +33,20 @@ describe("isManagedExtensionName", () => {
   });
 });
 
+describe("first-party extension names", () => {
+  it("detects first-party names distinctly from managed names", () => {
+    expect(isFirstPartyExtensionName("ask")).toBe(true);
+    expect(isFirstPartyExtensionName("subagents")).toBe(true);
+    expect(isFirstPartyExtensionName("voice")).toBe(true);
+    expect(isFirstPartyExtensionName("memory")).toBe(false);
+  });
+});
+
 describe("isWorkspaceExtensionEnabled", () => {
-  it("defaults first-party extensions to enabled when no allowlist is set", () => {
-    expect(isWorkspaceExtensionEnabled(undefined, "ask")).toBe(true);
-    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "subagents")).toBe(true);
-    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "voice")).toBe(true);
+  it("keeps first-party extensions off when no allowlist is set", () => {
+    expect(isWorkspaceExtensionEnabled(undefined, "ask")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "subagents")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "voice")).toBe(false);
   });
 
   it("treats an explicit empty allowlist as disabling first-party extensions", () => {

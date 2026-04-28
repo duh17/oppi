@@ -11,10 +11,9 @@ For writing extensions, supported layouts, lifecycle hooks, tool APIs, and TUI r
 
 Oppi adds three behaviors on top of normal pi extension loading:
 
-1. **Server-managed first-party tools**
-   - `ask`
-   - `subagents`
-   - `permission-gate` as a reserved managed name
+1. **Oppi-owned extension names and reserved names**
+   - workspace opt-in: `ask`, `subagents`, `voice`
+   - reserved managed name: `permission-gate`
 2. **Workspace allowlist filtering** via `workspace.extensions`
 3. **Mobile rendering** via server-side `StyledSegment[]`, not pi TUI components
 
@@ -67,28 +66,28 @@ At session startup, Oppi starts from pi's normal extension set for the session c
 
 Oppi does not replace that mechanism. It filters it.
 
-### Managed names
+### Oppi-owned names
 
-Oppi reserves these names:
+Oppi reserves one truly managed name:
 
 - `permission-gate`
-- `ask`
-- `subagents`
 
-Those names are filtered out of host discovery and owned by the server.
+That name is filtered out of host discovery and owned by the server.
 
-- `ask` comes from `server/extensions/ask.ts`
-- `subagents` comes from `server/extensions/subagents.ts`
-- `permission-gate` is implemented by the server policy engine in `server/src/sdk-backend.ts`
+Oppi also ships first-party extensions from the repo-local `oppi-extensions` pi package:
+
+- `ask` from `server/extensions/ask.ts`
+- `subagents` from `server/extensions/subagents.ts`
+- `voice` from `server/extensions/voice.ts`
+
+They are loaded through reloadable file-based wrappers under `oppi-extensions/extensions/`.
 
 ### Workspace allowlist
 
-`workspace.extensions` has two modes:
+When a workspace sets `extensions`, that list is an authoritative allowlist for optional extensions.
+Include `ask`, `subagents`, or `voice` explicitly if you want them.
 
-- **`undefined`**: use pi's normal discovery, plus Oppi first-party tools
-- **defined**: treat the list as an authoritative allowlist for optional extensions
-
-If a workspace sets `extensions`, include `ask` and `subagents` explicitly if you want to keep them.
+When `extensions` is unset, Oppi keeps normal pi discovery and does not auto-enable its own `oppi-extensions` names.
 
 ## Extension picker behavior
 
@@ -100,6 +99,7 @@ Behavior:
 - includes auto-discovered dirs (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`)
 - includes package-installed extensions (for example `~/.pi/agent/git/...` and npm installs)
 - includes settings-declared local extension paths
+- includes Oppi-owned names so workspaces can enable `ask`, `subagents`, and `voice` without separately installing the package into pi
 - excludes managed names
 - deduplicates by extension name for UI display using pi precedence rules (project > user > package)
 

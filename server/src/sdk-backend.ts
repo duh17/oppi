@@ -43,7 +43,7 @@ import type {
   PiStateSnapshot,
   SessionBackendEvent,
 } from "./pi-events.js";
-import { isManagedExtensionName } from "../extensions/first-party.js";
+import { isFirstPartyExtensionName, isManagedExtensionName } from "../extensions/first-party.js";
 import {
   getReloadableFirstPartyExtensionPaths,
   withReloadableFirstPartyExtensionContext,
@@ -550,6 +550,16 @@ export class SdkBackend {
             filtered = filtered.filter((ext) => {
               if (ext.path.startsWith("<inline:")) return true;
               return allowed.has(getExtensionName(ext));
+            });
+          } else {
+            // 3. Without an explicit allowlist, keep normal pi discovery intact but
+            //    leave Oppi-owned extension names off unless the workspace opted in.
+            filtered = filtered.filter((ext) => {
+              const name = getExtensionName(ext);
+              if (!isFirstPartyExtensionName(name)) {
+                return true;
+              }
+              return false;
             });
           }
 
