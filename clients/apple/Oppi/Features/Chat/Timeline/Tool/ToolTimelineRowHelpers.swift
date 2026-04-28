@@ -396,6 +396,15 @@ enum ToolTimelineRowUIHelpers {
         if normalized == "sql" {
             return UIImage(systemName: "cylinder")
         }
+        if normalized == "image" {
+            return UIImage(systemName: "photo.fill")
+        }
+        if normalized == "audio" {
+            return UIImage(systemName: "waveform")
+        }
+        if normalized == "video" {
+            return UIImage(systemName: "video.fill")
+        }
 
         return UIImage(systemName: genericLanguageBadgeSymbolName)
     }

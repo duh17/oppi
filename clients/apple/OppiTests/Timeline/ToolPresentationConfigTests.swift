@@ -385,10 +385,9 @@ struct ToolPresentationConfigTests {
         if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Sources/Agent.swift") }
     }
 
-    @Test func collapsedReadImageToolExtractsImagePreviewFromOutput() throws {
-        // End-to-end: simulates the real data flow where the server sends
-        // text + data URI as tool_output, ToolOutputStore accumulates them,
-        // and ToolPresentationBuilder extracts the first image for collapsed preview.
+    @Test func collapsedReadImageToolStaysHeaderOnly() throws {
+        // End-to-end: image reads should collapse like normal file reads.
+        // The image is available after expansion, but the collapsed row stays compact.
         let harness = makeTimelineHarness(sessionId: "session-a")
         let fakeBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
         let serverOutput = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
@@ -407,8 +406,9 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
-        #expect(config.collapsedImageBase64 == fakeBase64, "Builder must extract base64 from data URI in tool output")
-        #expect(config.collapsedImageMimeType == "image/png")
+        #expect(config.collapsedImageBase64 == nil)
+        #expect(config.collapsedImageMimeType == nil)
+        #expect(config.languageBadge == FileType.image.displayLabel)
     }
 
     @Test func collapsedReadImageToolWithEmptyOutputHasNoPreview() throws {

@@ -361,9 +361,26 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.streamingConstrainedHeight(
                     for: mode, geometry: geometry
                 )
+            } else if expandedUsesReadMediaLayout {
+                // Read-media rows can reveal their real height asynchronously
+                // after image decode (for example once an SVG or tall photo
+                // reports its aspect ratio). Bucketed text heuristics and
+                // cached pre-decode measurements both under-size these rows,
+                // so measure the hosted view directly on each layout pass.
+                let expandedContentView = expandedReadMediaContentView ?? expandedReadMediaContainer
+                expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.preferredViewportHeight(
+                    for: expandedContentView,
+                    in: self.expandedContainer,
+                    mode: mode,
+                    expandedScrollView: self.expandedScrollView,
+                    expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
+                    outputScrollView: self.outputScrollView,
+                    outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
+                    outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
+                    geometry: geometry
+                )
             } else {
-                let expandedContentView = expandedUsesReadMediaLayout ? expandedReadMediaContainer
-                    : (expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel)
+                let expandedContentView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
                 let widthBucket = Int(expandedContainer.bounds.width.rounded())
                 let signature = expandedRenderSignature
 

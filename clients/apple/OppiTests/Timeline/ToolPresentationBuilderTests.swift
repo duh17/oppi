@@ -1484,9 +1484,9 @@ struct ToolPresentationBuilderTests {
         #expect(lang == nil)
     }
 
-    // MARK: - Collapsed Image Preview
+    // MARK: - Collapsed image read presentation
 
-    @Test("read image file provides collapsed image preview")
+    @Test("read image file stays header-only when collapsed")
     func readImageCollapsedPreview() {
         let fakeBase64 = "iVBORw0KGgo="
         let output = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
@@ -1502,8 +1502,9 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.collapsedImageBase64 == fakeBase64)
-        #expect(config.collapsedImageMimeType == "image/png")
+        #expect(config.collapsedImageBase64 == nil)
+        #expect(config.collapsedImageMimeType == nil)
+        #expect(config.languageBadge == FileType.image.displayLabel)
     }
 
     @Test("read non-image file has no collapsed image preview")
@@ -1561,8 +1562,8 @@ struct ToolPresentationBuilderTests {
             Issue.record("Expected .readMedia content for image read")
             return
         }
-        // Builder still provides preview data, cell decides visibility
-        #expect(config.collapsedImageBase64 == fakeBase64)
+        #expect(config.collapsedImageBase64 == nil)
+        #expect(config.languageBadge == FileType.image.displayLabel)
     }
 
     @Test("non-read tool has no collapsed image preview")

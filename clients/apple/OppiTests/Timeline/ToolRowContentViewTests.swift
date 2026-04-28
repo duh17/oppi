@@ -558,6 +558,58 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedReadMediaViewportGrowsForTallImages() async throws {
+        let portraitSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 600\"><rect width=\"200\" height=\"600\" fill=\"red\"/></svg>"
+        let landscapeSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 200\"><rect width=\"600\" height=\"200\" fill=\"blue\"/></svg>"
+
+        let portraitView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: portraitSVG, filePath: "fixtures/portrait.svg", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ))
+        let landscapeView = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: landscapeSVG, filePath: "fixtures/landscape.svg", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ))
+
+        let portraitContainer = UIView(frame: CGRect(x: 0, y: 0, width: 370, height: 800))
+        let landscapeContainer = UIView(frame: CGRect(x: 0, y: 0, width: 370, height: 800))
+        for (container, view) in [(portraitContainer, portraitView), (landscapeContainer, landscapeView)] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                view.topAnchor.constraint(equalTo: container.topAnchor),
+            ])
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+        }
+
+        let portraitViewport = try #require(
+            Mirror(reflecting: portraitView).children.first { $0.label == "expandedViewportHeightConstraint" }?.value as? NSLayoutConstraint
+        )
+        let landscapeViewport = try #require(
+            Mirror(reflecting: landscapeView).children.first { $0.label == "expandedViewportHeightConstraint" }?.value as? NSLayoutConstraint
+        )
+
+        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                portraitContainer.setNeedsLayout()
+                landscapeContainer.setNeedsLayout()
+                portraitContainer.layoutIfNeeded()
+                landscapeContainer.layoutIfNeeded()
+                return portraitViewport.constant > landscapeViewport.constant + 120
+            }
+        }
+
+        #expect(updated)
+        #expect(portraitViewport.constant > 300)
+        #expect(landscapeViewport.constant < 260)
+    }
+
+    @MainActor
     @Test func inlineSVGPreviewAppliesAspectRatioConstraintAfterAsyncDecode() async throws {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
         let view = NativeExpandedInlineImageView(maxPixelSize: 1_600)
@@ -884,96 +936,56 @@ struct ToolTimelineRowContentViewTests {
         #expect(renderedTexts.contains { $0.contains("FAIL tests/workspace-crud.test.ts") })
     }
 
-    // MARK: - Collapsed Image Preview Regression Tests
+    // MARK: - Collapsed Image Row Presentation
 
     // Minimal valid 1x1 red-pixel PNG for testing (82 bytes, base64).
     private static let testPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
 
     @MainActor
-    @Test func collapsedReadImageIsTallerThanPlainRead() {
-        // Regression: bodyStack was hidden when only the image preview was
-        // visible, because showBody didn't include showImagePreview.
-        // The image preview container must make the row taller.
+    @Test func collapsedReadImageMatchesPlainReadHeight() {
         let plain = makeTimelineToolConfiguration(
             title: "server.ts",
             toolNamePrefix: "read",
             isExpanded: false
         )
-        let withImage = makeTimelineToolConfiguration(
+        let imageLikeRead = makeTimelineToolConfiguration(
             title: "icon.png",
+            languageBadge: FileType.image.displayLabel,
             toolNamePrefix: "read",
-            collapsedImageBase64: Self.testPNGBase64,
-            collapsedImageMimeType: "image/png",
             isExpanded: false
         )
 
         let plainView = ToolTimelineRowContentView(configuration: plain)
-        let imageView = ToolTimelineRowContentView(configuration: withImage)
+        let imageView = ToolTimelineRowContentView(configuration: imageLikeRead)
 
         let plainSize = fittedTimelineSize(for: plainView, width: 370)
         let imageSize = fittedTimelineSize(for: imageView, width: 370)
 
-        #expect(
-            imageSize.height > plainSize.height,
-            "Image preview row (\(imageSize.height)pt) must be taller than plain row (\(plainSize.height)pt)"
-        )
+        #expect(abs(imageSize.height - plainSize.height) < 24)
     }
 
     @MainActor
-    @Test func collapsedReadImageContainsVisibleImageView() throws {
-        // The image preview container must contain a visible UIImageView
-        // with scaleAspectFit content mode.
+    @Test func collapsedReadImageDoesNotRenderInlinePreview() {
         let config = makeTimelineToolConfiguration(
             title: "icon.png",
+            languageBadge: FileType.image.displayLabel,
             toolNamePrefix: "read",
-            collapsedImageBase64: Self.testPNGBase64,
-            collapsedImageMimeType: "image/png",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        // Find a non-hidden UIImageView with scaleAspectFit.
-        // The status icon and tool icon use scaleAspectFit too, but they are
-        // small (≤14pt). The image preview has a constraint of ≤200pt height
-        // and sits inside a container with cornerRadius 6.
-        let imageViews = timelineAllImageViews(in: view).filter {
-            !$0.isHidden && $0.contentMode == .scaleAspectFit
-        }
-        // Filter to ones whose parent has cornerRadius == 6 (the imagePreviewContainer).
-        let previewImageViews = imageViews.filter { iv in
-            iv.superview?.layer.cornerRadius == 6
-        }
-
-        #expect(!previewImageViews.isEmpty, "Collapsed image row must have a visible image preview UIImageView")
-    }
-
-    @MainActor
-    @Test func expandedReadImageHidesCollapsedPreview() {
-        // When expanded, the collapsed image preview container must be hidden
-        // to avoid doubling up with the expanded media renderer.
-        let config = makeTimelineToolConfiguration(
-            title: "icon.png",
-            expandedContent: .text(text: "Read image file [image/png]", language: nil),
-            toolNamePrefix: "read",
-            collapsedImageBase64: Self.testPNGBase64,
-            collapsedImageMimeType: "image/png",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        // The image preview container (cornerRadius == 6, contains aspectFit
-        // UIImageView) must be hidden when expanded.
-        let visiblePreviewContainers = timelineAllImageViews(in: view)
-            .filter { !$0.isHidden && $0.contentMode == .scaleAspectFit }
+        let previewImageViews = timelineAllImageViews(in: view)
+            .filter { !$0.isHidden && $0.image != nil && $0.contentMode == .scaleAspectFit }
             .filter { $0.superview?.layer.cornerRadius == 6 }
             .filter { !($0.superview?.isHidden ?? true) }
 
-        #expect(
-            visiblePreviewContainers.isEmpty,
-            "Collapsed image preview must be hidden when expanded"
-        )
+        #expect(previewImageViews.isEmpty)
+    }
+
+    @MainActor
+    @Test func imageBadgeUsesPhotoIcon() {
+        #expect(ToolTimelineRowUIHelpers.languageBadgeImage(for: FileType.image.displayLabel) != nil)
     }
 
     // Disabled: test seam properties removed — needs update

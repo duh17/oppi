@@ -56,7 +56,6 @@ enum ToolPresentationBuilder {
     ) -> ToolTimelineRowConfiguration {
         let normalizedTool = ToolCallFormatting.normalized(tool)
         let isExpanded = context.expandedItemIDs.contains(itemID)
-        let outputForFormatting = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
         let args = context.args
 
         let hasInlineMediaDataURI = shouldWarnInlineMediaForToolOutput(
@@ -123,13 +122,8 @@ enum ToolPresentationBuilder {
             title = String(title.prefix(239)) + "…"
         }
 
-        // Extract first image for collapsed thumbnail (read tool, image files)
-        let imagePreview = Self.collapsedImagePreview(
-            normalizedTool: normalizedTool,
-            args: args,
-            argsSummary: argsSummary,
-            output: outputForFormatting
-        )
+        // Collapsed rows should stay file-like, even for image reads.
+        // Inline media belongs in the expanded renderer, not the header.
 
         // Server-rendered segments: build attributed title and trailing.
         // For tools with SF Symbol icons (read, write, edit, bash), the first
@@ -179,8 +173,8 @@ enum ToolPresentationBuilder {
                 : collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
-            collapsedImageBase64: imagePreview?.base64,
-            collapsedImageMimeType: imagePreview?.mimeType,
+            collapsedImageBase64: nil,
+            collapsedImageMimeType: nil,
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,
@@ -259,7 +253,7 @@ enum ToolPresentationBuilder {
             result.toolNameColor = UIColor(Color.themeCyan)
             result.titleLineBreakMode = .byTruncatingMiddle
 
-            if fileMetadata.fileType == .markdown {
+            if fileMetadata.fileType == .markdown || fileMetadata.fileType == .image {
                 result.languageBadge = fileMetadata.fileType?.displayLabel
             } else {
                 result.languageBadge = fileMetadata.language?.displayName
