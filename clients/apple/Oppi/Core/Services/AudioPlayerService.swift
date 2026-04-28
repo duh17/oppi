@@ -13,7 +13,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Audi
 /// Tracks which item is currently playing so the UI can render
 /// per-row play/stop/loading state.
 @MainActor @Observable
-final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
+final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybackCaptureCoordinating {
     nonisolated static let stateDidChangeNotification = Notification.Name("AudioPlayerService.stateDidChange")
     nonisolated static let previousPlayingItemIDUserInfoKey = "previousPlayingItemID"
     nonisolated static let playingItemIDUserInfoKey = "playingItemID"
@@ -38,6 +38,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
     private var streamID: String?
     private var suppressedAudioStreamIDs: Set<String> = []
     private var autoPlayedVoiceReplyItemIDs: Set<String> = []
+    private var playbackSuppressedForCapture = false
     private var streamPendingBuffers = 0
     private var streamReceivedDone = false
 
@@ -75,6 +76,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
         }
     }
 
+    func beginCaptureInterruption() {
+        playbackSuppressedForCapture = true
+        stop()
+    }
+
+    func endCaptureInterruption() {
+        playbackSuppressedForCapture = false
+    }
+
     func stop() {
         let activeStreamID = streamID
         player?.stop()
@@ -84,11 +94,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
         if let activeStreamID {
             suppressedAudioStreamIDs.insert(activeStreamID)
         }
+        deactivatePlaybackAudioSessionIfPossible()
         setPlaybackState(playing: nil, loading: nil)
     }
 
     func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?) -> Bool {
-        AppPreferences.Voice.shouldAutoplay(delivery: delivery) && !autoPlayedVoiceReplyItemIDs.contains(itemID)
+        !playbackSuppressedForCapture
+            && AppPreferences.Voice.shouldAutoplay(delivery: delivery)
+            && !autoPlayedVoiceReplyItemIDs.contains(itemID)
     }
 
     func markVoiceReplyAutoplayed(itemID: String) {
@@ -107,6 +120,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
     /// should be rendered through normal tool-result audio attachments.
     func handleAudioStream(_ stream: AudioStreamMessage) {
         if suppressedAudioStreamIDs.contains(stream.id) {
+            if stream.event == .done || stream.event == .error {
+                suppressedAudioStreamIDs.remove(stream.id)
+            }
+            return
+        }
+
+        if playbackSuppressedForCapture {
+            suppressedAudioStreamIDs.insert(stream.id)
             if stream.event == .done || stream.event == .error {
                 suppressedAudioStreamIDs.remove(stream.id)
             }
@@ -152,6 +173,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
     // MARK: - Private
 
     private func play(data: Data, itemID: String) throws {
+        guard !playbackSuppressedForCapture else { return }
         stopAudioStream(clearState: false)
         // Configure audio session for playback
         let audioSession = AVAudioSession.sharedInstance()
@@ -164,6 +186,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
     }
 
     private func play(fileURL: URL, itemID: String) throws {
+        guard !playbackSuppressedForCapture else { return }
         stopAudioStream(clearState: false)
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.playback, mode: .default)
@@ -180,6 +203,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
                 guard let self else { return }
                 self.player = nil
                 self.playbackDelegate = nil
+                self.deactivatePlaybackAudioSessionIfPossible()
                 self.setPlaybackState(playing: nil, loading: nil)
             }
         }
@@ -326,8 +350,26 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter {
         streamPendingBuffers = 0
         streamReceivedDone = false
         if clearState {
+            deactivatePlaybackAudioSessionIfPossible()
             setPlaybackState(playing: nil, loading: nil)
         }
+    }
+
+    private func deactivatePlaybackAudioSessionIfPossible() {
+        let audioSession = AVAudioSession.sharedInstance()
+        guard Self.ownsPlaybackAudioSession(category: audioSession.category) else {
+            return
+        }
+
+        do {
+            try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            logger.debug("Playback audio session deactivation skipped: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    static func ownsPlaybackAudioSession(category: AVAudioSession.Category) -> Bool {
+        category == .playback
     }
 
     private func setPlaybackState(playing: String?, loading: String?) {

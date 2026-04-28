@@ -1,3 +1,4 @@
+import AVFoundation
 import Testing
 @testable import Oppi
 
@@ -73,10 +74,19 @@ struct AudioLifecycleCoordinatorTests {
         #expect(coordinator.stopRequests.last?.reason == .user)
     }
 
+    @Test func presentationPlaybackAloneDoesNotReportHardwarePlayback() {
+        let coordinator = AudioLifecycleCoordinator()
+
+        coordinator.beginDirectSpeak(itemID: "voice-1", transcript: "Stale presentation.")
+
+        #expect(coordinator.mode == .playing(itemID: "voice-1", source: .directSpeak))
+        #expect(!coordinator.hasActivePlayback)
+    }
+
     @Test func playbackNotificationsSyncLifecycleMode() {
         let coordinator = AudioLifecycleCoordinator()
 
-        coordinator.syncPlaybackState(playingItemID: "stream:voice-1", loadingItemID: nil)
+        coordinator.syncPlaybackState(playingItemID: "audio-stream-voice-1", loadingItemID: nil)
         #expect(coordinator.mode == .playing(itemID: "voice-1", source: .directSpeak))
 
         coordinator.syncPlaybackState(playingItemID: nil, loadingItemID: "voice-2")
@@ -84,6 +94,14 @@ struct AudioLifecycleCoordinatorTests {
 
         coordinator.syncPlaybackState(playingItemID: nil, loadingItemID: nil)
         #expect(coordinator.mode == .idle)
+    }
+
+    @Test func legacyDirectSpeakPlaybackIDsRemainSupported() {
+        let coordinator = AudioLifecycleCoordinator()
+
+        coordinator.syncPlaybackState(playingItemID: "stream:voice-1", loadingItemID: nil)
+
+        #expect(coordinator.mode == .playing(itemID: "voice-1", source: .directSpeak))
     }
 
     @Test func captureLifecycleProjectsComposerState() {
@@ -111,6 +129,30 @@ struct AudioLifecycleCoordinatorTests {
         coordinator.updateVoiceText(itemID: "voice-1", text: "   \n", delivery: .voiceMessage)
 
         #expect(coordinator.presentation.timelinePresentation(for: "voice-1") == .hidden)
+    }
+
+    @Test func audioPlayerOnlyDeactivatesPlaybackOwnedSession() {
+        #expect(AudioPlayerService.ownsPlaybackAudioSession(category: .playback))
+        #expect(!AudioPlayerService.ownsPlaybackAudioSession(category: .record))
+        #expect(!AudioPlayerService.ownsPlaybackAudioSession(category: .playAndRecord))
+    }
+
+    @Test func audioPlayerAutoplayIsSuppressedDuringCapture() {
+        let player = AudioPlayerService()
+
+        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-1", delivery: .directSpeak))
+
+        player.beginCaptureInterruption()
+        #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-2", delivery: .directSpeak))
+
+        player.endCaptureInterruption()
+        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-3", delivery: .directSpeak))
+    }
+
+    @Test func validMicrophoneFormatPassesAudioEngineValidation() throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+
+        try AudioEngineHelper.validateInputFormat(format)
     }
 }
 

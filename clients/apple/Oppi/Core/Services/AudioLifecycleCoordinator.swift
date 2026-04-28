@@ -74,7 +74,10 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
     var mode: AudioLifecycleMode { presentation.mode }
 
     var hasActivePlayback: Bool {
-        playbackInterrupter?.hasActivePlayback == true || isLifecyclePlaybackActive
+        // Hardware playback truth belongs to the concrete playback service.
+        // Presentation mode can be stale if a direct-speak notification is missed
+        // during reconnect/navigation, and must not keep dictation from starting.
+        playbackInterrupter?.hasActivePlayback == true
     }
 
     func setPlaybackInterrupter(_ interrupter: (any VoicePlaybackInterrupter)?) {
@@ -210,12 +213,26 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
     }
 
     private func playbackSource(fromPlaybackID playbackID: String) -> AudioPlaybackSource {
-        playbackID.hasPrefix("stream:") ? .directSpeak : .voiceMessageReplay
+        isDirectSpeakPlaybackID(playbackID) ? .directSpeak : .voiceMessageReplay
     }
 
     private func canonicalItemID(fromPlaybackID playbackID: String) -> String {
-        playbackID.hasPrefix("stream:") ? String(playbackID.dropFirst("stream:".count)) : playbackID
+        if playbackID.hasPrefix(Self.legacyDirectSpeakPlaybackPrefix) {
+            return String(playbackID.dropFirst(Self.legacyDirectSpeakPlaybackPrefix.count))
+        }
+        if playbackID.hasPrefix(Self.directSpeakPlaybackPrefix) {
+            return String(playbackID.dropFirst(Self.directSpeakPlaybackPrefix.count))
+        }
+        return playbackID
     }
+
+    private func isDirectSpeakPlaybackID(_ playbackID: String) -> Bool {
+        playbackID.hasPrefix(Self.directSpeakPlaybackPrefix)
+            || playbackID.hasPrefix(Self.legacyDirectSpeakPlaybackPrefix)
+    }
+
+    private static let directSpeakPlaybackPrefix = "audio-stream-"
+    private static let legacyDirectSpeakPlaybackPrefix = "stream:"
 
     private func normalizedTranscript(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)

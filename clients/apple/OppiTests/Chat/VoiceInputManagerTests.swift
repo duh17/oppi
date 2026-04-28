@@ -370,11 +370,11 @@ struct VoiceInputManagerTests {
     }
 
     @Test func preferredEngineUsesClassicForAllLocales() {
-        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .classicDictation)
-        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")) == .classicDictation)
-        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")) == .classicDictation)
-        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")) == .classicDictation)
-        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "fr-FR")) == .classicDictation)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US")) == .modernSpeech)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")) == .modernSpeech)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")) == .modernSpeech)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")) == .modernSpeech)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "fr-FR")) == .modernSpeech)
     }
 
     // MARK: - Language Label
@@ -488,12 +488,12 @@ struct VoiceInputManagerTests {
 
     // MARK: - Orchestration
 
-    @Test func recordingAudioSessionPolicyCapturesOnlyAndPreservesBluetoothInput() {
+    @Test func recordingAudioSessionPolicyUsesMeasurementAndBuiltInRouting() {
         #if os(iOS)
         #expect(VoiceInputSystemAccess.recordingCategory == .record)
-        #expect(VoiceInputSystemAccess.recordingMode == .default)
+        #expect(VoiceInputSystemAccess.recordingMode == .measurement)
         let options = VoiceInputSystemAccess.recordingCategoryOptions
-        #expect(options.contains(.allowBluetoothHFP))
+        #expect(!options.contains(.allowBluetoothHFP))
         #expect(!options.contains(.allowBluetoothA2DP))
         #expect(!options.contains(.defaultToSpeaker))
         #endif
@@ -556,6 +556,34 @@ struct VoiceInputManagerTests {
         #expect(session.startCallCount == 1)
     }
 
+    @Test func capturePlaybackSuppressionCoversRecordingAndStopsOnTeardown() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let playback = MockVoicePlaybackInterrupter()
+        let session = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in session }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setPlaybackInterrupter(playback)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(manager.state == .recording)
+        #expect(playback.beginCaptureInterruptionCallCount == 1)
+        #expect(playback.endCaptureInterruptionCallCount == 0)
+
+        _ = await manager.stopRecording()
+
+        #expect(manager.state == .idle)
+        #expect(playback.endCaptureInterruptionCallCount == 1)
+    }
+
     @Test func startRecordingProcessesSessionLifecycle() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
@@ -596,12 +624,13 @@ struct VoiceInputManagerTests {
         #expect(session.stopCallCount == 1)
     }
 
-    @Test func startRecordingRequestsPermissionsAndHandlesDenial() async {
+    @Test func startRecordingWithOnDeviceOnlyRequestsMicPermission() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
         let systemAccess = MockVoiceInputSystemAccess()
         systemAccess.hasPermissions = false
+        systemAccess.hasMicPermission = true
         systemAccess.requestPermissionsResult = false
 
         let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
@@ -609,11 +638,37 @@ struct VoiceInputManagerTests {
             providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
             systemAccess: systemAccess
         )
+        manager.setEngineMode(.onDevice)
+
+        try await manager.startRecording(source: "test")
+
+        #expect(systemAccess.requestMicPermissionCallCount == 0)
+        #expect(systemAccess.requestPermissionsCallCount == 0)
+        #expect(classicProvider.prepareSessionCallCount == 1)
+        #expect(manager.state == .recording)
+    }
+
+    @Test func startRecordingWithOnDeviceHandlesMicDenial() async {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.hasPermissions = false
+        systemAccess.hasMicPermission = false
+        systemAccess.requestMicPermissionResult = false
+
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
 
         try? await manager.startRecording(source: "test")
 
-        #expect(systemAccess.requestPermissionsCallCount == 1)
-        #expect(manager.state == .error("Microphone or speech permission denied"))
+        #expect(systemAccess.requestMicPermissionCallCount == 1)
+        #expect(systemAccess.requestPermissionsCallCount == 0)
+        #expect(manager.state == .error("Microphone permission denied"))
         #expect(classicProvider.prepareSessionCallCount == 0)
     }
 
@@ -728,8 +783,8 @@ struct VoiceInputManagerTests {
             try await manager.startRecording(source: "test")
         }
 
-        #expect(systemAccess.activateAudioSessionCallCount == 1)
-        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        #expect(systemAccess.activateAudioSessionCallCount == 2)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 2)
         #expect(manager.activeEngine == nil)
         #expect(manager.activeLanguageLabel == nil)
         #expect(manager.audioLevel == 0)
@@ -739,6 +794,39 @@ struct VoiceInputManagerTests {
             }
             return false
         }())
+    }
+
+    @Test func startRecordingRetriesOnDeviceSessionStartAfterAudioReset() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let firstSession = MockVoiceSession()
+        firstSession.startError = TestVoiceError("first start failed")
+        let secondSession = MockVoiceSession()
+        var sessions = [firstSession, secondSession]
+
+        let modernProvider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        modernProvider.makeSessionHandler = { _, _ in
+            sessions.removeFirst()
+        }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [modernProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+
+        try await manager.startRecording(source: "test")
+
+        #expect(manager.state == .recording)
+        #expect(manager.activeEngine == .modernSpeech)
+        #expect(modernProvider.makeSessionCallCount == 2)
+        #expect(firstSession.startCallCount == 1)
+        #expect(firstSession.cancelCallCount == 1)
+        #expect(secondSession.startCallCount == 1)
+        #expect(systemAccess.activateAudioSessionCallCount == 2)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
     }
 
     /// Remote mode without ASR available fails clearly instead of falling back.

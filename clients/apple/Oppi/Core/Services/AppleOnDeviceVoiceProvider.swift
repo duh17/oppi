@@ -378,6 +378,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
         let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
         inputBuilder = builder
+        try await newAnalyzer.prepareToAnalyze(in: preferredAudioFormat)
         try await newAnalyzer.start(inputSequence: sequence)
         startResultsBridge()
         let analyzerStartMs = analyzerStart.elapsedMs()

@@ -201,10 +201,23 @@ actor AsyncGate {
 }
 
 @MainActor
-final class MockVoicePlaybackInterrupter: VoicePlaybackInterrupter {
+final class MockVoicePlaybackInterrupter: VoicePlaybackCaptureCoordinating {
     var hasActivePlayback = false
     var stopCallCount = 0
+    var beginCaptureInterruptionCallCount = 0
+    var endCaptureInterruptionCallCount = 0
     var onStop: (() -> Void)?
+
+    func beginCaptureInterruption() {
+        beginCaptureInterruptionCallCount += 1
+        if hasActivePlayback {
+            stop()
+        }
+    }
+
+    func endCaptureInterruption() {
+        endCaptureInterruptionCallCount += 1
+    }
 
     func stop() {
         stopCallCount += 1

@@ -11,10 +11,14 @@ enum AudioEngineHelper {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        try validateInputFormat(inputFormat)
 
         let converter: AVAudioConverter?
         if let targetFormat, inputFormat != targetFormat {
-            converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+            guard let audioConverter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+                throw VoiceInputError.internalError("Cannot create microphone audio converter")
+            }
+            converter = audioConverter
         } else {
             converter = nil
         }
@@ -58,6 +62,12 @@ enum AudioEngineHelper {
         try engine.start()
 
         return (engine, levelStream)
+    }
+
+    static func validateInputFormat(_ format: AVAudioFormat) throws {
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw VoiceInputError.internalError("Microphone input format unavailable")
+        }
     }
 }
 

@@ -1011,6 +1011,58 @@ struct OppiDictationSessionAudioDrainTests {
         #expect(sentChunks[1] == Data([0x04, 0x05]))
     }
 
+    @Test func audioContinuesAfterCommittedResultUntilStop() async {
+        var sentChunks: [Data] = []
+        let connection = ServerConnection()
+        connection._sendDictationAudioForTesting = { data in
+            sentChunks.append(data)
+        }
+        connection._sendDictationForTesting = { _ in }
+
+        let (messageStream, messageCont) = AsyncStream.makeStream(of: ServerMessage.self)
+        let (audioStream, audioCont) = AsyncStream.makeStream(of: Data.self)
+
+        let session = OppiDictationSession(
+            connection: connection,
+            readinessTask: Task<DictationProviderInfo?, Error> { nil },
+            messages: messageStream
+        )
+        session._setPendingAudioStreamForTesting(audioStream)
+        session._startAudioDrainTaskForTesting()
+        session._startMessageListenerForTesting()
+
+        let eventsTask = Task { () -> [VoiceSessionEvent] in
+            var events: [VoiceSessionEvent] = []
+            do {
+                for try await event in session.events {
+                    events.append(event)
+                }
+            } catch {}
+            return events
+        }
+
+        audioCont.yield(Data([0x01]))
+        messageCont.yield(.dictationResult(text: "one", snap: false))
+        try? await Task.sleep(for: .milliseconds(30))
+        audioCont.yield(Data([0x02]))
+        audioCont.yield(Data([0x03]))
+        try? await Task.sleep(for: .milliseconds(30))
+
+        #expect(sentChunks == [Data([0x01]), Data([0x02]), Data([0x03])])
+
+        audioCont.finish()
+        messageCont.yield(.dictationFinal(text: "one two three"))
+        let events = await eventsTask.value
+        let transcriptEvents = events.compactMap { event -> String? in
+            if case .replaceFinalTranscript(let text, _, _, _) = event {
+                return text
+            }
+            return nil
+        }
+
+        #expect(transcriptEvents == ["one", "one two three"])
+    }
+
     private func consumeStreamError(
         from events: AsyncThrowingStream<VoiceSessionEvent, Error>
     ) async -> Error? {

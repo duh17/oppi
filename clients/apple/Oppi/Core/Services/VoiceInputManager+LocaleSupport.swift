@@ -13,17 +13,16 @@ extension VoiceInputManager {
         return Locale.current
     }
 
-    /// On-device engine routing. DictationTranscriber (classic keyboard dictation
-    /// model) is used for all locales — it's faster, adds punctuation, and has
-    /// years of Apple tuning for short-form dictation. SpeechTranscriber (new
-    /// model) is designed for long-form/meeting/lecture transcription and trades
-    /// short-form latency for broader context handling.
+    /// On-device engine routing.
+    ///
+    /// Prefer `SpeechTranscriber` for the in-app mic path. Recent device runs
+    /// show `DictationTranscriber` pre-warming successfully, then failing during
+    /// session activation with a generic `NSError`; `SpeechTranscriber` uses the
+    /// same on-device framework but has been more reliable for app-owned audio
+    /// capture.
     static func preferredEngine(for locale: Locale) -> TranscriptionEngine {
-        // All locales use the classic dictation engine. The new SpeechTranscriber
-        // model is optimized for long-form audio (Notes, Voice Memos) and has
-        // worse latency/accuracy for short chat dictation.
         _ = locale
-        return .classicDictation
+        return .modernSpeech
     }
 
     // periphery:ignore - API surface for voice availability checks

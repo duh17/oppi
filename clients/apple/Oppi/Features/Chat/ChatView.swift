@@ -317,7 +317,10 @@ struct ChatView: View {
                 voiceInputManager.setServerCredentials(connection.credentials)
                 voiceInputManager.setServerConnection(connection)
                 audioLifecycleCoordinator.setPlaybackInterrupter(audioPlayer)
-                voiceInputManager.setPlaybackInterrupter(audioLifecycleCoordinator)
+                // Dictation must use the concrete player as the hardware source of truth.
+                // The lifecycle coordinator owns presentation state and can be stale across
+                // direct-speak/reconnect edges; using it here can make the mic appear wedged.
+                voiceInputManager.setPlaybackInterrupter(audioPlayer)
                 await sessionManager.connect(
                     connection: connection,
                     sessionStore: sessionStore

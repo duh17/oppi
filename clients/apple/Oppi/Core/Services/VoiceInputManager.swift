@@ -32,6 +32,18 @@ protocol VoicePlaybackInterrupter: AnyObject {
     func stop()
 }
 
+/// Hardware playback gate used by dictation startup.
+///
+/// This intentionally excludes presentation-only coordinators. Voice input needs
+/// the concrete playback owner so it can block late voice-card autoplay and
+/// streaming chunks for the whole capture window.
+@MainActor
+protocol VoicePlaybackCaptureCoordinating: AnyObject {
+    var hasActivePlayback: Bool { get }
+    func beginCaptureInterruption()
+    func endCaptureInterruption()
+}
+
 @MainActor @Observable
 final class VoiceInputManager {
 
@@ -505,7 +517,8 @@ final class VoiceInputManager {
     private let routeResolver: VoiceInputRouteResolver
     private let sessionMonitor: VoiceInputSessionMonitor
     private let systemAccess: any VoiceInputSystemAccessing
-    private weak var playbackInterrupter: (any VoicePlaybackInterrupter)?
+    private weak var playbackCoordinator: (any VoicePlaybackCaptureCoordinating)?
+    private var playbackCaptureInterruptionActive = false
 
     /// Drives character-by-character text reveal for server dictation updates.
     let typewriterAnimator = TypewriterAnimator()
@@ -574,8 +587,8 @@ final class VoiceInputManager {
         logger.info("Server credentials: \(credentials != nil ? "set" : "cleared") host=\(host)")
     }
 
-    func setPlaybackInterrupter(_ interrupter: (any VoicePlaybackInterrupter)?) {
-        playbackInterrupter = interrupter
+    func setPlaybackInterrupter(_ coordinator: (any VoicePlaybackCaptureCoordinating)?) {
+        playbackCoordinator = coordinator
     }
 
     /// Update the server connection reference for the dictation provider.
@@ -596,12 +609,23 @@ final class VoiceInputManager {
     /// Resolve the effective engine, considering mode + server availability.
     private func effectiveEngine(for locale: Locale) async -> TranscriptionEngine {
         let fallback = Self.preferredEngine(for: locale)
-        return await routeResolver.resolveEngine(
+        let resolved = await routeResolver.resolveEngine(
             mode: engineMode,
             fallback: fallback,
             serverCredentials: serverCredentials,
             asrAvailable: serverConnection?.asrAvailable ?? false
         )
+
+        // Tests and previews often register only one on-device provider. Keep
+        // production routing on modern SpeechTranscriber while still allowing
+        // narrow registries to exercise on-device startup behavior.
+        if providerRegistry.provider(for: resolved) == nil,
+           resolved == .modernSpeech,
+           providerRegistry.provider(for: .classicDictation) != nil {
+            return .classicDictation
+        }
+
+        return resolved
     }
 
     private func validateServerDictationAvailabilityIfNeeded(
@@ -760,27 +784,19 @@ final class VoiceInputManager {
         let engine = await effectiveEngine(for: locale)
         dictationSessionStart = startTime
         activeEngine = engine
+        beginPlaybackCaptureInterruptionIfNeeded()
 
-        // Engine-aware permission check: server dictation needs only mic,
-        // on-device engines need both mic + speech recognition.
-        switch engine {
-        case .serverDictation:
-            if !systemAccess.hasMicPermission {
-                guard await systemAccess.requestMicPermission() else {
-                    activeEngine = nil
-                    state = .error("Microphone permission denied")
-                    scheduleErrorReset()
-                    return
-                }
-            }
-        case .modernSpeech, .classicDictation:
-            if !systemAccess.hasPermissions {
-                guard await requestPermissions() else {
-                    activeEngine = nil
-                    state = .error("Microphone or speech permission denied")
-                    scheduleErrorReset()
-                    return
-                }
+        // SpeechAnalyzer/DictationTranscriber capture needs microphone access.
+        // Do not gate on legacy SFSpeechRecognizer authorization here: users can
+        // deny that permission while on-device dictation remains usable, and the
+        // provider will surface any real analyzer/model failure during startup.
+        if !systemAccess.hasMicPermission {
+            guard await systemAccess.requestMicPermission() else {
+                endPlaybackCaptureInterruptionIfNeeded()
+                activeEngine = nil
+                state = .error("Microphone permission denied")
+                scheduleErrorReset()
+                return
             }
         }
 
@@ -803,11 +819,6 @@ final class VoiceInputManager {
         do {
             try validateServerDictationAvailabilityIfNeeded(for: engine)
             try ensureStartRequestActive(requestID)
-
-            if playbackInterrupter?.hasActivePlayback == true {
-                logger.info("Stopping active audio playback before voice recording")
-                playbackInterrupter?.stop()
-            }
 
             let timings = try await startProviderRecording(
                 requestID: requestID,
@@ -918,6 +929,7 @@ final class VoiceInputManager {
 
         deactivateAudioSession()
         teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
         state = .idle
         logger.info("Stopped. Transcript length: \(result.count) chars")
         return result
@@ -944,6 +956,7 @@ final class VoiceInputManager {
 
         deactivateAudioSession()
         teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
 
         emitDictationCancelTelemetry()
 
@@ -1017,12 +1030,45 @@ final class VoiceInputManager {
         timings.modelReadyMs = modelPhaseStart.elapsedMs()
 
         let transcriberStart = ContinuousClock.now
-        let session = try provider.makeSession(context: context, preparation: preparation)
+        var session = try provider.makeSession(context: context, preparation: preparation)
         activeLanguageLabel = Self.languageLabel(for: locale)
         timings.transcriberCreateMs = transcriberStart.elapsedMs()
 
         try ensureStartRequestActive(requestID)
+        bindSessionMonitor(session, metricAnnotation: metricAnnotation)
 
+        try setupAudioSession()
+        let sessionTimings: VoiceSessionStartTimings
+        do {
+            sessionTimings = try await session.start()
+        } catch {
+            guard provider.engine != .serverDictation else { throw error }
+            logger.error("On-device voice session start failed; retrying after audio session reset: \(error.localizedDescription, privacy: .public)")
+            await sessionMonitor.cancel()
+            deactivateAudioSession()
+            try ensureStartRequestActive(requestID)
+            try await Task.sleep(for: .milliseconds(250))
+            try ensureStartRequestActive(requestID)
+
+            session = try provider.makeSession(context: context, preparation: preparation)
+            bindSessionMonitor(session, metricAnnotation: metricAnnotation)
+            try setupAudioSession()
+            sessionTimings = try await session.start()
+        }
+        try ensureStartRequestActive(requestID)
+
+        timings.analyzerStartMs = sessionTimings.analyzerStartMs
+        timings.audioStartMs = sessionTimings.audioStartMs
+        timings.totalMs = startTime.elapsedMs()
+        recordingStart = ContinuousClock.now
+
+        return timings
+    }
+
+    private func bindSessionMonitor(
+        _ session: any VoiceTranscriptionSession,
+        metricAnnotation: VoiceMetricAnnotation
+    ) {
         sessionMonitor.bind(
             session: session,
             recordingStartTime: ContinuousClock.now,
@@ -1058,17 +1104,6 @@ final class VoiceInputManager {
                 }
             }
         )
-
-        try setupAudioSession()
-        let sessionTimings = try await session.start()
-        try ensureStartRequestActive(requestID)
-
-        timings.analyzerStartMs = sessionTimings.analyzerStartMs
-        timings.audioStartMs = sessionTimings.audioStartMs
-        timings.totalMs = startTime.elapsedMs()
-        recordingStart = ContinuousClock.now
-
-        return timings
     }
 
     // MARK: - Setup
@@ -1177,6 +1212,7 @@ final class VoiceInputManager {
         await sessionMonitor.cancel()
         deactivateAudioSession()
         teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
     }
 
     private func handleSessionStreamError(
@@ -1198,6 +1234,7 @@ final class VoiceInputManager {
         await sessionMonitor.cancel()
         deactivateAudioSession()
         teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
         state = .error(userFacingErrorMessage(for: error))
         scheduleErrorReset()
     }
@@ -1212,6 +1249,21 @@ final class VoiceInputManager {
     }
 
     // MARK: - Helpers
+
+    private func beginPlaybackCaptureInterruptionIfNeeded() {
+        guard !playbackCaptureInterruptionActive, let playbackCoordinator else { return }
+        if playbackCoordinator.hasActivePlayback {
+            logger.info("Stopping active audio playback before voice recording")
+        }
+        playbackCoordinator.beginCaptureInterruption()
+        playbackCaptureInterruptionActive = true
+    }
+
+    private func endPlaybackCaptureInterruptionIfNeeded() {
+        guard playbackCaptureInterruptionActive else { return }
+        playbackCoordinator?.endCaptureInterruption()
+        playbackCaptureInterruptionActive = false
+    }
 
     private func markTranscriptPresentationChanged() {
         transcriptPresentationRevision &+= 1
