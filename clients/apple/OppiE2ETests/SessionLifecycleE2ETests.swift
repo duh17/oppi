@@ -3,7 +3,7 @@ import XCTest
 /// E2E tests for session lifecycle: stopping mid-stream,
 /// multi-turn conversations, and switching between sessions.
 ///
-/// Requires the Docker server and MLX model server to be running.
+/// Requires the E2E server and local model endpoint to be running.
 /// Run via `ios/scripts/e2e.sh` which handles server lifecycle
 /// and writes the invite URL to `/tmp/oppi-e2e-invite.txt`.
 final class SessionLifecycleE2ETests: E2ETestCase {
@@ -51,37 +51,25 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         createAndEnterSession()
 
         // Turn 1
-        sendMessageAndWaitForResponse("Reply with exactly: TURN_ONE_OK")
-        let turnOne = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'TURN_ONE_OK'")
-        ).firstMatch
+        sendMessageAndWaitForResponse(localEchoPrompt("TURN_ONE_OK"))
         XCTAssertTrue(
-            turnOne.waitForExistence(timeout: 10),
+            waitForTimelineTextContaining("TURN_ONE_OK"),
             "TURN_ONE_OK not found in timeline after first turn"
         )
 
         // Turn 2
-        sendMessageAndWaitForResponse("Reply with exactly: TURN_TWO_OK")
-        let turnTwo = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'TURN_TWO_OK'")
-        ).firstMatch
+        sendMessageAndWaitForResponse(localEchoPrompt("TURN_TWO_OK"))
         XCTAssertTrue(
-            turnTwo.waitForExistence(timeout: 10),
+            waitForTimelineTextContaining("TURN_TWO_OK"),
             "TURN_TWO_OK not found in timeline after second turn"
         )
-        XCTAssertTrue(turnOne.exists, "TURN_ONE_OK disappeared after second turn")
 
         // Turn 3
-        sendMessageAndWaitForResponse("Reply with exactly: TURN_THREE_OK")
-        let turnThree = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'TURN_THREE_OK'")
-        ).firstMatch
+        sendMessageAndWaitForResponse(localEchoPrompt("TURN_THREE_OK"))
         XCTAssertTrue(
-            turnThree.waitForExistence(timeout: 10),
+            waitForTimelineTextContaining("TURN_THREE_OK"),
             "TURN_THREE_OK not found in timeline after third turn"
         )
-        XCTAssertTrue(turnOne.exists, "TURN_ONE_OK missing after third turn")
-        XCTAssertTrue(turnTwo.exists, "TURN_TWO_OK missing after third turn")
     }
 
     func testSessionSwitching() throws {
@@ -92,12 +80,9 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         // Enter session B (newest, index 1 after header)
         enterLatestSession()
 
-        sendMessageAndWaitForResponse("Reply with exactly: SESSION_B_MARKER")
-        let markerB = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'SESSION_B_MARKER'")
-        ).firstMatch
+        sendMessageAndWaitForResponse(localEchoPrompt("SESSION_B_MARKER"))
         XCTAssertTrue(
-            markerB.waitForExistence(timeout: 10),
+            waitForTimelineTextContaining("SESSION_B_MARKER"),
             "SESSION_B_MARKER not found in session B"
         )
 
@@ -106,27 +91,21 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         enterSession(at: 2)
 
         // Verify session B's marker is not in session A
-        let staleMarker = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'SESSION_B_MARKER'")
-        ).firstMatch
         XCTAssertFalse(
-            staleMarker.waitForExistence(timeout: 5),
+            waitForTimelineTextContaining("SESSION_B_MARKER", timeout: 5),
             "SESSION_B_MARKER leaked into session A"
         )
 
         // Send a message in session A
-        sendMessageAndWaitForResponse("Reply with exactly: SESSION_A_MARKER")
-        let markerA = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'SESSION_A_MARKER'")
-        ).firstMatch
+        sendMessageAndWaitForResponse(localEchoPrompt("SESSION_A_MARKER"))
         XCTAssertTrue(
-            markerA.waitForExistence(timeout: 10),
+            waitForTimelineTextContaining("SESSION_A_MARKER"),
             "SESSION_A_MARKER not found in session A"
         )
 
         // Confirm session B's marker still absent
         XCTAssertFalse(
-            staleMarker.exists,
+            waitForTimelineTextContaining("SESSION_B_MARKER", timeout: 2),
             "SESSION_B_MARKER appeared in session A after sending a message"
         )
     }

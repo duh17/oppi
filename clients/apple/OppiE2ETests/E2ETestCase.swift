@@ -1,20 +1,17 @@
 import XCTest
 
 /// Shared base class for E2E tests.
-/// Launches the app and pairs with the Docker server ONCE per test class,
+/// Launches the app and pairs with the E2E server once per test process,
 /// then each test method reuses the same app instance.
 ///
-/// XCTest creates a fresh instance per test method, but static properties
-/// persist across methods within a class. When the test class changes
-/// (detected via class name), the app is relaunched and re-paired.
+/// Pairing invite tokens are single-use, so relaunching and re-pairing for
+/// each test class makes later classes fail with an already-consumed invite.
 class E2ETestCase: XCTestCase {
 
-    /// Shared app instance — persists across test methods within a single test class.
-    /// Re-created when the active test class changes.
+    /// Shared app instance — persists across E2E test classes.
     /// nonisolated(unsafe) is required for Swift 6 strict concurrency — XCTest
-    /// guarantees sequential execution within a test class so this is safe.
+    /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
-    nonisolated(unsafe) private static var _pairedClassName: String?
 
     var app: XCUIApplication {
         Self._app!
@@ -26,12 +23,8 @@ class E2ETestCase: XCTestCase {
         try super.setUpWithError()
         continueAfterFailure = false
 
-        let className = String(describing: type(of: self))
-        if Self._app == nil || Self._pairedClassName != className {
-            Self._app = nil
-            Self._pairedClassName = nil
+        if Self._app == nil {
             try launchAndPair()
-            Self._pairedClassName = className
         }
 
         // Navigate back to workspace detail if a previous test left the app elsewhere
@@ -40,7 +33,7 @@ class E2ETestCase: XCTestCase {
 
     // MARK: - Launch & Pairing (once per class)
 
-    /// Launches the app, pairs with the Docker server, and navigates to the e2e-workspace.
+    /// Launches the app, pairs with the E2E server, and navigates to the e2e-workspace.
     private func launchAndPair() throws {
         let inviteURL = try readInviteURL()
 
@@ -78,7 +71,7 @@ class E2ETestCase: XCTestCase {
             workspaceCell.waitForExistence(timeout: 15),
             "Workspace 'e2e-workspace' cell did not appear in list"
         )
-        workspaceCell.tap()
+        openWorkspaceCell(workspaceCell, in: application)
 
         // Verify we arrived at workspace detail
         let newSessionButton = application.buttons["workspace.newSession"]
@@ -125,7 +118,7 @@ class E2ETestCase: XCTestCase {
         let workspaceCell = app.collectionViews["workspace.list"]
             .cells.containing(.staticText, identifier: "e2e-workspace").firstMatch
         if workspaceCell.waitForExistence(timeout: 5) {
-            workspaceCell.tap()
+            openWorkspaceCell(workspaceCell, in: app)
             if newSessionButton.waitForExistence(timeout: 15) {
                 return
             }
@@ -133,9 +126,17 @@ class E2ETestCase: XCTestCase {
 
         // Unknown state — force relaunch
         Self._app = nil
-        Self._pairedClassName = nil
         try launchAndPair()
-        Self._pairedClassName = String(describing: type(of: self))
+    }
+
+    private func openWorkspaceCell(_ workspaceCell: XCUIElement, in application: XCUIApplication) {
+        let newSessionButton = application.buttons["workspace.newSession"]
+        for _ in 0..<3 {
+            workspaceCell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if newSessionButton.waitForExistence(timeout: 5) {
+                return
+            }
+        }
     }
 
     // MARK: - Session Helpers
@@ -209,6 +210,31 @@ class E2ETestCase: XCTestCase {
     }
 
     // MARK: - Messaging
+
+    func localEchoPrompt(_ marker: String) -> String {
+        "Reply with exactly this token and nothing else: \(marker). No markdown. No explanation."
+    }
+
+    func waitForTimelineTextContaining(_ text: String, timeout: TimeInterval = 15) -> Bool {
+        let predicate = NSPredicate(
+            format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+            text,
+            text
+        )
+        let match = app.descendants(matching: .any).matching(predicate).firstMatch
+        if match.waitForExistence(timeout: timeout) {
+            return true
+        }
+
+        let jumpToBottom = app.buttons["chat.jumpToBottom"]
+        if jumpToBottom.exists && jumpToBottom.isHittable {
+            jumpToBottom.tap()
+            if match.waitForExistence(timeout: 3) {
+                return true
+            }
+        }
+        return false
+    }
 
     /// Types a message, sends it, and waits for the full round-trip to complete
     /// (stop button appears then disappears, chat input reappears).

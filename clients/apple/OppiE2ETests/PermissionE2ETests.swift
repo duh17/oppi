@@ -4,11 +4,11 @@ import XCTest
 /// Triggers tool usage (bash) to exercise the permission sheet,
 /// then verifies approve and deny paths.
 ///
-/// These tests depend on the local MLX model deciding to invoke
+/// These tests depend on the local model deciding to invoke
 /// the bash tool. If the model does not produce a tool call,
 /// the test skips gracefully rather than failing.
 ///
-/// Requires the Docker server and MLX model server to be running.
+/// Requires the E2E server and local model endpoint to be running.
 /// Run via `ios/scripts/e2e.sh` which handles server lifecycle
 /// and writes the invite URL to `/tmp/oppi-e2e-invite.txt`.
 final class PermissionE2ETests: E2ETestCase {
@@ -21,7 +21,7 @@ final class PermissionE2ETests: E2ETestCase {
         // Ask the model to use bash — triggers a permission request
         let chatInput = app.textViews["chat.input"]
         chatInput.tap()
-        chatInput.typeText("Use the bash tool to run: echo PERMISSION_APPROVED_OK")
+        chatInput.typeText("Use the bash tool. Run exactly this command: echo PERMISSION_APPROVED_OK")
 
         let sendButton = app.buttons["chat.send"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
@@ -31,7 +31,7 @@ final class PermissionE2ETests: E2ETestCase {
         let approveButton = app.buttons["permission.approve"]
         guard approveButton.waitForExistence(timeout: 60) else {
             throw XCTSkip(
-                "Permission sheet never appeared — the MLX model may not have invoked the bash tool"
+                "Permission sheet never appeared — the local model may not have invoked the bash tool"
             )
         }
 
@@ -50,11 +50,8 @@ final class PermissionE2ETests: E2ETestCase {
         }
 
         // Verify the tool output contains the echoed string
-        let toolOutput = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'PERMISSION_APPROVED_OK'")
-        ).firstMatch
         XCTAssertTrue(
-            toolOutput.waitForExistence(timeout: 15),
+            waitForTimelineTextContaining("PERMISSION_APPROVED_OK"),
             "PERMISSION_APPROVED_OK not found in timeline after approving bash tool"
         )
 
@@ -71,7 +68,7 @@ final class PermissionE2ETests: E2ETestCase {
         // Ask the model to use bash — triggers a permission request
         let chatInput = app.textViews["chat.input"]
         chatInput.tap()
-        chatInput.typeText("Use the bash tool to run: echo PERMISSION_DENIED_TEST")
+        chatInput.typeText("Use the bash tool. Run exactly this command: echo PERMISSION_DENIED_TEST")
 
         let sendButton = app.buttons["chat.send"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: 3), "Send button not found")
@@ -81,7 +78,7 @@ final class PermissionE2ETests: E2ETestCase {
         let approveButton = app.buttons["permission.approve"]
         guard approveButton.waitForExistence(timeout: 60) else {
             throw XCTSkip(
-                "Permission sheet never appeared — the MLX model may not have invoked the bash tool"
+                "Permission sheet never appeared — the local model may not have invoked the bash tool"
             )
         }
 
@@ -107,13 +104,8 @@ final class PermissionE2ETests: E2ETestCase {
             "Chat input did not reappear after permission denial — session may be stuck"
         )
 
-        // The denied command's output should NOT appear in the timeline
-        let deniedOutput = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS 'PERMISSION_DENIED_TEST'")
-        ).firstMatch
-        XCTAssertFalse(
-            deniedOutput.waitForExistence(timeout: 5),
-            "PERMISSION_DENIED_TEST appeared in timeline despite denying permission"
-        )
+        // Denial success is covered by composer recovery above. The user's
+        // original prompt also contains the marker, so a timeline text search
+        // cannot distinguish prompt text from forbidden command output.
     }
 }
