@@ -24,6 +24,7 @@ import {
   subscribeSession,
   sendPromptAndWait,
   autoApprovePermissions,
+  restartServerPreservingData,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -122,6 +123,28 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const found = sessions.find((s) => s.id === sessionId);
     expect(found).toBeTruthy();
   });
+
+  it("keeps an already-paired device token valid across server restart", async () => {
+    if (!lmsReady()) return;
+
+    await restartServerPreservingData();
+
+    const me = await api("GET", "/me", deviceToken);
+    expect(me.status).toBe(200);
+
+    const workspaces = await api("GET", "/workspaces", deviceToken);
+    expect(workspaces.status).toBe(200);
+    const workspaceList = workspaces.json?.workspaces as { id: string }[];
+    expect(workspaceList.some((workspace) => workspace.id === workspaceId)).toBe(true);
+
+    const sessions = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
+    expect(sessions.status).toBe(200);
+    const sessionList = sessions.json?.sessions as { id: string }[];
+    expect(sessionList.some((session) => session.id === sessionId)).toBe(true);
+
+    const stream = await openStream(deviceToken);
+    closeStream(stream);
+  }, 120_000);
 
   // ── 3. Stream subscribe ──
 

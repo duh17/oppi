@@ -2,8 +2,9 @@
  * Invite generation — reusable by CLI (QR rendering, --json) and future Mac app.
  */
 
+import { sign } from "node:crypto";
 import type { Storage } from "./storage.js";
-import type { InviteData, InvitePayloadV3 } from "./types.js";
+import type { InviteData, InvitePayloadV3, SignedInviteEnvelopeV3 } from "./types.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import { isTailscaleHostname, prepareTlsForServer, readCertificateFingerprint } from "./tls.js";
 
@@ -90,7 +91,7 @@ export function generateInvite(
     tlsCertFingerprint,
   };
 
-  const invitePayload: InvitePayloadV3 = {
+  const signedPayload: InvitePayloadV3 = {
     v: 3,
     host: inviteData.host,
     port: inviteData.port,
@@ -100,6 +101,18 @@ export function generateInvite(
     name: inviteData.name,
     tlsCertFingerprint: inviteData.tlsCertFingerprint,
     fingerprint: identity.fingerprint,
+  };
+  const signedPayloadJson = JSON.stringify(signedPayload);
+  const signature = sign(
+    null,
+    Buffer.from(signedPayloadJson, "utf-8"),
+    identity.privateKeyPem,
+  ).toString("base64url");
+  const invitePayload: SignedInviteEnvelopeV3 = {
+    v: 3,
+    signedPayload: Buffer.from(signedPayloadJson, "utf-8").toString("base64url"),
+    publicKey: identity.publicKeyRaw,
+    signature,
   };
 
   const inviteJson = JSON.stringify(invitePayload);

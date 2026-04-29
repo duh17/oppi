@@ -1474,3 +1474,10 @@ export interface InvitePayloadV3 extends InviteData {
   v: 3;
   fingerprint?: string;
 }
+
+export interface SignedInviteEnvelopeV3 {
+  v: 3;
+  signedPayload: string;
+  publicKey: string;
+  signature: string;
+}

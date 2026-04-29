@@ -14,7 +14,7 @@ import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -132,6 +132,15 @@ export async function stopServer(): Promise<void> {
   }
 }
 
+/** Restart the e2e server without deleting its data directory/volume. */
+export async function restartServerPreservingData(): Promise<void> {
+  if (process.env.E2E_NATIVE === "1") {
+    await restartNativeServerPreservingData();
+  } else {
+    await restartDockerServerPreservingData();
+  }
+}
+
 let dockerModelsJson: string | null = null;
 
 async function canReachHealthOver(scheme: E2ETransportScheme): Promise<boolean> {
@@ -228,6 +237,14 @@ async function startDockerServer(): Promise<void> {
   console.log(`[e2e] Docker server healthy, e2eModel=${E2E_MODEL}`);
 }
 
+async function restartDockerServerPreservingData(): Promise<void> {
+  execSync("docker restart oppi-e2e", { stdio: "inherit" });
+  transportScheme = await resolveDockerTransportScheme();
+  process.env.E2E_TRANSPORT_SCHEME = transportScheme;
+  applySelfSignedTlsBypass();
+  await waitForHealth();
+}
+
 async function stopDockerServer(): Promise<void> {
   const composeFile = join(__dirname, "docker-compose.e2e.yml");
   try {
@@ -253,17 +270,16 @@ async function startNativeServer(): Promise<void> {
   execSync("npm run build", { cwd: SERVER_DIR, stdio: "inherit" });
 
   nativeDataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-native-"));
+  process.env.E2E_NATIVE_DATA_DIR = nativeDataDir;
 
-  // Pre-configure
-  const { Storage } = await import(join(SERVER_DIR, "dist/src/storage.js"));
-  const storage = new Storage(nativeDataDir);
-  storage.updateConfig({
-    host: "127.0.0.1",
-    port: E2E_PORT,
-    token: ADMIN_TOKEN,
-  });
+  // Pre-configure. ConfigStore merges this minimal file with defaults at startup.
+  writeFileSync(
+    join(nativeDataDir, "config.json"),
+    JSON.stringify({ host: "127.0.0.1", port: E2E_PORT, token: ADMIN_TOKEN }, null, 2),
+    { mode: 0o600 },
+  );
 
-  transportScheme = storage.getConfig().tls?.mode === "disabled" ? "http" : "https";
+  transportScheme = "https";
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
@@ -276,25 +292,38 @@ async function startNativeServer(): Promise<void> {
     cpFile(hostModels, join(piDir, "models.json"));
   }
 
-  const logPath = join(nativeDataDir, "server.log");
+  await launchNativeServerProcess();
+  console.log("[e2e] Native server healthy");
+}
+
+async function launchNativeServerProcess(): Promise<void> {
+  const dataDir = nativeDataDir ?? process.env.E2E_NATIVE_DATA_DIR;
+  if (!dataDir) {
+    throw new Error("[e2e] Native data dir not initialized");
+  }
+  nativeDataDir = dataDir;
+
+  const logPath = join(dataDir, "server.log");
   const logFd = openSync(logPath, "w");
 
   serverProcess = spawn("node", ["dist/src/cli.js", "serve"], {
     cwd: SERVER_DIR,
     env: {
       ...process.env,
-      OPPI_DATA_DIR: nativeDataDir,
+      OPPI_DATA_DIR: dataDir,
     },
     stdio: ["ignore", logFd, logFd],
   });
 
   closeSync(logFd);
+  if (serverProcess.pid) {
+    process.env.E2E_NATIVE_SERVER_PID = String(serverProcess.pid);
+  }
 
   await waitForHealth();
-  console.log("[e2e] Native server healthy");
 }
 
-async function stopNativeServer(): Promise<void> {
+async function terminateNativeServerProcess(): Promise<void> {
   if (serverProcess && !serverProcess.killed) {
     serverProcess.kill("SIGTERM");
     await new Promise<void>((resolve) => {
@@ -307,11 +336,30 @@ async function stopNativeServer(): Promise<void> {
         resolve();
       });
     });
+  } else if (process.env.E2E_NATIVE_SERVER_PID) {
+    try {
+      process.kill(Number(process.env.E2E_NATIVE_SERVER_PID), "SIGTERM");
+    } catch {
+      // Process may already be gone.
+    }
+    await sleep(1000);
   }
+  serverProcess = null;
+  delete process.env.E2E_NATIVE_SERVER_PID;
+}
+
+async function restartNativeServerPreservingData(): Promise<void> {
+  await terminateNativeServerProcess();
+  await launchNativeServerProcess();
+}
+
+async function stopNativeServer(): Promise<void> {
+  await terminateNativeServerProcess();
 
   if (nativeDataDir) {
     rmSync(nativeDataDir, { recursive: true, force: true });
     nativeDataDir = null;
+    delete process.env.E2E_NATIVE_DATA_DIR;
   }
 }
 
@@ -377,43 +425,17 @@ export async function generateTestInvite(): Promise<{
   pairingToken: string;
   fingerprint: string;
 }> {
-  if (process.env.E2E_NATIVE === "1") {
-    // Native mode: access storage directly
-    const { Storage } = await import(join(SERVER_DIR, "dist/src/storage.js"));
-    const { generateInvite } = await import(join(SERVER_DIR, "dist/src/invite.js"));
-
-    const storage = new Storage(nativeDataDir!);
-    const invite = generateInvite(
-      storage,
-      () => "127.0.0.1",
-      () => "e2e-server",
-      { pairingTokenTtlMs: 60_000 },
-    );
-
-    const invitePayload = {
-      v: 3,
-      host: invite.host,
-      port: invite.port,
-      scheme: invite.scheme,
-      token: "",
-      pairingToken: invite.pairingToken,
-      name: invite.name,
-      fingerprint: invite.fingerprint,
-      tlsCertFingerprint: invite.tlsCertFingerprint,
-    };
-
-    return {
-      inviteURL: invite.inviteURL,
-      invitePayload,
-      pairingToken: invite.pairingToken,
-      fingerprint: invite.fingerprint,
-    };
-  }
-
-  // Docker mode: write script to temp file, copy into container, execute
+  const storageImport =
+    process.env.E2E_NATIVE === "1"
+      ? pathToFileURL(join(SERVER_DIR, "dist/src/storage.js")).href
+      : "./dist/src/storage.js";
+  const inviteImport =
+    process.env.E2E_NATIVE === "1"
+      ? pathToFileURL(join(SERVER_DIR, "dist/src/invite.js")).href
+      : "./dist/src/invite.js";
   const scriptContent = [
-    'import { Storage } from "./dist/src/storage.js";',
-    'import { generateInvite } from "./dist/src/invite.js";',
+    `import { Storage } from ${JSON.stringify(storageImport)};`,
+    `import { generateInvite } from ${JSON.stringify(inviteImport)};`,
     "const storage = new Storage(process.env.OPPI_DATA_DIR);",
     "const invite = generateInvite(",
     '  storage, () => "host.docker.internal", () => "e2e-server",',
@@ -437,6 +459,16 @@ export async function generateTestInvite(): Promise<{
   writeFileSync(tmpScript, scriptContent);
 
   try {
+    if (process.env.E2E_NATIVE === "1") {
+      const dataDir = process.env.E2E_NATIVE_DATA_DIR;
+      if (!dataDir) throw new Error("[e2e] Native data dir not available for invite generation");
+      const raw = execSync(`OPPI_DATA_DIR=${dataDir} node ${tmpScript}`, {
+        cwd: SERVER_DIR,
+        encoding: "utf-8",
+      }).trim();
+      return JSON.parse(raw);
+    }
+
     execSync(`docker cp ${tmpScript} oppi-e2e:/opt/oppi-server/gen-invite.mjs`, { stdio: "pipe" });
     const raw = execSync("docker exec -w /opt/oppi-server oppi-e2e node gen-invite.mjs", {
       encoding: "utf-8",

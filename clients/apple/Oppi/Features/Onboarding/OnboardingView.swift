@@ -272,6 +272,31 @@ enum InviteBootstrapService {
             )
         }
 
+        let sameTarget = isSameServer(existingCredentials, credentials)
+        let existingFingerprint = existingCredentials?.normalizedServerFingerprint
+        let inviteFingerprint = credentials.normalizedServerFingerprint
+        let requiresTrustReset = sameTarget
+            && existingFingerprint != nil
+            && inviteFingerprint != nil
+            && existingFingerprint != inviteFingerprint
+
+        let requiresInviteTrust = inviteFingerprint != nil
+
+        if requiresTrustReset || requiresInviteTrust {
+            let reason: String
+            if requiresTrustReset {
+                reason = "Server identity changed for \(credentials.host). Confirm trust reset."
+            } else {
+                let displayFingerprint = inviteFingerprint ?? "unknown"
+                reason = "Trust \(credentials.host) (\(shortFingerprint(displayFingerprint)))"
+            }
+
+            let trusted = await confirmTrust(reason)
+            guard trusted else {
+                throw InviteBootstrapError.message("Trust confirmation cancelled")
+            }
+        }
+
         let bootstrapAPI = APIClient(
             baseURL: baseURL,
             token: credentials.token,
@@ -302,31 +327,6 @@ enum InviteBootstrapService {
         }
 
         _ = try await api.me()
-
-        let sameTarget = isSameServer(existingCredentials, credentials)
-        let existingFingerprint = existingCredentials?.normalizedServerFingerprint
-        let inviteFingerprint = credentials.normalizedServerFingerprint
-        let requiresTrustReset = sameTarget
-            && existingFingerprint != nil
-            && inviteFingerprint != nil
-            && existingFingerprint != inviteFingerprint
-
-        let requiresInviteTrust = inviteFingerprint != nil
-
-        if requiresTrustReset || requiresInviteTrust {
-            let reason: String
-            if requiresTrustReset {
-                reason = "Server identity changed for \(credentials.host). Confirm trust reset."
-            } else {
-                let displayFingerprint = inviteFingerprint ?? "unknown"
-                reason = "Trust \(credentials.host) (\(shortFingerprint(displayFingerprint)))"
-            }
-
-            let trusted = await confirmTrust(reason)
-            guard trusted else {
-                throw InviteBootstrapError.message("Trust confirmation cancelled")
-            }
-        }
 
         let effectiveCredentials = credentials.withAuthToken(effectiveToken)
         let sessions = try await api.listSessions()

@@ -219,7 +219,16 @@ describe.skipIf(!hasOpenSSL)("oppi pair (tls self-signed)", () => {
       const invite = url.searchParams.get("invite");
       expect(invite).toBeTruthy();
 
-      const payload = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+      const envelope = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+        signedPayload?: string;
+        publicKey?: string;
+        signature?: string;
+      };
+      expect(envelope.publicKey).toBeTruthy();
+      expect(envelope.signature).toBeTruthy();
+      const payload = JSON.parse(
+        Buffer.from(envelope.signedPayload!, "base64url").toString("utf-8"),
+      ) as {
         scheme?: string;
         tlsCertFingerprint?: string;
       };
@@ -322,7 +331,16 @@ exit 1
       const invite = url.searchParams.get("invite");
       expect(invite).toBeTruthy();
 
-      const payload = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+      const envelope = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+        signedPayload?: string;
+        publicKey?: string;
+        signature?: string;
+      };
+      expect(envelope.publicKey).toBeTruthy();
+      expect(envelope.signature).toBeTruthy();
+      const payload = JSON.parse(
+        Buffer.from(envelope.signedPayload!, "base64url").toString("utf-8"),
+      ) as {
         host?: string;
         scheme?: string;
         tlsCertFingerprint?: string;
@@ -343,10 +361,9 @@ describe("oppi serve (first-run tls bootstrap)", () => {
     const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tls-"));
 
     try {
-      const { stdout: defaultTlsJson, exitCode: defaultExitCode } = run(
-        ["config", "get", "tls"],
-        { OPPI_DATA_DIR: serveDir },
-      );
+      const { stdout: defaultTlsJson, exitCode: defaultExitCode } = run(["config", "get", "tls"], {
+        OPPI_DATA_DIR: serveDir,
+      });
       expect(defaultExitCode).toBe(0);
       const defaultTls = JSON.parse(defaultTlsJson) as { mode?: string };
       expect(defaultTls.mode).toBe("self-signed");
@@ -357,10 +374,9 @@ describe("oppi serve (first-run tls bootstrap)", () => {
       );
       expect(setDisabledExitCode).toBe(0);
 
-      const { stdout: beforeTlsJson, exitCode: beforeExitCode } = run(
-        ["config", "get", "tls"],
-        { OPPI_DATA_DIR: serveDir },
-      );
+      const { stdout: beforeTlsJson, exitCode: beforeExitCode } = run(["config", "get", "tls"], {
+        OPPI_DATA_DIR: serveDir,
+      });
       expect(beforeExitCode).toBe(0);
       const beforeTls = JSON.parse(beforeTlsJson) as { mode?: string };
       expect(beforeTls.mode).toBe("disabled");
@@ -368,10 +384,9 @@ describe("oppi serve (first-run tls bootstrap)", () => {
       // `serve` is long-running; use a short timeout to trigger startup path.
       run(["serve"], { OPPI_DATA_DIR: serveDir }, 1_500);
 
-      const { stdout: afterTlsJson, exitCode: afterExitCode } = run(
-        ["config", "get", "tls"],
-        { OPPI_DATA_DIR: serveDir },
-      );
+      const { stdout: afterTlsJson, exitCode: afterExitCode } = run(["config", "get", "tls"], {
+        OPPI_DATA_DIR: serveDir,
+      });
       expect(afterExitCode).toBe(0);
       const afterTls = JSON.parse(afterTlsJson) as { mode?: string };
       expect(afterTls.mode).toBe("self-signed");

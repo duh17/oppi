@@ -7,6 +7,19 @@ import Foundation
 struct InviteBootstrapServiceTests {
     private let host = "pairing.example.test"
 
+    @Test func trustConfirmationPrecedesPairingTokenExchange() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repoRoot.appendingPathComponent("Oppi/Features/Onboarding/OnboardingView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let trustIndex = try #require(source.range(of: "let trusted = await confirmTrust(reason)")?.lowerBound)
+        let pairIndex = try #require(source.range(of: "try await bootstrapAPI.pairDevice")?.lowerBound)
+
+        #expect(trustIndex < pairIndex)
+    }
+
     @Test func pairingFailureMessageForExpiredInvite() {
         let message = InviteBootstrapService.pairingFailureMessage(
             for: APIError.server(status: 401, message: "Invalid or expired pairing token"),

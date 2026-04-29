@@ -1,3 +1,4 @@
+import CryptoKit
 import Testing
 import Foundation
 @testable import Oppi
@@ -428,6 +429,13 @@ struct ServerCredentialsTests {
     }
 }
 
+private struct SignedInviteEnvelopeV3Fixture: Codable {
+    var v: Int
+    var signedPayload: String
+    var publicKey: String
+    var signature: String
+}
+
 private struct InvitePayloadV3Fixture: Codable {
     var v: Int
     var host: String
@@ -465,26 +473,51 @@ struct ServerCredentialsInviteSecurityTests {
         )
     }
 
-    @Test func decodeInvitePayloadAcceptsUnsignedV3Payload() throws {
+    @Test func decodeInvitePayloadRejectsUnsignedV3PayloadWithPins() throws {
         let payload = defaultPayloadV3()
         let data = try JSONEncoder().encode(payload)
         let json = try #require(String(data: data, encoding: .utf8))
 
         let creds = ServerCredentials.decodeInvitePayload(json)
 
-        #expect(creds != nil)
+        #expect(creds == nil)
+    }
+
+    @Test func decodeInvitePayloadAcceptsSignedV3PayloadWithPins() throws {
+        let payload = defaultPayloadV3()
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let publicKey = signingKey.publicKey.rawRepresentation
+        let fingerprint = "sha256:\(Data(SHA256.hash(data: publicKey)).base64URLEncodedString)"
+        var signedPayload = payload
+        signedPayload.fingerprint = fingerprint
+        let signedData = try JSONEncoder().encode(signedPayload)
+        let signature = try signingKey.signature(for: signedData)
+        let envelope = SignedInviteEnvelopeV3Fixture(
+            v: 3,
+            signedPayload: signedData.base64URLEncodedString,
+            publicKey: publicKey.base64URLEncodedString,
+            signature: signature.base64URLEncodedString
+        )
+        let envelopeData = try JSONEncoder().encode(envelope)
+        let envelopeJson = try #require(String(data: envelopeData, encoding: .utf8))
+
+        let creds = ServerCredentials.decodeInvitePayload(envelopeJson)
+
         #expect(creds?.host == payload.host)
         #expect(creds?.port == payload.port)
         #expect(creds?.resolvedScheme == .https)
-        #expect(creds?.token == payload.token)
         #expect(creds?.pairingToken == payload.pairingToken)
         #expect(creds?.normalizedTLSCertFingerprint == payload.tlsCertFingerprint)
-        #expect(creds?.normalizedServerFingerprint == payload.fingerprint)
+        #expect(creds?.normalizedServerFingerprint == fingerprint)
     }
 
     @Test func decodeInvitePayloadDefaultsSchemeToHttpWhenMissing() throws {
         var payload = defaultPayloadV3()
         payload.scheme = nil
+        payload.tlsCertFingerprint = nil
+        payload.fingerprint = nil
 
         let data = try JSONEncoder().encode(payload)
         let json = try #require(String(data: data, encoding: .utf8))
@@ -493,7 +526,7 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds?.resolvedScheme == .http)
     }
 
-    @Test func decodeInviteURLAcceptsUnsignedV3DeepLink() throws {
+    @Test func decodeInviteURLRejectsUnsignedV3DeepLinkWithPins() throws {
         let payload = defaultPayloadV3()
         let data = try JSONEncoder().encode(payload)
         let json = try #require(String(data: data, encoding: .utf8))
@@ -505,8 +538,8 @@ struct ServerCredentialsInviteSecurityTests {
         let connectCreds = ServerCredentials.decodeInviteURL(connectURL)
         let pairCreds = ServerCredentials.decodeInviteURL(pairURL)
 
-        #expect(connectCreds?.host == payload.host)
-        #expect(pairCreds?.host == payload.host)
+        #expect(connectCreds == nil)
+        #expect(pairCreds == nil)
     }
 
     @Test func decodeInviteURLRejectsUnsupportedVersion() throws {

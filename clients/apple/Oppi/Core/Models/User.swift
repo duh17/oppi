@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Authenticated user info returned by `GET /me`.
@@ -86,31 +87,40 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
 
-        guard let v3 = try? decoder.decode(InvitePayloadV3.self, from: data), v3.v == 3 else {
-            return nil
+        if let envelope = try? decoder.decode(SignedInviteEnvelopeV3.self, from: data), envelope.v == 3 {
+            guard let signedData = decodeBase64URL(envelope.signedPayload),
+                  let publicKeyData = decodeBase64URL(envelope.publicKey),
+                  let signatureData = decodeBase64URL(envelope.signature),
+                  let signedPayload = String(data: signedData, encoding: .utf8) else {
+                return nil
+            }
+
+            do {
+                let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
+                guard publicKey.isValidSignature(signatureData, for: signedData) else { return nil }
+            } catch {
+                return nil
+            }
+
+            guard var credentials = decodeUnsignedInvitePayload(signedPayload, allowPinnedUnsigned: true) else {
+                return nil
+            }
+            let derivedFingerprint = "sha256:\(Data(SHA256.hash(data: publicKeyData)).base64URLEncodedString)"
+            guard credentials.normalizedServerFingerprint == derivedFingerprint else { return nil }
+            credentials = ServerCredentials(
+                host: credentials.host,
+                port: credentials.port,
+                token: credentials.token,
+                name: credentials.name,
+                scheme: credentials.resolvedScheme,
+                pairingToken: credentials.pairingToken,
+                serverFingerprint: derivedFingerprint,
+                tlsCertFingerprint: credentials.tlsCertFingerprint
+            )
+            return credentials
         }
 
-        let hasDirectToken = !v3.token.isEmpty
-        let hasPairingToken = !(v3.pairingToken?.isEmpty ?? true)
-        guard !v3.host.isEmpty, (1...65_535).contains(v3.port), hasDirectToken || hasPairingToken else {
-            return nil
-        }
-
-        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.http.rawValue)
-        guard let inviteScheme = ServerScheme(rawValue: inviteSchemeRaw) else {
-            return nil
-        }
-
-        return Self(
-            host: v3.host,
-            port: v3.port,
-            token: v3.token,
-            name: v3.name,
-            scheme: inviteScheme,
-            pairingToken: v3.pairingToken,
-            serverFingerprint: v3.fingerprint,
-            tlsCertFingerprint: v3.tlsCertFingerprint
-        )
+        return decodeUnsignedInvitePayload(payload, allowPinnedUnsigned: false)
     }
 
     /// Decode a deep-link invite.
@@ -193,6 +203,45 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         )
     }
 
+    private static func decodeUnsignedInvitePayload(
+        _ payload: String,
+        allowPinnedUnsigned: Bool
+    ) -> Self? {
+        guard let data = payload.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+
+        guard let v3 = try? decoder.decode(InvitePayloadV3.self, from: data), v3.v == 3 else {
+            return nil
+        }
+
+        if !allowPinnedUnsigned,
+           (!(v3.fingerprint?.isEmpty ?? true) || !(v3.tlsCertFingerprint?.isEmpty ?? true)) {
+            return nil
+        }
+
+        let hasDirectToken = !v3.token.isEmpty
+        let hasPairingToken = !(v3.pairingToken?.isEmpty ?? true)
+        guard !v3.host.isEmpty, (1...65_535).contains(v3.port), hasDirectToken || hasPairingToken else {
+            return nil
+        }
+
+        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.http.rawValue)
+        guard let inviteScheme = ServerScheme(rawValue: inviteSchemeRaw) else {
+            return nil
+        }
+
+        return Self(
+            host: v3.host,
+            port: v3.port,
+            token: v3.token,
+            name: v3.name,
+            scheme: inviteScheme,
+            pairingToken: v3.pairingToken,
+            serverFingerprint: v3.fingerprint,
+            tlsCertFingerprint: v3.tlsCertFingerprint
+        )
+    }
+
     private static func queryValue(named name: String, in queryItems: [URLQueryItem]) -> String? {
         queryItems.first(where: { $0.name == name })?.value
     }
@@ -211,6 +260,13 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     }
 }
 
+private struct SignedInviteEnvelopeV3: Decodable {
+    let v: Int
+    let signedPayload: String
+    let publicKey: String
+    let signature: String
+}
+
 private struct InvitePayloadV3: Decodable {
     let v: Int
     let host: String
@@ -221,4 +277,13 @@ private struct InvitePayloadV3: Decodable {
     let name: String
     let tlsCertFingerprint: String?
     let fingerprint: String?
+}
+
+private extension Data {
+    var base64URLEncodedString: String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 }
