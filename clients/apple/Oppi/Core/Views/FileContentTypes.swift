@@ -172,6 +172,35 @@ enum FileType: Equatable {
 
 // MARK: - FileContentPresentation
 
+enum FilePreviewCategory: Equatable {
+    case image
+    case audio
+    case video
+    case pdf
+    case text
+    case binary
+}
+
+extension FileType {
+    var previewCategory: FilePreviewCategory {
+        switch self {
+        case .image:
+            return .image
+        case .audio:
+            return .audio
+        case .video:
+            return .video
+        case .pdf:
+            return .pdf
+        case .markdown, .html, .code, .json, .plain,
+             .latex, .orgMode, .mermaid, .graphviz:
+            return .text
+        case .binary:
+            return .binary
+        }
+    }
+}
+
 enum FileContentPresentation {
     /// Compact card-style rendering used inside timeline/list rows.
     case inline

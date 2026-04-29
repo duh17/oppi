@@ -20,6 +20,7 @@ struct FileTypeTests {
             return
         }
         #expect(lang == .typescript)
+        #expect(ft.previewCategory == .text)
     }
 
     @Test func detectMarkdown() {
@@ -43,6 +44,7 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "anim.gif") == .image)
         #expect(FileType.detect(from: "icon.webp") == .image)
         #expect(FileType.detect(from: "icon.svg") == .image)
+        #expect(FileType.detect(from: "logo.png").previewCategory == .image)
     }
 
     @Test func detectDockerfile() {
@@ -136,6 +138,7 @@ struct FileTypeTests {
     @Test func audioExtensionDetected() {
         #expect(FileType.detect(from: "voice.wav") == .audio)
         #expect(FileType.detect(from: "voice.mp3") == .audio)
+        #expect(FileType.detect(from: "voice.wav").previewCategory == .audio)
     }
 
     @Test func displayLabels() {
@@ -216,17 +219,23 @@ struct FileTypeTests {
     // MARK: - New non-code types (video, PDF, binary)
 
     @Test func detectPDF() {
-        #expect(FileType.detect(from: "doc.pdf") == .pdf)
+        let ft = FileType.detect(from: "doc.pdf")
+        #expect(ft == .pdf)
+        #expect(ft.previewCategory == .pdf)
     }
 
     @Test func detectVideo() {
-        #expect(FileType.detect(from: "clip.mp4") == .video)
+        let mp4 = FileType.detect(from: "clip.mp4")
+        #expect(mp4 == .video)
+        #expect(mp4.previewCategory == .video)
         #expect(FileType.detect(from: "movie.mov") == .video)
         #expect(FileType.detect(from: "video.webm") == .video)
     }
 
     @Test func detectBinary() {
-        #expect(FileType.detect(from: "archive.gz") == .binary)
+        let ft = FileType.detect(from: "archive.gz")
+        #expect(ft == .binary)
+        #expect(ft.previewCategory == .binary)
         #expect(FileType.detect(from: "bundle.zip") == .binary)
         #expect(FileType.detect(from: "disk.dmg") == .binary)
         #expect(FileType.detect(from: "assets.car") == .binary)
@@ -292,6 +301,25 @@ struct FileTypeTests {
         #expect(FileType.code(language: .protobuf).displayLabel == "Protobuf")
         #expect(FileType.code(language: .graphql).displayLabel == "GraphQL")
         #expect(FileType.code(language: .diff).displayLabel == "Diff")
+    }
+}
+
+@Suite("File preview category")
+struct FilePreviewCategoryTests {
+    @Test func textLikeFilesStayText() {
+        #expect(FileType.detect(from: "runtime-update.ts").previewCategory == .text)
+        #expect(FileType.detect(from: "README.md").previewCategory == .text)
+        #expect(FileType.detect(from: "index.html").previewCategory == .text)
+        #expect(FileType.detect(from: "data.json").previewCategory == .text)
+        #expect(FileType.detect(from: "diagram.mmd").previewCategory == .text)
+    }
+
+    @Test func mediaAndBinaryFilesKeepTheirCategories() {
+        #expect(FileType.detect(from: "photo.png").previewCategory == .image)
+        #expect(FileType.detect(from: "voice.m4a").previewCategory == .audio)
+        #expect(FileType.detect(from: "clip.mp4").previewCategory == .video)
+        #expect(FileType.detect(from: "doc.pdf").previewCategory == .pdf)
+        #expect(FileType.detect(from: "archive.zip").previewCategory == .binary)
     }
 }
 

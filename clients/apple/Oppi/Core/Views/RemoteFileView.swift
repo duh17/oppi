@@ -1,6 +1,5 @@
 import SwiftUI
 import OSLog
-import UniformTypeIdentifiers
 
 // periphery:ignore
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
@@ -37,21 +36,22 @@ struct RemoteFileView: View {
         (path as NSString).pathExtension.lowercased()
     }
 
-    private var pathType: UTType? {
-        guard !pathExtension.isEmpty else { return nil }
-        return UTType(filenameExtension: pathExtension)
+    private var detectedFileType: FileType {
+        FileType.detect(from: path)
     }
 
     private var isImagePath: Bool {
-        if let pathType {
-            return pathType.conforms(to: .image)
+        if case .image = detectedFileType {
+            return true
         }
         return pathExtension == "svg"
     }
 
     private var isVideoPath: Bool {
-        guard let pathType else { return false }
-        return pathType.conforms(to: .movie) || pathType.conforms(to: .video)
+        if case .video = detectedFileType {
+            return true
+        }
+        return false
     }
 
     private var currentWorkspaceHostMount: String? {

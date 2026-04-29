@@ -2,7 +2,6 @@ import AVKit
 import Network
 import PDFKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Displays the content of a workspace file in browse mode.
 ///
@@ -41,36 +40,10 @@ struct FileBrowserContentView: View {
         fileName.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
     }
 
-    private var fileType: UTType? {
-        guard !fileExtension.isEmpty else { return nil }
-        return UTType(filenameExtension: fileExtension)
-    }
-
-    /// Determine the media category for this file extension.
-    private var mediaCategory: MediaCategory {
-        if let fileType {
-            if fileType.conforms(to: .image) {
-                return .image
-            }
-            if fileType.conforms(to: .movie) || fileType.conforms(to: .video) {
-                return .video
-            }
-            if fileType.conforms(to: .audio) {
-                return .audio
-            }
-            if fileType == .pdf {
-                return .pdf
-            }
-        }
-
-        // Fallbacks for uncommon or older UTType mappings.
-        if fileExtension == "svg" {
-            return .image
-        }
-        if MediaMimeType.audioMimeType(forPathExtension: fileExtension) != nil {
-            return .audio
-        }
-        return .text
+    /// Determine preview behavior using Oppi's canonical file-type detector.
+    /// This avoids `.ts` being misclassified as MPEG transport stream video.
+    private var mediaCategory: FilePreviewCategory {
+        FileType.detect(from: filePath).previewCategory
     }
 
     /// Whether the UIKit file viewer is active (text content loaded).
@@ -234,17 +207,20 @@ struct FileBrowserContentView: View {
             case .audio:
                 let url = try await api.browseFileStreamURL(workspaceId: workspaceId, path: filePath)
                 content = .audio(url)
-            case .image, .pdf, .text:
+            case .image, .pdf, .text, .binary:
                 let data = try await api.browseWorkspaceFile(workspaceId: workspaceId, path: filePath)
                 switch category {
                 case .image: content = .image(data)
                 case .pdf: content = .pdf(data)
-                default:
+                case .binary: content = .binary
+                case .text:
                     if let text = String(data: data, encoding: .utf8) {
                         content = .text(text)
                     } else {
                         content = .binary
                     }
+                default:
+                    content = .binary
                 }
             }
         } catch {
@@ -461,12 +437,6 @@ private struct PDFKitView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PDFView, context: Context) {}
-}
-
-// MARK: - Media Category
-
-private enum MediaCategory {
-    case image, video, audio, pdf, text
 }
 
 // MARK: - Phase
