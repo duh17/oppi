@@ -97,4 +97,53 @@ struct ChatInputBarTests {
         let reserved = ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: true)
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
+
+    @Test("Composer text answers ask instead of becoming steering or follow-up")
+    func composerTextBuildsCustomAskAnswer() throws {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "What context?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let answers = try #require(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "  we already got this from pi  "))
+        #expect(answers == ["q1": .custom("we already got this from pi")])
+    }
+
+    @Test("Composer text falls through to normal send when no ask is active")
+    func composerTextFallsThroughWithoutAsk() {
+        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: nil, text: "steer the agent") == nil)
+    }
+
+    @Test("Composer text does not answer asks that disallow custom input")
+    func composerTextIgnoresAskWithoutCustomInput() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Pick", options: [], multiSelect: false)],
+            allowCustom: false,
+            timeout: nil
+        )
+
+        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "custom") == nil)
+        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "   ") == nil)
+    }
+
+    @Test("Composer text does not guess which multi-question ask page to answer")
+    func composerTextIgnoresMultiQuestionAsk() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [
+                AskQuestion(id: "q1", question: "First?", options: [], multiSelect: false),
+                AskQuestion(id: "q2", question: "Second?", options: [], multiSelect: false)
+            ],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "answer") == nil)
+    }
 }

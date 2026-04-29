@@ -104,6 +104,10 @@ struct ChatInputBar<ActionRow: View>: View {
         return hasText || hasImages || hasFiles || hasReviewComments
     }
 
+    private var pendingAskCustomAnswers: [String: AskAnswer]? {
+        Self.customAskAnswers(request: askRequest, text: composerDisplayText)
+    }
+
     private var accentColor: Color { .themeBlue }
 
     private var composerPlaceholder: String {
@@ -715,6 +719,21 @@ struct ChatInputBar<ActionRow: View>: View {
         }
     }
 
+    /// Ask responses take precedence over normal busy sends while an ask card
+    /// is active. That lets the main composer answer the visible custom ask
+    /// directly instead of creating a steering/follow-up message.
+    static func customAskAnswers(request: AskRequest?, text: String) -> [String: AskAnswer]? {
+        guard let request,
+              request.allowCustom,
+              request.questions.count == 1,
+              let question = request.questions.first else { return nil }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        return [question.id: .custom(trimmed)]
+    }
+
     private func handleSend() {
         guard !isSending else { return }
 
@@ -733,12 +752,21 @@ struct ChatInputBar<ActionRow: View>: View {
                 } else {
                     await manager.cancelRecording()
                 }
-                onSend()
+                submitAskCustomAnswerIfNeeded() ?? onSend()
             }
             return
         }
 
-        onSend()
+        submitAskCustomAnswerIfNeeded() ?? onSend()
+    }
+
+    @discardableResult
+    private func submitAskCustomAnswerIfNeeded() -> Void? {
+        guard let answers = pendingAskCustomAnswers else { return nil }
+        onAskSubmit?(answers)
+        text = ""
+        textBeforeRecording = nil
+        return ()
     }
 
     private func handleAlternateSend() {
