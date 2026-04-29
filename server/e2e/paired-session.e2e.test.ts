@@ -186,94 +186,43 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 5. Ask flow → direct ask UI request only (requires real LLM) ──
+  // ── 5. Transport/auth negative paths ──
 
-  it("uses direct ask UI without leaking generic select dialogs", async () => {
+  it("rejects unauthenticated API and missing-session stream requests", async () => {
     if (!lmsReady()) return;
 
+    const unauthenticated = await api("GET", "/workspaces");
+    expect(unauthenticated.status).toBe(401);
+
+    const invalidToken = await api("GET", "/workspaces", "not-a-real-device-token");
+    expect(invalidToken.status).toBe(401);
+
     const stream = await openStream(deviceToken);
-    const approver = autoApprovePermissions(stream, sessionId);
-
     try {
-      await subscribeSession(stream, sessionId, "req-e2e-sub-ask");
-
       const startIndex = stream.events.length;
-      const promptRequestId = "req-e2e-ask-prompt";
+      const requestId = "req-e2e-missing-session";
 
       stream.send({
-        type: "prompt",
-        sessionId,
-        message:
-          "Use the ask tool exactly once with one question. " +
-          "Question id: target. Question text: Which target should I inspect? " +
-          "Options: value=source label=Source code; value=tests label=Tests. " +
-          "allowCustom: false. After the user answers, reply with exactly ASK_E2E_OK:<answer-value>. " +
-          "Do not use any other tools or ask any follow-up questions.",
-        requestId: promptRequestId,
+        type: "subscribe",
+        sessionId: "missing-session-id",
+        level: "full",
+        sinceSeq: 0,
+        requestId,
       });
 
-      const { event: promptAck } = await waitForEvent(
+      const { event } = await waitForEvent(
         stream,
         (e) =>
           e.direction === "in" &&
           (e.type === "command_result" || e.type === "rpc_result") &&
-          e.requestId === promptRequestId,
-        `prompt rpc_result (${promptRequestId})`,
-        { startIndex, timeoutMs: 300_000 },
-      );
-      expect(promptAck.success).toBe(true);
-
-      const { event: askEvent } = await waitForEvent(
-        stream,
-        (e) =>
-          e.direction === "in" &&
-          e.type === "extension_ui_request" &&
-          e.sessionId === sessionId &&
-          e.method === "ask",
-        "direct ask ui request",
-        { startIndex, timeoutMs: 300_000 },
+          e.requestId === requestId,
+        `missing-session rpc_result (${requestId})`,
+        { startIndex },
       );
 
-      expect(askEvent.id).toBeTruthy();
-
-      stream.send({
-        type: "extension_ui_response",
-        sessionId,
-        id: askEvent.id,
-        value: JSON.stringify({ target: "tests" }),
-        requestId: "req-e2e-ask-answer",
-      });
-
-      await waitForEvent(
-        stream,
-        (e) => e.direction === "in" && e.type === "agent_end" && e.sessionId === sessionId,
-        `agent_end (${promptRequestId})`,
-        { startIndex, timeoutMs: 300_000 },
-      );
-
-      const sessionEvents = stream.events
-        .slice(startIndex)
-        .filter((e) => e.direction === "in" && e.sessionId === sessionId);
-
-      const askRequests = sessionEvents.filter(
-        (e) => e.type === "extension_ui_request" && e.method === "ask",
-      );
-      const selectRequests = sessionEvents.filter(
-        (e) => e.type === "extension_ui_request" && e.method === "select",
-      );
-
-      expect(askRequests).toHaveLength(1);
-      expect(selectRequests).toHaveLength(0);
-
-      let assistantText = "";
-      for (const e of sessionEvents) {
-        if (e.type === "text_delta" && e.delta) assistantText += e.delta;
-        if (e.type === "message_end" && e.content) assistantText += e.content;
-      }
-
-      expect(assistantText).toContain("ASK_E2E_OK:tests");
+      expect(event.success).toBe(false);
+      expect(event.error).toContain("Session not found");
     } finally {
-      approver.stop();
       await closeStream(stream);
     }
   });

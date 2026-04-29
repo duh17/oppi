@@ -69,6 +69,6 @@ globalThis.__oppiFirstPartyExtensionRuntime ??= {
 export function getReloadableFirstPartyExtensionPaths(): string[] {
   const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   return ["ask", "voice", "subagents"].map((name) =>
-    resolve(projectRoot, "oppi-extensions", "extensions", `${name}.ts`),
+    resolve(projectRoot, "dist", "extensions", `${name}.js`),
   );
 }
