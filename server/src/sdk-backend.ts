@@ -509,10 +509,11 @@ export class SdkBackend {
 
       const firstPartyExtensionPaths = getReloadableFirstPartyExtensionPaths();
 
-      // Resource loader — suppress skill/prompt/theme auto-discovery, but keep
-      // file-based extensions so /reload can re-import Oppi's first-party ones.
-      // Extension factories (permission gate + temporary pending factories) are
-      // still injected here.
+      // Resource loader — suppress skill/theme auto-discovery, but keep
+      // prompt templates enabled because Oppi exposes them as slash commands.
+      // File-based extensions stay enabled so /reload can re-import Oppi's
+      // first-party ones. Extension factories (permission gate + temporary
+      // pending factories) are still injected here.
       // Pi's auto-discovered permission-gate extension is filtered out since
       // oppi has its own policy engine (GateServer). Without this, both gates
       // run and the pi extension blocks commands it considers "dangerous" with
@@ -524,7 +525,6 @@ export class SdkBackend {
         additionalExtensionPaths: firstPartyExtensionPaths,
         additionalSkillPaths: config.skillPaths ?? [],
         noSkills: true,
-        noPromptTemplates: true,
         noThemes: true,
         extensionFactories,
         appendSystemPrompt: workspace?.systemPrompt ? [workspace.systemPrompt] : undefined,

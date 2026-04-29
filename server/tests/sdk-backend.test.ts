@@ -1,5 +1,6 @@
-import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@mariozechner/pi-coding-agent";
 
@@ -25,6 +26,62 @@ describe("resolveSdkSessionCwd", () => {
     const mount = resolvePath(homedir(), "workspace", "oppi");
     const workspace = { hostMount: mount } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(mount);
+  });
+});
+
+describe("SdkBackend prompt templates", () => {
+  it("loads project prompt templates into Oppi sessions", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-prompts-"));
+    mkdirSync(join(cwd, ".pi", "prompts"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".pi", "prompts", "grill-me.md"),
+      [
+        "---",
+        "description: Stress-test a plan one question at a time",
+        "---",
+        "Ask one question at a time.",
+      ].join("\n"),
+    );
+
+    const backend = await SdkBackend.create({
+      session: {
+        id: "sess-prompts",
+        workspaceId: "w1",
+        status: "starting",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      },
+      workspace: {
+        id: "w1",
+        name: "Prompt Test",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+
+    try {
+      const runtime = (backend as unknown as {
+        runtime: {
+          session: { promptTemplates: Array<{ name: string }> };
+          services: { resourceLoader: PiSdk.ResourceLoader };
+        };
+      }).runtime;
+
+      const discoveredPromptNames = runtime.services.resourceLoader
+        .getPrompts()
+        .prompts.map((prompt) => prompt.name);
+      const sessionPromptNames = runtime.session.promptTemplates.map((prompt) => prompt.name);
+
+      expect(discoveredPromptNames).toContain("grill-me");
+      expect(sessionPromptNames).toContain("grill-me");
+    } finally {
+      await backend.dispose();
+    }
   });
 });
 
