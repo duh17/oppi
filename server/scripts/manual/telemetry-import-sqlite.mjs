@@ -1,29 +1,34 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+
+const INGEST_PARSER_VERSION = 2;
 
 function parseArgs(argv) {
   const args = {
     watch: false,
     intervalMs: 15000,
-    telemetryDir: resolve(process.env.OPPI_DATA_DIR || join(process.env.HOME || '.', '.config/oppi'), 'diagnostics/telemetry'),
+    telemetryDir: resolve(
+      process.env.OPPI_DATA_DIR || join(process.env.HOME || ".", ".config/oppi"),
+      "diagnostics/telemetry",
+    ),
     db: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--watch') {
+    if (arg === "--watch") {
       args.watch = true;
-    } else if (arg === '--interval-ms') {
-      args.intervalMs = Number.parseInt(argv[++i] || '', 10);
-    } else if (arg === '--telemetry-dir') {
-      args.telemetryDir = resolve(argv[++i] || '');
-    } else if (arg === '--db') {
-      args.db = resolve(argv[++i] || '');
+    } else if (arg === "--interval-ms") {
+      args.intervalMs = Number.parseInt(argv[++i] || "", 10);
+    } else if (arg === "--telemetry-dir") {
+      args.telemetryDir = resolve(argv[++i] || "");
+    } else if (arg === "--db") {
+      args.db = resolve(argv[++i] || "");
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -34,7 +39,7 @@ function parseArgs(argv) {
   }
 
   if (!args.db) {
-    args.db = join(args.telemetryDir, 'telemetry.db');
+    args.db = join(args.telemetryDir, "telemetry.db");
   }
 
   return args;
@@ -51,7 +56,8 @@ function ensureSchema(db) {
       size_bytes INTEGER NOT NULL,
       mtime_ms INTEGER NOT NULL,
       line_count INTEGER NOT NULL,
-      processed_at_ms INTEGER NOT NULL
+      processed_at_ms INTEGER NOT NULL,
+      parser_version INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS chat_metric_samples (
@@ -129,22 +135,29 @@ function ensureSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_metrickit_window ON metrickit_payloads(window_start_ms, window_end_ms);
   `);
+
+  const ingestedFileColumns = db.prepare("PRAGMA table_info(ingested_files)").all();
+  const hasParserVersion = ingestedFileColumns.some((column) => column.name === "parser_version");
+  if (!hasParserVersion) {
+    db.exec("ALTER TABLE ingested_files ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 function detectKind(fileName) {
-  if (fileName.startsWith('chat-metrics-') && fileName.endsWith('.jsonl')) return 'chat';
-  if (fileName.startsWith('server-metrics-') && fileName.endsWith('.jsonl')) return 'server';
-  if (fileName.startsWith('server-ops-metrics-') && fileName.endsWith('.jsonl')) return 'server_ops';
-  if (fileName.startsWith('metrickit-') && fileName.endsWith('.jsonl')) return 'metrickit';
+  if (fileName.startsWith("chat-metrics-") && fileName.endsWith(".jsonl")) return "chat";
+  if (fileName.startsWith("server-metrics-") && fileName.endsWith(".jsonl")) return "server";
+  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl"))
+    return "server_ops";
+  if (fileName.startsWith("metrickit-") && fileName.endsWith(".jsonl")) return "metrickit";
   return null;
 }
 
 function fileId(parts) {
-  return createHash('sha1').update(parts.join('|')).digest('hex');
+  return createHash("sha1").update(parts.join("|")).digest("hex");
 }
 
 function toJson(value) {
-  return value && typeof value === 'object' ? JSON.stringify(value) : null;
+  return value && typeof value === "object" ? JSON.stringify(value) : null;
 }
 
 function safeNumber(value) {
@@ -152,9 +165,9 @@ function safeNumber(value) {
 }
 
 function normalizeSummary(payload) {
-  if (payload?.summary && typeof payload.summary === 'object') return payload.summary;
-  if (payload?.metrics && typeof payload.metrics === 'object') return payload.metrics;
-  if (payload?.diagnostics && typeof payload.diagnostics === 'object') return payload.diagnostics;
+  if (payload?.summary && typeof payload.summary === "object") return payload.summary;
+  if (payload?.metrics && typeof payload.metrics === "object") return payload.metrics;
+  if (payload?.diagnostics && typeof payload.diagnostics === "object") return payload.diagnostics;
   return null;
 }
 
@@ -166,7 +179,9 @@ function inferWindow(payload) {
     payload.start,
     payload.periodStartMs,
     payload.timeRange?.startMs,
-  ].map((v) => Number(v)).filter(Number.isFinite);
+  ]
+    .map((v) => Number(v))
+    .filter(Number.isFinite);
   const endCandidates = [
     payload.windowEndMs,
     payload.windowEnd,
@@ -178,7 +193,9 @@ function inferWindow(payload) {
     payload.generatedAtMs,
     payload.receivedAt,
     payload.receivedAtMs,
-  ].map((v) => Number(v)).filter(Number.isFinite);
+  ]
+    .map((v) => Number(v))
+    .filter(Number.isFinite);
 
   const start = candidates[0] ?? endCandidates[0] ?? 0;
   const end = endCandidates[0] ?? start;
@@ -186,7 +203,7 @@ function inferWindow(payload) {
 }
 
 function ingestChatFile(db, sourceFile, lines, meta) {
-  const del = db.prepare('DELETE FROM chat_metric_samples WHERE source_file = ?');
+  const del = db.prepare("DELETE FROM chat_metric_samples WHERE source_file = ?");
   const ins = db.prepare(`
     INSERT INTO chat_metric_samples (
       id, source_file, line_number, sample_index, ts_ms, metric, value, unit,
@@ -206,7 +223,8 @@ function ingestChatFile(db, sourceFile, lines, meta) {
       const sample = samples[sampleIndex] ?? {};
       const ts = Number(sample.ts);
       const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== 'string') continue;
+      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string")
+        continue;
       ins.run(
         fileId([sourceFile, lineIndex + 1, sampleIndex]),
         sourceFile,
@@ -215,7 +233,7 @@ function ingestChatFile(db, sourceFile, lines, meta) {
         ts,
         sample.metric,
         value,
-        typeof sample.unit === 'string' ? sample.unit : 'count',
+        typeof sample.unit === "string" ? sample.unit : "count",
         safeNumber(Number(payload.generatedAt)),
         safeNumber(Number(payload.receivedAt)),
         payload.appVersion ?? null,
@@ -229,12 +247,12 @@ function ingestChatFile(db, sourceFile, lines, meta) {
       count += 1;
     }
   }
-  upsertFileMeta(db, sourceFile, 'chat', meta, lines.length);
+  upsertFileMeta(db, sourceFile, "chat", meta, lines.length);
   return count;
 }
 
 function ingestServerFile(db, sourceFile, lines, meta) {
-  const del = db.prepare('DELETE FROM server_metric_samples WHERE source_file = ?');
+  const del = db.prepare("DELETE FROM server_metric_samples WHERE source_file = ?");
   const ins = db.prepare(`
     INSERT INTO server_metric_samples (
       id, source_file, line_number, ts_ms, cpu_user, cpu_system, cpu_total,
@@ -271,12 +289,12 @@ function ingestServerFile(db, sourceFile, lines, meta) {
     );
     count += 1;
   }
-  upsertFileMeta(db, sourceFile, 'server', meta, lines.length);
+  upsertFileMeta(db, sourceFile, "server", meta, lines.length);
   return count;
 }
 
 function ingestServerOpsFile(db, sourceFile, lines, meta) {
-  const del = db.prepare('DELETE FROM server_ops_metric_samples WHERE source_file = ?');
+  const del = db.prepare("DELETE FROM server_ops_metric_samples WHERE source_file = ?");
   const ins = db.prepare(`
     INSERT INTO server_ops_metric_samples (
       id, source_file, line_number, sample_index, ts_ms, metric, value, tags_json
@@ -294,7 +312,8 @@ function ingestServerOpsFile(db, sourceFile, lines, meta) {
       const sample = samples[sampleIndex] ?? {};
       const ts = Number(sample.ts);
       const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== 'string') continue;
+      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string")
+        continue;
       ins.run(
         fileId([sourceFile, lineIndex + 1, sampleIndex]),
         sourceFile,
@@ -308,12 +327,12 @@ function ingestServerOpsFile(db, sourceFile, lines, meta) {
       count += 1;
     }
   }
-  upsertFileMeta(db, sourceFile, 'server_ops', meta, lines.length);
+  upsertFileMeta(db, sourceFile, "server_ops", meta, lines.length);
   return count;
 }
 
 function ingestMetricKitFile(db, sourceFile, lines, meta) {
-  const del = db.prepare('DELETE FROM metrickit_payloads WHERE source_file = ?');
+  const del = db.prepare("DELETE FROM metrickit_payloads WHERE source_file = ?");
   const ins = db.prepare(`
     INSERT INTO metrickit_payloads (
       id, source_file, line_number, payload_index, kind, window_start_ms, window_end_ms,
@@ -327,58 +346,90 @@ function ingestMetricKitFile(db, sourceFile, lines, meta) {
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line.trim()) continue;
-    const payload = JSON.parse(line);
-    const { start, end } = inferWindow(payload);
-    ins.run(
-      fileId([sourceFile, lineIndex + 1]),
-      sourceFile,
-      lineIndex + 1,
-      0,
-      payload.kind ?? payload.payloadType ?? 'metrickit',
-      start,
-      end,
-      safeNumber(Number(payload.generatedAt ?? payload.generatedAtMs)),
-      safeNumber(Number(payload.receivedAt ?? payload.receivedAtMs)),
-      payload.appVersion ?? null,
-      payload.buildNumber ?? null,
-      payload.osVersion ?? null,
-      payload.deviceModel ?? null,
-      toJson(normalizeSummary(payload)),
-      JSON.stringify(payload),
-    );
-    count += 1;
+    const record = JSON.parse(line);
+    const payloads = Array.isArray(record.payloads) ? record.payloads : [record];
+    for (let payloadIndex = 0; payloadIndex < payloads.length; payloadIndex += 1) {
+      const payload = payloads[payloadIndex] ?? {};
+      const { start, end } = inferWindow(payload);
+      ins.run(
+        fileId([sourceFile, lineIndex + 1, payloadIndex]),
+        sourceFile,
+        lineIndex + 1,
+        payloadIndex,
+        payload.kind ?? payload.payloadType ?? "metrickit",
+        start,
+        end,
+        safeNumber(
+          Number(
+            record.generatedAt ??
+              record.generatedAtMs ??
+              payload.generatedAt ??
+              payload.generatedAtMs,
+          ),
+        ),
+        safeNumber(
+          Number(
+            record.receivedAt ?? record.receivedAtMs ?? payload.receivedAt ?? payload.receivedAtMs,
+          ),
+        ),
+        record.appVersion ?? payload.appVersion ?? null,
+        record.buildNumber ?? payload.buildNumber ?? null,
+        record.osVersion ?? payload.osVersion ?? null,
+        record.deviceModel ?? payload.deviceModel ?? null,
+        toJson(normalizeSummary(payload)),
+        payload.raw === undefined ? JSON.stringify(payload) : JSON.stringify(payload.raw),
+      );
+      count += 1;
+    }
   }
-  upsertFileMeta(db, sourceFile, 'metrickit', meta, lines.length);
+  upsertFileMeta(db, sourceFile, "metrickit", meta, lines.length);
   return count;
 }
 
 function upsertFileMeta(db, sourceFile, kind, meta, lineCount) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO ingested_files (
-      source_file, file_kind, size_bytes, mtime_ms, line_count, processed_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?)
+      source_file, file_kind, size_bytes, mtime_ms, line_count, processed_at_ms, parser_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(source_file) DO UPDATE SET
       file_kind = excluded.file_kind,
       size_bytes = excluded.size_bytes,
       mtime_ms = excluded.mtime_ms,
       line_count = excluded.line_count,
-      processed_at_ms = excluded.processed_at_ms
-  `).run(sourceFile, kind, meta.sizeBytes, meta.mtimeMs, lineCount, Date.now());
+      processed_at_ms = excluded.processed_at_ms,
+      parser_version = excluded.parser_version
+  `,
+  ).run(
+    sourceFile,
+    kind,
+    meta.sizeBytes,
+    meta.mtimeMs,
+    lineCount,
+    Date.now(),
+    INGEST_PARSER_VERSION,
+  );
 }
 
-function shouldIngest(db, sourceFile, meta) {
-  const row = db.prepare(
-    'SELECT size_bytes, mtime_ms FROM ingested_files WHERE source_file = ?'
-  ).get(sourceFile);
+function shouldIngest(db, sourceFile, meta, kind) {
+  const row = db
+    .prepare(
+      "SELECT size_bytes, mtime_ms, parser_version FROM ingested_files WHERE source_file = ?",
+    )
+    .get(sourceFile);
   if (!row) return true;
-  return row.size_bytes !== meta.sizeBytes || row.mtime_ms !== meta.mtimeMs;
+  return (
+    row.size_bytes !== meta.sizeBytes ||
+    row.mtime_ms !== meta.mtimeMs ||
+    (kind === "metrickit" && row.parser_version !== INGEST_PARSER_VERSION)
+  );
 }
 
 function ingestOnce(db, telemetryDir) {
   const entries = existsSync(telemetryDir) ? readdirSync(telemetryDir).sort() : [];
   const summary = { filesScanned: 0, filesIngested: 0, rowsIngested: 0 };
 
-  db.exec('BEGIN');
+  db.exec("BEGIN");
   try {
     for (const entry of entries) {
       const kind = detectKind(entry);
@@ -387,24 +438,29 @@ function ingestOnce(db, telemetryDir) {
       const sourceFile = join(telemetryDir, entry);
       const stats = statSync(sourceFile);
       const meta = { sizeBytes: stats.size, mtimeMs: Math.trunc(stats.mtimeMs) };
-      if (!shouldIngest(db, sourceFile, meta)) continue;
+      if (!shouldIngest(db, sourceFile, meta, kind)) continue;
 
-      const content = readFileSync(sourceFile, 'utf8');
-      const lines = content.split('\n');
-      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+      const content = readFileSync(sourceFile, "utf8");
+      const lines = content.split("\n");
+      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
       let rows = 0;
-      if (kind === 'chat') rows = ingestChatFile(db, sourceFile, lines, meta);
-      else if (kind === 'server') rows = ingestServerFile(db, sourceFile, lines, meta);
-      else if (kind === 'server_ops') rows = ingestServerOpsFile(db, sourceFile, lines, meta);
-      else if (kind === 'metrickit') rows = ingestMetricKitFile(db, sourceFile, lines, meta);
+      if (kind === "chat") rows = ingestChatFile(db, sourceFile, lines, meta);
+      else if (kind === "server") rows = ingestServerFile(db, sourceFile, lines, meta);
+      else if (kind === "server_ops") rows = ingestServerOpsFile(db, sourceFile, lines, meta);
+      else if (kind === "metrickit") rows = ingestMetricKitFile(db, sourceFile, lines, meta);
 
       summary.filesIngested += 1;
       summary.rowsIngested += rows;
     }
-    db.exec('COMMIT');
+    db.exec("COMMIT");
   } catch (error) {
-    db.exec('ROLLBACK');
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original ingestion error. SQLite may already have ended
+      // the transaction for some failure modes.
+    }
     throw error;
   }
 
@@ -413,12 +469,12 @@ function ingestOnce(db, telemetryDir) {
 
 function backupBrokenDb(dbPath, reason) {
   if (!existsSync(dbPath)) return null;
-  const suffix = new Date().toISOString().replace(/[:.]/g, '-');
+  const suffix = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = `${dbPath}.broken-${suffix}`;
   renameSync(dbPath, backupPath);
   rmSync(`${dbPath}-wal`, { force: true });
   rmSync(`${dbPath}-shm`, { force: true });
-  console.warn('[telemetry-import] rebuilt malformed database', { dbPath, backupPath, reason });
+  console.warn("[telemetry-import] rebuilt malformed database", { dbPath, backupPath, reason });
   return backupPath;
 }
 
@@ -426,9 +482,9 @@ function openDbWithRecovery(dbPath) {
   try {
     const db = new DatabaseSync(dbPath);
     ensureSchema(db);
-    const row = db.prepare('PRAGMA integrity_check').get();
-    const verdict = row ? Object.values(row)[0] : 'ok';
-    if (verdict !== 'ok') {
+    const row = db.prepare("PRAGMA integrity_check").get();
+    const verdict = row ? Object.values(row)[0] : "ok";
+    if (verdict !== "ok") {
       db.close();
       backupBrokenDb(dbPath, String(verdict));
       const freshDb = new DatabaseSync(dbPath);
@@ -438,7 +494,7 @@ function openDbWithRecovery(dbPath) {
     return db;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('malformed')) throw error;
+    if (!message.includes("malformed")) throw error;
     backupBrokenDb(dbPath, message);
     const db = new DatabaseSync(dbPath);
     ensureSchema(db);
@@ -455,7 +511,7 @@ async function main() {
     const startedAt = Date.now();
     try {
       const summary = ingestOnce(db, args.telemetryDir);
-      console.log('[telemetry-import]', {
+      console.log("[telemetry-import]", {
         telemetryDir: args.telemetryDir,
         db: args.db,
         durationMs: Date.now() - startedAt,
@@ -463,14 +519,14 @@ async function main() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes('malformed')) throw error;
+      if (!message.includes("malformed")) throw error;
       try {
         db.close();
       } catch {}
       backupBrokenDb(args.db, message);
       db = openDbWithRecovery(args.db);
       const summary = ingestOnce(db, args.telemetryDir);
-      console.log('[telemetry-import]', {
+      console.log("[telemetry-import]", {
         telemetryDir: args.telemetryDir,
         db: args.db,
         durationMs: Date.now() - startedAt,
@@ -487,14 +543,24 @@ async function main() {
     return;
   }
 
-  const timer = setInterval(run, args.intervalMs);
-  timer.unref();
-  process.on('SIGINT', () => {
+  let running = false;
+  const runOnceIfIdle = () => {
+    if (running) return;
+    running = true;
+    try {
+      run();
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(runOnceIfIdle, args.intervalMs);
+  process.on("SIGINT", () => {
     clearInterval(timer);
     db.close();
     process.exit(0);
   });
-  process.on('SIGTERM', () => {
+  process.on("SIGTERM", () => {
     clearInterval(timer);
     db.close();
     process.exit(0);
@@ -502,6 +568,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('[telemetry-import] failed', error);
+  console.error("[telemetry-import] failed", error);
   process.exit(1);
 });

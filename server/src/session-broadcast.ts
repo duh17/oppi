@@ -163,7 +163,9 @@ export class SessionBroadcaster {
       durable: true,
     });
 
-    this.deps.metrics?.record("server.broadcast_fanout", active.subscribers.size);
+    this.deps.metrics?.record("server.broadcast_fanout", active.subscribers.size, {
+      type: sequenced.type,
+    });
 
     for (const cb of active.subscribers) {
       try {
