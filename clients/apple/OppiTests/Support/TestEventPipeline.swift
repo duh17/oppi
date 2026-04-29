@@ -124,6 +124,25 @@ final class TestEventPipeline {
         case .retryEnd(let success, let attempt, let finalError):
             coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
         case .commandResult(let command, let requestId, let success, let data, let error):
+            if let requestId {
+                if command == "prompt" || command == "steer" || command == "follow_up" {
+                    _ = conn.commands.resolveTurnCommandResult(
+                        command: command,
+                        requestId: requestId,
+                        success: success,
+                        error: error
+                    )
+                } else {
+                    _ = conn.commands.resolveCommandResult(
+                        command: command,
+                        requestId: requestId,
+                        success: success,
+                        data: data,
+                        error: error
+                    )
+                }
+            }
+
             let consumed = conn.handleCommandResult(command: command, requestId: requestId, success: success, data: data, error: error, sessionId: sessionId)
             if !consumed {
                 coalescer.receive(.commandResult(sessionId: sessionId, command: command, requestId: requestId, success: success, data: data, error: error))
