@@ -1,9 +1,9 @@
 import Foundation
 
-/// A user-configurable action that appears in the π text-selection menu.
+/// A user-configurable quick comment template shown on the review-comment sheet.
 ///
-/// Users can add, edit, reorder, and delete actions. Ships with sensible
-/// defaults matching the original five actions.
+/// The text-selection edit menu intentionally exposes one action only: Comment.
+/// These templates are the configurable shortcuts inside that comment flow.
 struct PiQuickAction: Codable, Identifiable, Equatable, Hashable {
     let id: UUID
     var title: String
@@ -12,17 +12,34 @@ struct PiQuickAction: Codable, Identifiable, Equatable, Hashable {
     var behavior: PiQuickActionBehavior
     var sortOrder: Int
 
-    /// True when this action should not prepend a prefix line to the snippet.
+    /// True when this legacy action would insert only the selected snippet.
     var isRawInsert: Bool {
         promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    /// Text inserted into the comment composer when this quick comment is tapped.
+    var quickCommentText: String {
+        promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True when this action can be shown as a quick comment template.
+    ///
+    /// Legacy `.newSession` actions with non-empty text are kept during
+    /// migration so customized templates are not lost on upgrade.
+    var isQuickCommentTemplate: Bool {
+        behavior != .reviewComment && !quickCommentText.isEmpty
+    }
 }
 
-/// How a pi action dispatches the selected text.
+/// Legacy dispatch behavior for stored actions.
+///
+/// New selection routing no longer exposes these behaviors directly: selected text
+/// has one edit-menu action, Comment. The cases remain so existing persisted JSON
+/// decodes safely and so older routing tests can describe compatibility paths.
 enum PiQuickActionBehavior: String, Codable, CaseIterable, Equatable, Hashable {
-    /// Append to the active session's composer input.
+    /// Legacy: append to the active session's composer input.
     case currentSession
-    /// Open the Quick Session sheet with the text pre-filled.
+    /// Legacy: open the Quick Session sheet with the text pre-filled.
     case newSession
     /// Save the selected text as a staged review comment.
     case reviewComment
@@ -31,7 +48,7 @@ enum PiQuickActionBehavior: String, Codable, CaseIterable, Equatable, Hashable {
 // MARK: - Built-in Defaults
 
 extension PiQuickAction {
-    // Stable UUIDs for built-in defaults.
+    // Stable UUIDs for built-in defaults and legacy actions.
     // swiftlint:disable identifier_name
     private static let _id1 = UUID(uuidString: "A0000001-0000-0000-0000-000000000001") ?? UUID()
     private static let _id2 = UUID(uuidString: "A0000001-0000-0000-0000-000000000002") ?? UUID()
@@ -46,7 +63,7 @@ extension PiQuickAction {
         id: _id1,
         title: "Explain",
         systemImage: "questionmark.bubble",
-        promptPrefix: "Explain this:",
+        promptPrefix: "Explain this.",
         behavior: .currentSession,
         sortOrder: 0
     )
@@ -55,7 +72,7 @@ extension PiQuickAction {
         id: _id2,
         title: "Do it",
         systemImage: "play.circle",
-        promptPrefix: "Do this:",
+        promptPrefix: "Do this.",
         behavior: .currentSession,
         sortOrder: 1
     )
@@ -64,7 +81,7 @@ extension PiQuickAction {
         id: _id3,
         title: "Fix",
         systemImage: "wrench.and.screwdriver",
-        promptPrefix: "Fix this:",
+        promptPrefix: "Fix this.",
         behavior: .currentSession,
         sortOrder: 2
     )
@@ -73,11 +90,12 @@ extension PiQuickAction {
         id: _id4,
         title: "Refactor",
         systemImage: "arrow.triangle.branch",
-        promptPrefix: "Refactor this:",
+        promptPrefix: "Refactor this.",
         behavior: .currentSession,
         sortOrder: 3
     )
 
+    /// Legacy action kept for compatibility with persisted settings/tests.
     static let addToPromptAction = PiQuickAction(
         id: _id5,
         title: "Add to Prompt",
@@ -87,6 +105,7 @@ extension PiQuickAction {
         sortOrder: 4
     )
 
+    /// Legacy action kept for compatibility; no longer appears in the selection menu.
     static let newSessionAction = PiQuickAction(
         id: _id6,
         title: "New Session",
@@ -105,27 +124,25 @@ extension PiQuickAction {
         sortOrder: 100
     )
 
-    /// The factory defaults.
+    /// The only action shown in text-selection menus.
     static func sortedForSelectionMenu(_ actions: [PiQuickAction]) -> [PiQuickAction] {
-        let actionsWithReviewComment = actions.contains(where: { $0.behavior == .reviewComment })
-            ? actions
-            : actions + [reviewCommentAction]
-
-        return actionsWithReviewComment.sorted { lhs, rhs in
-            let lhsPriority = lhs.behavior == .reviewComment ? -1 : lhs.sortOrder
-            let rhsPriority = rhs.behavior == .reviewComment ? -1 : rhs.sortOrder
-            return lhsPriority < rhsPriority
-        }
+        _ = actions
+        return [reviewCommentAction]
     }
 
+    /// Configurable quick comments shown on the comment composer sheet.
+    static func quickCommentTemplates(_ actions: [PiQuickAction]) -> [PiQuickAction] {
+        actions
+            .filter { $0.isQuickCommentTemplate }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    /// The factory defaults for quick comments.
     static let builtInDefaults: [PiQuickAction] = [
         explainAction,
         doItAction,
         fixAction,
         refactorAction,
-        addToPromptAction,
-        newSessionAction,
-        reviewCommentAction,
     ]
 }
 
@@ -133,11 +150,11 @@ extension PiQuickAction {
 
 import SwiftUI
 
-/// Persists and vends the user's configured π quick actions.
+/// Persists and vends the user's configured quick comment templates.
 ///
-/// Observable so the edit-menu builders and settings UI react to changes.
-/// Reads/writes JSON to UserDefaults. Falls back to built-in defaults
-/// on first launch or corrupt data.
+/// Observable so the comment composer and settings UI react to changes.
+/// Reads/writes JSON to UserDefaults. Falls back to built-in defaults on first
+/// launch, corrupt data, or legacy data that only contains non-comment actions.
 @MainActor @Observable
 final class PiQuickActionStore {
     private static let defaultsKey = "\(AppIdentifiers.subsystem).piQuickActions"
@@ -146,9 +163,9 @@ final class PiQuickActionStore {
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
-           let decoded = try? JSONDecoder().decode([PiQuickAction].self, from: data),
-           !decoded.isEmpty {
-            actions = decoded.sorted { $0.sortOrder < $1.sortOrder }
+           let decoded = try? JSONDecoder().decode([PiQuickAction].self, from: data) {
+            let templates = Self.normalizedTemplates(decoded)
+            actions = templates.isEmpty ? PiQuickAction.builtInDefaults : templates
         } else {
             actions = PiQuickAction.builtInDefaults
         }
@@ -194,6 +211,28 @@ final class PiQuickActionStore {
     }
 
     // MARK: - Private
+
+    private static func normalizedTemplates(_ actions: [PiQuickAction]) -> [PiQuickAction] {
+        var templates = PiQuickAction.quickCommentTemplates(actions).map(migratingLegacyBuiltInText)
+        for i in templates.indices {
+            templates[i].sortOrder = i
+        }
+        return templates
+    }
+
+    private static func migratingLegacyBuiltInText(_ action: PiQuickAction) -> PiQuickAction {
+        var migrated = action
+        if action.id == PiQuickAction.explainAction.id, action.quickCommentText == "Explain this:" {
+            migrated.promptPrefix = PiQuickAction.explainAction.promptPrefix
+        } else if action.id == PiQuickAction.doItAction.id, action.quickCommentText == "Do this:" {
+            migrated.promptPrefix = PiQuickAction.doItAction.promptPrefix
+        } else if action.id == PiQuickAction.fixAction.id, action.quickCommentText == "Fix this:" {
+            migrated.promptPrefix = PiQuickAction.fixAction.promptPrefix
+        } else if action.id == PiQuickAction.refactorAction.id, action.quickCommentText == "Refactor this:" {
+            migrated.promptPrefix = PiQuickAction.refactorAction.promptPrefix
+        }
+        return migrated
+    }
 
     private func reindex() {
         for i in actions.indices {

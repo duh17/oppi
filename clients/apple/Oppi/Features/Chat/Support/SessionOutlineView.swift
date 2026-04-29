@@ -23,6 +23,7 @@ struct SessionOutlineView: View {
     let changedFiles: [String]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
+    var fileDetailActionScope: SelectedTextActionScope? = nil
     var onNavigateTreeNode: ((TreeNavigationRequest) async throws -> Void)? = nil
     var initialTreeSnapshot: SessionTreeSnapshot? = nil
     var loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil
@@ -117,7 +118,8 @@ struct SessionOutlineView: View {
                             sessionId: sessionId,
                             workspaceId: workspaceId,
                             changedFiles: changedFiles,
-                            searchText: debouncedSearchText
+                            searchText: debouncedSearchText,
+                            fileDetailActionScope: fileDetailActionScope
                         )
                     } else {
                         ContentUnavailableView(

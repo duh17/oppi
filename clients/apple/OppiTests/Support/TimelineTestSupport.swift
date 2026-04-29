@@ -233,6 +233,7 @@ extension TimelineTestHarness {
         renderWindowStep: Int = 50,
         isBusy: Bool = false,
         streamingAssistantID: String? = nil,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         onShowEarlier: @escaping () -> Void = {}
     ) {
         let config = makeTimelineConfiguration(
@@ -249,7 +250,8 @@ extension TimelineTestHarness {
             toolSegmentStore: toolSegmentStore,
             connection: connection,
             scrollController: scrollController,
-            audioPlayer: audioPlayer
+            audioPlayer: audioPlayer,
+            selectedTextPiRouter: selectedTextPiRouter
         )
         coordinator.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
@@ -310,6 +312,7 @@ struct WindowedTimelineHarness {
         renderWindowStep: Int = 50,
         isBusy: Bool = true,
         streamingID: String? = nil,
+        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         onShowEarlier: @escaping () -> Void = {}
     ) {
         harness.applyAndLayout(
@@ -318,6 +321,7 @@ struct WindowedTimelineHarness {
             renderWindowStep: renderWindowStep,
             isBusy: isBusy,
             streamingAssistantID: streamingID,
+            selectedTextPiRouter: selectedTextPiRouter,
             onShowEarlier: onShowEarlier
         )
     }
@@ -440,7 +444,8 @@ func makeTimelineConfiguration(
     scrollController: ChatScrollController,
     audioPlayer: AudioPlayerService,
     topOverlap: CGFloat = 0,
-    bottomOverlap: CGFloat = 0
+    bottomOverlap: CGFloat = 0,
+    selectedTextPiRouter: SelectedTextPiActionRouter? = nil
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -460,6 +465,7 @@ func makeTimelineConfiguration(
         toolSegmentStore: toolSegmentStore,
         connection: connection,
         audioPlayer: audioPlayer,
+        selectedTextPiRouter: selectedTextPiRouter,
         topOverlap: topOverlap,
         bottomOverlap: bottomOverlap
     )

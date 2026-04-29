@@ -5,16 +5,16 @@ import Testing
 @Suite("Workspace context bar pi routing")
 @MainActor
 struct WorkspaceContextBarPiRoutingTests {
-    @Test func sessionScopedRouterForwardsReviewCommentToActiveChatInsteadOfQuickSession() throws {
+    @Test func sessionScopedActionScopeForwardsReviewCommentToActiveChatInsteadOfQuickSession() throws {
         var forwarded: SelectedTextPiRequest?
         var dismissed = false
 
-        let parentRouter = SelectedTextPiActionRouter { request in
+        let parentScope = SelectedTextActionScope.activeSession(SelectedTextPiActionRouter { request in
             forwarded = request
-        }
-        let router = try #require(WorkspaceContextBar.makeFileDetailPiRouter(
-            parentRouter: parentRouter,
-            fallbackRouter: SelectedTextPiActionRouter { _ in Issue.record("Should not route session-scoped comments to quick session") },
+        })
+        let scope = try #require(WorkspaceContextBar.makeFileDetailActionScope(
+            parentScope: parentScope,
+            fallbackScope: .quickSession(SelectedTextPiActionRouter { _ in Issue.record("Should not route session-scoped comments to quick session") }),
             dismissFileDetail: { dismissed = true }
         ))
 
@@ -28,21 +28,21 @@ struct WorkspaceContextBarPiRoutingTests {
             )
         )
 
-        router.dispatch(request)
+        scope.router.dispatch(request)
 
         #expect(forwarded == request)
         #expect(dismissed == true)
     }
 
-    @Test func missingParentRouterFallsBackToQuickSession() throws {
+    @Test func missingParentScopeFallsBackToQuickSession() throws {
         var fallback: SelectedTextPiRequest?
         var dismissed = false
 
-        let router = try #require(WorkspaceContextBar.makeFileDetailPiRouter(
-            parentRouter: nil,
-            fallbackRouter: SelectedTextPiActionRouter { request in
+        let scope = try #require(WorkspaceContextBar.makeFileDetailActionScope(
+            parentScope: nil,
+            fallbackScope: .quickSession(SelectedTextPiActionRouter { request in
                 fallback = request
-            },
+            }),
             dismissFileDetail: { dismissed = true }
         ))
 
@@ -52,7 +52,7 @@ struct WorkspaceContextBarPiRoutingTests {
             source: SelectedTextSourceContext(sessionId: "", surface: .fullScreenDiff)
         )
 
-        router.dispatch(request)
+        scope.router.dispatch(request)
 
         #expect(fallback == request)
         #expect(dismissed == false)

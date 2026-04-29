@@ -24,11 +24,11 @@ struct WorkspaceReviewFileDetailView: View {
     let workspaceId: String
     let selectedSessionId: String?
     let file: WorkspaceReviewFile
-    var selectedTextPiRouterOverride: SelectedTextPiActionRouter? = nil
+    var selectedTextActionScopeOverride: SelectedTextActionScope? = nil
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @Environment(SessionStore.self) private var sessionStore
-    @Environment(AppNavigation.self) private var navigation
 
     @State private var selectedTab: DetailTab = .diff
     @State private var diff: WorkspaceReviewDiffResponse?
@@ -38,15 +38,15 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var launchError: String?
     @State private var navigateToReview: ReviewSessionNavDestination?
 
-    private var piRouter: SelectedTextPiActionRouter {
-        selectedTextPiRouterOverride ?? navigation.makeQuickSessionPiRouter()
+    private var selectedTextScope: SelectedTextActionScope? {
+        selectedTextActionScopeOverride ?? selectedTextActionScope
     }
 
-    private func diffSourceContext(filePath: String) -> SelectedTextSourceContext {
-        SelectedTextSourceContext(
-            sessionId: selectedSessionId ?? "",
-            surface: .fullScreenDiff,
-            filePath: filePath
+    private var selectedTextActionContext: SelectedTextActionContext? {
+        selectedTextScope?.makeActionContext(
+            sessionId: selectedSessionId,
+            sourceLabel: file.path.lastPathComponentForDisplay,
+            filePath: file.path
         )
     }
 
@@ -187,7 +187,7 @@ struct WorkspaceReviewFileDetailView: View {
                     filePath: file.path,
                     presentation: .document
                 )
-                .environment(\.selectedTextPiActionRouter, piRouter)
+                .environment(\.selectedTextActionScope, selectedTextScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isDeletedFile {
                 // Deleted file: skip tabs, show diff (the only useful view)
@@ -196,9 +196,9 @@ struct WorkspaceReviewFileDetailView: View {
                 WorkspaceReviewDiffView(
                     diff: diff,
                     filePath: file.path,
-                    selectedTextSourceContext: diffSourceContext(filePath: file.path)
+                    selectedTextActionContext: selectedTextActionContext
                 )
-                .environment(\.selectedTextPiActionRouter, piRouter)
+                .environment(\.selectedTextActionScope, selectedTextScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Picker("View", selection: $selectedTab) {
@@ -218,9 +218,9 @@ struct WorkspaceReviewFileDetailView: View {
                         WorkspaceReviewDiffView(
                             diff: diff,
                             filePath: file.path,
-                            selectedTextSourceContext: diffSourceContext(filePath: file.path)
+                            selectedTextActionContext: selectedTextActionContext
                         )
-                        .environment(\.selectedTextPiActionRouter, piRouter)
+                        .environment(\.selectedTextActionScope, selectedTextScope)
                     case .current:
                         currentContent(diff: diff)
                     }
@@ -237,7 +237,7 @@ struct WorkspaceReviewFileDetailView: View {
             filePath: file.path,
             presentation: .document
         )
-        .environment(\.selectedTextPiActionRouter, piRouter)
+        .environment(\.selectedTextActionScope, selectedTextScope)
     }
 
     private var fileIcon: FileIcon {
@@ -354,14 +354,14 @@ struct WorkspaceReviewFileDetailView: View {
 struct WorkspaceReviewDiffView: View {
     let diff: WorkspaceReviewDiffResponse
     let filePath: String
-    var selectedTextSourceContext: SelectedTextSourceContext?
+    var selectedTextActionContext: SelectedTextActionContext?
 
     var body: some View {
         UnifiedDiffView(
             hunks: diff.hunks,
             filePath: filePath,
             emptyDescription: "This file has no textual diff to show.",
-            selectedTextSourceContext: selectedTextSourceContext
+            selectedTextActionContext: selectedTextActionContext
         )
     }
 }

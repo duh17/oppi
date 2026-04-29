@@ -73,7 +73,7 @@ struct WorkspaceContextBar: View {
     let sessionId: String?
     let childSessions: [Session]
     var onSelectChild: ((String) -> Void)?
-    var fileDetailPiRouter: SelectedTextPiActionRouter?
+    var fileDetailActionScope: SelectedTextActionScope?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
     var collapseToken: Int = 0
     /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
@@ -109,7 +109,7 @@ struct WorkspaceContextBar: View {
         sessionId: String? = nil,
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
-        fileDetailPiRouter: SelectedTextPiActionRouter? = nil,
+        fileDetailActionScope: SelectedTextActionScope? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
     ) {
@@ -120,26 +120,34 @@ struct WorkspaceContextBar: View {
         self.sessionId = sessionId
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
-        self.fileDetailPiRouter = fileDetailPiRouter
+        self.fileDetailActionScope = fileDetailActionScope
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
     }
 
     // MARK: - Session scoping
 
-    static func makeFileDetailPiRouter(
-        parentRouter: SelectedTextPiActionRouter?,
-        fallbackRouter: SelectedTextPiActionRouter?,
+    static func makeFileDetailActionScope(
+        parentScope: SelectedTextActionScope?,
+        fallbackScope: SelectedTextActionScope?,
         dismissFileDetail: @escaping () -> Void
-    ) -> SelectedTextPiActionRouter? {
-        if let parentRouter {
-            return SelectedTextPiActionRouter { request in
-                dismissFileDetail()
-                parentRouter.dispatch(request)
+    ) -> SelectedTextActionScope? {
+        if let parentScope {
+            switch parentScope {
+            case .activeSession(let router):
+                return .activeSession(SelectedTextPiActionRouter { request in
+                    dismissFileDetail()
+                    router.dispatch(request)
+                })
+            case .quickSession(let router):
+                return .quickSession(SelectedTextPiActionRouter { request in
+                    dismissFileDetail()
+                    router.dispatch(request)
+                })
             }
         }
 
-        return fallbackRouter
+        return fallbackScope
     }
 
     /// When viewing a session that has touched files, scope the bar to show only those files.
@@ -256,6 +264,11 @@ struct WorkspaceContextBar: View {
                 .sheet(item: $selectedCommit) { commit in
                     NavigationStack {
                         CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
+                            .environment(\.selectedTextActionScope, Self.makeFileDetailActionScope(
+                                parentScope: fileDetailActionScope,
+                                fallbackScope: nil,
+                                dismissFileDetail: { selectedCommit = nil }
+                            ))
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
                                     Button("Done") { selectedCommit = nil }
@@ -693,9 +706,9 @@ struct WorkspaceContextBar: View {
                     workspaceId: workspaceId,
                     selectedSessionId: sessionId,
                     file: file.toReviewFile(),
-                    selectedTextPiRouterOverride: Self.makeFileDetailPiRouter(
-                        parentRouter: fileDetailPiRouter,
-                        fallbackRouter: nil,
+                    selectedTextActionScopeOverride: Self.makeFileDetailActionScope(
+                        parentScope: fileDetailActionScope,
+                        fallbackScope: nil,
                         dismissFileDetail: { selectedFile = nil }
                     )
                 )

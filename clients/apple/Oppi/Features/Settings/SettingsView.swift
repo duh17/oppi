@@ -139,12 +139,12 @@ struct SettingsView: View {
                 NavigationLink {
                     PiActionsSettingsView()
                 } label: {
-                    Label("π Actions", systemImage: "contextualmenu.and.cursorarrow")
+                    Label("Quick Comments", systemImage: "text.bubble")
                 }
             } header: {
                 Text("Text Selection")
             } footer: {
-                Text("Customize the π menu shown when selecting text in chat and file views.")
+                Text("Customize the quick comments shown after selecting text and choosing Comment.")
             }
 
             Section {

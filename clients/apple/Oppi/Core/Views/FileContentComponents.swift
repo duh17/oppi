@@ -155,7 +155,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
     var maxHeight: CGFloat? = nil
     var selectedTextSourceContext: SelectedTextSourceContext? = nil
 
-    @Environment(\.selectedTextPiActionRouter) private var selectedTextPiRouter
+    @Environment(\.selectedTextPiActionRouter) private var selectedTextActionRouter
 
     /// Approximate line height for FullScreenCodeTypography.codeFont (12pt mono).
     private static let estimatedLineHeight: CGFloat = 15.0
@@ -169,7 +169,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
             startLine: startLine,
             palette: ThemeRuntimeState.currentThemeID().palette,
             alwaysBounceVertical: maxHeight == nil,
-            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextPiRouter: selectedTextActionRouter,
             selectedTextSourceContext: selectedTextSourceContext
         )
     }

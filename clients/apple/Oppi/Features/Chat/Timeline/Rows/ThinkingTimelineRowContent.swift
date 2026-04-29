@@ -131,7 +131,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     }
 
     private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.interactionContext?.selectedTextPiRouter != nil
+        currentConfiguration.interactionContext?.selectedTextActionContext != nil
     }
 
     private var currentInteractionSpec: TimelineExpandableTextInteractionSpec {
@@ -538,13 +538,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
             content: trimmedDisplayText,
             stream: fullScreenThinkingStream
         )
-        let ctx = currentConfiguration.interactionContext
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextPiRouter: ctx?.selectedTextPiRouter,
-            selectedTextSessionId: ctx?.sessionId,
-            selectedTextSourceLabel: "Thinking"
+            selectedTextActionContext: currentConfiguration.interactionContext?
+                .selectedTextActionContext?
+                .overriding(sourceLabel: "Thinking")
         )
     }
 
@@ -618,7 +617,7 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.interactionContext?.selectedTextPiRouter,
+            router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .thinking,
                 sourceLabel: "Thinking"

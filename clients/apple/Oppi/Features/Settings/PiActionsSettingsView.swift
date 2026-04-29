@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Settings view for managing user-configured π quick actions.
+/// Settings view for managing user-configured quick comment templates.
 ///
-/// Shows the ordered list of actions with edit/delete/reorder support.
-/// Tapping an action opens an editor sheet. "Add Action" creates a new one.
+/// Shows the ordered list of templates with edit/delete/reorder support.
+/// Tapping a template opens an editor sheet. "Add Quick Comment" creates a new one.
 struct PiActionsSettingsView: View {
     @Environment(PiQuickActionStore.self) private var store
 
@@ -24,7 +24,7 @@ struct PiActionsSettingsView: View {
                     store.move(from: source, to: destination)
                 }
             } header: {
-                Text("Actions appear in the π text selection menu")
+                Text("Quick comments appear on the comment sheet")
             }
 
             Section {
@@ -32,7 +32,7 @@ struct PiActionsSettingsView: View {
                     let newAction = PiQuickAction(
                         id: UUID(),
                         title: "",
-                        systemImage: "sparkles",
+                        systemImage: "text.bubble",
                         promptPrefix: "",
                         behavior: .currentSession,
                         sortOrder: store.actions.count
@@ -40,7 +40,7 @@ struct PiActionsSettingsView: View {
                     editingAction = newAction
                     isAdding = true
                 } label: {
-                    Label("Add Action", systemImage: "plus")
+                    Label("Add Quick Comment", systemImage: "plus")
                 }
 
                 Button(role: .destructive) {
@@ -51,7 +51,7 @@ struct PiActionsSettingsView: View {
             }
         }
         .themedListSurface()
-        .navigationTitle("π Actions")
+        .navigationTitle("Quick Comments")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -81,7 +81,7 @@ struct PiActionsSettingsView: View {
             .presentationDetents([.medium, .large])
         }
         .confirmationDialog(
-            "Reset all π actions to defaults?",
+            "Reset all quick comments to defaults?",
             isPresented: $showResetConfirmation,
             titleVisibility: .visible
         ) {
@@ -108,18 +108,10 @@ struct PiActionsSettingsView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.themeFg)
 
-                    HStack(spacing: 6) {
-                        Text(action.behavior == .newSession ? "New session" : "Current session")
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
-
-                        if !action.isRawInsert {
-                            Text(action.promptPrefix)
-                                .font(.caption2)
-                                .foregroundStyle(.themeComment)
-                                .lineLimit(1)
-                        }
-                    }
+                    Text(action.quickCommentText)
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
                 }
 
                 Spacer()
@@ -135,12 +127,11 @@ struct PiActionsSettingsView: View {
 
 // MARK: - Editor
 
-/// Form for creating or editing a single π quick action.
+/// Form for creating or editing a single quick comment template.
 struct PiActionEditorView: View {
     @State private var title: String
     @State private var systemImage: String
     @State private var promptPrefix: String
-    @State private var behavior: PiQuickActionBehavior
 
     private let actionId: UUID
     private let sortOrder: Int
@@ -157,7 +148,6 @@ struct PiActionEditorView: View {
         _title = State(initialValue: action.title)
         _systemImage = State(initialValue: action.systemImage)
         _promptPrefix = State(initialValue: action.promptPrefix)
-        _behavior = State(initialValue: action.behavior)
         self.actionId = action.id
         self.sortOrder = action.sortOrder
         self.isNew = isNew
@@ -167,6 +157,7 @@ struct PiActionEditorView: View {
 
     private var canSave: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -182,23 +173,13 @@ struct PiActionEditorView: View {
                 }
             }
 
-            Section("Prompt") {
-                TextField("Prompt prefix (e.g. \"Explain this:\")", text: $promptPrefix)
-                    .textInputAutocapitalization(.never)
+            Section("Comment Text") {
+                TextField("Comment text (e.g. \"Fix this.\")", text: $promptPrefix)
+                    .textInputAutocapitalization(.sentences)
 
-                if promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("No prefix — selected text will be inserted as-is")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
-            }
-
-            Section("Behavior") {
-                Picker("When triggered", selection: $behavior) {
-                    Text("Append to current session").tag(PiQuickActionBehavior.currentSession)
-                    Text("Start new session").tag(PiQuickActionBehavior.newSession)
-                }
-                .pickerStyle(.menu)
+                Text("This text is inserted into the comment composer when you tap the quick comment.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
             }
 
             Section {
@@ -208,7 +189,7 @@ struct PiActionEditorView: View {
             }
         }
         .themedListSurface()
-        .navigationTitle(isNew ? "New Action" : "Edit Action")
+        .navigationTitle(isNew ? "New Quick Comment" : "Edit Quick Comment")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -221,7 +202,7 @@ struct PiActionEditorView: View {
                         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                         systemImage: systemImage,
                         promptPrefix: promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines),
-                        behavior: behavior,
+                        behavior: .currentSession,
                         sortOrder: sortOrder
                     )
                     onSave(action)
@@ -243,24 +224,13 @@ struct PiActionEditorView: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(title.isEmpty ? .themeComment : .themeFg)
 
-                if !promptPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("\"\(promptPrefix)\" + selected text")
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                } else {
-                    Text("selected text only")
-                        .font(.caption2)
-                        .foregroundStyle(.themeComment)
-                }
+                Text(promptPrefix.isEmpty ? "Comment text required" : promptPrefix)
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(2)
             }
 
             Spacer()
-
-            if behavior == .newSession {
-                Image(systemName: "plus.message")
-                    .font(.caption)
-                    .foregroundStyle(.themeGreen)
-            }
         }
     }
 }

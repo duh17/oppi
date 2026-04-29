@@ -247,7 +247,7 @@ struct ChatView: View {
                     onSelectChild: { childId in
                         childSessionToOpen = ChildSessionRoute(id: childId)
                     },
-                    fileDetailPiRouter: selectedTextPiRouter,
+                    fileDetailActionScope: .activeSession(selectedTextPiRouter),
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: handleContextBarExpandedChanged
                 )
@@ -287,6 +287,7 @@ struct ChatView: View {
                     selectedText: context.request.selectedText,
                     source: context.request.source,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                    quickComments: PiQuickAction.quickCommentTemplates(piQuickActionStore.actions),
                     onCancel: { reviewComments.pendingDraft = nil },
                     onSave: { body in
                         await saveReviewComment(body: body, request: context.request)
@@ -1314,6 +1315,7 @@ struct ChatView: View {
                 scrollController.scrollTargetID = targetID
             },
             onFork: forkFromMessage,
+            fileDetailActionScope: .activeSession(selectedTextPiRouter),
             onNavigateTreeNode: { request in
                 try await navigateFromTree(request)
             },

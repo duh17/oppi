@@ -14,7 +14,15 @@ struct CodeFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
+
+    private var selectedTextActionContext: SelectedTextActionContext? {
+        selectedTextActionScope?.makeActionContext(
+            sourceLabel: language.displayName,
+            filePath: filePath,
+            languageHint: language.displayName
+        )
+    }
 
     var body: some View {
         if presentation.usesInlineChrome {
@@ -42,9 +50,12 @@ struct CodeFileView: View {
                 content: content,
                 language: language.displayName,
                 startLine: startLine,
-                selectedTextSourceContext: piRouter != nil
-                    ? fileContentSourceContext(filePath: filePath, language: language.displayName)
-                    : nil
+                selectedTextSourceContext: selectedTextActionContext?
+                    .sourceContext(
+                        surface: .fullScreenCode,
+                        filePath: filePath,
+                        languageHint: language.displayName
+                    )
             )
         }
     }

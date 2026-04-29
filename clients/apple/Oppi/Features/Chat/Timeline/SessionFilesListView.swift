@@ -14,8 +14,10 @@ struct SessionFilesListView: View {
     let workspaceId: String?
     let changedFiles: [String]
     var searchText: String = ""
+    var fileDetailActionScope: SelectedTextActionScope? = nil
 
     @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(\.dismiss) private var dismiss
 
     /// Files from git status, keyed by path for fast lookup.
     private var gitFilesByPath: [String: GitFileStatus] {
@@ -73,7 +75,8 @@ struct SessionFilesListView: View {
                     WorkspaceReviewFileDetailView(
                         workspaceId: workspaceId,
                         selectedSessionId: sessionId,
-                        file: gitFile.toReviewFile()
+                        file: gitFile.toReviewFile(),
+                        selectedTextActionScopeOverride: makeFileDetailActionScope()
                     )
                 } label: {
                     fileRowContent(
@@ -84,20 +87,23 @@ struct SessionFilesListView: View {
                 }
             } else if let workspaceId {
                 NavigationLink {
-                    if isAbsolutePath(path) {
-                        SessionTouchedFileContentView(
-                            workspaceId: workspaceId,
-                            sessionId: sessionId,
-                            filePath: path,
-                            fileName: path.lastPathComponentForDisplay
-                        )
-                    } else {
-                        FileBrowserContentView(
-                            workspaceId: workspaceId,
-                            filePath: path,
-                            fileName: path.lastPathComponentForDisplay
-                        )
+                    Group {
+                        if isAbsolutePath(path) {
+                            SessionTouchedFileContentView(
+                                workspaceId: workspaceId,
+                                sessionId: sessionId,
+                                filePath: path,
+                                fileName: path.lastPathComponentForDisplay
+                            )
+                        } else {
+                            FileBrowserContentView(
+                                workspaceId: workspaceId,
+                                filePath: path,
+                                fileName: path.lastPathComponentForDisplay
+                            )
+                        }
                     }
+                    .environment(\.selectedTextActionScope, makeFileDetailActionScope())
                 } label: {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
@@ -114,6 +120,16 @@ struct SessionFilesListView: View {
                 )
             }
         }
+    }
+
+    private func makeFileDetailActionScope() -> SelectedTextActionScope? {
+        guard case .activeSession(let router) = fileDetailActionScope else {
+            return fileDetailActionScope
+        }
+        return .activeSession(SelectedTextPiActionRouter { request in
+            dismiss()
+            router.dispatch(request)
+        })
     }
 
     @ViewBuilder

@@ -77,7 +77,7 @@ struct PiQuickActionRoutingPolicyTests {
 
     @Test(arguments: SelectedTextSurfaceKind.representativeSurfaces)
     func nonChatSurfacesRouteActionsToQuickSession(surface: SelectedTextSurfaceKind) throws {
-        for action in [PiQuickAction.builtInDefaults[0], PiQuickAction.builtInDefaults[4], PiQuickAction.builtInDefaults[5], PiQuickAction.reviewCommentAction] {
+        for action in [PiQuickAction.explainAction, PiQuickAction.addToPromptAction, PiQuickAction.newSessionAction, PiQuickAction.reviewCommentAction] {
             let request = SelectedTextPiRequest(
                 action: action,
                 selectedText: "selected text",
@@ -103,14 +103,14 @@ struct PiQuickActionRoutingPolicyTests {
         Case(
             name: "chat add-to-prompt appends to composer",
             context: .activeChat,
-            action: PiQuickAction.builtInDefaults[4],
+            action: PiQuickAction.addToPromptAction,
             source: source(surface: .assistantCodeBlock),
             expected: .currentSessionDraftContains("let value = 42")
         ),
         Case(
             name: "chat new-session explicitly opens Quick Session",
             context: .activeChat,
-            action: PiQuickAction.builtInDefaults[5],
+            action: PiQuickAction.newSessionAction,
             source: source(surface: .assistantProse),
             expected: .quickSessionDraftContains("let value = 42")
         ),
@@ -126,7 +126,7 @@ struct PiQuickActionRoutingPolicyTests {
             context: .nonChat,
             action: PiQuickAction.builtInDefaults[0],
             source: source(surface: .fullScreenCode),
-            expected: .quickSessionDraftContains("Explain this:")
+            expected: .quickSessionDraftContains("Explain this.")
         ),
     ]
 

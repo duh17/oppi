@@ -19,8 +19,8 @@ struct RemoteFileView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
     @Environment(WorkspaceStore.self) private var workspaceStore
-    @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @State private var content: String?
     @State private var imageData: Data?
     @State private var isLoading = true
@@ -31,10 +31,6 @@ struct RemoteFileView: View {
 
     private var filename: String {
         (path as NSString).lastPathComponent
-    }
-
-    private var piRouter: SelectedTextPiActionRouter {
-        navigation.makeQuickSessionPiRouter()
     }
 
     private var pathExtension: String {
@@ -99,7 +95,11 @@ struct RemoteFileView: View {
                 // The VC has its own nav controller with dismiss, copy, share, toggle.
                 FullScreenCodeView(
                     content: fullScreenContent(text: content),
-                    selectedTextPiRouter: piRouter
+                    selectedTextActionContext: selectedTextActionScope?.makeActionContext(
+                        sessionId: sessionId,
+                        sourceLabel: filename,
+                        filePath: path
+                    )
                 )
             } else if let imageData, isImagePath {
                 NavigationStack {

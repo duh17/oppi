@@ -77,7 +77,7 @@ struct ContentView: View {
                 }
             }
         }
-        .environment(\.selectedTextPiActionRouter, navigation.makeQuickSessionPiRouter())
+        .environment(\.selectedTextActionScope, navigation.makeQuickSessionActionScope())
         .safeAreaInset(edge: .top, spacing: 0) {
             if !navigation.showOnboarding,
                let request = crossSessionPrimary {

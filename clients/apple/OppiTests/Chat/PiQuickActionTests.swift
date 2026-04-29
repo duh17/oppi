@@ -8,21 +8,35 @@ struct PiQuickActionTests {
 
     // MARK: - Model
 
-    @Test func builtInDefaultsContainSevenActions() {
-        #expect(PiQuickAction.builtInDefaults.count == 7)
-        #expect(PiQuickAction.builtInDefaults.last?.behavior == .reviewComment)
+    @Test func builtInDefaultsContainFourQuickComments() {
+        #expect(PiQuickAction.builtInDefaults.count == 4)
+        #expect(PiQuickAction.builtInDefaults.allSatisfy { $0.isQuickCommentTemplate })
     }
 
-    @Test func commentSortsFirstInSelectionMenu() {
+    @Test func selectionMenuContainsOnlyCommentAction() {
         let sorted = PiQuickAction.sortedForSelectionMenu(PiQuickAction.builtInDefaults)
-        #expect(sorted.first?.behavior == .reviewComment)
+        #expect(sorted == [PiQuickAction.reviewCommentAction])
     }
 
-    @Test func persistedActionsMissingCommentGetCompatibilityAction() {
-        let persisted = Array(PiQuickAction.builtInDefaults.prefix(6))
-        let sorted = PiQuickAction.sortedForSelectionMenu(persisted)
-        #expect(sorted.count == 7)
-        #expect(sorted.first?.behavior == .reviewComment)
+    @Test func quickCommentTemplatesKeepLegacyTemplatesAndFilterNonTemplates() {
+        let legacyNewSessionTemplate = PiQuickAction(
+            id: UUID(),
+            title: "Ship it",
+            systemImage: "paperplane",
+            promptPrefix: "Ship this.",
+            behavior: .newSession,
+            sortOrder: 10
+        )
+        let legacy = PiQuickAction.builtInDefaults + [
+            PiQuickAction.addToPromptAction,
+            PiQuickAction.reviewCommentAction,
+            legacyNewSessionTemplate,
+        ]
+        let templates = PiQuickAction.quickCommentTemplates(legacy)
+        #expect(templates.count == 5)
+        #expect(templates.contains(legacyNewSessionTemplate))
+        #expect(!templates.contains(PiQuickAction.addToPromptAction))
+        #expect(!templates.contains(PiQuickAction.reviewCommentAction))
     }
 
     @Test func builtInDefaultsHaveStableIds() {
@@ -163,6 +177,6 @@ struct PiQuickActionTests {
             source: .init(sessionId: "s-1", surface: .assistantProse)
         )
         let result = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-        #expect(result.hasPrefix("Fix this:"))
+        #expect(result.hasPrefix("Fix this."))
     }
 }

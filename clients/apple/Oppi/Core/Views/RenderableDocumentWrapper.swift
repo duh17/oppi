@@ -4,7 +4,7 @@ import SwiftUI
 
 /// SwiftUI bridge for ``RenderableDocumentView``.
 ///
-/// Reads SwiftUI environment (piRouter, allowsFullScreenExpansion),
+/// Reads SwiftUI environment (selected-text action scope, allowsFullScreenExpansion),
 /// owns the `@State showFullScreen` + `.fullScreenViewer()` modifier,
 /// and passes everything to the UIKit view.
 ///
@@ -30,7 +30,12 @@ struct RenderableDocumentWrapper: View {
 
     @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @State private var showFullScreen = false
+
+    private var effectiveActionContext: SelectedTextActionContext? {
+        selectedTextActionScope?.makeActionContext()
+    }
 
     var body: some View {
         _RenderableDocumentRepresentable(
@@ -46,7 +51,7 @@ struct RenderableDocumentWrapper: View {
         .fullScreenViewer(
             isPresented: $showFullScreen,
             content: fullScreenContent,
-            piRouter: piRouter
+            selectedTextActionContext: effectiveActionContext
         )
     }
 }

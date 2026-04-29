@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 @Suite("Full-screen selected text π actions")
 struct FullScreenSelectedTextTests {
-    @Test func codeBodyPrependsPiSubmenu() throws {
+    @Test func codeBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .code(content: "let answer = 42", language: "swift", filePath: "Answer.swift", startLine: 1)
         )
@@ -19,11 +19,11 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
-    @Test func diffBodyPrependsPiSubmenu() throws {
+    @Test func diffBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .diff(
                 oldText: "let value = 1",
@@ -45,11 +45,11 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
-    @Test func markdownBodyPrependsPiSubmenu() throws {
+    @Test func markdownBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .markdown(content: "Alpha beta gamma", filePath: "Notes.md")
         )
@@ -63,8 +63,8 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
     @Test func fullScreenMarkdownUsesRichRenderingForLargeDocuments() throws {
@@ -92,7 +92,7 @@ struct FullScreenSelectedTextTests {
         #expect(!renderedText.contains("`inline code`"))
     }
 
-    @Test func thinkingBodyPrependsPiSubmenu() throws {
+    @Test func thinkingBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .thinking(content: "Think harder")
         )
@@ -106,11 +106,11 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
-    @Test func terminalBodyPrependsPiSubmenu() throws {
+    @Test func terminalBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .terminal(content: "hello\nworld", command: "echo hello", stream: nil)
         )
@@ -124,11 +124,11 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
-    @Test func sourceBodyPrependsPiSubmenu() throws {
+    @Test func sourceBodyPrependsCommentAction() throws {
         let controller = makeController(
             content: .plainText(content: "raw source", filePath: "Notes.txt")
         )
@@ -142,11 +142,11 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
-    @Test func liveSourceBodyPrependsPiSubmenu() throws {
+    @Test func liveSourceBodyPrependsCommentAction() throws {
         let stream = SourceTraceStream(
             text: "streaming source",
             filePath: "Draft.swift",
@@ -166,8 +166,8 @@ struct FullScreenSelectedTextTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
     @Test func liveSourceChunkUpdateKeepsNavigationChromeWhenMetadataIsUnchanged() throws {
@@ -182,7 +182,6 @@ struct FullScreenSelectedTextTests {
         )
         let navigationController = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigationController.topViewController)
-        // titleView is nil in Liquid Glass immersive mode — only floating glass pills.
         let copyButton = try #require(contentController.navigationItem.rightBarButtonItems?.first)
 
         stream.update(

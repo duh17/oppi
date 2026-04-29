@@ -229,7 +229,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func selectedTextCommandEditMenuPrependsPiSubmenuAndDisablesTapCopy() throws {
+    @Test func selectedTextCommandEditMenuPrependsCommentActionAndDisablesTapCopy() throws {
         let router = SelectedTextPiActionRouter { _ in }
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
@@ -250,9 +250,8 @@ struct ToolTimelineRowContentViewTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
         let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
         #expect(copyMenuAction.title == "Copy")
         #expect(commandLabel.isSelectable)

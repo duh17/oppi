@@ -1,23 +1,25 @@
 import UIKit
 import WebKit
 
-/// WKWebView subclass that adds π quick actions to the text selection edit menu.
+/// WKWebView subclass that adds the Comment action to the text selection edit menu.
 ///
-/// When the user selects text, a "π" submenu appears in the edit menu callout
-/// with actions like Explain, Do it, Fix, Refactor, Add to Prompt.
+/// When the user selects text, a single Comment action appears in the edit menu.
+/// Configurable quick comments live inside the comment composer sheet rather than
+/// crowding the selection menu.
 ///
 /// Uses `buildMenu(with:)` — the stable `UIResponder` API (iOS 13+) — to inject
 /// menu items into WKWebView's edit menu. The system walks the responder chain
 /// when building the edit menu, so overriding here on the WKWebView subclass
-/// inserts our items alongside the standard Copy/Look Up/Translate actions.
+/// inserts our item alongside the standard Copy/Look Up/Translate actions.
 ///
-/// When an action is triggered, the selected text is retrieved via JavaScript
+/// When the action is triggered, the selected text is retrieved via JavaScript
 /// (`window.getSelection()`) and dispatched through the configured handler.
 final class PiWKWebView: WKWebView {
-    /// Called when the user picks a pi action on selected text.
+    /// Called when the user picks the comment action on selected text.
     var piActionHandler: ((String, PiQuickAction) -> Void)?
 
-    /// Store for user-configured actions. Set externally before the menu is shown.
+    /// Store for user-configured quick comments. Kept for wiring compatibility;
+    /// the edit menu itself always shows one Comment action.
     var piActionStore: PiQuickActionStore?
 
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {
@@ -34,22 +36,18 @@ final class PiWKWebView: WKWebView {
 
         guard piActionHandler != nil else { return }
 
-        let quickActions = piActionStore?.actions ?? PiQuickAction.builtInDefaults
-
-        let menuActions = quickActions.map { quickAction in
-            UIAction(
-                title: quickAction.title,
-                image: UIImage(systemName: quickAction.systemImage)
-            ) { [weak self] _ in
-                self?.handlePiAction(quickAction)
-            }
+        let quickAction = PiQuickAction.reviewCommentAction
+        let commentAction = UIAction(
+            title: quickAction.title,
+            image: UIImage(systemName: quickAction.systemImage)
+        ) { [weak self] _ in
+            self?.handlePiAction(quickAction)
         }
 
-        let piMenu = UIMenu(title: "π", children: menuActions)
-
-        // Insert π before the standard edit menu (Copy, etc.) so it
-        // appears first — matching the UITextView π menu ordering.
-        builder.insertSibling(piMenu, beforeMenu: .standardEdit)
+        // Insert an inline menu before the standard edit actions so this reads
+        // as a direct "Comment" action, not as a π submenu.
+        let commentMenu = UIMenu(title: "", options: .displayInline, children: [commentAction])
+        builder.insertSibling(commentMenu, beforeMenu: .standardEdit)
     }
 
     private func handlePiAction(_ quickAction: PiQuickAction) {

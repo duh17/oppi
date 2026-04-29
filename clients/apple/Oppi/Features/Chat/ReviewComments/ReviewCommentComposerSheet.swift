@@ -4,6 +4,7 @@ struct ReviewCommentComposerSheet: View {
     let selectedText: String
     let source: SelectedTextSourceContext
     var voiceInputManager: VoiceInputManager?
+    var quickComments: [PiQuickAction] = []
     let onCancel: () -> Void
     let onSave: (String) async -> Bool
 
@@ -25,9 +26,23 @@ struct ReviewCommentComposerSheet: View {
 
                     referenceCard
 
-                    Text("Comment")
-                        .font(.headline)
-                        .foregroundStyle(.themeFg)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Comment")
+                            .font(.headline)
+                            .foregroundStyle(.themeFg)
+
+                        Spacer()
+
+                        if !quickComments.isEmpty {
+                            Text("Quick comments")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.themeComment)
+                        }
+                    }
+
+                    if !quickComments.isEmpty {
+                        quickCommentStrip
+                    }
 
                     ReviewCommentTextInput(
                         text: $bodyText,
@@ -103,6 +118,33 @@ struct ReviewCommentComposerSheet: View {
         }
     }
 
+    private var quickCommentStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(quickComments) { action in
+                    Button {
+                        applyQuickComment(action)
+                    } label: {
+                        Label(action.title, systemImage: action.systemImage)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .background(Color.themeBgHighlight.opacity(0.85), in: Capsule())
+                            .overlay {
+                                Capsule()
+                                    .stroke(Color.themeComment.opacity(0.18), lineWidth: 1)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSaving)
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .accessibilityLabel("Quick comments")
+    }
+
     private var referenceLocation: String {
         if let filePath = source.filePath {
             return filePath
@@ -123,6 +165,20 @@ struct ReviewCommentComposerSheet: View {
                 .foregroundStyle(.themeFg)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func applyQuickComment(_ action: PiQuickAction) {
+        let text = action.quickCommentText
+        guard !text.isEmpty else { return }
+
+        let trimmedBody = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedBody.isEmpty {
+            bodyText = text
+        } else if bodyText.hasSuffix("\n") {
+            bodyText += text
+        } else {
+            bodyText += "\n" + text
         }
     }
 

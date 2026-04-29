@@ -258,6 +258,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         currentConfiguration.selectedTextSessionId
     }
 
+    private var selectedTextActionContext: SelectedTextActionContext? {
+        SelectedTextActionContext(
+            router: selectedTextPiRouter,
+            sessionId: selectedTextSessionId,
+            sourceLabel: currentConfiguration.title
+        )
+    }
+
     private var perfSessionId: String? {
         currentConfiguration.selectedTextSessionId
     }
@@ -1852,9 +1860,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSessionId: selectedTextSessionId,
-            selectedTextSourceLabel: currentConfiguration.title
+            selectedTextActionContext: selectedTextActionContext
         )
     }
 

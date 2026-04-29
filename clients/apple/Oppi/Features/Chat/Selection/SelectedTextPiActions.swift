@@ -40,6 +40,94 @@ enum SelectedTextSurfaceKind: Equatable {
     }
 }
 
+struct SelectedTextActionContext {
+    let dispatcher: SelectedTextPiActionRouter
+    let sessionId: String
+    let sourceLabel: String?
+    let filePath: String?
+    let languageHint: String?
+
+    init(
+        dispatcher: SelectedTextPiActionRouter,
+        sessionId: String,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        languageHint: String? = nil
+    ) {
+        self.dispatcher = dispatcher
+        self.sessionId = sessionId
+        self.sourceLabel = sourceLabel
+        self.filePath = filePath
+        self.languageHint = languageHint
+    }
+
+    init?(
+        router: SelectedTextPiActionRouter?,
+        sessionId: String? = nil,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        languageHint: String? = nil
+    ) {
+        guard let router else { return nil }
+        self.init(
+            dispatcher: router,
+            sessionId: sessionId ?? "",
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            languageHint: languageHint
+        )
+    }
+
+    func sourceContext(
+        surface: SelectedTextSurfaceKind,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        lineRange: ClosedRange<Int>? = nil,
+        languageHint: String? = nil
+    ) -> SelectedTextSourceContext {
+        SelectedTextSourceContext(
+            sessionId: sessionId,
+            surface: surface,
+            sourceLabel: sourceLabel ?? self.sourceLabel,
+            filePath: filePath ?? self.filePath,
+            lineRange: lineRange,
+            languageHint: languageHint ?? self.languageHint
+        )
+    }
+
+    func overriding(
+        sessionId: String? = nil,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        languageHint: String? = nil
+    ) -> SelectedTextActionContext {
+        SelectedTextActionContext(
+            dispatcher: dispatcher,
+            sessionId: sessionId ?? self.sessionId,
+            sourceLabel: sourceLabel ?? self.sourceLabel,
+            filePath: filePath ?? self.filePath,
+            languageHint: languageHint ?? self.languageHint
+        )
+    }
+}
+
+extension SelectedTextActionScope {
+    func makeActionContext(
+        sessionId: String? = nil,
+        sourceLabel: String? = nil,
+        filePath: String? = nil,
+        languageHint: String? = nil
+    ) -> SelectedTextActionContext? {
+        SelectedTextActionContext(
+            router: router,
+            sessionId: sessionId,
+            sourceLabel: sourceLabel,
+            filePath: filePath,
+            languageHint: languageHint
+        )
+    }
+}
+
 struct SelectedTextSourceContext: Equatable {
     let sessionId: String
     let surface: SelectedTextSurfaceKind
@@ -117,46 +205,39 @@ enum SelectedTextPiMenuBuilder {
         router: SelectedTextPiActionRouter,
         actionStore: PiQuickActionStore? = nil
     ) -> UIMenu? {
-        guard let piSubmenu = piSubmenu(
+        guard let commentAction = commentAction(
             selectedText: selectedText,
             sourceContext: sourceContext,
-            router: router,
-            actionStore: actionStore
+            router: router
         ) else {
             return nil
         }
 
-        // Keep π first so the system is less likely to bury it under "More"
-        // when the edit menu gets crowded.
-        return UIMenu(children: [piSubmenu] + suggestedActions)
+        // Keep Comment first so the system is less likely to bury it under
+        // "More" when the edit menu gets crowded.
+        return UIMenu(children: [commentAction] + suggestedActions)
     }
 
     @MainActor
-    static func piSubmenu(
+    static func commentAction(
         selectedText: String,
         sourceContext: SelectedTextSourceContext,
-        router: SelectedTextPiActionRouter,
-        actionStore: PiQuickActionStore? = nil
-    ) -> UIMenu? {
+        router: SelectedTextPiActionRouter
+    ) -> UIAction? {
         let normalized = SelectedTextPiPromptFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
 
-        let quickActions = PiQuickAction.sortedForSelectionMenu(actionStore?.actions ?? PiQuickAction.builtInDefaults)
-
-        let menuActions = quickActions.map { quickAction in
-            UIAction(
-                title: quickAction.title,
-                image: UIImage(systemName: quickAction.systemImage)
-            ) { _ in
-                router.dispatch(.init(
-                    action: quickAction,
-                    selectedText: normalized,
-                    source: sourceContext
-                ))
-            }
+        let quickAction = PiQuickAction.reviewCommentAction
+        return UIAction(
+            title: quickAction.title,
+            image: UIImage(systemName: quickAction.systemImage)
+        ) { _ in
+            router.dispatch(.init(
+                action: quickAction,
+                selectedText: normalized,
+                source: sourceContext
+            ))
         }
-
-        return UIMenu(title: "π", children: menuActions)
     }
 }
 
@@ -240,18 +321,35 @@ enum SelectedTextPiEditMenuSupport {
 
 import SwiftUI
 
-private struct SelectedTextPiRouterEnvironmentKey: EnvironmentKey {
-    static let defaultValue: SelectedTextPiActionRouter? = nil
+enum SelectedTextActionScope {
+    case activeSession(SelectedTextPiActionRouter)
+    case quickSession(SelectedTextPiActionRouter)
+
+    var router: SelectedTextPiActionRouter {
+        switch self {
+        case .activeSession(let router), .quickSession(let router):
+            return router
+        }
+    }
+}
+
+private struct SelectedTextActionScopeEnvironmentKey: EnvironmentKey {
+    static let defaultValue: SelectedTextActionScope? = nil
 }
 
 extension EnvironmentValues {
-    /// Pi action router for text selection menus.
+    /// Routing scope for selected-text actions.
     ///
-    /// Injected by `FileBrowserContentView` (routes to quick session)
-    /// and `ChatTimelineView` (routes to active session composer).
+    /// Boundary views must inject a scope explicitly. Shared file/diff viewers
+    /// consume it but do not manufacture their own fallback routing.
+    var selectedTextActionScope: SelectedTextActionScope? {
+        get { self[SelectedTextActionScopeEnvironmentKey.self] }
+        set { self[SelectedTextActionScopeEnvironmentKey.self] = newValue }
+    }
+
+    /// Convenience read-only access to the scoped router.
     var selectedTextPiActionRouter: SelectedTextPiActionRouter? {
-        get { self[SelectedTextPiRouterEnvironmentKey.self] }
-        set { self[SelectedTextPiRouterEnvironmentKey.self] = newValue }
+        selectedTextActionScope?.router
     }
 }
 

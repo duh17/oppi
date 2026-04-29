@@ -13,8 +13,16 @@ struct JSONFileView: View {
     let presentation: FileContentPresentation
     let filePath: String?
 
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @State private var prettyContent: String?
+
+    private var selectedTextActionContext: SelectedTextActionContext? {
+        selectedTextActionScope?.makeActionContext(
+            sourceLabel: "JSON",
+            filePath: filePath,
+            languageHint: "json"
+        )
+    }
 
     var body: some View {
         let effectiveContent = prettyContent ?? content
@@ -44,9 +52,12 @@ struct JSONFileView: View {
                     content: effectiveContent,
                     language: "json",
                     startLine: startLine,
-                    selectedTextSourceContext: piRouter != nil
-                        ? fileContentSourceContext(filePath: filePath, language: "json")
-                        : nil
+                    selectedTextSourceContext: selectedTextActionContext?
+                        .sourceContext(
+                            surface: .fullScreenCode,
+                            filePath: filePath,
+                            languageHint: "json"
+                        )
                 )
             }
         }

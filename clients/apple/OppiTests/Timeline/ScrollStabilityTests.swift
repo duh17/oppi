@@ -23,6 +23,90 @@ struct ScrollStabilityTests {
     // MARK: - Scroll Stability
 
     @MainActor
+    @Test func selectionEnabledTallUserMessageStaysStableDuringDetachedStreamingUpdates() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "s-user-review-scroll",
+            useAnchoredCollectionView: true
+        )
+        let router = SelectedTextPiActionRouter { _ in }
+
+        var items: [ChatItem] = []
+        for i in 0..<12 {
+            items.append(.assistantMessage(
+                id: "a-pre-\(i)",
+                text: String(repeating: "Context line \(i). ", count: 10),
+                timestamp: Date()
+            ))
+        }
+
+        let reviewBlock = (0..<80)
+            .map { "Review clients/apple/Oppi/Features/Chat/File\($0).swift" }
+            .joined(separator: "\n")
+        items.append(.userMessage(
+            id: "user-review",
+            text: reviewBlock,
+            images: [],
+            timestamp: Date()
+        ))
+
+        for i in 0..<8 {
+            items.append(.assistantMessage(
+                id: "a-post-\(i)",
+                text: String(repeating: "Follow-up line \(i). ", count: 8),
+                timestamp: Date()
+            ))
+        }
+        items.append(.assistantMessage(id: "stream-1", text: "Starting review…", timestamp: Date()))
+
+        windowed.applyItems(items, isBusy: true, streamingID: "stream-1", selectedTextPiRouter: router)
+
+        let maxOffset = max(0, windowed.collectionView.contentSize.height - windowed.collectionView.bounds.height)
+        windowed.collectionView.contentOffset.y = maxOffset
+        windowed.collectionView.layoutIfNeeded()
+
+        let targetIndex = try #require(items.firstIndex(where: { $0.id == "user-review" }))
+        windowed.collectionView.scrollToItem(at: IndexPath(item: targetIndex, section: 0), at: .top, animated: false)
+        windowed.collectionView.layoutIfNeeded()
+        windowed.scrollController.detachFromBottomForUserScroll()
+
+        let userCell = try #require(windowed.collectionView.cellForItem(at: IndexPath(item: targetIndex, section: 0)))
+        let userTextView = try #require(timelineFirstTextView(in: userCell.contentView))
+        #expect(userTextView.isSelectable)
+        #expect(
+            userTextView.gestureRecognizerShouldBegin(userTextView.panGestureRecognizer) == false,
+            "Tall selectable user messages must pass vertical drags to the outer timeline"
+        )
+
+        let anchorOffset = windowed.collectionView.contentOffset.y
+
+        for round in 1...6 {
+            let lastIndex = items.count - 1
+            items[lastIndex] = .assistantMessage(
+                id: "stream-1",
+                text: String(repeating: "Streaming review round \(round). ", count: round * 18),
+                timestamp: Date()
+            )
+
+            if round.isMultiple(of: 2) {
+                items.append(.toolCall(
+                    id: "tool-\(round)",
+                    tool: "Read",
+                    argsSummary: "clients/apple/Oppi/File\(round).swift",
+                    outputPreview: "contents",
+                    outputByteCount: 256,
+                    isError: false,
+                    isDone: true
+                ))
+            }
+
+            windowed.applyItems(items, isBusy: true, streamingID: "stream-1", selectedTextPiRouter: router)
+            let drift = abs(windowed.collectionView.contentOffset.y - anchorOffset)
+            #expect(drift < 2.0, "contentOffset drifted \(drift)pt on streaming round \(round)")
+            #expect(!windowed.scrollController.isCurrentlyNearBottom)
+        }
+    }
+
+    @MainActor
     @Test func contentOffsetStaysStableWhenNewItemsAppendedWhileScrolledUp() {
         // Reproduce: user is scrolled up; tool calls transition from running
         // to done (height changes), new items are inserted. Viewport must stay.

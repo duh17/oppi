@@ -37,7 +37,7 @@ struct SelectedTextPiPromptFormatterTests {
         )
 
         let result = SelectedTextPiPromptFormatter.composeDraftAddition(for: request)
-        #expect(result == "Explain this:\n\n> some passage")
+        #expect(result == "Explain this.\n\n> some passage")
     }
 
     @Test func codeFormattingUsesLongerFenceWhenSelectionContainsBackticks() {

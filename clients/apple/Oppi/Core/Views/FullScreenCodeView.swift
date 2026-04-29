@@ -273,6 +273,7 @@ extension View {
     func fullScreenViewer(
         isPresented: Binding<Bool>,
         content: FullScreenCodeContent,
+        selectedTextActionContext: SelectedTextActionContext? = nil,
         piRouter: SelectedTextPiActionRouter? = nil,
         sessionId: String? = nil,
         sourceLabel: String? = nil
@@ -280,7 +281,8 @@ extension View {
         sheet(isPresented: isPresented) {
             FullScreenCodeView(
                 content: content,
-                selectedTextPiRouter: piRouter,
+                selectedTextActionContext: selectedTextActionContext,
+                selectedTextActionRouter: piRouter,
                 selectedTextSessionId: sessionId,
                 selectedTextSourceLabel: sourceLabel
             )
@@ -294,25 +296,33 @@ extension View {
 
 struct FullScreenCodeView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
-    var selectedTextPiRouter: SelectedTextPiActionRouter?
+    var selectedTextActionContext: SelectedTextActionContext?
+    var selectedTextActionRouter: SelectedTextPiActionRouter?
     let selectedTextSessionId: String?
     let selectedTextSourceLabel: String?
 
-    @Environment(\.selectedTextPiActionRouter) private var environmentPiRouter
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
 
-    /// Effective router: explicit parameter wins, falls back to environment.
-    private var effectivePiRouter: SelectedTextPiActionRouter? {
-        selectedTextPiRouter ?? environmentPiRouter
+    /// Effective action context for this fullscreen presentation.
+    private var effectiveActionContext: SelectedTextActionContext? {
+        selectedTextActionContext
+            ?? selectedTextActionRouter.map { SelectedTextActionContext(router: $0, sessionId: selectedTextSessionId, sourceLabel: selectedTextSourceLabel) }
+            ?? selectedTextActionScope?.makeActionContext(
+                sessionId: selectedTextSessionId,
+                sourceLabel: selectedTextSourceLabel
+            )
     }
 
     init(
         content: FullScreenCodeContent,
-        selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
+        selectedTextActionContext: SelectedTextActionContext? = nil,
+        selectedTextActionRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
         selectedTextSourceLabel: String? = nil
     ) {
         self.content = content
-        self.selectedTextPiRouter = selectedTextPiRouter
+        self.selectedTextActionContext = selectedTextActionContext
+        self.selectedTextActionRouter = selectedTextActionRouter
         self.selectedTextSessionId = selectedTextSessionId
         self.selectedTextSourceLabel = selectedTextSourceLabel
     }
@@ -320,9 +330,7 @@ struct FullScreenCodeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
-            selectedTextPiRouter: effectivePiRouter,
-            selectedTextSessionId: selectedTextSessionId,
-            selectedTextSourceLabel: selectedTextSourceLabel
+            selectedTextActionContext: effectiveActionContext
         )
     }
 

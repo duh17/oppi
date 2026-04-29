@@ -64,18 +64,9 @@ final class AppNavigation {
 
     // MARK: - Pi Quick Actions
 
-    /// Creates a pi quick-action router that routes to the quick session sheet.
-    ///
-    /// This is the canonical router for all non-chat surfaces (file browser,
-    /// review diffs, skill files, commit diffs, etc.). Chat views create their
-    /// own router that sends to the active session's composer instead.
-    ///
-    /// Injected at the `ContentView` root via `.environment()` so most views
-    /// pick it up automatically. Views that present sheets may need to
-    /// re-inject it since SwiftUI environment doesn't always propagate
-    /// through nested sheet boundaries.
-    func makeQuickSessionPiRouter() -> SelectedTextPiActionRouter {
-        SelectedTextPiActionRouter { [weak self] request in
+    /// Creates the default non-chat selected-text routing scope.
+    func makeQuickSessionActionScope() -> SelectedTextActionScope {
+        .quickSession(SelectedTextPiActionRouter { [weak self] request in
             guard let self,
                   case .quickSessionDraft(let draft) = SelectedTextPiRouterPolicy.route(
                     request: request,
@@ -83,7 +74,7 @@ final class AppNavigation {
                   ) else { return }
             self.pendingQuickSessionDraft = draft
             self.showQuickSession = true
-        }
+        })
     }
 }
 

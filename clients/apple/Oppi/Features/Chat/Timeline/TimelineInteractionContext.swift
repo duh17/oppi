@@ -11,6 +11,14 @@ final class TimelineInteractionContext {
     var selectedTextPiRouter: SelectedTextPiActionRouter?
     var sessionId: String = ""
 
+    /// Context object for renderer plumbing.
+    var selectedTextActionContext: SelectedTextActionContext? {
+        SelectedTextActionContext(
+            router: selectedTextPiRouter,
+            sessionId: sessionId
+        )
+    }
+
     /// Build a `SelectedTextSourceContext` for the given surface.
     func sourceContext(
         surface: SelectedTextSurfaceKind,
@@ -19,9 +27,7 @@ final class TimelineInteractionContext {
         lineRange: ClosedRange<Int>? = nil,
         languageHint: String? = nil
     ) -> SelectedTextSourceContext? {
-        guard selectedTextPiRouter != nil else { return nil }
-        return SelectedTextSourceContext(
-            sessionId: sessionId,
+        selectedTextActionContext?.sourceContext(
             surface: surface,
             sourceLabel: sourceLabel,
             filePath: filePath,

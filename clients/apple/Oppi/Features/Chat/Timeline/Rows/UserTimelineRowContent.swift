@@ -1,6 +1,40 @@
 import SwiftUI
 import UIKit
 
+/// Non-scrollable UITextView that lets the outer timeline own vertical drags.
+///
+/// User rows enable text selection for the Comment action. A plain selectable
+/// `UITextView` still wants to begin its internal pan gesture even when
+/// scrolling is disabled, which prevents the outer chat timeline from entering
+/// a user-drag state and can trigger detached-anchor snap-back.
+private final class VerticalPanPassthroughTextView: UITextView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        guard !isScrollEnabled else { return }
+
+        let desiredOffset = CGPoint(
+            x: -adjustedContentInset.left,
+            y: -adjustedContentInset.top
+        )
+
+        guard abs(contentOffset.x - desiredOffset.x) > 0.5
+                || abs(contentOffset.y - desiredOffset.y) > 0.5 else {
+            return
+        }
+
+        contentOffset = desiredOffset
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGestureRecognizer, !isScrollEnabled {
+            return false
+        }
+
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+}
+
 /// Native UIKit user row — handles text, upload badges, repo-pointer badges, and image messages.
 struct UserTimelineRowConfiguration: UIContentConfiguration {
     let text: String
@@ -42,7 +76,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private let pathPillRow = UIStackView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
-    private let messageTextView = UITextView()
+    private let messageTextView = VerticalPanPassthroughTextView()
     private let imageStrip = UIScrollView()
     private let imageStack = UIStackView()
 
@@ -79,7 +113,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     var forkAction: (() -> Void)? { currentConfiguration.onFork }
 
     private var isSelectedTextPiEnabled: Bool {
-        currentConfiguration.interactionContext?.selectedTextPiRouter != nil
+        currentConfiguration.interactionContext?.selectedTextActionContext != nil
     }
 
     init(configuration: UserTimelineRowConfiguration) {
@@ -699,7 +733,7 @@ extension UserTimelineRowContentView: UITextViewDelegate {
             textView: textView,
             range: range,
             suggestedActions: suggestedActions,
-            router: currentConfiguration.interactionContext?.selectedTextPiRouter,
+            router: currentConfiguration.interactionContext?.selectedTextActionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .userMessage
             )

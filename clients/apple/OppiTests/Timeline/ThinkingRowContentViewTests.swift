@@ -107,7 +107,7 @@ struct ThinkingRowContentViewTests {
         #expect(!hasSingleTap)
     }
 
-    @Test func selectedTextEditMenuPrependsPiSubmenu() throws {
+    @Test func selectedTextEditMenuPrependsCommentAction() throws {
         let router = SelectedTextPiActionRouter { _ in }
         let interactionCtx = TimelineInteractionContext()
         interactionCtx.selectedTextPiRouter = router
@@ -130,9 +130,8 @@ struct ThinkingRowContentViewTests {
             suggestedActions: [copyAction]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
         let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
         #expect(copyMenuAction.title == "Copy")
     }

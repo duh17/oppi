@@ -53,9 +53,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
-    private let selectedTextPiRouter: SelectedTextPiActionRouter?
-    private let selectedTextSessionId: String?
-    private let selectedTextSourceLabel: String?
+    private let selectedTextActionContext: SelectedTextActionContext?
     private var showSource = false
     private var copyButton: UIBarButtonItem?
     private weak var contentHostController: UIViewController?
@@ -68,15 +66,19 @@ final class FullScreenCodeViewController: UIViewController {
     init(
         content: FullScreenCodeContent,
         presentationMode: PresentationMode = .sheet,
+        selectedTextActionContext: SelectedTextActionContext? = nil,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
         selectedTextSourceLabel: String? = nil
     ) {
         self.content = content
         self.presentationMode = presentationMode
-        self.selectedTextPiRouter = selectedTextPiRouter
-        self.selectedTextSessionId = selectedTextSessionId
-        self.selectedTextSourceLabel = selectedTextSourceLabel
+        self.selectedTextActionContext = selectedTextActionContext
+            ?? SelectedTextActionContext(
+                router: selectedTextPiRouter,
+                sessionId: selectedTextSessionId,
+                sourceLabel: selectedTextSourceLabel
+            )
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -88,6 +90,7 @@ final class FullScreenCodeViewController: UIViewController {
     /// responder-chain walk from a specific source view.
     static func present(
         content: FullScreenCodeContent,
+        selectedTextActionContext: SelectedTextActionContext? = nil,
         selectedTextPiRouter: SelectedTextPiActionRouter? = nil,
         selectedTextSessionId: String? = nil,
         selectedTextSourceLabel: String? = nil
@@ -105,9 +108,12 @@ final class FullScreenCodeViewController: UIViewController {
 
         let controller = FullScreenCodeViewController(
             content: content,
-            selectedTextPiRouter: selectedTextPiRouter,
-            selectedTextSessionId: selectedTextSessionId,
-            selectedTextSourceLabel: selectedTextSourceLabel
+            selectedTextActionContext: selectedTextActionContext
+                ?? SelectedTextActionContext(
+                    router: selectedTextPiRouter,
+                    sessionId: selectedTextSessionId,
+                    sourceLabel: selectedTextSourceLabel
+                )
         )
         controller.modalPresentationStyle = .pageSheet
         if let sheet = controller.sheetPresentationController {
@@ -276,7 +282,7 @@ final class FullScreenCodeViewController: UIViewController {
                 language: language,
                 startLine: startLine,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
@@ -288,7 +294,7 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 isStreaming: false,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenSource,
                     filePath: filePath
@@ -301,7 +307,7 @@ final class FullScreenCodeViewController: UIViewController {
                 filePath: filePath,
                 precomputedLines: precomputedLines,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
                     filePath: filePath
@@ -313,7 +319,7 @@ final class FullScreenCodeViewController: UIViewController {
                 stream: nil,
                 palette: palette,
                 plainTextFallbackThreshold: nil,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenMarkdown,
                     filePath: filePath
@@ -327,7 +333,7 @@ final class FullScreenCodeViewController: UIViewController {
             return body
         case .html(let text, let filePath):
             let piHandler = makePiWebViewHandler(
-                router: selectedTextPiRouter,
+                router: selectedTextActionContext?.dispatcher,
                 sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
             )
             let view = HTMLRenderView(htmlString: text, piActionHandler: piHandler)
@@ -338,7 +344,7 @@ final class FullScreenCodeViewController: UIViewController {
                 content: text,
                 stream: stream,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenThinking,
                     fallbackSourceLabel: String(localized: "Thinking")
@@ -351,7 +357,7 @@ final class FullScreenCodeViewController: UIViewController {
                 command: command,
                 stream: stream,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenTerminal,
                     fallbackSourceLabel: command
@@ -365,7 +371,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .latex(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
@@ -376,7 +382,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .orgMode(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
@@ -387,7 +393,7 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenRenderedDocumentBody(
                 content: .mermaid(text),
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
@@ -400,7 +406,7 @@ final class FullScreenCodeViewController: UIViewController {
                 language: "dot",
                 startLine: 1,
                 palette: palette,
-                selectedTextPiRouter: selectedTextPiRouter,
+                selectedTextPiRouter: selectedTextActionContext?.dispatcher,
                 selectedTextSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
                     filePath: filePath,
@@ -418,7 +424,7 @@ final class FullScreenCodeViewController: UIViewController {
             content: snapshot.text,
             isStreaming: !snapshot.isDone,
             palette: palette,
-            selectedTextPiRouter: selectedTextPiRouter,
+            selectedTextPiRouter: selectedTextActionContext?.dispatcher,
             selectedTextSourceContext: makeSourceContext(
                 surface: .fullScreenSource,
                 filePath: snapshot.filePath
@@ -571,13 +577,10 @@ final class FullScreenCodeViewController: UIViewController {
         languageHint: String? = nil,
         fallbackSourceLabel: String? = nil
     ) -> SelectedTextSourceContext? {
-        // Allow empty session ID for file browser context where there's no
-        // active session but we still want the π quick action menu.
-        guard selectedTextPiRouter != nil else { return nil }
-        return SelectedTextSourceContext(
-            sessionId: selectedTextSessionId ?? "",
+        guard let actionContext = selectedTextActionContext else { return nil }
+        return actionContext.sourceContext(
             surface: surface,
-            sourceLabel: selectedTextSourceLabel ?? fallbackSourceLabel,
+            sourceLabel: actionContext.sourceLabel ?? fallbackSourceLabel,
             filePath: filePath,
             languageHint: languageHint
         )

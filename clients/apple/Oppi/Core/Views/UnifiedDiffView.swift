@@ -13,11 +13,16 @@ struct UnifiedDiffView: View {
     let filePath: String
     var emptyTitle = "No Textual Changes"
     var emptySystemImage = "checkmark.circle"
-    var emptyDescription = "This diff has no textual changes to show."
+    var emptyDescription = "This file has no textual changes to show."
     var selectedTextSourceContext: SelectedTextSourceContext?
+    var selectedTextActionContext: SelectedTextActionContext?
 
-    @Environment(\.selectedTextPiActionRouter) private var piRouter
+    @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @Environment(\.piQuickActionStore) private var piQuickActionStore
+
+    private var effectiveActionContext: SelectedTextActionContext? {
+        selectedTextActionContext ?? selectedTextActionScope?.makeActionContext()
+    }
 
     /// Pre-built attributed string + measured width, computed off main thread.
     @State private var built: BuiltDiff?
@@ -35,9 +40,12 @@ struct UnifiedDiffView: View {
             } else if let built {
                 UnifiedDiffTextView(
                     built: built,
-                    piRouter: piRouter,
+                    selectedTextActionContext: effectiveActionContext,
                     piQuickActionStore: piQuickActionStore,
-                    sourceContext: selectedTextSourceContext
+                    sourceContext: selectedTextSourceContext ?? effectiveActionContext?.sourceContext(
+                        surface: .fullScreenDiff,
+                        filePath: filePath
+                    )
                 )
                 .ignoresSafeArea(.keyboard)
             } else {
@@ -146,12 +154,16 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
 /// attributed string. The build happens off the main thread in the parent view.
 private struct UnifiedDiffTextView: UIViewRepresentable {
     let built: UnifiedDiffView.BuiltDiff
-    let piRouter: SelectedTextPiActionRouter?
+    let selectedTextActionContext: SelectedTextActionContext?
     let piQuickActionStore: PiQuickActionStore?
     let sourceContext: SelectedTextSourceContext?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(piRouter: piRouter, piQuickActionStore: piQuickActionStore, sourceContext: sourceContext)
+        Coordinator(
+            selectedTextActionContext: selectedTextActionContext,
+            piQuickActionStore: piQuickActionStore,
+            sourceContext: sourceContext
+        )
     }
 
     func makeUIView(context: Context) -> UIView {
@@ -212,22 +224,22 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.piRouter = piRouter
+        context.coordinator.selectedTextActionContext = selectedTextActionContext
         context.coordinator.piQuickActionStore = piQuickActionStore
         context.coordinator.sourceContext = sourceContext
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        var piRouter: SelectedTextPiActionRouter?
+        var selectedTextActionContext: SelectedTextActionContext?
         var piQuickActionStore: PiQuickActionStore?
         var sourceContext: SelectedTextSourceContext?
 
         init(
-            piRouter: SelectedTextPiActionRouter?,
+            selectedTextActionContext: SelectedTextActionContext?,
             piQuickActionStore: PiQuickActionStore?,
             sourceContext: SelectedTextSourceContext?
         ) {
-            self.piRouter = piRouter
+            self.selectedTextActionContext = selectedTextActionContext
             self.piQuickActionStore = piQuickActionStore
             self.sourceContext = sourceContext
         }
@@ -241,7 +253,7 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
                 textView: textView,
                 range: range,
                 suggestedActions: suggestedActions,
-                router: piRouter,
+                router: selectedTextActionContext?.dispatcher,
                 sourceContext: sourceContext,
                 actionStore: piQuickActionStore
             )

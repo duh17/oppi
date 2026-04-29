@@ -208,7 +208,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
-            selectedTextPiRouter: configuration.interactionContext?.selectedTextPiRouter,
+            selectedTextPiRouter: configuration.interactionContext?.selectedTextActionContext?.dispatcher,
             selectedTextSourceContext: configuration.interactionContext?.sourceContext(
                 surface: .assistantProse
             ),

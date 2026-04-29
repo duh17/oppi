@@ -200,6 +200,34 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("selection-enabled user row passes vertical pans to outer timeline")
+    func selectionEnabledUserRowPassesVerticalPansToOuterTimeline() throws {
+        let interactionCtx = TimelineInteractionContext()
+        interactionCtx.selectedTextPiRouter = SelectedTextPiActionRouter { _ in }
+        interactionCtx.sessionId = "session-1"
+        var config = UserTimelineRowConfiguration(
+            text: String(repeating: "Review clients/apple/Oppi/Features/Chat/ChatView.swift\n", count: 40),
+            images: [],
+            canFork: false,
+            onFork: nil
+        )
+        config.interactionContext = interactionCtx
+        let view = UserTimelineRowContentView(configuration: config)
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 320)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let textView = try #require(userMessageTextView(in: view))
+        #expect(textView.isSelectable)
+        #expect(!textView.isScrollEnabled)
+        #expect(
+            textView.gestureRecognizerShouldBegin(textView.panGestureRecognizer) == false,
+            "Selectable non-scrollable user text should pass vertical drags to the outer timeline"
+        )
+    }
+
+    @MainActor
     @Test("user row selected text edit menu prepends π submenu")
     func userRowSelectedTextEditMenuPrependsPiSubmenu() throws {
         let interactionCtx = TimelineInteractionContext()
@@ -227,9 +255,7 @@ struct UserTimelineRowContentTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
     }
 
     @MainActor

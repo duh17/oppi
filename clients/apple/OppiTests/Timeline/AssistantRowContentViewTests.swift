@@ -683,7 +683,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func selectedTextEditMenuPrependsPiSubmenu() throws {
+    @Test func selectedTextEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
         let router = SelectedTextPiActionRouter { _ in }
         markdownView.apply(configuration: .make(
@@ -702,16 +702,15 @@ struct AssistantTimelineRowContentViewTests {
             suggestedActions: [copyAction]
         ))
 
-        #expect(timelineActionTitles(in: menu) == ["Copy"])
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
-        #expect(timelineActionTitles(in: piMenu) == ["Comment", "Explain", "Do it", "Fix", "Refactor", "Add to Prompt", "New Session"])
+        #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
         let copyMenuAction = try #require(menu.children.dropFirst().first as? UIAction)
         #expect(copyMenuAction.title == "Copy")
     }
 
     @MainActor
-    @Test func selectedAssistantCodeBlockEditMenuPrependsPiSubmenu() throws {
+    @Test func selectedAssistantCodeBlockEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
         let router = SelectedTextPiActionRouter { _ in }
         markdownView.apply(configuration: .make(
@@ -731,12 +730,12 @@ struct AssistantTimelineRowContentViewTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
     @MainActor
-    @Test func selectedAssistantTableEditMenuPrependsPiSubmenu() throws {
+    @Test func selectedAssistantTableEditMenuPrependsCommentAction() throws {
         let markdownView = AssistantMarkdownContentView()
         let router = SelectedTextPiActionRouter { _ in }
         markdownView.apply(configuration: .make(
@@ -756,8 +755,8 @@ struct AssistantTimelineRowContentViewTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
     @MainActor

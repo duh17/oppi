@@ -139,21 +139,26 @@ final class ReviewCommentStore {
         ]
 
         for (index, comment) in staged.enumerated() {
-            lines.append("\(index + 1). Location: \(referenceTitle(comment.reference))")
+            lines.append("### Comment \(index + 1)")
+            lines.append("")
+            lines.append("**Where:** \(referenceTitle(comment.reference))")
+
             if let selectedText = comment.reference.selectedText,
                !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append("   Context:")
+                lines.append("")
+                lines.append("**Selected text:**")
                 lines.append(contentsOf: fencedContextLines(
                     selectedText,
                     language: comment.reference.languageHint ?? languageHint(for: comment.reference.path),
                     maxLines: 12
                 ))
-                lines.append("")
             }
-            lines.append("   Comment:")
-            for bodyLine in comment.body.split(separator: "\n", omittingEmptySubsequences: false) {
-                lines.append("   \(bodyLine)")
-            }
+
+            lines.append("")
+            lines.append("**Comment:**")
+            lines.append("")
+            lines.append(contentsOf: quotedCommentLines(comment.body))
+
             if index < staged.count - 1 {
                 lines.append("")
             }
@@ -194,9 +199,9 @@ final class ReviewCommentStore {
             .map(String.init)
         let fence = String(repeating: "`", count: max(3, longestBacktickRun(in: contextLines.joined(separator: "\n")) + 1))
         let languageSuffix = language.map { $0 } ?? ""
-        return ["   \(fence)\(languageSuffix)"]
-            + contextLines.map { "   \($0)" }
-            + ["   \(fence)"]
+        return ["\(fence)\(languageSuffix)"]
+            + contextLines
+            + ["\(fence)"]
     }
 
     private static func longestBacktickRun(in text: String) -> Int {
@@ -244,6 +249,12 @@ final class ReviewCommentStore {
             return "css"
         default:
             return nil
+        }
+    }
+
+    private static func quotedCommentLines(_ text: String) -> [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            line.isEmpty ? ">" : "> \(line)"
         }
     }
 

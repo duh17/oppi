@@ -32,7 +32,7 @@ struct FileBrowserPiActionTests {
 
         #expect(nav.showQuickSession == true)
         let draft = try #require(nav.pendingQuickSessionDraft)
-        #expect(draft.contains("Explain this:"))
+        #expect(draft.contains("Explain this."))
         #expect(draft.contains("let x = 42"))
     }
 
@@ -81,7 +81,7 @@ struct FileBrowserPiActionTests {
         #expect(nav.pendingQuickSessionDraft == "> Some markdown prose")
     }
 
-    // MARK: - NativeCodeBodyView π menu via environment
+    // MARK: - NativeCodeBodyView comment menu via environment
 
     @Test func codeBodyShowsPiMenuWhenEnvironmentRouterSet() throws {
         let codeBody = NativeFullScreenCodeBody(
@@ -112,9 +112,8 @@ struct FileBrowserPiActionTests {
             suggestedActions: [UIAction(title: "Copy") { _ in }]
         ))
 
-        let piMenu = try #require(menu.children.first as? UIMenu)
-        #expect(piMenu.title == "π")
-        #expect(piMenu.children.count == PiQuickAction.builtInDefaults.count)
+        let commentAction = try #require(menu.children.first as? UIAction)
+        #expect(commentAction.title == "Comment")
     }
 
     @Test func codeBodyNoPiMenuWhenRouterNil() throws {

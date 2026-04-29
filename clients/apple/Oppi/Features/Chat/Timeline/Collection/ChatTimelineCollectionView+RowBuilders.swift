@@ -70,7 +70,7 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            onOpenPathPill: { [workspaceId, weak apiClient = connection?.apiClient] pill, sourceView in
+            onOpenPathPill: { [workspaceId, weak apiClient = connection?.apiClient, interactionContext = self.interactionContext] pill, sourceView in
                 guard let workspaceId, !workspaceId.isEmpty,
                       let apiClient,
                       let presenter = sourceView.nearestViewController() else {
@@ -84,6 +84,7 @@ extension ChatTimelineCollectionHost.Controller {
                     fileSize: nil
                 )
                 .environment(\.apiClient, apiClient)
+                .environment(\.selectedTextActionScope, interactionContext.selectedTextPiRouter.map(SelectedTextActionScope.activeSession))
 
                 let host = UIHostingController(rootView: view)
                 let navigation = UINavigationController(rootViewController: host)
