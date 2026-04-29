@@ -4,43 +4,41 @@ Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/badlogic
 
 ## Quickstart
 
+### npm global install
+
 ```bash
-# 1. Install
+npm install -g oppi-server
+oppi --version
+oppi serve
+```
+
+On first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials,
+and bootstraps local HTTPS/WSS with `tls.mode=self-signed`. Run `oppi pair` to
+show a pairing QR for the iOS/macOS app.
+
+Upgrade or uninstall the global CLI with npm:
+
+```bash
+npm install -g oppi-server@latest
+npm uninstall -g oppi-server
+```
+
+### Source checkout install
+
+```bash
 git clone https://github.com/duh17/oppi.git && cd oppi/server
 npm install
 npm run build
-
-# 2. Set up pi auth (needed for LLM API calls)
-pi auth
-
-# 3. Start (auto-inits config + shows pairing QR on first run)
 node dist/src/cli.js serve
 ```
 
-On a fresh install, first `serve` bootstraps local HTTPS/WSS with
-`tls.mode=self-signed` automatically (including cert pin in invite payloads).
-
-Use this command only if you need to switch back to self-signed later:
-
-```bash
-node dist/src/cli.js config set tls '{"mode":"self-signed"}'
-```
-
-Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
-
-```bash
-node dist/src/cli.js config set tls '{"mode":"tailscale"}'
-```
-
-Create a workspace in the app and start a session.
-
-If you prefer a one-command install from outside the repo, use:
+If you prefer the repo bootstrapper from outside the repo, use:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | bash
 ```
 
-Repo-root equivalent:
+Equivalent explicit steps:
 
 ```bash
 git clone https://github.com/duh17/oppi.git
@@ -48,10 +46,24 @@ cd oppi
 bash install.sh
 ```
 
+Use this command only if you need to switch back to self-signed later:
+
+```bash
+oppi config set tls '{"mode":"self-signed"}'
+```
+
+Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
+
+```bash
+oppi config set tls '{"mode":"tailscale"}'
+```
+
+Create a workspace in the app and start a session.
+
 ## Requirements
 
 - Node.js 22+
-- [pi](https://github.com/badlogic/pi-mono) CLI installed (`pi auth` for LLM auth)
+- [pi](https://github.com/badlogic/pi-mono) runtime dependency (installed automatically with npm package)
 - macOS or Linux
 
 ## Docker (skills-ready compose setup)
@@ -127,26 +139,39 @@ docker compose start
 
 ## Commands
 
-All commands run from the `server/` directory:
+Use `oppi ...` for npm/global installs. In a source checkout before linking, use
+`node dist/src/cli.js ...` from the `server/` directory.
 
 ```bash
-node dist/src/cli.js serve [--host <h>]      # start server
-node dist/src/cli.js init                    # interactive first-time setup
-node dist/src/cli.js pair [name]             # regenerate pairing QR
-node dist/src/cli.js status                  # server config overview
-node dist/src/cli.js doctor                  # check prerequisites
-node dist/src/cli.js update                  # update dependencies
-node dist/src/cli.js config show             # show config
-node dist/src/cli.js config get <key>        # get a single config value
-node dist/src/cli.js config set <key> <val>  # update config
-node dist/src/cli.js config validate         # validate config file
-node dist/src/cli.js token rotate            # rotate owner bearer token
-node dist/src/cli.js server install          # install LaunchAgent (macOS)
-node dist/src/cli.js server uninstall        # remove LaunchAgent
-node dist/src/cli.js server status           # check background service
-node dist/src/cli.js server restart          # restart background server
-node dist/src/cli.js server stop             # stop background server
+oppi serve [--host <h>]      # start server
+oppi init                    # interactive first-time setup
+oppi pair [name]             # regenerate pairing QR
+oppi status                  # server config overview
+oppi doctor                  # check prerequisites
+oppi update                  # update mutable runtime dependencies only
+oppi update --self           # show how to update the Oppi server install
+oppi config show             # show config
+oppi config get <key>        # get a single config value
+oppi config set <key> <val>  # update config
+oppi config validate         # validate config file
+oppi token rotate            # rotate owner bearer token
+oppi server install          # install LaunchAgent (macOS)
+oppi server uninstall        # remove LaunchAgent
+oppi server status           # check background service
+oppi server restart          # restart background server
+oppi server stop             # stop background server
 ```
+
+### Install and update modes
+
+- **App-managed runtime:** Oppi.app owns server code and seeds
+  `~/.config/oppi/server-runtime`. `oppi update` updates mutable runtime
+  dependencies only; update Oppi.app to update server code.
+- **npm global install:** npm owns server code. Use
+  `npm install -g oppi-server@latest` to upgrade and `npm uninstall -g
+oppi-server` to remove. `oppi update` does not upgrade the global package.
+- **Git/bootstrap install:** git owns server code. Use
+  `git pull && npm install && npm run build` to upgrade a checkout.
 
 ## Built-in extensions
 

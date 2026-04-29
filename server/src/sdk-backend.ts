@@ -1012,6 +1012,10 @@ export class SdkBackend {
         // Working indicator customization requires TUI access; unsupported in Oppi sessions.
       },
 
+      setWorkingVisible: (_visible) => {
+        // Working row visibility requires TUI access; unsupported in Oppi sessions.
+      },
+
       setWidget: (key, content, options) => {
         if (content === undefined || Array.isArray(content)) {
           this.emitExtensionUIRequest({

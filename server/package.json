@@ -9,7 +9,10 @@
   },
   "files": [
     "dist/",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts",
     "extensions/",
+    "!extensions/**/*.test.ts",
     "themes/",
     "LICENSE",
     "README.md"
@@ -72,14 +75,14 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "^0.7.0",
-    "@mariozechner/pi-coding-agent": "0.70.2",
+    "@mariozechner/pi-coding-agent": "0.70.6",
     "diff-match-patch": "^1.0.5",
     "mime-types": "3.0.2",
     "typebox": "1.1.28",
     "ws": "^8.18.0"
   },
   "overrides": {
-    "basic-ftp": "5.2.2"
+    "basic-ftp": "^5.2.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

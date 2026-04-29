@@ -60,6 +60,7 @@ import {
 import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
 import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
+import { getPackageInfo } from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
@@ -263,7 +264,7 @@ function resolvePiExecutable(): string {
 }
 
 export class Server {
-  static readonly VERSION = "0.2.0";
+  static readonly VERSION = getPackageInfo().version;
 
   static detectPiVersion(piExecutable: string): string {
     try {

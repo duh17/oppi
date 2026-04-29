@@ -78,7 +78,7 @@ function resolveRuntimeAbsolute(): string | null {
  * 1. Mutable runtime dir (seeded from DMG)
  * 2. The CLI that's currently running (git clone / local dev)
  * 3. App bundle seed (direct)
- * 4. Homebrew global
+ * 4. npm global
  */
 function resolveCLIAbsolute(): string | null {
   const runtimeCLI = join(homedir(), ".config", "oppi", "server-runtime", "dist", "src", "cli.js");
@@ -93,11 +93,12 @@ function resolveCLIAbsolute(): string | null {
   const seedCLI = "/Applications/Oppi.app/Contents/Resources/server-seed/dist/src/cli.js";
   if (existsSync(seedCLI)) return seedCLI;
 
-  const brewCandidates = [
-    "/opt/homebrew/lib/node_modules/@anthropic-ai/oppi/dist/src/cli.js",
-    "/usr/local/lib/node_modules/@anthropic-ai/oppi/dist/src/cli.js",
+  const globalCandidates = [
+    "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js",
+    "/usr/local/lib/node_modules/oppi-server/dist/src/cli.js",
+    join(homedir(), ".npm", "lib", "node_modules", "oppi-server", "dist", "src", "cli.js"),
   ];
-  for (const p of brewCandidates) {
+  for (const p of globalCandidates) {
     if (existsSync(p)) return p;
   }
 

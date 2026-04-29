@@ -10,12 +10,13 @@
  *   API:     POST /server/runtime/update
  *
  * Updates run `bun install` (or `npm install`) in the runtime dir using
- * the existing package.json. The server must be restarted after updates
- * to pick up new code.
+ * the existing package.json. When a newer pi runtime package is available,
+ * Oppi pins the runtime manifest to that version before installing.
+ * The server must be restarted after updates to pick up new code.
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 export interface RuntimeUpdateStatus {
@@ -57,6 +58,12 @@ interface RuntimeUpdateManagerOptions {
   currentVersion: string;
 }
 
+interface PackageManagerCommand {
+  bin: string;
+  installArgs: string[];
+  name: string;
+}
+
 /**
  * Resolves the mutable runtime directory.
  *
@@ -67,11 +74,8 @@ interface RuntimeUpdateManagerOptions {
  * Falls back to the OPPI_DATA_DIR-relative conventional path.
  */
 function resolveRuntimeDir(): string | undefined {
-  // The CLI entrypoint is at <runtimeDir>/dist/src/cli.js
-  // __dirname in ESM is not available, but we can use import.meta.url or process.argv
   const cliPath = process.argv[1];
   if (cliPath) {
-    // Walk up from dist/src/cli.js → runtime dir
     const candidate = dirname(dirname(dirname(cliPath)));
     if (
       existsSync(join(candidate, "package.json")) &&
@@ -81,7 +85,6 @@ function resolveRuntimeDir(): string | undefined {
     }
   }
 
-  // Fallback: conventional path
   const home = process.env.HOME || process.env.USERPROFILE || "";
   const conventional = join(home, ".config", "oppi", "server-runtime");
   if (existsSync(join(conventional, "package.json"))) {
@@ -94,20 +97,16 @@ function resolveRuntimeDir(): string | undefined {
 /**
  * Resolves a package manager binary for running install.
  *
- * Priority: OPPI_RUNTIME_BIN env (set by Mac app) → bun → npm → node (with npx).
+ * Priority: OPPI_RUNTIME_BIN env (set by Mac app) → bun → npm.
  */
-function resolvePackageManager(): { bin: string; args: string[]; name: string } | undefined {
-  // The runtime dir only has dist/ (no source) so we must skip prepare/build scripts.
-  // Also skip postinstall scripts for supply-chain safety (consistent with .npmrc).
+function resolvePackageManager(): PackageManagerCommand | undefined {
   const ignoreScripts = "--ignore-scripts";
 
-  // Mac app injects the exact bun path it launched us with
   const runtimeBin = process.env.OPPI_RUNTIME_BIN;
   if (runtimeBin && existsSync(runtimeBin) && runtimeBin.includes("bun")) {
-    return { bin: runtimeBin, args: ["install", "--no-save", ignoreScripts], name: "bun" };
+    return { bin: runtimeBin, installArgs: ["install", "--no-save", ignoreScripts], name: "bun" };
   }
 
-  // Check common bun locations
   const bunCandidates = [
     "/opt/homebrew/bin/bun",
     "/usr/local/bin/bun",
@@ -115,15 +114,14 @@ function resolvePackageManager(): { bin: string; args: string[]; name: string } 
   ];
   for (const p of bunCandidates) {
     if (existsSync(p)) {
-      return { bin: p, args: ["install", "--no-save", ignoreScripts], name: "bun" };
+      return { bin: p, installArgs: ["install", "--no-save", ignoreScripts], name: "bun" };
     }
   }
 
-  // Check npm
   const npmCandidates = ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"];
   for (const p of npmCandidates) {
     if (existsSync(p)) {
-      return { bin: p, args: ["install", "--omit=dev", ignoreScripts], name: "npm" };
+      return { bin: p, installArgs: ["install", "--omit=dev", ignoreScripts], name: "npm" };
     }
   }
 
@@ -148,6 +146,53 @@ function readSeedVersion(dir: string): string | undefined {
   }
 }
 
+function parseSemver(version: string): [number, number, number] | undefined {
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!match) return undefined;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isVersionNewer(candidate: string | undefined, current: string | undefined): boolean {
+  if (!candidate || !current) return false;
+  const a = parseSemver(candidate);
+  const b = parseSemver(current);
+  if (!a || !b) return false;
+  if (a[0] !== b[0]) return a[0] > b[0];
+  if (a[1] !== b[1]) return a[1] > b[1];
+  return a[2] > b[2];
+}
+
+function readManifestDependencyVersion(
+  runtimeDir: string,
+  packageName: string,
+): string | undefined {
+  try {
+    const pkgJson = JSON.parse(readFileSync(join(runtimeDir, "package.json"), "utf-8"));
+    return pkgJson.dependencies?.[packageName] ?? pkgJson.optionalDependencies?.[packageName];
+  } catch {
+    return undefined;
+  }
+}
+
+function pinManifestDependencyVersion(
+  runtimeDir: string,
+  packageName: string,
+  version: string,
+): void {
+  const pkgPath = join(runtimeDir, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgPath, "utf-8"));
+
+  if (pkgJson.dependencies && packageName in pkgJson.dependencies) {
+    pkgJson.dependencies[packageName] = version;
+  } else if (pkgJson.optionalDependencies && packageName in pkgJson.optionalDependencies) {
+    pkgJson.optionalDependencies[packageName] = version;
+  } else {
+    pkgJson.dependencies = { ...(pkgJson.dependencies ?? {}), [packageName]: version };
+  }
+
+  writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + "\n");
+}
+
 /**
  * Snapshot installed versions of key packages for before/after comparison.
  */
@@ -166,11 +211,38 @@ function snapshotVersions(runtimeDir: string): Map<string, string> {
   return versions;
 }
 
+async function fetchLatestPackageVersion(packageName: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const encoded = encodeURIComponent(packageName);
+    const res = await fetch(`https://registry.npmjs.org/${encoded}/latest`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`npm registry returned ${res.status}`);
+    }
+
+    const data = (await res.json()) as { version?: unknown };
+    if (typeof data.version !== "string" || data.version.trim().length === 0) {
+      throw new Error("npm registry response missing version");
+    }
+
+    return data.version.trim();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export class RuntimeUpdateManager {
   private readonly packageName: string;
   private readonly currentVersion: string;
   private updateInProgress = false;
   private lastCheckedAt?: number;
+  private latestVersion?: string;
+  private checkError?: string;
   private lastUpdatedAt?: number;
   private lastUpdateError?: string;
   private restartRequired = false;
@@ -180,19 +252,34 @@ export class RuntimeUpdateManager {
     this.currentVersion = options.currentVersion;
   }
 
-  async getStatus(_options?: { force?: boolean }): Promise<RuntimeUpdateStatus> {
+  async getStatus(options?: { force?: boolean }): Promise<RuntimeUpdateStatus> {
     const runtimeDir = resolveRuntimeDir();
     const canUpdate = runtimeDir !== undefined && resolvePackageManager() !== undefined;
+
+    if (options?.force || this.lastCheckedAt === undefined) {
+      this.lastCheckedAt = Date.now();
+      try {
+        this.latestVersion = await fetchLatestPackageVersion(this.packageName);
+        this.checkError = undefined;
+      } catch (err: unknown) {
+        this.checkError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    const updateAvailable = isVersionNewer(this.latestVersion, this.currentVersion);
 
     return {
       packageName: this.packageName,
       currentVersion: this.currentVersion,
-      updateAvailable: false, // We don't check npm registry — user decides
+      latestVersion: this.latestVersion,
+      pendingVersion: updateAvailable ? this.latestVersion : undefined,
+      updateAvailable,
       canUpdate,
       checking: false,
       updateInProgress: this.updateInProgress,
       restartRequired: this.restartRequired,
       lastCheckedAt: this.lastCheckedAt,
+      checkError: this.checkError,
       lastUpdatedAt: this.lastUpdatedAt,
       lastUpdateError: this.lastUpdateError,
       runtimeDir,
@@ -203,8 +290,9 @@ export class RuntimeUpdateManager {
   /**
    * Run package manager install in the runtime directory.
    *
-   * This updates all deps to their latest semver-compatible versions
-   * according to the ranges in package.json.
+   * If a newer pi runtime package is published, the runtime manifest is first
+   * pinned to that exact version so Oppi can truly upgrade the embedded runtime
+   * instead of only reinstalling already-pinned dependencies.
    */
   async updateRuntime(): Promise<RuntimeUpdateResult> {
     if (this.updateInProgress) {
@@ -239,19 +327,23 @@ export class RuntimeUpdateManager {
     this.lastUpdateError = undefined;
 
     try {
-      // Snapshot before
+      const status = await this.getStatus({ force: true });
       const before = snapshotVersions(runtimeDir);
 
-      // Run install
-      await execAsync(pm.bin, pm.args, {
+      const targetVersion = status.updateAvailable ? status.latestVersion : undefined;
+      if (targetVersion) {
+        const pinned = readManifestDependencyVersion(runtimeDir, this.packageName);
+        if (pinned !== targetVersion) {
+          pinManifestDependencyVersion(runtimeDir, this.packageName, targetVersion);
+        }
+      }
+
+      await execAsync(pm.bin, pm.installArgs, {
         cwd: runtimeDir,
         timeout: 120_000,
       });
 
-      // Snapshot after
       const after = snapshotVersions(runtimeDir);
-
-      // Compute diff
       const updatedPackages: UpdatedPackage[] = [];
       for (const [name, newVersion] of after) {
         const oldVersion = before.get(name);
@@ -266,11 +358,15 @@ export class RuntimeUpdateManager {
       const message =
         updatedPackages.length > 0
           ? `Updated ${updatedPackages.length} package(s). Restart required to apply changes.`
-          : "All dependencies are up to date.";
+          : targetVersion
+            ? `Pinned ${this.packageName} to ${targetVersion}. Restart may still be required after install.`
+            : "All dependencies are up to date.";
 
       return {
         ok: true,
         message,
+        latestVersion: status.latestVersion,
+        pendingVersion: targetVersion,
         restartRequired: this.restartRequired,
         updatedPackages,
       };

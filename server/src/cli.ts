@@ -36,6 +36,7 @@ import {
 import type { ServerConfig } from "./types.js";
 import { generateInvite } from "./invite.js";
 import { RuntimeUpdateManager } from "./runtime-update.js";
+import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
   installService,
@@ -1098,10 +1099,23 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
 async function cmdUpdate(flags: Record<string, string>): Promise<void> {
   printHeader();
 
-  console.log("  " + c.bold("Updating server dependencies"));
+  const mode = flags.self === "true" ? "self" : "runtime";
+  if (mode === "self") {
+    console.log("  " + c.bold("Updating Oppi server"));
+    console.log("");
+    console.log(c.yellow("  Self-update depends on how Oppi was installed."));
+    console.log(c.dim("  npm global:   npm install -g oppi-server@latest"));
+    console.log(c.dim("  git checkout: git pull && npm install && npm run build"));
+    console.log(
+      c.dim("  Mac app:      update Oppi.app; the app manages its bundled server runtime"),
+    );
+    console.log("");
+    return;
+  }
+
+  console.log("  " + c.bold("Checking server runtime dependency updates"));
   console.log("");
 
-  // Create a manager with the current pi version
   let piVersion = "unknown";
   try {
     const runtimeDir = join(homedir(), ".config", "oppi", "server-runtime");
@@ -1120,7 +1134,7 @@ async function cmdUpdate(flags: Record<string, string>): Promise<void> {
   }
 
   const manager = new RuntimeUpdateManager({ currentVersion: piVersion });
-  const status = await manager.getStatus();
+  const status = await manager.getStatus({ force: true });
 
   if (!status.runtimeDir) {
     console.log(c.red("  Runtime directory not found."));
@@ -1143,15 +1157,36 @@ async function cmdUpdate(flags: Record<string, string>): Promise<void> {
     console.log(`  Seed version: ${c.dim(status.seedVersion)}`);
   }
   console.log(`  Current pi:  ${c.dim(status.currentVersion)}`);
+  if (status.latestVersion) {
+    const latestLabel = status.updateAvailable
+      ? `${c.green(status.latestVersion)} ${c.yellow("(update available)")}`
+      : c.dim(`${status.latestVersion} (current)`);
+    console.log(`  Latest pi:   ${latestLabel}`);
+  }
+  if (status.checkError) {
+    console.log(`  ${c.yellow("Registry check failed:")} ${c.dim(status.checkError)}`);
+  }
   console.log("");
 
-  if (flags.dry === "true") {
-    console.log(c.dim("  Dry run — would run package install in runtime dir."));
+  if (flags.check === "true" || flags.dry === "true") {
+    if (flags.dry === "true") {
+      console.log(
+        c.dim("  Dry run — would update the runtime manifest if needed, then run install."),
+      );
+      console.log("");
+      return;
+    }
+
+    console.log(
+      status.updateAvailable
+        ? c.yellow("  Update available.")
+        : c.green("  Runtime dependencies are already current."),
+    );
     console.log("");
     return;
   }
 
-  console.log(c.dim("  Running package install..."));
+  console.log(c.dim("  Updating runtime..."));
   console.log("");
 
   const result = await manager.updateRuntime();
@@ -1173,7 +1208,7 @@ async function cmdUpdate(flags: Record<string, string>): Promise<void> {
     console.log(c.dim("  If running via the Mac app, restart from the menu bar."));
     console.log(c.dim("  If running via CLI, stop and re-run 'oppi serve'."));
   } else {
-    console.log(c.green("  All dependencies are up to date."));
+    console.log(c.green(`  ${result.message}`));
   }
   console.log("");
 }
@@ -1192,7 +1227,10 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${c.cyan("status")}                     Show server status`);
   console.log(`    ${c.cyan("doctor")}                     Security + environment diagnostics`);
-  console.log(`    ${c.cyan("update")}                     Update server dependencies`);
+  console.log(
+    `    ${c.cyan("update")}                     Check for and install runtime dependency updates`,
+  );
+  console.log(`    ${c.cyan("update --self")}              Show how to update Oppi server itself`);
   console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
   console.log("");
 
@@ -1221,6 +1259,7 @@ function cmdHelp(): void {
   console.log(`    ${c.dim("--json")}             Output invite as JSON (pair command)`);
   console.log(`    ${c.dim("--show-token")}       Print owner token in pair output (unsafe)`);
   console.log(`    ${c.dim("--config-file <p>")}  Config path for 'config validate'`);
+  console.log(`    ${c.dim("--check")}            Check runtime update status without installing`);
   console.log("");
 
   console.log("  " + c.bold("Examples:"));
@@ -1270,6 +1309,11 @@ async function main(): Promise<void> {
   }
   if (command === "help" || command === "--help" || command === "-h") {
     cmdHelp();
+    return;
+  }
+  if (command === "version" || command === "--version" || command === "-v") {
+    const info = getPackageInfo();
+    console.log(`${info.name} ${info.version}`);
     return;
   }
 

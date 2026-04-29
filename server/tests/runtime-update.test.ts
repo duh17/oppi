@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -98,11 +98,17 @@ function mockInstallFailure(stderr: string, stdout = ""): void {
 let savedArgv1: string;
 let savedHome: string | undefined;
 let savedRuntimeBin: string | undefined;
+let savedFetch: typeof global.fetch | undefined;
 
 beforeEach(() => {
   savedArgv1 = process.argv[1];
   savedHome = process.env.HOME;
   savedRuntimeBin = process.env.OPPI_RUNTIME_BIN;
+  savedFetch = global.fetch;
+  global.fetch = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ version: "0.62.0" }),
+  })) as typeof global.fetch;
   mockExecFile.mockReset();
 });
 
@@ -114,6 +120,7 @@ afterEach(() => {
   } else {
     process.env.OPPI_RUNTIME_BIN = savedRuntimeBin;
   }
+  global.fetch = savedFetch as typeof global.fetch;
 });
 
 // ── Tests ──
@@ -126,6 +133,7 @@ describe("RuntimeUpdateManager", () => {
 
       expect(status.currentVersion).toBe("0.62.0");
       expect(status.packageName).toBe("@mariozechner/pi-coding-agent");
+      expect(status.latestVersion).toBe("0.62.0");
       expect(status.updateAvailable).toBe(false);
       expect(status.checking).toBe(false);
       expect(status.updateInProgress).toBe(false);
@@ -185,6 +193,20 @@ describe("RuntimeUpdateManager", () => {
       const status = await manager.getStatus();
       expect(status.runtimeDir).toBeUndefined();
       expect(status.canUpdate).toBe(false);
+    });
+
+    it("reports update availability from npm registry", async () => {
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ version: "0.63.0" }),
+      })) as typeof global.fetch;
+
+      const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
+      const status = await manager.getStatus({ force: true });
+
+      expect(status.latestVersion).toBe("0.63.0");
+      expect(status.pendingVersion).toBe("0.63.0");
+      expect(status.updateAvailable).toBe(true);
     });
   });
 
@@ -261,24 +283,23 @@ describe("RuntimeUpdateManager", () => {
       try {
         pointResolverAt(dir);
 
-        // Make execFile hang — never invoke the callback
-        mockExecFile.mockImplementation(() => {});
+        mockExecFile.mockImplementation(
+          (_bin: string, _args: string[], _opts: unknown, cb: Function) => {
+            setTimeout(() => cb(null, "", ""), 25);
+          },
+        );
 
         const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
 
-        // Start first update (will hang on execFile)
         const first = manager.updateRuntime();
+        await Promise.resolve();
+        await Promise.resolve();
 
-        // Second update should be rejected immediately
         const second = await manager.updateRuntime();
         expect(second.ok).toBe(false);
         expect(second.message).toBe("Update already in progress");
 
-        // Let the first one resolve so it doesn't leak
-        // Find and call the pending callback
-        const pendingCb = mockExecFile.mock.calls[0]?.[3];
-        if (typeof pendingCb === "function") pendingCb(null, "", "");
-        await first.catch(() => {});
+        await first;
       } finally {
         cleanup();
       }
@@ -316,6 +337,44 @@ describe("RuntimeUpdateManager", () => {
         });
         expect(result.message).toContain("Updated 1 package(s)");
         expect(result.message).toContain("Restart required");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("pins pi runtime to the latest published version before install", async () => {
+      const { dir, cleanup } = makeFakeRuntimeDir({
+        deps: { "@mariozechner/pi-coding-agent": "0.62.0" },
+        installedVersions: { "@mariozechner/pi-coding-agent": "0.62.0" },
+      });
+
+      try {
+        pointResolverAt(dir);
+        global.fetch = vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ version: "0.63.0" }),
+        })) as typeof global.fetch;
+        mockInstallSuccess(() => {
+          writeFileSync(
+            join(dir, "node_modules", "@mariozechner", "pi-coding-agent", "package.json"),
+            JSON.stringify({ name: "@mariozechner/pi-coding-agent", version: "0.63.0" }),
+          );
+        });
+
+        const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
+        const result = await manager.updateRuntime();
+        const pkgJson = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
+          dependencies: Record<string, string>;
+        };
+
+        expect(pkgJson.dependencies["@mariozechner/pi-coding-agent"]).toBe("0.63.0");
+        expect(result.ok).toBe(true);
+        expect(result.pendingVersion).toBe("0.63.0");
+        expect(result.updatedPackages).toContainEqual({
+          name: "@mariozechner/pi-coding-agent",
+          from: "0.62.0",
+          to: "0.63.0",
+        });
       } finally {
         cleanup();
       }
