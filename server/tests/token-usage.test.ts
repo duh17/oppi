@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizePiUsage, resolveCacheWriteForModelBreakdown } from "../src/token-usage.js";
+import {
+  estimateUsageCostFromModel,
+  normalizePiUsage,
+  resolveCacheWriteForModelBreakdown,
+} from "../src/token-usage.js";
+
+const codexSparkExpectedCost = 0.0049;
 
 describe("normalizePiUsage", () => {
   it("returns canonical usage when explicit fields are present", () => {
@@ -79,10 +85,44 @@ describe("normalizePiUsage", () => {
     });
   });
 
+  it("falls back to model pricing when provider reports zero cost", () => {
+    const usage = normalizePiUsage(
+      {
+        input: 1000,
+        output: 100,
+        cacheRead: 10000,
+        cacheWrite: 0,
+        cost: { total: 0 },
+      },
+      "openai-codex/gpt-5.3-codex-spark"
+    );
+
+    expect(usage).toEqual({
+      input: 1000,
+      output: 100,
+      cacheRead: 10000,
+      cacheWrite: 0,
+      cost: codexSparkExpectedCost,
+    });
+  });
+
   it("returns null for non-object usage", () => {
     expect(normalizePiUsage(undefined)).toBeNull();
     expect(normalizePiUsage(null)).toBeNull();
     expect(normalizePiUsage("oops")).toBeNull();
+  });
+});
+
+describe("estimateUsageCostFromModel", () => {
+  it("falls back from openai-codex to priced catalog entries for codex spark", () => {
+    const cost = estimateUsageCostFromModel("openai-codex/gpt-5.3-codex-spark", {
+      input: 1000,
+      output: 100,
+      cacheRead: 10000,
+      cacheWrite: 0,
+    });
+
+    expect(cost).toBe(codexSparkExpectedCost);
   });
 });
 

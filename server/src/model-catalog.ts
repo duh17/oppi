@@ -61,6 +61,7 @@ export class ModelCatalog {
   constructor(
     private registry: ModelRegistry,
     private storage: Storage,
+    private allowlist?: string[],
   ) {}
 
   /** Refresh the model catalog from the SDK registry. */
@@ -68,7 +69,10 @@ export class ModelCatalog {
     try {
       this.registry.refresh();
       const available = this.registry.getAvailable();
-      this.catalog = sdkModelsToModelInfo(available);
+      const allModels = sdkModelsToModelInfo(available);
+      const allowed =
+        this.allowlist && this.allowlist.length > 0 ? new Set(this.allowlist) : undefined;
+      this.catalog = allowed ? allModels.filter((model) => allowed.has(model.id)) : allModels;
       this.updatedAt = Date.now();
 
       if (this.catalog.length > 0) {

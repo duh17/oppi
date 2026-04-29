@@ -517,7 +517,6 @@ export class SdkBackend {
       // oppi has its own policy engine (GateServer). Without this, both gates
       // run and the pi extension blocks commands it considers "dangerous" with
       // no UI to approve them (ctx.hasUI is false in oppi sessions).
-      const workspaceSystemPromptMode = workspace?.systemPromptMode ?? "append";
       const loader = new DefaultResourceLoader({
         cwd,
         agentDir: runtimeAgentDir,
@@ -528,11 +527,7 @@ export class SdkBackend {
         noPromptTemplates: true,
         noThemes: true,
         extensionFactories,
-        systemPrompt: workspaceSystemPromptMode === "replace" ? workspace?.systemPrompt : undefined,
-        appendSystemPrompt:
-          workspaceSystemPromptMode === "append" && workspace?.systemPrompt
-            ? [workspace.systemPrompt]
-            : undefined,
+        appendSystemPrompt: workspace?.systemPrompt ? [workspace.systemPrompt] : undefined,
         extensionsOverride: (base) => {
           // 1. Filter out extensions managed directly by oppi-server.
           //    permission-gate is replaced by oppi's own policy engine.

@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { generateId } from "../id.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { normalizePiUsage } from "../token-usage.js";
+import { estimateUsageCostFromModel, normalizePiUsage } from "../token-usage.js";
 import type { Session, SessionChangeStats } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
@@ -166,6 +166,21 @@ function backfillContextTokensFromTrace(session: Session): void {
   }
 }
 
+function backfillCostFromTokens(session: Session): void {
+  if ((session.cost ?? 0) > 0) {
+    return;
+  }
+
+  if (totalTokenUsage(session.tokens) <= 0) {
+    return;
+  }
+
+  const recovered = estimateUsageCostFromModel(session.model, session.tokens);
+  if (recovered > 0) {
+    session.cost = recovered;
+  }
+}
+
 /**
  * Strip internal bookkeeping fields from changeStats before caching.
  *
@@ -268,6 +283,7 @@ export class SessionStore {
         }
 
         backfillTokens(session);
+        backfillCostFromTokens(session);
         backfillContextTokensFromTrace(session);
         this.cache.set(session.id, stripInternalFields(session));
       } catch (err: unknown) {
@@ -335,6 +351,7 @@ export class SessionStore {
       const session = raw.session as Session | undefined;
       if (!session) return undefined;
       backfillTokens(session);
+      backfillCostFromTokens(session);
       backfillContextTokensFromTrace(session);
       cache.set(session.id, stripInternalFields(session));
       return cache.get(sessionId);

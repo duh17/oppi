@@ -81,7 +81,7 @@ describe("Storage.createWorkspace", () => {
     expect(ws.icon).toBe("terminal");
     expect(ws.runtime).toBeUndefined();
     expect(ws.systemPrompt).toBe("Be helpful");
-    expect(ws.systemPromptMode).toBe("replace");
+    expect(ws.systemPromptMode).toBe("append");
     expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.extensions).toEqual(["memory", "todos"]);
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
@@ -309,11 +309,11 @@ describe("Storage.updateWorkspace", () => {
     expect(storage.getWorkspace(ws.id)!.systemPrompt).toBeUndefined();
   });
 
-  it("updates systemPromptMode", () => {
+  it("normalizes systemPromptMode updates back to append", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, { systemPromptMode: "replace" });
 
-    expect(updated!.systemPromptMode).toBe("replace");
+    expect(updated!.systemPromptMode).toBe("append");
   });
 
   it("updates hostMount", () => {

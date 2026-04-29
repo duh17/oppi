@@ -11,9 +11,9 @@ For writing extensions, supported layouts, lifecycle hooks, tool APIs, and TUI r
 
 Oppi adds three behaviors on top of normal pi extension loading:
 
-1. **Oppi-owned extension names and reserved names**
-   - workspace opt-in: `ask`, `subagents`, `voice`
-   - reserved managed name: `permission-gate`
+1. **Oppi-owned first-party names and reserved managed names**
+   - first-party workspace opt-in names: `ask`, `subagents`, `voice`
+   - reserved server-managed name: `permission-gate`
 2. **Workspace allowlist filtering** via `workspace.extensions`
 3. **Mobile rendering** via server-side `StyledSegment[]`, not pi TUI components
 
@@ -30,7 +30,8 @@ flowchart TD
   subgraph Server[Oppi server]
     EL[extension-loader.ts\nlistHostExtensions]
     SR[skills route\nGET /extensions]
-    SS[session-start.ts\ninject ask and subagents]
+    SS[session-start.ts\ninject ask, voice, and subagents]
+    FR[first-party-extension-runtime.ts\nreloadable first-party runtime context]
     SB[sdk-backend.ts\nfilter managed names\napply workspace allowlist]
     PG[GateServer policy hook\nin-process permission gate]
     MRR[mobile-renderer.ts]
@@ -48,7 +49,7 @@ flowchart TD
   EL --> SR --> WE
   GE --> SB
   PE --> SB
-  SS --> SB
+  SS --> FR --> SB
   PG --> SB
   MR --> MRR --> SP --> SEG --> TP
   SB --> SP
@@ -68,7 +69,7 @@ Oppi does not replace that mechanism. It filters it.
 
 ### Oppi-owned names
 
-Oppi reserves one truly managed name:
+Oppi reserves one truly managed server-owned name:
 
 - `permission-gate`
 
@@ -129,9 +130,11 @@ Oppi replaces that behavior with an in-process gate wired through the server and
 | `server/extensions/first-party.ts` | Reserved names and enablement rules |
 | `server/extensions/ask.ts` | First-party ask tool |
 | `server/extensions/subagents.ts` | First-party multi-agent tools |
+| `server/extensions/voice.ts` | First-party voice tool |
 | `server/src/extension-loader.ts` | Picker discovery for global + project-local extensions |
 | `server/src/routes/skills.ts` | `GET /extensions` |
 | `server/src/session-start.ts` | Injects first-party factories |
+| `server/src/first-party-extension-runtime.ts` | Rebinds reloadable ask/voice/subagents runtime context |
 | `server/src/sdk-backend.ts` | Filters managed names and applies workspace allowlist |
 | `server/src/mobile-renderer.ts` | Mobile tool row renderers |
 | `server/src/session-protocol.ts` | Sends `callSegments` and `resultSegments` to iOS |

@@ -106,9 +106,14 @@ describe("oppi config", () => {
     expect(stdout.trim()).toContain("9999");
   });
 
-  it("config set updates defaultModel", () => {
-    run(["config", "set", "defaultModel", "anthropic/claude-sonnet-4-20250514"]);
-    const { stdout } = run(["config", "get", "defaultModel"]);
+  it("config set updates subagent defaultModel inside extensions", () => {
+    run([
+      "config",
+      "set",
+      "extensions",
+      '{"subagents":{"modelPolicy":{"defaultModel":"anthropic/claude-sonnet-4-20250514"}}}',
+    ]);
+    const { stdout } = run(["config", "get", "extensions"]);
     expect(stdout.trim()).toContain("anthropic/claude-sonnet-4-20250514");
   });
 

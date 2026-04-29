@@ -31,7 +31,6 @@ struct WorkspaceEditView: View {
     @State private var selectedSkills: Set<String> = []
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
-    @State private var systemPromptMode: WorkspaceSystemPromptMode = .append
     @State private var gitStatusEnabled: Bool = true
     @State private var extensionNames: String = ""
     @State private var availableExtensions: [ExtensionInfo] = []
@@ -128,7 +127,7 @@ struct WorkspaceEditView: View {
 
     private var systemPromptEditorSummary: String {
         if systemPrompt.isEmpty {
-            return systemPromptMode == .append ? "No custom prompt" : "Using Pi base prompt"
+            return "No custom prompt"
         }
 
         let lineCount = systemPrompt.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -137,7 +136,7 @@ struct WorkspaceEditView: View {
 
     private var systemPromptPreviewText: String {
         if systemPrompt.isEmpty {
-            return systemPromptMode.emptyStateText
+            return "No workspace prompt yet. Pi’s base prompt will be used as-is."
         }
 
         return systemPrompt
@@ -146,22 +145,12 @@ struct WorkspaceEditView: View {
     var body: some View {
         List(selection: selectableRowSelection) {
             Section("System Prompt") {
-                Picker("Behavior", selection: $systemPromptMode) {
-                    Text("Append").tag(WorkspaceSystemPromptMode.append)
-                    Text("Replace").tag(WorkspaceSystemPromptMode.replace)
-                }
-                .pickerStyle(.segmented)
-
                 NavigationLink {
-                    WorkspaceSystemPromptEditorView(
-                        workspaceId: workspace.id,
-                        systemPrompt: $systemPrompt,
-                        mode: systemPromptMode
-                    )
+                    WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(systemPromptMode.editorLinkTitle)
+                            Text("Edit workspace prompt")
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.themeFg)
 
@@ -182,7 +171,7 @@ struct WorkspaceEditView: View {
                 }
                 .foregroundStyle(.themeFg)
 
-                Text(systemPromptMode.detailText)
+                Text("Add workspace-specific instructions after Pi’s base prompt.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -429,7 +418,6 @@ struct WorkspaceEditView: View {
         selectedSkills = Set(source.skills)
         hostMount = source.hostMount ?? ""
         systemPrompt = source.systemPrompt ?? ""
-        systemPromptMode = source.systemPromptMode
         gitStatusEnabled = source.gitStatusEnabled ?? true
         setSelectedExtensionNames(source.extensions ?? [])
         runtime = source.runtime
@@ -491,7 +479,7 @@ struct WorkspaceEditView: View {
             icon: nullableJSONString(icon),
             skills: validSelectedSkillNames(),
             systemPrompt: nullableJSONString(systemPrompt),
-            systemPromptMode: systemPromptMode,
+            systemPromptMode: .append,
             hostMount: nullableJSONString(hostMount),
             gitStatusEnabled: gitStatusEnabled,
             extensions: parseUniqueNames(extensionNames),
@@ -514,51 +502,18 @@ struct WorkspaceEditView: View {
 // MARK: - System Prompt Editor
 
 private struct WorkspaceSystemPromptEditorView: View {
-    let workspaceId: String
     @Binding var systemPrompt: String
-    let mode: WorkspaceSystemPromptMode
-
-    @Environment(\.apiClient) private var apiClient
-
-    @State private var isLoadingBasePrompt = false
-    @State private var basePromptError: String?
-    @State private var loadedBasePromptCandidate: String?
-    @State private var confirmReplacingPrompt = false
 
     var body: some View {
         VStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(mode.editorCalloutTitle)
+                Text("Workspace instructions")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.themeFg)
 
-                Text(mode.detailText)
+                Text("Add workspace-specific instructions after Pi’s base prompt.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
-
-                if mode == .replace {
-                    Button {
-                        Task { await loadBasePrompt() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isLoadingBasePrompt {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "arrow.down.doc")
-                            }
-                            Text(isLoadingBasePrompt ? "Loading Pi base prompt…" : "Load Pi base prompt")
-                        }
-                        .font(.caption.weight(.semibold))
-                    }
-                    .disabled(isLoadingBasePrompt)
-                }
-
-                if let basePromptError {
-                    Text(basePromptError)
-                        .font(.caption)
-                        .foregroundStyle(.themeRed)
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -586,18 +541,11 @@ private struct WorkspaceSystemPromptEditorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.themeBg.ignoresSafeArea())
-        .navigationTitle(mode.editorTitle)
+        .navigationTitle("Workspace Prompt")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if mode == .replace {
-                        Button(isLoadingBasePrompt ? "Loading Pi Base Prompt…" : "Load Pi Base Prompt") {
-                            Task { await loadBasePrompt() }
-                        }
-                        .disabled(isLoadingBasePrompt)
-                    }
-
                     Button("Clear", role: .destructive) {
                         systemPrompt = ""
                     }
@@ -609,7 +557,7 @@ private struct WorkspaceSystemPromptEditorView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
-                Text(mode == .append ? "Appended prompt" : "Replacement prompt")
+                Text("Appended prompt")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
 
@@ -622,40 +570,6 @@ private struct WorkspaceSystemPromptEditorView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(.ultraThinMaterial)
-        }
-        .alert("Replace with Pi base prompt?", isPresented: $confirmReplacingPrompt) {
-            Button("Cancel", role: .cancel) {
-                loadedBasePromptCandidate = nil
-            }
-            Button("Replace", role: .destructive) {
-                systemPrompt = loadedBasePromptCandidate ?? systemPrompt
-                loadedBasePromptCandidate = nil
-            }
-        } message: {
-            Text("This will replace the current prompt text in the editor.")
-        }
-    }
-
-    private func loadBasePrompt() async {
-        guard let api = apiClient else {
-            basePromptError = "Server is offline — reconnecting in background"
-            return
-        }
-
-        isLoadingBasePrompt = true
-        basePromptError = nil
-        defer { isLoadingBasePrompt = false }
-
-        do {
-            let basePrompt = try await api.getWorkspaceBaseSystemPrompt(id: workspaceId)
-            if systemPrompt.isEmpty {
-                systemPrompt = basePrompt
-            } else {
-                loadedBasePromptCandidate = basePrompt
-                confirmReplacingPrompt = true
-            }
-        } catch {
-            basePromptError = error.localizedDescription
         }
     }
 }
@@ -695,49 +609,3 @@ private struct SkillSelectionRow: View {
     }
 }
 
-private extension WorkspaceSystemPromptMode {
-    var editorTitle: String {
-        switch self {
-        case .append:
-            return "Appended Prompt"
-        case .replace:
-            return "Base Prompt Override"
-        }
-    }
-
-    var editorLinkTitle: String {
-        switch self {
-        case .append:
-            return "Edit appended prompt"
-        case .replace:
-            return "Edit replacement prompt"
-        }
-    }
-
-    var editorCalloutTitle: String {
-        switch self {
-        case .append:
-            return "Workspace instructions"
-        case .replace:
-            return "Pi base prompt override"
-        }
-    }
-
-    var detailText: String {
-        switch self {
-        case .append:
-            return "Add workspace-specific instructions after Pi’s base prompt."
-        case .replace:
-            return "Replace Pi’s base prompt for new sessions in this workspace. AGENTS files, skills, and runtime context still apply."
-        }
-    }
-
-    var emptyStateText: String {
-        switch self {
-        case .append:
-            return "No workspace prompt yet. Pi’s base prompt will be used as-is."
-        case .replace:
-            return "No replacement prompt saved. Load Pi’s base prompt as a starting point, then edit it here."
-        }
-    }
-}

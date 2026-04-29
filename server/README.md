@@ -150,14 +150,19 @@ node dist/src/cli.js server stop             # stop background server
 
 ## Built-in extensions
 
-The server provides two first-party extensions:
+The server ships three first-party extension names:
 
 - **ask** — structured Q&A between agent and user. The agent poses questions with predefined options; the iOS app renders them as interactive cards and routes answers back.
 - **subagents** — multi-agent orchestration. Includes the `spawn_agent`, `stop_agent`, `send_message`, and `inspect_agent` tools. See [docs/sub-agents.md](docs/sub-agents.md).
+- **voice** — server-managed voice creation and playback helpers exposed through the Oppi voice tools.
 
-Both are enabled by default when a workspace does not set `extensions`.
+Oppi-owned first-party names are `ask`, `subagents`, and `voice`.
+The reserved server-managed name is `permission-gate`.
 
-If a workspace sets `extensions`, that list becomes an authoritative allowlist for optional extensions. To keep first-party tools enabled in that mode, include `ask` and `subagents` explicitly.
+Workspace extension behavior is explicit:
+
+- when `workspace.extensions` is unset, Oppi keeps normal pi discovery and does **not** auto-enable its own first-party names
+- when `workspace.extensions` is set, it becomes an authoritative allowlist for optional extensions; include `ask`, `subagents`, and/or `voice` explicitly if you want them
 
 Pi provides the core runtime and extension model. Oppi builds on top of that with the mobile client, transport, server orchestration, native rendering, and server-managed capabilities.
 

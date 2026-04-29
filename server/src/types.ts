@@ -23,6 +23,7 @@ export interface Workspace {
   systemPrompt?: string; // Workspace prompt text (appended or replacement depending on mode)
   systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
+  defaultModel?: string; // Optional default model for new sessions in this workspace
 
   // Extensions
   // Undefined = discovered pi extensions only. Defined = authoritative allowlist.
@@ -649,6 +650,7 @@ export interface CreateWorkspaceRequest {
   systemPrompt?: string;
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string;
+  defaultModel?: string;
   extensions?: string[];
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";
@@ -665,6 +667,7 @@ export interface UpdateWorkspaceRequest {
   systemPrompt?: string | null;
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string | null;
+  defaultModel?: string | null;
   extensions?: string[];
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";

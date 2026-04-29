@@ -1613,6 +1613,24 @@ describe("translatePiEvent", () => {
         cacheWrite: 0,
       });
     });
+
+    it("falls back to catalog pricing when a codex spark message reports zero cost", () => {
+      const session = makeSession({ model: "openai-codex/gpt-5.3-codex-spark" });
+
+      applyMessageEndToSession(session, {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input: 1_000,
+          output: 100,
+          cacheRead: 10_000,
+          cacheWrite: 0,
+          cost: { total: 0 },
+        },
+      });
+
+      expect(session.cost).toBeCloseTo(0.0049);
+    });
   });
 
   describe("message_end", () => {

@@ -69,8 +69,10 @@ function normalizeSandboxConfig(
   return result.allowedHosts || result.env ? result : undefined;
 }
 
-function normalizeSystemPromptMode(value: unknown): WorkspaceSystemPromptMode {
-  return value === "replace" ? "replace" : "append";
+function normalizeSystemPromptMode(_value: unknown): WorkspaceSystemPromptMode {
+  // Workspace prompts are append-only in Oppi. Older persisted "replace"
+  // values are accepted on read/write and normalized back to append.
+  return "append";
 }
 
 export class WorkspaceStore {
@@ -95,6 +97,7 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeOptionalString(req.hostMount),
+      defaultModel: normalizeOptionalString(req.defaultModel),
       extensions: normalizeExtensions(req.extensions),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime: req.runtime,
@@ -137,6 +140,7 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeOptionalString(raw.hostMount),
+      defaultModel: normalizeOptionalString(raw.defaultModel),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
@@ -211,6 +215,8 @@ export class WorkspaceStore {
       workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
     if (updates.hostMount !== undefined)
       workspace.hostMount = normalizeOptionalString(updates.hostMount);
+    if (updates.defaultModel !== undefined)
+      workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.extensions !== undefined)
       workspace.extensions = normalizeExtensions(updates.extensions);
     if (updates.gitStatusEnabled !== undefined)

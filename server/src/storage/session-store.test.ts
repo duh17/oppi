@@ -6,6 +6,31 @@ import { Storage } from "../storage.js";
 import type { Session } from "../types.js";
 
 describe("SessionStore trace context repair", () => {
+  it("backfills codex spark cost from stored aggregate tokens", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-store-"));
+
+    try {
+      const storage = new Storage(dataDir);
+      const session: Session = {
+        id: "sess-cost",
+        status: "ready",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        model: "openai-codex/gpt-5.3-codex-spark",
+        messageCount: 1,
+        tokens: { input: 1000, output: 100, cacheRead: 10000, cacheWrite: 0 },
+        cost: 0,
+      };
+
+      storage.saveSession(session);
+
+      const reloaded = new Storage(dataDir).getSession("sess-cost");
+      expect(reloaded?.cost).toBeCloseTo(0.0049);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("recovers the last non-zero context snapshot from the trace tail", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-store-"));
 

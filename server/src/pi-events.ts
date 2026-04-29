@@ -16,6 +16,8 @@ export interface PiMessage {
   role?: string;
   content?: unknown;
   usage?: PiMessageUsage;
+  provider?: string;
+  model?: string;
 }
 
 export interface ExtensionUIRequestEvent {

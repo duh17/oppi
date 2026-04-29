@@ -1,3 +1,4 @@
+import { calculateCost, getModel, type KnownProvider, type Usage } from "@mariozechner/pi-ai";
 import type { PiMessageUsage } from "./pi-events.js";
 
 export interface NormalizedUsage {
@@ -27,6 +28,10 @@ interface CacheWriteInferenceRule {
   matches: (modelId: string) => boolean;
   estimate: (tokens: TokenCounts) => number;
 }
+
+const COST_PROVIDER_FALLBACKS: Partial<Record<KnownProvider, KnownProvider[]>> = {
+  "openai-codex": ["openai", "azure-openai-responses"],
+};
 
 const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
   {
@@ -76,6 +81,74 @@ function nonNegative(value: number | undefined): number {
   return value < 0 ? 0 : value;
 }
 
+export function estimateUsageCostFromModel(
+  modelId: string | undefined,
+  tokens: Partial<TokenCounts> | undefined,
+): number {
+  const normalizedTokens = normalizeTokens(tokens);
+  const totalTokens =
+    normalizedTokens.input +
+    normalizedTokens.output +
+    normalizedTokens.cacheRead +
+    normalizedTokens.cacheWrite;
+
+  if (!modelId || totalTokens <= 0) {
+    return 0;
+  }
+
+  const slashIndex = modelId.indexOf("/");
+  if (slashIndex <= 0 || slashIndex >= modelId.length - 1) {
+    return 0;
+  }
+
+  const provider = modelId.slice(0, slashIndex) as KnownProvider;
+  const rawModelId = modelId.slice(slashIndex + 1);
+  const candidateProviders = [provider, ...(COST_PROVIDER_FALLBACKS[provider] ?? [])];
+
+  for (const candidateProvider of candidateProviders) {
+    const candidate = getModel(candidateProvider, rawModelId as never);
+    if (!candidate) {
+      continue;
+    }
+
+    const hasPricing =
+      candidate.cost.input > 0 ||
+      candidate.cost.output > 0 ||
+      candidate.cost.cacheRead > 0 ||
+      candidate.cost.cacheWrite > 0;
+    if (!hasPricing) {
+      continue;
+    }
+
+    const estimated = calculateCost(candidate, {
+      input: normalizedTokens.input,
+      output: normalizedTokens.output,
+      cacheRead: normalizedTokens.cacheRead,
+      cacheWrite: normalizedTokens.cacheWrite,
+      totalTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    } satisfies Usage).total;
+
+    if (Number.isFinite(estimated) && estimated > 0) {
+      return estimated;
+    }
+  }
+
+  return 0;
+}
+
+function resolveNormalizedCost(
+  reportedCostTotal: number,
+  modelId: string | undefined,
+  tokens: TokenCounts,
+): number {
+  if (reportedCostTotal > 0) {
+    return reportedCostTotal;
+  }
+
+  return estimateUsageCostFromModel(modelId, tokens);
+}
+
 /**
  * Normalize heterogeneous provider usage payloads into server canonical fields.
  *
@@ -84,7 +157,10 @@ function nonNegative(value: number | undefined): number {
  * - OpenAI Chat Completions expose prompt_tokens_details.cached_tokens (+ optional cache_write_tokens)
  * - OpenAI Responses expose input_tokens_details.cached_tokens and may omit cache writes
  */
-export function normalizePiUsage(usageLike: PiMessageUsage | unknown): NormalizedUsage | null {
+export function normalizePiUsage(
+  usageLike: PiMessageUsage | unknown,
+  modelId?: string,
+): NormalizedUsage | null {
   const usage = asRecord(usageLike);
   if (!usage) {
     return null;
@@ -131,13 +207,15 @@ export function normalizePiUsage(usageLike: PiMessageUsage | unknown): Normalize
   }
 
   const output = nonNegative(explicitOutput ?? completionTokens);
+  const tokens = { input, output, cacheRead, cacheWrite };
+  const reportedCostTotal = readFiniteNumber(cost, "total");
 
   return {
-    input,
-    output,
-    cacheRead,
-    cacheWrite,
-    cost: nonNegative(readFiniteNumber(cost, "total")),
+    ...tokens,
+    cost:
+      reportedCostTotal === undefined
+        ? 0
+        : resolveNormalizedCost(nonNegative(reportedCostTotal), modelId, tokens),
   };
 }
 

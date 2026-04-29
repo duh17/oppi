@@ -157,14 +157,29 @@ export function extractAssistantText(message: PiMessage): string {
   return textParts.join("");
 }
 
-function extractUsage(message: PiMessage): {
+function fullModelIdFromMessage(message: PiMessage): string | undefined {
+  if (typeof message.provider === "string" && typeof message.model === "string") {
+    return `${message.provider}/${message.model}`;
+  }
+
+  if (typeof message.model === "string" && message.model.includes("/")) {
+    return message.model;
+  }
+
+  return undefined;
+}
+
+function extractUsage(
+  message: PiMessage,
+  modelId?: string,
+): {
   input: number;
   output: number;
   cost: number;
   cacheRead: number;
   cacheWrite: number;
 } | null {
-  return normalizePiUsage(message.usage);
+  return normalizePiUsage(message.usage, modelId ?? fullModelIdFromMessage(message));
 }
 
 /**
@@ -997,7 +1012,7 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   // Only persist assistant messages — user messages are already stored on prompt receipt
   if (role === "user") return;
 
-  const usage = extractUsage(message);
+  const usage = extractUsage(message, session.model);
   const assistantText = extractAssistantText(message);
 
   if (assistantText) {
