@@ -249,9 +249,12 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                 UIImage(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down"),
                 for: .normal
             )
+            let summaryKind = configuration.presentation.phase == .branchSummary
+                ? "branch summary"
+                : "compaction summary"
             expandButton.accessibilityLabel = configuration.isExpanded
-                ? "Collapse compaction summary"
-                : "Expand compaction summary"
+                ? "Collapse \(summaryKind)"
+                : "Expand \(summaryKind)"
         } else {
             expandButton.setImage(nil, for: .normal)
             expandButton.accessibilityLabel = nil
@@ -293,6 +296,14 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                 title: "Compaction cancelled",
                 color: UIColor(palette.red),
                 backgroundAlpha: 0.16
+            )
+
+        case .branchSummary:
+            return Style(
+                icon: "arrow.triangle.branch",
+                title: "Branch summary",
+                color: UIColor(palette.green),
+                backgroundAlpha: 0.14
             )
         }
     }

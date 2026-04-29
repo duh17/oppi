@@ -240,6 +240,7 @@ extension ChatTimelineCollectionHost.Controller {
             case completed
             case retrying
             case cancelled
+            case branchSummary
         }
 
         let phase: Phase
@@ -257,6 +258,11 @@ extension ChatTimelineCollectionHost.Controller {
     static func compactionPresentation(from rawMessage: String) -> CompactionPresentation? {
         let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return nil }
+
+        if message.hasPrefix("Branch context:") {
+            let detail = detailAfterFirstColon(from: message)
+            return CompactionPresentation(phase: .branchSummary, detail: detail, tokensBefore: nil)
+        }
 
         if message.hasPrefix("Context overflow \u{2014} compacting")
             || message.hasPrefix("Compacting context") {
@@ -322,6 +328,10 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     private static func compactionDetail(from message: String) -> String? {
+        detailAfterFirstColon(from: message)
+    }
+
+    private static func detailAfterFirstColon(from message: String) -> String? {
         guard let separator = message.firstIndex(of: ":") else {
             return nil
         }

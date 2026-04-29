@@ -51,6 +51,8 @@ interface MockRouteContext {
     getActiveSession: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
+    refreshSessionState: ReturnType<typeof vi.fn>;
+    runCommand: ReturnType<typeof vi.fn>;
   };
   storage: {
     getDataDir: ReturnType<typeof vi.fn>;
@@ -429,6 +431,68 @@ describe("POST /workspaces/:id/sessions", () => {
     // Should NOT start or prompt
     expect(mock.sessions.startSession).not.toHaveBeenCalled();
     expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
+  async function dispatchFork(
+    mock: MockRouteContext,
+    body: Record<string, unknown>,
+    sessionId = "source-1",
+  ): Promise<boolean> {
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const req = makeRequestBody(body);
+    const res = {} as ServerResponse;
+    const url = new URL(`https://localhost/workspaces/ws-1/sessions/${sessionId}/fork`);
+    return dispatcher({
+      method: "POST",
+      path: `/workspaces/ws-1/sessions/${sessionId}/fork`,
+      url,
+      req,
+      res,
+    });
+  }
+
+  it("creates timeline forks as independent root sessions, not child sessions", async () => {
+    const mock = createMockContext();
+    const source = makeSession({
+      id: "source-1",
+      workspaceId: "ws-1",
+      workspaceName: "test-workspace",
+      name: "Original",
+      piSessionFile: "/tmp/source.jsonl",
+      piSessionFiles: ["/tmp/older.jsonl", "/tmp/source.jsonl"],
+      parentSessionId: "spawn-parent",
+      thinkingLevel: "medium",
+      contextWindow: 200_000,
+    });
+    const fork = makeSession({ id: "fork-1", name: "Fork: Original" });
+
+    mock.storage.createSession.mockReturnValue(fork);
+    mock.storage.getSession
+      .mockReturnValueOnce(source)
+      .mockReturnValueOnce(source)
+      .mockReturnValueOnce(fork);
+
+    await dispatchFork(mock, { entryId: "entry-user-1" });
+
+    expect(mock.sessions.runCommand).toHaveBeenCalledWith("fork-1", {
+      type: "fork",
+      entryId: "entry-user-1",
+    });
+
+    const savedFork = mock.storage.saveSession.mock.calls[0]![0] as Session;
+    expect(savedFork.workspaceId).toBe("ws-1");
+    expect(savedFork.piSessionFile).toBe("/tmp/source.jsonl");
+    expect(savedFork.piSessionFiles).toEqual(["/tmp/older.jsonl", "/tmp/source.jsonl"]);
+    expect(savedFork.thinkingLevel).toBe("medium");
+    expect(savedFork.contextWindow).toBe(200_000);
+    expect(savedFork.parentSessionId).toBeUndefined();
+
+    expect(mock.responses).toHaveLength(1);
+    expect(mock.responses[0]!.status).toBe(201);
+    const response = mock.responses[0]!.data as { session: Session };
+    expect(response.session.id).toBe("fork-1");
   });
 });
 

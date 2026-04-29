@@ -453,6 +453,35 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func branchContextRendersAsExpandableSummaryRow() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let itemID = "branch-summary-1"
+        let summary = String(repeating: "preserve tree QA notes ", count: 12)
+
+        let config = makeTimelineConfiguration(
+            items: [
+                .systemEvent(id: itemID, message: "Branch context: ## Goal\n\(summary)"),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+        let branchConfig = try #require(cell.contentConfiguration as? CompactionTimelineRowConfiguration)
+        #expect(branchConfig.presentation.phase == .branchSummary)
+        #expect(branchConfig.presentation.detail?.hasPrefix("## Goal") == true)
+        #expect(branchConfig.canExpand)
+        #expect(branchConfig.onToggleExpand != nil)
+    }
+
+    @MainActor
     @Test func tappingCompactionRowDoesNotToggleExpansion() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let itemID = "compaction-expand-1"

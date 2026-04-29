@@ -406,6 +406,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const forkSession = ctx.storage.createSession(forkName);
 
+    // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
+    // Do not map that to Oppi `parentSessionId`: in Oppi, parent/child session
+    // trees are reserved for spawned subagents. Timeline forks are independent
+    // root sessions in the workspace list.
     forkSession.workspaceId = workspace.id;
     forkSession.workspaceName = workspace.name;
     forkSession.piSessionFile = sourceSessionFile;
