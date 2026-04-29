@@ -105,6 +105,9 @@ final class ServerConnection {
     /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
     var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
 
+    /// Test seam: observe view-driven session re-entry preparation.
+    var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
+
     // periphery:ignore - used by OppiDictationProviderTests via @testable import
     /// Test seam: override dictation control sends without a live WebSocket.
     var _sendDictationForTesting: ((ClientMessage) async throws -> Void)?
@@ -729,6 +732,18 @@ final class ServerConnection {
         // Restore pending user-blocking UI for this session.
         restorePendingAskRequestIfNeeded(for: sessionId)
         restorePendingExtensionDialogIfNeeded(for: sessionId)
+    }
+
+    /// Re-establish command routing and kick `/stream` reconnect immediately
+    /// when a session view re-enters foreground interaction.
+    ///
+    /// This closes the gap where SwiftUI has made the view tappable again but
+    /// the async session connect task has not yet refocused the connection or
+    /// restarted the stream transport.
+    func prepareForSessionReentry(_ sessionId: String) {
+        _onPrepareForSessionReentryForTesting?(sessionId)
+        focusSession(sessionId)
+        connectStream()
     }
 
     /// Disconnect from the current session stream.

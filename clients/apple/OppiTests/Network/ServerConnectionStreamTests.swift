@@ -58,6 +58,25 @@ struct ServerConnectionStreamTests {
                 "Should create task when none exists")
     }
 
+    @Test func prepareForSessionReentryRestoresFocusAndStartsStreamImmediately() {
+        let (conn, _) = makeTestConnection(sessionId: "child")
+        conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1"))
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        conn.disconnectSession()
+        #expect(conn.focusedSessionId == nil)
+
+        conn.prepareForSessionReentry("parent")
+
+        #expect(conn.focusedSessionId == "parent",
+                "Re-entry should restore the parent as the focused command target before async connect runs")
+        #expect(conn.streamConsumptionTask != nil,
+                "Re-entry should kick stream reconnect immediately")
+        #expect(conn.wsClient?.status == .connecting,
+                "Re-entry should reopen /stream instead of waiting for the later connect task")
+    }
+
     // MARK: - streamConsumptionTask self-cleanup
 
     @Test func consumptionTaskNilsItselfWhenStreamEnds() async {

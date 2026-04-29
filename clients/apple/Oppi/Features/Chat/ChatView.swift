@@ -894,6 +894,12 @@ struct ChatView: View {
 
     @MainActor
     private func handleAppear() {
+        // Re-establish command routing immediately on re-entry.
+        // The async sessionManager.connect() task starts shortly after onAppear,
+        // but users can tap toolbar controls before that task has a chance to
+        // refocus the connection on this session.
+        connection.prepareForSessionReentry(sessionId)
+
         sessionManager.markAppeared()
         voiceInputManager.loadPreferences()
         if sessionManager.hasAppeared, let draft = chatState.composerDraft, !draft.isEmpty {
