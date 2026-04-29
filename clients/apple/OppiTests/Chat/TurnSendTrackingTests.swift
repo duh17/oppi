@@ -120,4 +120,19 @@ struct TurnSendTrackingTests {
         let error = SendAckError.rejected(command: "prompt", reason: "")
         #expect(error.errorDescription == "prompt rejected")
     }
+
+    @Test func notSubscribedPromptRejectionIsRetryable() {
+        let error = SendAckError.rejected(
+            command: "prompt",
+            reason: "Session WTKeS0ND is not subscribed at level=full"
+        )
+
+        #expect(MessageSender.isRetryableTurnSendError(error))
+    }
+
+    @Test func ordinaryPromptRejectionIsNotRetryable() {
+        let error = SendAckError.rejected(command: "prompt", reason: "session is stopped")
+
+        #expect(!MessageSender.isRetryableTurnSendError(error))
+    }
 }

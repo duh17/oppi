@@ -198,7 +198,7 @@ final class MessageSender {
                 return
             } catch {
                 lastError = error
-                if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
+                if attempt < Self.turnSendMaxAttempts, Self.isRetryableTurnSendError(error) {
                     continue
                 }
                 commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
@@ -794,6 +794,20 @@ final class MessageSender {
     }
 
     // MARK: - Retry Classification
+
+    static func isRetryableTurnSendError(_ error: Error) -> Bool {
+        if CommandTracker.isReconnectableSendError(error) {
+            return true
+        }
+
+        guard let ackError = error as? SendAckError,
+              case .rejected(let command, let reason) = ackError,
+              ["prompt", "steer", "follow_up"].contains(command) else {
+            return false
+        }
+
+        return reason?.contains("not subscribed at level=full") == true
+    }
 
     static func isRetryableStopError(_ error: Error) -> Bool {
         if let cmdError = error as? CommandRequestError {
