@@ -225,11 +225,7 @@ async function startDockerServer(): Promise<void> {
   applySelfSignedTlsBypass();
   await waitForHealth();
 
-  // Set the server's defaultModel to the OMLX model (replaces the Dockerfile default)
-  execSync(`docker exec oppi-e2e node dist/src/cli.js config set defaultModel "${E2E_MODEL}"`, {
-    stdio: "pipe",
-  });
-  console.log(`[e2e] Docker server healthy, defaultModel=${E2E_MODEL}`);
+  console.log(`[e2e] Docker server healthy, e2eModel=${E2E_MODEL}`);
 }
 
 async function stopDockerServer(): Promise<void> {
@@ -265,7 +261,6 @@ async function startNativeServer(): Promise<void> {
     host: "127.0.0.1",
     port: E2E_PORT,
     token: ADMIN_TOKEN,
-    defaultModel: E2E_MODEL,
   });
 
   transportScheme = storage.getConfig().tls?.mode === "disabled" ? "http" : "https";
