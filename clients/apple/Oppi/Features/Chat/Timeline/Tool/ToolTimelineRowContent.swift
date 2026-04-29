@@ -147,8 +147,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
-    private var collapsedAudioDecodeTask: Task<Void, Never>?
-    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
+    private lazy var collapsedAudioController = ToolRowAudioController(button: audioPlaybackButton)
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
@@ -236,10 +235,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     deinit {
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
-        collapsedAudioDecodeTask?.cancel()
-        if let audioStateObserver {
-            NotificationCenter.default.removeObserver(audioStateObserver)
-        }
     }
 
     var configuration: UIContentConfiguration {
@@ -870,7 +865,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
         audioPlaybackButton.translatesAutoresizingMaskIntoConstraints = false
-        audioPlaybackButton.addTarget(self, action: #selector(toggleCollapsedAudioPlayback), for: .touchUpInside)
         trailingStack.addArrangedSubview(audioPlaybackButton)
         trailingStack.addArrangedSubview(elapsedLabel)
         trailingStack.addArrangedSubview(addedLabel)
@@ -1116,8 +1110,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isDone: configuration.isDone,
             elapsedLabel: elapsedLabel
         )
-        applyCollapsedAudioPlaybackButton(configuration: configuration)
-
+        collapsedAudioController.apply(configuration: configuration)
         ToolTimelineRowDisplayState.updateTrailingVisibility(
             trailingStack: trailingStack,
             languageBadgeIconView: languageBadgeIconView,
@@ -1134,50 +1127,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             configuration: configuration,
             previewLabel: previewLabel
         )
-    }
-
-    private func applyCollapsedAudioPlaybackButton(configuration: ToolTimelineRowConfiguration) {
-        let hasReplayableVoiceAudio = collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil
-        let hasLiveStreamPlayback = configuration.toolNamePrefix == "voice_speak"
-            && (configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false)
-        guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
-            audioPlaybackButton.isHidden = true
-            return
-        }
-
-        bindAudioStateObservationIfNeeded()
-        audioPlaybackButton.isHidden = false
-        audioPlaybackButton.tintColor = UIColor(Color.themePurple)
-        audioPlaybackButton.accessibilityLabel = isCollapsedVoiceAudioPlaying(configuration: configuration)
-            ? "Stop voice message"
-            : "Play voice message"
-        updateCollapsedAudioPlaybackButtonImage(configuration: configuration)
-    }
-
-    private func bindAudioStateObservationIfNeeded() {
-        guard audioStateObserver == nil else { return }
-        audioStateObserver = NotificationCenter.default.addObserver(
-            forName: AudioPlayerService.stateDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.updateCollapsedAudioPlaybackButtonImage(configuration: self.currentConfiguration)
-        }
-    }
-
-    private func updateCollapsedAudioPlaybackButtonImage(configuration: ToolTimelineRowConfiguration) {
-        let isPlaying = isCollapsedVoiceAudioPlaying(configuration: configuration)
-        let imageName = isPlaying ? "stop.fill" : "play.fill"
-        let image = UIImage(systemName: imageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
-        audioPlaybackButton.setImage(image, for: .normal)
-    }
-
-    private func isCollapsedVoiceAudioPlaying(configuration: ToolTimelineRowConfiguration) -> Bool {
-        guard let itemID = collapsedVoiceAudioItemID(in: configuration) else { return false }
-        return configuration.audioPlayer?.playingItemID == itemID
-            || configuration.audioPlayer?.loadingItemID == itemID
-            || (configuration.audioPlayer?.isStreamingPlaybackActive(itemID: itemID) ?? false)
     }
 
     private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
@@ -1197,75 +1146,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return configuration.toolNamePrefix == "voice_speak" || filePath == "Voice message"
         case .bash, .diff, .code, .markdown, .status, .text, .none:
             return false
-        }
-    }
-
-    private func collapsedVoiceAudioBase64(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard configuration.toolNamePrefix == "voice_speak",
-              case .readMedia(let output, _, _) = configuration.expandedContent,
-              let clip = AudioExtractor.extract(from: output).first else {
-            return nil
-        }
-        return clip.base64
-    }
-
-    private func collapsedVoiceAudioAttachment(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard case .voiceMessage(_, let attachmentId, _, _, _) = configuration.expandedContent,
-              !attachmentId.isEmpty else {
-            return nil
-        }
-        return attachmentId
-    }
-
-    private func collapsedVoiceAudioItemID(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard collapsedVoiceAudioAttachment(in: configuration) != nil || collapsedVoiceAudioBase64(in: configuration) != nil || configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) == true else {
-            return nil
-        }
-        return configuration.itemID
-    }
-
-    @objc
-    private func toggleCollapsedAudioPlayback() {
-        guard let audioPlayer = currentConfiguration.audioPlayer,
-              let itemID = collapsedVoiceAudioItemID(in: currentConfiguration) else {
-            return
-        }
-
-        if audioPlayer.playingItemID == itemID
-            || audioPlayer.loadingItemID == itemID
-            || audioPlayer.isStreamingPlaybackActive(itemID: itemID) {
-            audioPlayer.stop()
-            updateCollapsedAudioPlaybackButtonImage(configuration: currentConfiguration)
-            return
-        }
-
-        if let attachmentId = collapsedVoiceAudioAttachment(in: currentConfiguration),
-           let fetcher = currentConfiguration.sessionAttachmentFetcher {
-            collapsedAudioDecodeTask?.cancel()
-            collapsedAudioDecodeTask = Task { [attachmentId, itemID, weak audioPlayer] in
-                do {
-                    let data = try await fetcher(attachmentId)
-                    await MainActor.run {
-                        guard let audioPlayer else { return }
-                        audioPlayer.toggleDataPlayback(data: data, itemID: itemID)
-                    }
-                } catch {
-                    await MainActor.run {
-                        updateCollapsedAudioPlaybackButtonImage(configuration: currentConfiguration)
-                    }
-                }
-            }
-            return
-        }
-
-        guard let base64 = collapsedVoiceAudioBase64(in: currentConfiguration) else { return }
-        collapsedAudioDecodeTask?.cancel()
-        collapsedAudioDecodeTask = Task.detached(priority: .userInitiated) { [base64, itemID, weak audioPlayer] in
-            let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
-            await MainActor.run {
-                guard let data, let audioPlayer else { return }
-                audioPlayer.toggleDataPlayback(data: data, itemID: itemID)
-            }
         }
     }
 
