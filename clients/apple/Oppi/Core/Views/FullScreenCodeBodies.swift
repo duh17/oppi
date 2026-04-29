@@ -199,7 +199,7 @@ final class NativeFullScreenDiffBody: UIView {
         let build = DiffAttributedStringBuilder.buildResult(
             hunks: hunks,
             filePath: filePath ?? "diff.txt",
-            options: .init(includeStats: true, headerStyle: .sectioned, includeGapSummary: true)
+            options: .init(includeStats: true, includeGapSummary: true)
         )
 
         super.init(frame: .zero)

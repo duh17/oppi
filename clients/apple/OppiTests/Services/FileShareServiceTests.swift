@@ -705,11 +705,11 @@ struct FileShareServiceTests {
         let text = withoutStats.string
 
         // Should not have the stats summary prefix (the "+1 -1 N lines" line)
-        // But should still have the hunk content
+        // But should still have the hunk content.
         #expect(text.contains("let x = 1"))
-        // The first non-whitespace content should be the header
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(trimmed.hasPrefix("@@"), "Without stats, content should start with hunk header")
+        #expect(trimmed.hasPrefix("Change 1 of 1"), "Without stats, content should start with the sectioned change header")
+        #expect(!text.contains("@@ -"), "Attributed diff rendering should not emit raw unified-diff hunk headers")
     }
 
     // MARK: - Diff Unified Text Correctness

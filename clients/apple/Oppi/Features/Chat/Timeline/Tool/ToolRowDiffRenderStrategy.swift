@@ -64,7 +64,11 @@ struct ToolRowDiffRenderStrategy {
                         ]
                     )
                 } else {
-                    diffText = DiffAttributedStringBuilder.build(hunks: hunks, filePath: path ?? "diff.txt")
+                    diffText = DiffAttributedStringBuilder.buildResult(
+                        hunks: hunks,
+                        filePath: path ?? "diff.txt",
+                        options: .init(includeStats: false, includeGapSummary: true)
+                    ).attributedText
                 }
                 ToolRowRenderCache.set(signature: signature, attributed: diffText)
                 expandedLabel.text = nil

@@ -245,11 +245,11 @@ struct DiffGutterAttributeTests {
         #expect(kind == "removed", "Removed gutter must have diffLineKindAttributeKey='removed'")
     }
 
-    @Test func sectionedHeadersHideRawPatchMarkers() throws {
+    @Test func diffHeadersHideRawPatchMarkers() throws {
         let result = DiffAttributedStringBuilder.buildResult(
             hunks: makeHunks(),
             filePath: "test.swift",
-            options: .init(includeStats: true, headerStyle: .sectioned, includeGapSummary: true)
+            options: .init(includeStats: true, includeGapSummary: true)
         )
 
         #expect(result.attributedText.string.contains("Change 1 of 1"))
@@ -258,7 +258,7 @@ struct DiffGutterAttributeTests {
         #expect(result.headerRanges.count == 1)
     }
 
-    @Test func sectionedHeadersShowCollapsedGapSummary() throws {
+    @Test func diffHeadersShowCollapsedGapSummary() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(
                 oldStart: 10,
@@ -285,7 +285,7 @@ struct DiffGutterAttributeTests {
         let result = DiffAttributedStringBuilder.buildResult(
             hunks: hunks,
             filePath: "test.swift",
-            options: .init(includeStats: false, headerStyle: .sectioned, includeGapSummary: true)
+            options: .init(includeStats: false, includeGapSummary: true)
         )
 
         #expect(result.attributedText.string.contains("18 unchanged lines"))

@@ -152,14 +152,8 @@ enum DiffAttributedStringBuilder {
     }
 
     struct Options {
-        enum HeaderStyle {
-            case rawPatch
-            case sectioned
-        }
-
         var includeStats = false
-        var headerStyle: HeaderStyle = .rawPatch
-        var includeGapSummary = false
+        var includeGapSummary = true
     }
 
     struct BuildResult {
@@ -272,35 +266,20 @@ enum DiffAttributedStringBuilder {
             }
 
             let headerStart = text.length
-            switch options.headerStyle {
-            case .rawPatch:
-                text.append(" ")
-                text.append(hunk.headerText)
-                text.append(" \n")
-                headers.append(
-                    HeaderInfo(
-                        fullRange: NSRange(location: headerStart, length: text.length - headerStart),
-                        titleRange: nil,
-                        subtitleRange: nil,
-                        usesSectionStyle: false
-                    )
+            let titleStart = text.length
+            text.append(" Change \(hunkIndex + 1) of \(hunks.count)\n")
+            let titleRange = NSRange(location: titleStart, length: text.length - titleStart)
+            let subtitleStart = text.length
+            text.append(" \(hunk.displayLineRangeText) • \(hunk.changeSummaryText)\n")
+            let subtitleRange = NSRange(location: subtitleStart, length: text.length - subtitleStart)
+            headers.append(
+                HeaderInfo(
+                    fullRange: NSRange(location: headerStart, length: text.length - headerStart),
+                    titleRange: titleRange,
+                    subtitleRange: subtitleRange,
+                    usesSectionStyle: true
                 )
-            case .sectioned:
-                let titleStart = text.length
-                text.append(" Change \(hunkIndex + 1) of \(hunks.count)\n")
-                let titleRange = NSRange(location: titleStart, length: text.length - titleStart)
-                let subtitleStart = text.length
-                text.append(" \(hunk.displayLineRangeText) • \(hunk.changeSummaryText)\n")
-                let subtitleRange = NSRange(location: subtitleStart, length: text.length - subtitleStart)
-                headers.append(
-                    HeaderInfo(
-                        fullRange: NSRange(location: headerStart, length: text.length - headerStart),
-                        titleRange: titleRange,
-                        subtitleRange: subtitleRange,
-                        usesSectionStyle: true
-                    )
-                )
-            }
+            )
 
             for line in hunk.lines {
                 let displayLineNumber = displayedLineNumber(for: line)
@@ -472,12 +451,7 @@ enum DiffAttributedStringBuilder {
         result.endEditing()
         return BuildResult(
             attributedText: result,
-            headerRanges: headers.compactMap { header in
-                if let titleRange = header.titleRange {
-                    return titleRange
-                }
-                return header.usesSectionStyle ? nil : header.fullRange
-            }
+            headerRanges: headers.compactMap(\.titleRange)
         )
     }
 
