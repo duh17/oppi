@@ -99,7 +99,7 @@ private final class UnifiedDiffLayoutManager: NSLayoutManager {
     weak var hostScrollView: UIScrollView?
 
     /// Measured content width set after text layout.
-    var measuredContentWidth: CGFloat = 0
+    nonisolated(unsafe) var measuredContentWidth: CGFloat = 0
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)

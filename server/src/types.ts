@@ -818,7 +818,6 @@ export const CHAT_METRIC_REGISTRY = {
     description: "Client lag from command_result frame receipt to command waiter resolution.",
   },
   // Removed: chat.stream_open_ms — p50=0ms, never measures real latency
-  // Removed: chat.subscribe_ack_ms — replaced by chat.subscribe_gate_ms
   "chat.subscribe_gate_ms": {
     unit: "ms",
     description: "Client-observed full subscription gate latency for session commands.",
@@ -1131,11 +1130,15 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
         level?: "full" | "notifications";
         /** Optional per-session durable sequence cursor for catch-up replay. */
         sinceSeq?: number;
+        /** Monotonic client subscription generation used to ignore stale lifecycle messages. */
+        subscriptionGeneration?: number;
         requestId?: string;
       }
     | {
         type: "unsubscribe";
         sessionId: string;
+        /** Must match the active subscription generation when provided. */
+        subscriptionGeneration?: number;
         requestId?: string;
       }
     // ── Prompting ──

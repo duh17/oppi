@@ -77,12 +77,11 @@ final class SessionStreamCoordinator {
         let streamStart = ContinuousClock.now
 
         // Cancel any pending unsubscribe for the session we're about to subscribe.
-        if let pendingUnsub = connection.pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
-            pendingUnsub.cancel()
-        }
+        connection.cancelPendingUnsubscribe(for: sessionId)
 
         connection.focusSession(sessionId)
         connection.subscriptionRegistry.setDesired(.full, for: sessionId)
+        let subscriptionGeneration = connection.subscriptionRegistry.generation(for: sessionId)
         connection.chatState.thinkingLevel = .medium
         Task {
             await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
@@ -145,7 +144,12 @@ final class SessionStreamCoordinator {
                     requestId: requestId,
                     level: .full
                 )
-                return .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
+                return .subscribe(
+                    sessionId: sessionId,
+                    level: .full,
+                    requestId: requestId,
+                    subscriptionGeneration: subscriptionGeneration
+                )
             }
             if let subscribeRequestId {
                 connection.subscriptionRegistry.markSubscribeAck(
@@ -250,7 +254,11 @@ final class SessionStreamCoordinator {
                 generation: generation
             )
             try? await connection.wsClient?.send(
-                .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
+                .unsubscribe(
+                    sessionId: sessionId,
+                    requestId: UUID().uuidString,
+                    subscriptionGeneration: generation
+                )
             )
         }
 
@@ -271,7 +279,12 @@ final class SessionStreamCoordinator {
                         requestId: requestId,
                         level: .notifications
                     )
-                    return .subscribe(sessionId: sessionId, level: .notifications, requestId: requestId)
+                    return .subscribe(
+                        sessionId: sessionId,
+                        level: .notifications,
+                        requestId: requestId,
+                        subscriptionGeneration: connection.subscriptionRegistry.generation(for: sessionId)
+                    )
                 }
 
                 if let subscribeRequestId {
@@ -290,7 +303,11 @@ final class SessionStreamCoordinator {
                         generation: generation
                     )
                     try? await connection.wsClient?.send(
-                        .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
+                        .unsubscribe(
+                            sessionId: sessionId,
+                            requestId: UUID().uuidString,
+                            subscriptionGeneration: generation
+                        )
                     )
                 }
             } catch {
@@ -522,6 +539,8 @@ final class SessionStreamCoordinator {
         maxAttempts: Int,
         reason: String
     ) async -> Bool {
+        connection.cancelPendingUnsubscribe(for: sessionId)
+
         let startedAt = ContinuousClock.now
         var lastErrorKind: String?
         for attempt in 1...maxAttempts {
@@ -553,7 +572,12 @@ final class SessionStreamCoordinator {
                         requestId: requestId,
                         level: desiredLevel
                     )
-                    return .subscribe(sessionId: sessionId, level: level, requestId: requestId)
+                    return .subscribe(
+                        sessionId: sessionId,
+                        level: level,
+                        requestId: requestId,
+                        subscriptionGeneration: connection.subscriptionRegistry.generation(for: sessionId)
+                    )
                 }
                 if let subscribeRequestId {
                     connection.subscriptionRegistry.markSubscribeAck(

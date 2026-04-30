@@ -270,6 +270,54 @@ describe("/stream websocket behavior", () => {
     expect(unsubscribeResults.every((msg) => msg.success)).toBe(true);
   });
 
+  it("ignores stale unsubscribe after newer full subscribe generation", async () => {
+    const harness = makeHarness();
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
+
+    ws.emitMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-gen-1",
+      subscriptionGeneration: 1,
+    });
+    await flushQueue();
+
+    ws.emitMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-gen-2",
+      subscriptionGeneration: 2,
+    });
+    await flushQueue();
+
+    ws.emitMessage({
+      type: "unsubscribe",
+      sessionId: "s1",
+      requestId: "unsub-stale-gen-1",
+      subscriptionGeneration: 1,
+    });
+    await flushQueue();
+
+    const beforePrompt = ws.sent.length;
+    ws.emitClientMessage({
+      type: "prompt",
+      sessionId: "s1",
+      message: "should still be subscribed",
+      requestId: "prompt-after-stale-unsub",
+    });
+    await flushQueue();
+
+    const errors = ws.sent
+      .slice(beforePrompt)
+      .filter((msg) => msg.type === "error" && msg.sessionId === "s1");
+    expect(errors).toHaveLength(0);
+    expect(harness.handleClientMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("allows multiple full subscriptions without downgrading", async () => {
     const harness = makeHarness({ sessions: [makeSession("s1"), makeSession("s2")] });
     const ws = new FakeWebSocket();

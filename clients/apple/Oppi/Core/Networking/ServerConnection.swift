@@ -706,6 +706,14 @@ final class ServerConnection {
         endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
     }
 
+    /// Cancel a deferred unsubscribe that would otherwise be able to arrive
+    /// after a newer subscribe for the same session.
+    func cancelPendingUnsubscribe(for sessionId: String) {
+        if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
+            pendingUnsub.cancel()
+        }
+    }
+
     /// Unsubscribe from a specific session.
     ///
     /// The send is tracked so `streamSession()` can cancel it before
@@ -717,6 +725,7 @@ final class ServerConnection {
         sessionContinuations[sessionId]?.finish()
         sessionContinuations.removeValue(forKey: sessionId)
 
+        let subscriptionGeneration = subscriptionRegistry.generation(for: sessionId)
         subscriptionRegistry.setDesired(.none, for: sessionId)
 
         pendingUnsubscribeTasks[sessionId]?.cancel()
@@ -724,7 +733,8 @@ final class ServerConnection {
             guard !Task.isCancelled else { return }
             try? await self?.wsClient?.send(.unsubscribe(
                 sessionId: sessionId,
-                requestId: UUID().uuidString
+                requestId: UUID().uuidString,
+                subscriptionGeneration: subscriptionGeneration
             ))
             self?.pendingUnsubscribeTasks.removeValue(forKey: sessionId)
         }
@@ -768,6 +778,7 @@ final class ServerConnection {
     /// restarted the stream transport.
     func prepareForSessionReentry(_ sessionId: String) {
         _onPrepareForSessionReentryForTesting?(sessionId)
+        cancelPendingUnsubscribe(for: sessionId)
         focusSession(sessionId)
         connectStream()
     }

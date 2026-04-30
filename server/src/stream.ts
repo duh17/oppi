@@ -24,6 +24,7 @@ export type StreamSubscriptionLevel = "full" | "notifications";
 export interface UserStreamSubscription {
   level: StreamSubscriptionLevel;
   unsubscribe: () => void;
+  subscriptionGeneration?: number;
 }
 
 /** Services needed by the stream mux — injected by Server. */
@@ -89,6 +90,26 @@ function countBucketForTag(count: number): string {
   if (count === 1) return "1";
   if (count <= 4) return "2-4";
   return "5+";
+}
+
+function isStaleSubscriptionGeneration(
+  currentGeneration: number | undefined,
+  incomingGeneration: number | undefined,
+): boolean {
+  return (
+    currentGeneration !== undefined &&
+    incomingGeneration !== undefined &&
+    incomingGeneration < currentGeneration
+  );
+}
+
+function latestSubscriptionGeneration(
+  currentGeneration: number | undefined,
+  incomingGeneration: number | undefined,
+): number | undefined {
+  if (incomingGeneration === undefined) return currentGeneration;
+  if (currentGeneration === undefined) return incomingGeneration;
+  return Math.max(currentGeneration, incomingGeneration);
 }
 
 function parseIncomingClientMessage(
@@ -325,11 +346,26 @@ export class UserStreamMux {
       send({ ...msg, sessionId });
     };
 
-    const clearSubscription = (sessionId: string): void => {
+    const clearSubscription = (
+      sessionId: string,
+      subscriptionGeneration?: number,
+    ): { cleared: boolean; ignoredStale: boolean } => {
       const sub = subscriptions.get(sessionId);
-      if (!sub) return;
+      if (!sub) return { cleared: false, ignoredStale: false };
+
+      if (isStaleSubscriptionGeneration(sub.subscriptionGeneration, subscriptionGeneration)) {
+        log.info("stream.unsubscribe.ignored_stale", {
+          connId,
+          sessionId,
+          subscriptionGeneration,
+          currentGeneration: sub.subscriptionGeneration,
+        });
+        return { cleared: false, ignoredStale: true };
+      }
+
       sub.unsubscribe();
       subscriptions.delete(sessionId);
+      return { cleared: true, ignoredStale: false };
     };
 
     const clearAllSubscriptions = (): void => {
@@ -344,6 +380,7 @@ export class UserStreamMux {
       level: StreamSubscriptionLevel,
       requestId?: string,
       sinceSeq?: number,
+      subscriptionGeneration?: number,
     ): Promise<void> => {
       const subscribeStart = Date.now();
       log.info("stream.subscribe.received", {
@@ -352,6 +389,7 @@ export class UserStreamMux {
         requestId,
         requestedLevel: level,
         sinceSeq,
+        subscriptionGeneration,
       });
 
       if (sinceSeq !== undefined && (!Number.isInteger(sinceSeq) || sinceSeq < 0)) {
@@ -398,8 +436,49 @@ export class UserStreamMux {
       // the event loop and causing ping timeouts → more reconnects.
       const existing = subscriptions.get(sessionId);
       if (existing && sinceSeq === undefined) {
+        if (
+          isStaleSubscriptionGeneration(existing.subscriptionGeneration, subscriptionGeneration)
+        ) {
+          log.info("stream.subscribe.ignored_stale", {
+            connId,
+            sessionId,
+            requestId,
+            requestedLevel: level,
+            effectiveLevel: existing.level,
+            subscriptionGeneration,
+            currentGeneration: existing.subscriptionGeneration,
+          });
+          send({
+            type: "command_result",
+            command: "subscribe",
+            requestId,
+            success: true,
+            data: {
+              sessionId,
+              level: existing.level,
+              requestedLevel: level,
+              currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
+              catchUpComplete: true,
+              ignoredStale: true,
+              subscriptionGeneration: existing.subscriptionGeneration,
+            },
+            sessionId,
+          });
+          return;
+        }
+
         const retainFullSubscription = existing.level === "full" && level === "notifications";
         if (existing.level === level || retainFullSubscription) {
+          const effectiveGeneration = latestSubscriptionGeneration(
+            existing.subscriptionGeneration,
+            subscriptionGeneration,
+          );
+          if (effectiveGeneration !== existing.subscriptionGeneration) {
+            subscriptions.set(sessionId, {
+              ...existing,
+              subscriptionGeneration: effectiveGeneration,
+            });
+          }
           log.debug("stream.subscribe.deduplicated", {
             connId,
             sessionId,
@@ -407,6 +486,8 @@ export class UserStreamMux {
             requestedLevel: level,
             effectiveLevel: existing.level,
             retainFullSubscription,
+            subscriptionGeneration,
+            effectiveGeneration,
           });
           send({
             type: "command_result",
@@ -421,6 +502,7 @@ export class UserStreamMux {
               catchUpComplete: true,
               deduplicated: true,
               retainedFullSubscription: retainFullSubscription,
+              subscriptionGeneration: effectiveGeneration,
             },
             sessionId,
           });
@@ -483,7 +565,7 @@ export class UserStreamMux {
         };
 
         const unsubscribe = this.ctx.sessions.subscribe(sessionId, callback);
-        subscriptions.set(sessionId, { level, unsubscribe });
+        subscriptions.set(sessionId, { level, unsubscribe, subscriptionGeneration });
 
         sendForSession(sessionId, {
           type: "state",
@@ -678,18 +760,35 @@ export class UserStreamMux {
                 break;
               }
               const level = msg.level === "notifications" ? "notifications" : "full";
-              await subscribeSession(msg.sessionId, level, msg.requestId, msg.sinceSeq);
+              await subscribeSession(
+                msg.sessionId,
+                level,
+                msg.requestId,
+                msg.sinceSeq,
+                msg.subscriptionGeneration,
+              );
               break;
             }
 
             case "unsubscribe": {
-              clearSubscription(msg.sessionId);
+              const result = clearSubscription(msg.sessionId, msg.subscriptionGeneration);
+              log.info("stream.unsubscribe.completed", {
+                connId,
+                sessionId: msg.sessionId,
+                requestId: msg.requestId,
+                subscriptionGeneration: msg.subscriptionGeneration,
+                cleared: result.cleared,
+                ignoredStale: result.ignoredStale,
+              });
               send({
                 type: "command_result",
                 command: "unsubscribe",
                 requestId: msg.requestId,
                 success: true,
-                data: { sessionId: msg.sessionId },
+                data: {
+                  sessionId: msg.sessionId,
+                  ignoredStale: result.ignoredStale,
+                },
                 sessionId: msg.sessionId,
               });
               break;

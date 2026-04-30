@@ -26,7 +26,7 @@ struct ServerConnectionReconnectTests {
         // Mock: ack subscribe commands (don't ack get_queue — we only care
         // that the stale task was cancelled, not that a new one completes)
         conn._sendMessageForTesting = { message in
-            if case .subscribe(let sessionId, _, _, let requestId) = message {
+            if case .subscribe(let sessionId, _, _, let requestId, _) = message {
                 conn.routeStreamMessage(StreamMessage(
                     sessionId: sessionId,
                     streamSeq: nil, seq: nil, currentSeq: nil,
@@ -60,7 +60,7 @@ struct ServerConnectionReconnectTests {
         // Mock: ack subscribe, count get_queue sends
         conn._sendMessageForTesting = { message in
             switch message {
-            case .subscribe(let sessionId, _, _, let requestId):
+            case .subscribe(let sessionId, _, _, let requestId, _):
                 conn.routeStreamMessage(StreamMessage(
                     sessionId: sessionId,
                     streamSeq: nil, seq: nil, currentSeq: nil,
@@ -108,7 +108,7 @@ struct ServerConnectionReconnectTests {
 
         // Mock: ack subscribe commands
         conn._sendMessageForTesting = { message in
-            if case .subscribe(let sessionId, _, _, let requestId) = message {
+            if case .subscribe(let sessionId, _, _, let requestId, _) = message {
                 await subscribeCounter.increment()
                 conn.routeStreamMessage(StreamMessage(
                     sessionId: sessionId,
@@ -182,7 +182,7 @@ struct ServerConnectionReconnectTests {
             await commandOrder.record(command)
 
             switch message {
-            case .subscribe(let sessionId, _, _, let requestId):
+            case .subscribe(let sessionId, _, _, let requestId, _):
                 conn.routeStreamMessage(StreamMessage(
                     sessionId: sessionId,
                     streamSeq: nil, seq: nil, currentSeq: nil,

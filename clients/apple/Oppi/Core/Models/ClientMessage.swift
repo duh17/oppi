@@ -93,8 +93,14 @@ enum ClientMessage: Sendable {
     case dictationCancel
 
     // ── Stream multiplexing (/stream protocol) ──
-    case subscribe(sessionId: String, level: StreamSubscriptionLevel = .full, sinceSeq: Int? = nil, requestId: String? = nil)
-    case unsubscribe(sessionId: String, requestId: String? = nil)
+    case subscribe(
+        sessionId: String,
+        level: StreamSubscriptionLevel = .full,
+        sinceSeq: Int? = nil,
+        requestId: String? = nil,
+        subscriptionGeneration: Int? = nil
+    )
+    case unsubscribe(sessionId: String, requestId: String? = nil, subscriptionGeneration: Int? = nil)
 }
 
 /// Subscription level for the `/stream` multiplexed WebSocket.
@@ -444,17 +450,19 @@ extension ClientMessage: Encodable {
             try c.encode("dictation_cancel", forKey: .type)
 
         // ── Stream multiplexing ──
-        case .subscribe(let sessionId, let level, let sinceSeq, let reqId):
+        case .subscribe(let sessionId, let level, let sinceSeq, let reqId, let subscriptionGeneration):
             try c.encode("subscribe", forKey: .type)
             try c.encode(sessionId, forKey: .sessionId)
             try c.encode(level, forKey: .level)
             try c.encodeIfPresent(sinceSeq, forKey: .sinceSeq)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            try c.encodeIfPresent(subscriptionGeneration, forKey: .subscriptionGeneration)
 
-        case .unsubscribe(let sessionId, let reqId):
+        case .unsubscribe(let sessionId, let reqId, let subscriptionGeneration):
             try c.encode("unsubscribe", forKey: .type)
             try c.encode(sessionId, forKey: .sessionId)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            try c.encodeIfPresent(subscriptionGeneration, forKey: .subscriptionGeneration)
         }
     }
 
@@ -465,7 +473,7 @@ extension ClientMessage: Encodable {
         case customInstructions, entryId, sessionPath, command, query, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
-        case sessionId, sinceSeq
+        case sessionId, sinceSeq, subscriptionGeneration
     }
 }
 

@@ -64,6 +64,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             self.pill = pill
         }
 
+        @MainActor
         @objc func handleTap() {
             owner?.openPathPill(pill)
         }

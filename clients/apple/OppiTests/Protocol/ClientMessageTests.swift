@@ -290,6 +290,34 @@ struct ClientMessageTests {
         #expect(payload?["namesHeuristic"] as? Bool == true)
     }
 
+    @Test func encodesSubscribeGeneration() throws {
+        let msg = ClientMessage.subscribe(
+            sessionId: "s1",
+            level: .full,
+            requestId: "sub-1",
+            subscriptionGeneration: 7
+        )
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "subscribe")
+        #expect(json["sessionId"] as? String == "s1")
+        #expect(json["level"] as? String == "full")
+        #expect(json["requestId"] as? String == "sub-1")
+        #expect(json["subscriptionGeneration"] as? Int == 7)
+    }
+
+    @Test func encodesUnsubscribeGeneration() throws {
+        let msg = ClientMessage.unsubscribe(
+            sessionId: "s1",
+            requestId: "unsub-1",
+            subscriptionGeneration: 7
+        )
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "unsubscribe")
+        #expect(json["sessionId"] as? String == "s1")
+        #expect(json["requestId"] as? String == "unsub-1")
+        #expect(json["subscriptionGeneration"] as? Int == 7)
+    }
+
     // MARK: - Helpers
 
     private enum DecodeError: Error {
