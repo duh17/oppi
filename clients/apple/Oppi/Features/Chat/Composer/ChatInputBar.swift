@@ -111,11 +111,12 @@ struct ChatInputBar<ActionRow: View>: View {
     private var accentColor: Color { .themeBlue }
 
     private var composerPlaceholder: String {
-        if pendingReviewCommentCount > 0 {
-            return "Send review comments…"
-        }
-        guard isBusy else { return "Message…" }
-        return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
+        Self.composerPlaceholder(
+            askRequest: askRequest,
+            pendingReviewCommentCount: pendingReviewCommentCount,
+            isBusy: isBusy,
+            busyStreamingBehavior: busyStreamingBehavior
+        )
     }
 
     private var sendActionFillColor: Color {
@@ -722,6 +723,22 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Ask responses take precedence over normal busy sends while an ask card
     /// is active. That lets the main composer answer the visible custom ask
     /// directly instead of creating a steering/follow-up message.
+    static func composerPlaceholder(
+        askRequest: AskRequest?,
+        pendingReviewCommentCount: Int,
+        isBusy: Bool,
+        busyStreamingBehavior: StreamingBehavior
+    ) -> String {
+        if pendingReviewCommentCount > 0 {
+            return "Send review comments…"
+        }
+        if let askRequest, askRequest.allowCustom {
+            return "Type answer…"
+        }
+        guard isBusy else { return "Message…" }
+        return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
+    }
+
     static func customAskAnswers(request: AskRequest?, text: String) -> [String: AskAnswer]? {
         guard let request,
               request.allowCustom,

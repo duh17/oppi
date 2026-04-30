@@ -271,21 +271,6 @@ struct AskCard: View {
 
     private func questionFooter(_ question: AskQuestion) -> some View {
         HStack {
-            if request.allowCustom {
-                Button {
-                    isExpanded = true
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "pencil")
-                            .font(.caption2)
-                        Text("Type answer")
-                            .font(.caption)
-                    }
-                    .foregroundStyle(.themeComment)
-                }
-                .buttonStyle(.plain)
-            }
-
             Spacer()
 
             Button {

@@ -98,6 +98,46 @@ struct ChatInputBarTests {
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
 
+    @Test("Ask with custom input updates the composer placeholder")
+    func askWithCustomInputUpdatesComposerPlaceholder() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "What context?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: request,
+            pendingReviewCommentCount: 0,
+            isBusy: true,
+            busyStreamingBehavior: .steer
+        )
+
+        #expect(placeholder == "Type answer…")
+    }
+
+    @Test("Ask without custom input keeps busy placeholder behavior")
+    func askWithoutCustomInputKeepsBusyPlaceholderBehavior() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Pick one", options: [], multiSelect: false)],
+            allowCustom: false,
+            timeout: nil
+        )
+
+        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+            askRequest: request,
+            pendingReviewCommentCount: 0,
+            isBusy: true,
+            busyStreamingBehavior: .steer
+        )
+
+        #expect(placeholder == "Steer agent…")
+    }
+
     @Test("Composer text answers ask instead of becoming steering or follow-up")
     func composerTextBuildsCustomAskAnswer() throws {
         let request = AskRequest(
