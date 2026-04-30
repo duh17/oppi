@@ -95,14 +95,27 @@ final class SessionStreamCoordinator {
 
         // Wait for transport to be connected before opening the per-session stream.
         let streamOpenStart = ContinuousClock.now
+        let statusBeforeWait = statusTag(connection.wsClient?.status)
+        var waitOutcome = "already_connected"
         if connection.wsClient?.status == .connected {
             // already connected
         } else if await connection.waitForConnectedStream(timeout: .seconds(10)) {
-            // connected after wait
+            waitOutcome = "connected"
         } else {
+            waitOutcome = "timeout"
             // timeout — proceed anyway, subscribe will fail and be handled
         }
         let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
+        recordMetric(
+            .wsWaitForConnectedMs,
+            value: streamOpenMs,
+            sessionId: sessionId,
+            tags: [
+                "transport": transport,
+                "status_before": statusBeforeWait,
+                "outcome": waitOutcome,
+            ]
+        )
 
         let perSessionStream = AsyncStream<SessionStreamEvent> { continuation in
             connection.sessionEventContinuations[sessionId] = continuation
@@ -149,19 +162,20 @@ final class SessionStreamCoordinator {
             )
         }
 
-        let subscribeAckMs = Int((ContinuousClock.now - subscribeStart) / .milliseconds(1))
+        let subscribeGateMs = Int((ContinuousClock.now - subscribeStart) / .milliseconds(1))
 
         Task.detached(priority: .utility) {
             var tags: [String: String] = [
                 "transport": transport,
                 "status": subscribeStatus,
+                "level": "full",
             ]
             if let subscribeErrorKind {
                 tags["error_kind"] = subscribeErrorKind
             }
             await ChatMetricsService.shared.record(
-                metric: .subscribeAckMs,
-                value: Double(subscribeAckMs),
+                metric: .subscribeGateMs,
+                value: Double(subscribeGateMs),
                 unit: .ms,
                 sessionId: sessionId,
                 tags: tags
@@ -174,20 +188,20 @@ final class SessionStreamCoordinator {
         let endpointHost = connection.streamEndpointHostForMetrics()
 
         streamCoordinatorLogger.info(
-            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeAck=\(subscribeAckMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)"
+            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeGate=\(subscribeGateMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)"
         )
 
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
             "wsStatus": String(describing: wsStatus),
             "streamOpenMs": String(streamOpenMs),
-            "subscribeAckMs": String(subscribeAckMs),
+            "subscribeGateMs": String(subscribeGateMs),
             "queueSyncMs": "0",
             "queueSyncStatus": "async",
             "totalMs": String(totalMs),
             "transport": transport,
             "endpointHost": endpointHost,
             "connectMs": String(streamOpenMs),
-            "subscribeMs": String(subscribeAckMs),
+            "subscribeMs": String(subscribeGateMs),
         ])
 
         await syncNotificationSubscriptions(connection: connection)
@@ -447,7 +461,8 @@ final class SessionStreamCoordinator {
                 connection: connection,
                 sessionId: focusedSessionId,
                 level: .full,
-                maxAttempts: ServerConnection.resubscribeMaxAttempts
+                maxAttempts: ServerConnection.resubscribeMaxAttempts,
+                reason: "stream_reconnect"
             )
             if ok {
                 focusedResubscribed = true
@@ -481,7 +496,8 @@ final class SessionStreamCoordinator {
                 connection: connection,
                 sessionId: sessionId,
                 level: .notifications,
-                maxAttempts: 1
+                maxAttempts: 1,
+                reason: "stream_reconnect"
             )
         }
 
@@ -503,10 +519,25 @@ final class SessionStreamCoordinator {
         connection: ServerConnection,
         sessionId: String,
         level: StreamSubscriptionLevel,
-        maxAttempts: Int
+        maxAttempts: Int,
+        reason: String
     ) async -> Bool {
+        let startedAt = ContinuousClock.now
+        var lastErrorKind: String?
         for attempt in 1...maxAttempts {
-            guard connection.wsClient != nil else { return false }
+            guard connection.wsClient != nil else {
+                recordResubscribeMetric(
+                    elapsed: ContinuousClock.now - startedAt,
+                    connection: connection,
+                    sessionId: sessionId,
+                    level: level,
+                    reason: reason,
+                    attempt: attempt,
+                    outcome: "error",
+                    errorKind: "not_connected"
+                )
+                return false
+            }
 
             var subscribeRequestId: String?
             do {
@@ -530,8 +561,18 @@ final class SessionStreamCoordinator {
                         requestId: subscribeRequestId
                     )
                 }
+                recordResubscribeMetric(
+                    elapsed: ContinuousClock.now - startedAt,
+                    connection: connection,
+                    sessionId: sessionId,
+                    level: level,
+                    reason: reason,
+                    attempt: attempt,
+                    outcome: "ok"
+                )
                 return true
             } catch {
+                lastErrorKind = connection.telemetryErrorKind(from: error)
                 if let subscribeRequestId {
                     connection.subscriptionRegistry.markSubscribeFailed(
                         sessionId: sessionId,
@@ -549,6 +590,16 @@ final class SessionStreamCoordinator {
             }
         }
 
+        recordResubscribeMetric(
+            elapsed: ContinuousClock.now - startedAt,
+            connection: connection,
+            sessionId: sessionId,
+            level: level,
+            reason: reason,
+            attempt: maxAttempts,
+            outcome: "error",
+            errorKind: lastErrorKind
+        )
         return false
     }
 
@@ -566,6 +617,17 @@ final class SessionStreamCoordinator {
         guard canRecoverNotSubscribed(connection: connection, sessionId: sessionId) else {
             return false
         }
+
+        recordMetric(
+            .subscriptionRaceCount,
+            value: 1,
+            unit: .count,
+            sessionId: sessionId,
+            tags: [
+                "transport": connection.transportPath.rawValue,
+                "state": silentResubscribeTask == nil ? "starting" : "coalesced",
+            ]
+        )
 
         if silentResubscribeTask == nil {
             silentResubscribeTask = startSilentResubscribe(
@@ -630,7 +692,20 @@ final class SessionStreamCoordinator {
                 connection: connection,
                 sessionId: sessionId,
                 level: .full,
-                maxAttempts: 2
+                maxAttempts: 2,
+                reason: debounce ? "silent_resubscribe" : "turn_retry"
+            )
+
+            self.recordMetric(
+                .silentResubscribeCount,
+                value: 1,
+                unit: .count,
+                sessionId: sessionId,
+                tags: [
+                    "transport": connection.transportPath.rawValue,
+                    "outcome": ok ? "ok" : "error",
+                    "reason": debounce ? "stream_error" : "turn_retry",
+                ]
             )
 
             if ok {
@@ -663,6 +738,57 @@ final class SessionStreamCoordinator {
             .prefix(Self.maxNotificationSubscriptions)
             .map(\.id)
         return Set(candidates)
+    }
+
+    private func recordResubscribeMetric(
+        elapsed: Duration,
+        connection: ServerConnection,
+        sessionId: String,
+        level: StreamSubscriptionLevel,
+        reason: String,
+        attempt: Int,
+        outcome: String,
+        errorKind: String? = nil
+    ) {
+        var tags: [String: String] = [
+            "transport": connection.transportPath.rawValue,
+            "level": level.rawValue,
+            "reason": reason,
+            "attempt": String(attempt),
+            "outcome": outcome,
+        ]
+        if let errorKind {
+            tags["error_kind"] = errorKind
+        }
+        recordMetric(.resubscribeMs, value: Int(elapsed / .milliseconds(1)), sessionId: sessionId, tags: tags)
+    }
+
+    private func recordMetric(
+        _ metric: ChatMetricName,
+        value: Int,
+        unit: ChatMetricUnit = .ms,
+        sessionId: String?,
+        tags: [String: String]
+    ) {
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: metric,
+                value: Double(value),
+                unit: unit,
+                sessionId: sessionId,
+                tags: tags
+            )
+        }
+    }
+
+    private func statusTag(_ status: WebSocketClient.Status?) -> String {
+        switch status {
+        case .connected: "connected"
+        case .connecting: "connecting"
+        case .disconnected: "disconnected"
+        case .reconnecting: "reconnecting"
+        case nil: "none"
+        }
     }
 
     // MARK: - State machine

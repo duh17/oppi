@@ -26,6 +26,9 @@ final class MessageSender {
     /// Focused session context used for session envelope framing.
     var focusedSessionProvider: (() -> FocusedSessionContext?)?
 
+    /// Current transport path for telemetry tagging.
+    var transportPathProvider: (() -> ConnectionTransportPath)?
+
     /// Optional recovery hook used before retrying a turn rejected because the
     /// stream lost its full subscription. Returns after the resubscribe attempt.
     var recoverNotSubscribedBeforeRetry: ((_ sessionId: String?) async -> Bool)?
@@ -270,11 +273,38 @@ final class MessageSender {
         )
 
         let pending = PendingCommand(command: command, requestId: requestId)
+        let transport = transportPathProvider?().rawValue ?? "unknown"
+        let roundtripStart = ContinuousClock.now
         commands.registerCommand(pending)
 
         do {
+            let sendStart = ContinuousClock.now
             try await dispatchSend(outboundMessage, sessionIdOverride: sessionIdOverride)
+            recordCommandMetric(
+                metric: .commandSendMs,
+                elapsed: ContinuousClock.now - sendStart,
+                command: command,
+                transport: transport,
+                outcome: "ok"
+            )
         } catch {
+            let errorKind = Self.telemetryErrorKind(from: error)
+            recordCommandMetric(
+                metric: .commandSendMs,
+                elapsed: ContinuousClock.now - roundtripStart,
+                command: command,
+                transport: transport,
+                outcome: "error",
+                errorKind: errorKind
+            )
+            recordCommandMetric(
+                metric: .commandRoundtripMs,
+                elapsed: ContinuousClock.now - roundtripStart,
+                command: command,
+                transport: transport,
+                outcome: "error",
+                errorKind: errorKind
+            )
             commands.unregisterCommand(requestId: requestId)
             pending.waiter.resolve(.failure(error))
             throw error
@@ -287,12 +317,55 @@ final class MessageSender {
                 timeout: effectiveTimeout
             )
             commands.unregisterCommand(requestId: requestId)
+            recordCommandMetric(
+                metric: .commandRoundtripMs,
+                elapsed: ContinuousClock.now - roundtripStart,
+                command: command,
+                transport: transport,
+                outcome: "ok"
+            )
             return response.data
         } catch {
+            recordCommandMetric(
+                metric: .commandRoundtripMs,
+                elapsed: ContinuousClock.now - roundtripStart,
+                command: command,
+                transport: transport,
+                outcome: "error",
+                errorKind: Self.telemetryErrorKind(from: error)
+            )
             commands.unregisterCommand(requestId: requestId)
             throw error
         }
     }
+
+    private func recordCommandMetric(
+        metric: ChatMetricName,
+        elapsed: Duration,
+        command: String,
+        transport: String,
+        outcome: String,
+        errorKind: String? = nil
+    ) {
+        let elapsedMs = Int(elapsed / .milliseconds(1))
+        var tags: [String: String] = [
+            "command": command,
+            "transport": transport,
+            "outcome": outcome,
+        ]
+        if let errorKind {
+            tags["error_kind"] = errorKind
+        }
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: metric,
+                value: Double(elapsedMs),
+                unit: .ms,
+                tags: tags
+            )
+        }
+    }
+
 
     private func waitForCommandResult(
         waiter: CommandResultWaiter,

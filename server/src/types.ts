@@ -784,10 +784,6 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Payload byte count flushed per coalescer batch.",
   },
-  "chat.inbound_queue_depth": {
-    unit: "count",
-    description: "Inbound queue depth observed while processing stream events.",
-  },
   "chat.full_reload_ms": {
     unit: "ms",
     description: "Latency for full timeline reload fallback path.",
@@ -804,18 +800,44 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Reducer reconstruction/load latency from cached state.",
   },
-  "chat.ws_connect_ms": {
+  "chat.ws_wait_for_connected_ms": {
     unit: "ms",
-    description: "Legacy WebSocket connect latency bucket (mixed phases).",
+    description: "Client wait for /stream to reach connected before session subscribe.",
+  },
+  "chat.command_send_ms": {
+    unit: "ms",
+    description: "Client command send path duration until WebSocket send returns.",
+  },
+  "chat.command_roundtrip_ms": {
+    unit: "ms",
+    description:
+      "Client command request/response duration until correlated command_result resolves.",
+  },
+  "chat.command_resolve_lag_ms": {
+    unit: "ms",
+    description: "Client lag from command_result frame receipt to command waiter resolution.",
   },
   // Removed: chat.stream_open_ms — p50=0ms, never measures real latency
-  "chat.subscribe_ack_ms": {
+  // Removed: chat.subscribe_ack_ms — replaced by chat.subscribe_gate_ms
+  "chat.subscribe_gate_ms": {
     unit: "ms",
-    description: "Latency from subscribe send to subscribe command acknowledgement.",
+    description: "Client-observed full subscription gate latency for session commands.",
   },
   "chat.queue_sync_ms": {
     unit: "ms",
     description: "Latency for initial queue snapshot refresh (get_queue command).",
+  },
+  "chat.resubscribe_ms": {
+    unit: "ms",
+    description: "Client resubscribe duration after reconnect or not-subscribed recovery.",
+  },
+  "chat.silent_resubscribe_count": {
+    unit: "count",
+    description: "Silent resubscribe attempts triggered by not-subscribed recovery.",
+  },
+  "chat.subscription_race_count": {
+    unit: "count",
+    description: "Recovered not-subscribed race detections on the client stream.",
   },
   "chat.message_queue_ack_ms": {
     unit: "ms",
@@ -828,10 +850,6 @@ export const CHAT_METRIC_REGISTRY = {
   "chat.message_queue_start_miss": {
     unit: "count",
     description: "Queue messages sent before session start was confirmed.",
-  },
-  "chat.connected_dispatch_ms": {
-    unit: "ms",
-    description: "Delay from connected message receipt to session-loop consumption.",
   },
   "chat.session_message_count": {
     unit: "count",

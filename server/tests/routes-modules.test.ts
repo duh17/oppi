@@ -1140,7 +1140,7 @@ describe("routes modules", () => {
               },
               {
                 ts: generatedAt + 21,
-                metric: "chat.subscribe_ack_ms",
+                metric: "chat.subscribe_gate_ms",
                 value: 88,
                 unit: "ms",
                 tags: { transport: "paired", status: "ok" },
@@ -1151,13 +1151,6 @@ describe("routes modules", () => {
                 value: 52,
                 unit: "ms",
                 tags: { transport: "paired", status: "ok" },
-              },
-              {
-                ts: generatedAt + 23,
-                metric: "chat.connected_dispatch_ms",
-                value: 24,
-                unit: "ms",
-                tags: { transport: "paired" },
               },
               {
                 ts: generatedAt + 24,
@@ -1254,21 +1247,20 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(15);
+        expect(record.sampleCount).toBe(14);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
-        expect(record.samples[3]?.metric).toBe("chat.subscribe_ack_ms");
+        expect(record.samples[3]?.metric).toBe("chat.subscribe_gate_ms");
         expect(record.samples[4]?.metric).toBe("chat.queue_sync_ms");
-        expect(record.samples[5]?.metric).toBe("chat.connected_dispatch_ms");
-        expect(record.samples[6]?.metric).toBe("chat.session_message_count");
-        expect(record.samples[7]?.metric).toBe("chat.session_input_tokens");
-        expect(record.samples[8]?.metric).toBe("chat.session_output_tokens");
-        expect(record.samples[9]?.metric).toBe("chat.session_mutating_tool_calls");
-        expect(record.samples[10]?.metric).toBe("chat.session_files_changed");
-        expect(record.samples[11]?.metric).toBe("chat.session_added_lines");
-        expect(record.samples[12]?.metric).toBe("chat.session_removed_lines");
-        expect(record.samples[13]?.metric).toBe("chat.session_context_tokens");
-        expect(record.samples[14]?.metric).toBe("chat.session_context_window");
+        expect(record.samples[5]?.metric).toBe("chat.session_message_count");
+        expect(record.samples[6]?.metric).toBe("chat.session_input_tokens");
+        expect(record.samples[7]?.metric).toBe("chat.session_output_tokens");
+        expect(record.samples[8]?.metric).toBe("chat.session_mutating_tool_calls");
+        expect(record.samples[9]?.metric).toBe("chat.session_files_changed");
+        expect(record.samples[10]?.metric).toBe("chat.session_added_lines");
+        expect(record.samples[11]?.metric).toBe("chat.session_removed_lines");
+        expect(record.samples[12]?.metric).toBe("chat.session_context_tokens");
+        expect(record.samples[13]?.metric).toBe("chat.session_context_window");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }

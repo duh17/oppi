@@ -288,7 +288,6 @@ final class ChatSessionManager {
             return
         }
 
-        let wsOpenStartMs = ChatSessionTelemetry.nowMs()
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
             transitionTo(.disconnected(reason: .fatalError))
@@ -331,7 +330,6 @@ final class ChatSessionManager {
                     connection: connection,
                     sessionStore: sessionStore,
                     generation: generation,
-                    wsOpenStartMs: wsOpenStartMs,
                     hasReceivedConnected: &hasReceivedConnected
                 )
                 if case .disconnected = entryState { break }
@@ -349,7 +347,6 @@ final class ChatSessionManager {
                     connection: connection,
                     sessionStore: sessionStore,
                     generation: generation,
-                    wsOpenStartMs: wsOpenStartMs,
                     hasReceivedConnected: &hasReceivedConnected
                 )
                 if case .disconnected = entryState { break }
@@ -461,7 +458,6 @@ final class ChatSessionManager {
         connection: ServerConnection,
         sessionStore: SessionStore,
         generation: Int,
-        wsOpenStartMs: Int64,
         hasReceivedConnected: inout Bool
     ) async {
         guard event.sessionId == sessionId else {
@@ -491,12 +487,6 @@ final class ChatSessionManager {
 
                 if let receivedAtMs = inboundMeta?.receivedAtMs {
                     let dispatchLagMs = max(0, ChatSessionTelemetry.nowMs() - receivedAtMs)
-                    ChatSessionTelemetry.recordConnectedDispatchLag(
-                        lagMs: dispatchLagMs,
-                        sessionId: sessionId,
-                        transport: transportTag
-                    )
-
                     if dispatchLagMs >= 1_000 {
                         ClientLog.error(
                             "WebSocket",
@@ -508,16 +498,6 @@ final class ChatSessionManager {
                             ]
                         )
                     }
-                }
-
-                // Record time from WS open to first .connected message.
-                if !hasReceivedConnected {
-                    let wsConnectDurationMs = max(0, ChatSessionTelemetry.nowMs() - wsOpenStartMs)
-                    ChatSessionTelemetry.recordWsConnect(
-                        durationMs: wsConnectDurationMs,
-                        sessionId: sessionId,
-                        transport: transportTag
-                    )
                 }
 
                 // Seed seq tracking from the server's current position.

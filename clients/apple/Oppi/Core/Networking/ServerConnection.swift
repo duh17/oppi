@@ -171,6 +171,9 @@ final class ServerConnection {
         silenceWatchdog.onProbe = { [weak self] in
             try? await self?.requestState()
         }
+        sender.transportPathProvider = { [weak self] in
+            self?.transportPath ?? .paired
+        }
         sender.recoverNotSubscribedBeforeRetry = { [weak self] sessionId in
             guard let self, let sessionId else { return false }
             return await self.sessionStreamCoordinator.recoverNotSubscribedBeforeRetry(
@@ -515,7 +518,7 @@ final class ServerConnection {
            sessionStreamCoordinator.handleNotSubscribedError(connection: self, sessionId: sessionId) {
             // Still resolve paired command_result waiters so callers don't
             // time out, but don't yield to the per-session stream.
-            resolveBoundaryCommandResult(message)
+            resolveBoundaryCommandResult(message, meta: frameEvent.meta)
             return
         }
 
@@ -523,7 +526,7 @@ final class ServerConnection {
         // BEFORE yielding to the per-session stream. Semantic effects still
         // flow downstream, but request waiters do not depend on a session
         // consumer being attached and running.
-        resolveBoundaryCommandResult(message)
+        resolveBoundaryCommandResult(message, meta: frameEvent.meta)
 
         // Route to per-session continuation if active. Metadata stays attached
         // to the message through SessionStreamEvent.
@@ -551,29 +554,45 @@ final class ServerConnection {
 
     /// Resolve command waiters at the stream boundary for every command_result
     /// with a requestId. Semantic effects still flow through session routing.
-    private func resolveBoundaryCommandResult(_ message: ServerMessage) {
+    private func resolveBoundaryCommandResult(_ message: ServerMessage, meta: InboundStreamMeta?) {
         guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
               let requestId else {
             return
         }
 
+        let resolved: Bool
         if command == "prompt" || command == "steer" || command == "follow_up" {
-            _ = commands.resolveTurnCommandResult(
+            resolved = commands.resolveTurnCommandResult(
                 command: command,
                 requestId: requestId,
                 success: success,
                 error: error
             )
-            return
+        } else {
+            resolved = commands.resolveCommandResult(
+                command: command,
+                requestId: requestId,
+                success: success,
+                data: data,
+                error: error
+            )
         }
 
-        _ = commands.resolveCommandResult(
-            command: command,
-            requestId: requestId,
-            success: success,
-            data: data,
-            error: error
-        )
+        guard resolved, let receivedAtMs = meta?.receivedAtMs else { return }
+        let lagMs = max(0, Date.nowMs() - receivedAtMs)
+        let transport = meta?.transportPath.rawValue ?? transportPath.rawValue
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .commandResolveLagMs,
+                value: Double(lagMs),
+                unit: .ms,
+                tags: [
+                    "command": command,
+                    "transport": transport,
+                    "success": success ? "true" : "false",
+                ]
+            )
+        }
     }
 
     /// Handle `/stream` (re)connection — coordinator re-subscribes tracked sessions.

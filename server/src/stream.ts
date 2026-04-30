@@ -84,6 +84,13 @@ function toBuffer(data: RawData): Buffer {
   return Buffer.from(data);
 }
 
+function countBucketForTag(count: number): string {
+  if (count <= 0) return "0";
+  if (count === 1) return "1";
+  if (count <= 4) return "2-4";
+  return "5+";
+}
+
 function parseIncomingClientMessage(
   data: RawData,
 ):
@@ -423,12 +430,20 @@ export class UserStreamMux {
 
       clearSubscription(sessionId);
 
+      const catchupRequested = sinceSeq !== undefined;
+      let catchUpComplete = !catchupRequested;
+      let pendingPermissionCount = 0;
+      let pendingUIRequestCount = 0;
+      let startedSession = false;
+
       try {
         let hydratedSession = this.ctx.ensureSessionContextWindow(session);
         if (level === "full") {
           const subStartMs = Date.now();
+          const hadActiveSession = this.ctx.sessions.getActiveSession(sessionId) !== undefined;
           const workspace = this.ctx.resolveWorkspaceForSession(session);
           const started = await this.ctx.sessions.startSession(sessionId, workspace);
+          startedSession = !hadActiveSession;
           const startSessionMs = Date.now() - subStartMs;
           hydratedSession = this.ctx.ensureSessionContextWindow(started);
           sendForSession(sessionId, {
@@ -477,7 +492,6 @@ export class UserStreamMux {
           ),
         });
 
-        let catchUpComplete = true;
         if (sinceSeq !== undefined) {
           const catchUp = this.ctx.sessions.getCatchUp(sessionId, sinceSeq);
           if (catchUp) {
@@ -491,6 +505,7 @@ export class UserStreamMux {
         const pendingPerms = this.ctx.gate
           .getPendingForUser()
           .filter((p: PendingDecision) => p.sessionId === sessionId);
+        pendingPermissionCount = pendingPerms.length;
         for (const pending of pendingPerms) {
           send(buildPermissionMessage(pending));
         }
@@ -499,16 +514,25 @@ export class UserStreamMux {
         // after reconnects, focus changes, or stream re-subscribe.
         const pendingAskMsg = this.ctx.sessions.getPendingAskMessage(sessionId);
         if (pendingAskMsg) {
+          pendingUIRequestCount++;
           send(pendingAskMsg);
         }
 
-        for (const pendingUIMsg of this.ctx.sessions.getPendingUIRequestMessages(sessionId)) {
+        const pendingUIMsgs = this.ctx.sessions.getPendingUIRequestMessages(sessionId);
+        pendingUIRequestCount += pendingUIMsgs.length;
+        for (const pendingUIMsg of pendingUIMsgs) {
           send(pendingUIMsg);
         }
 
         const durationMs = Date.now() - subscribeStart;
         metrics?.record("server.session_subscribe_ms", durationMs, {
           level,
+          outcome: "success",
+          catchup_requested: catchupRequested ? "true" : "false",
+          catchup_complete: catchUpComplete ? "true" : "false",
+          started_session: startedSession ? "true" : "false",
+          pending_permissions: countBucketForTag(pendingPermissionCount),
+          pending_ui_requests: countBucketForTag(pendingUIRequestCount),
         });
 
         send({
@@ -535,6 +559,15 @@ export class UserStreamMux {
         });
       } catch (err: unknown) {
         const message = safeErrorMessage(err);
+        metrics?.record("server.session_subscribe_ms", Date.now() - subscribeStart, {
+          level,
+          outcome: "error",
+          catchup_requested: catchupRequested ? "true" : "false",
+          catchup_complete: catchUpComplete ? "true" : "false",
+          started_session: startedSession ? "true" : "false",
+          pending_permissions: countBucketForTag(pendingPermissionCount),
+          pending_ui_requests: countBucketForTag(pendingUIRequestCount),
+        });
         send({
           type: "command_result",
           command: "subscribe",

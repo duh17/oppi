@@ -52,30 +52,6 @@ enum ChatSessionTelemetry {
         )
     }
 
-    static func recordWsConnect(
-        durationMs: Int64,
-        sessionId: String,
-        transport: String
-    ) {
-        emit(
-            .wsConnectMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            tags: ["transport": transport]
-        )
-    }
-
-    static func recordConnectedDispatchLag(
-        lagMs: Int64,
-        sessionId: String,
-        transport: String
-    ) {
-        emit(
-            .connectedDispatchMs, Double(lagMs), .ms,
-            sessionId: sessionId,
-            tags: ["transport": transport]
-        )
-    }
-
     static func recordTTFT(
         durationMs: Int64,
         sessionId: String,
