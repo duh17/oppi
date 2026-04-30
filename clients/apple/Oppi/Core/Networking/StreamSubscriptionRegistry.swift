@@ -33,12 +33,13 @@ final class StreamSubscriptionRegistry {
 
     func setDesired(_ level: DesiredSubscriptionLevel, for sessionId: String) {
         var entry = entries[sessionId] ?? Entry()
-        if entry.desired != level {
+        let effectiveLevel = entry.desired == .full && level == .notifications ? .full : level
+        if entry.desired != effectiveLevel {
             entry.generation += 1
             entry.ackState = .idle
         }
-        entry.desired = level
-        if level == .none {
+        entry.desired = effectiveLevel
+        if effectiveLevel == .none {
             entry.ackState = .idle
         }
         entries[sessionId] = entry

@@ -216,7 +216,9 @@ final class SessionStreamCoordinator {
     func syncNotificationSubscriptions(connection: ServerConnection) async {
         guard connection.wsClient != nil else { return }
 
-        let desired = desiredNotificationSessionIds(connection: connection)
+        let desired = desiredNotificationSessionIds(connection: connection).filter {
+            connection.subscriptionRegistry.desiredLevel(for: $0) != .full
+        }
         for sessionId in desired {
             connection.subscriptionRegistry.setDesired(.notifications, for: sessionId)
         }
@@ -266,6 +268,7 @@ final class SessionStreamCoordinator {
                 }
 
                 let stillDesired = desiredNotificationSessionIds(connection: connection).contains(sessionId)
+                    && connection.subscriptionRegistry.desiredLevel(for: sessionId) != .full
                 if !stillDesired {
                     let generation = connection.subscriptionRegistry.generation(for: sessionId)
                     connection.subscriptionRegistry.markUnsubscribeSent(

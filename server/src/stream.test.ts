@@ -265,6 +265,44 @@ describe("UserStreamMux — multiple full subscriptions", () => {
     expect(ctx.handleClientMessage).toHaveBeenCalledTimes(2);
   });
 
+  it("does not downgrade a full subscription when a stale notification subscribe arrives", async () => {
+    const sessA = makeSession("sess-a");
+    const { ctx } = createMockContext([sessA]);
+
+    const mux = new UserStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket(ws as unknown as WebSocket);
+    await drain();
+
+    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full", requestId: "full" });
+    await drain();
+    ws.receive({
+      type: "subscribe",
+      sessionId: "sess-a",
+      level: "notifications",
+      requestId: "stale-notification",
+    });
+    await drain();
+
+    const notificationResult = ws
+      .sentOfType("command_result")
+      .find((m) => (m as Record<string, unknown>).requestId === "stale-notification") as
+      | (ServerMessage & { data?: Record<string, unknown> })
+      | undefined;
+    expect(notificationResult?.success).toBe(true);
+    expect(notificationResult?.data?.level).toBe("full");
+    expect(notificationResult?.data?.retainedFullSubscription).toBe(true);
+
+    ws.receive({ type: "get_state", sessionId: "sess-a", requestId: "cmd-a" } as ClientMessage);
+    await drain();
+
+    const notSubscribedErrors = ws.sent.filter(
+      (m) => m.type === "error" && m.code === "stream_not_subscribed_full",
+    );
+    expect(notSubscribedErrors).toHaveLength(0);
+    expect(ctx.handleClientMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("notification-level subscriptions still filter non-notification events", async () => {
     const sessA = makeSession("sess-a");
     const { ctx, broadcastTo } = createMockContext([sessA]);

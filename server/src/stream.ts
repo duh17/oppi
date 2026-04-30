@@ -343,7 +343,7 @@ export class UserStreamMux {
         connId,
         sessionId,
         requestId,
-        level,
+        requestedLevel: level,
         sinceSeq,
       });
 
@@ -390,28 +390,35 @@ export class UserStreamMux {
       // each re-subscribe hundreds of notification sessions, overwhelming
       // the event loop and causing ping timeouts → more reconnects.
       const existing = subscriptions.get(sessionId);
-      if (existing && existing.level === level && sinceSeq === undefined) {
-        log.debug("stream.subscribe.deduplicated", {
-          connId,
-          sessionId,
-          requestId,
-          level,
-        });
-        send({
-          type: "command_result",
-          command: "subscribe",
-          requestId,
-          success: true,
-          data: {
+      if (existing && sinceSeq === undefined) {
+        const retainFullSubscription = existing.level === "full" && level === "notifications";
+        if (existing.level === level || retainFullSubscription) {
+          log.debug("stream.subscribe.deduplicated", {
+            connId,
             sessionId,
-            level,
-            currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
-            catchUpComplete: true,
-            deduplicated: true,
-          },
-          sessionId,
-        });
-        return;
+            requestId,
+            requestedLevel: level,
+            effectiveLevel: existing.level,
+            retainFullSubscription,
+          });
+          send({
+            type: "command_result",
+            command: "subscribe",
+            requestId,
+            success: true,
+            data: {
+              sessionId,
+              level: existing.level,
+              requestedLevel: level,
+              currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
+              catchUpComplete: true,
+              deduplicated: true,
+              retainedFullSubscription: retainFullSubscription,
+            },
+            sessionId,
+          });
+          return;
+        }
       }
 
       clearSubscription(sessionId);
@@ -522,7 +529,7 @@ export class UserStreamMux {
           connId,
           sessionId,
           requestId,
-          level,
+          subscribedLevel: level,
           catchUpComplete,
           durationMs,
         });
@@ -541,7 +548,7 @@ export class UserStreamMux {
           connId,
           sessionId,
           requestId,
-          level,
+          requestedLevel: level,
           durationMs: Date.now() - subscribeStart,
           error: message,
         });

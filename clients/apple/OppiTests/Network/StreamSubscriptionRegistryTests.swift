@@ -77,6 +77,21 @@ struct StreamSubscriptionRegistryTests {
         #expect(registry.routeLevel(for: "s1") == .full)
     }
 
+    @Test func notificationIntentCannotDowngradeFullDesiredLevel() {
+        let registry = StreamSubscriptionRegistry()
+
+        registry.setDesired(.full, for: "s1")
+        registry.markSubscribeSent(sessionId: "s1", requestId: "full", level: .full)
+        registry.markSubscribeAck(sessionId: "s1", requestId: "full")
+
+        registry.setDesired(.notifications, for: "s1")
+
+        #expect(registry.desiredLevel(for: "s1") == .full)
+        #expect(registry.ackState(for: "s1") == .acked(generation: 1, level: .full))
+        #expect(registry.sessionIds(desired: .notifications).contains("s1") == false)
+        #expect(registry.sessionIds(acked: .full) == ["s1"])
+    }
+
     @Test func matchingUnsubscribeClearsDesiredAndAck() {
         let registry = StreamSubscriptionRegistry()
 
