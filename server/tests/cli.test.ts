@@ -9,6 +9,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer } from "node:net";
 
 const CLI = resolve(__dirname, "../dist/src/cli.js");
 let dataDir: string;
@@ -36,6 +37,28 @@ function run(
     const e = err as { stdout?: string; status?: number };
     return { stdout: e.stdout ?? "", exitCode: e.status ?? 1 };
   }
+}
+
+async function getFreePort(): Promise<number> {
+  return await new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate test port")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolvePort(port);
+      });
+    });
+  });
 }
 
 beforeAll(() => {
@@ -357,10 +380,11 @@ exit 1
 });
 
 describe("oppi serve (first-run tls bootstrap)", () => {
-  it("upgrades legacy disabled TLS to self-signed on first serve", () => {
+  it("upgrades legacy disabled TLS to self-signed on first serve", async () => {
     const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tls-"));
 
     try {
+      const freePort = await getFreePort();
       const { stdout: defaultTlsJson, exitCode: defaultExitCode } = run(["config", "get", "tls"], {
         OPPI_DATA_DIR: serveDir,
       });
@@ -373,6 +397,18 @@ describe("oppi serve (first-run tls bootstrap)", () => {
         { OPPI_DATA_DIR: serveDir },
       );
       expect(setDisabledExitCode).toBe(0);
+
+      const { exitCode: setPortExitCode } = run(
+        ["config", "set", "port", String(freePort)],
+        { OPPI_DATA_DIR: serveDir },
+      );
+      expect(setPortExitCode).toBe(0);
+
+      const { exitCode: setHostExitCode } = run(
+        ["config", "set", "host", "127.0.0.1"],
+        { OPPI_DATA_DIR: serveDir },
+      );
+      expect(setHostExitCode).toBe(0);
 
       const { stdout: beforeTlsJson, exitCode: beforeExitCode } = run(["config", "get", "tls"], {
         OPPI_DATA_DIR: serveDir,
