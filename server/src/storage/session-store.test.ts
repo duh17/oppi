@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -78,6 +78,122 @@ describe("SessionStore trace context repair", () => {
 
       const reloaded = new Storage(dataDir).listSessions()[0];
       expect(reloaded?.contextTokens).toBe(550);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("legacy workspace session migration", () => {
+  it("assigns old sessions to an existing workspace by JSONL cwd", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-migration-"));
+    const projectDir = join(dataDir, "project");
+    const nestedDir = join(projectDir, "server");
+
+    try {
+      mkdirSync(nestedDir, { recursive: true });
+      const tracePath = join(dataDir, "legacy.jsonl");
+      writeFileSync(
+        tracePath,
+        JSON.stringify({ type: "session", id: "pi-1", cwd: nestedDir, timestamp: "now" }) + "\n",
+      );
+
+      const storage = new Storage(dataDir);
+      const workspace = storage.createWorkspace({
+        name: "project",
+        skills: [],
+        hostMount: projectDir,
+      });
+      storage.saveSession({
+        id: "legacy-1",
+        status: "ready",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: tracePath,
+      });
+
+      const reloaded = new Storage(dataDir).getSession("legacy-1");
+      expect(reloaded?.workspaceId).toBe(workspace.id);
+      expect(reloaded?.workspaceName).toBe("project");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves legacy sessions orphaned when no existing hostMount matches", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-migration-"));
+    const projectDir = join(dataDir, "orphan-project");
+
+    try {
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(join(dataDir, "sessions"), { recursive: true });
+      const tracePath = join(dataDir, "legacy.jsonl");
+      writeFileSync(
+        tracePath,
+        JSON.stringify({ type: "session", id: "pi-1", cwd: projectDir, timestamp: "now" }) + "\n",
+      );
+      writeFileSync(
+        join(dataDir, "sessions", "legacy-1.json"),
+        JSON.stringify(
+          {
+            session: {
+              id: "legacy-1",
+              workspaceId: null,
+              status: "ready",
+              createdAt: Date.now(),
+              lastActivity: Date.now(),
+              messageCount: 0,
+              tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              cost: 0,
+              piSessionFile: tracePath,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const reloadedStorage = new Storage(dataDir);
+      const reloaded = reloadedStorage.getSession("legacy-1");
+
+      expect(reloaded?.workspaceId).toBeNull();
+      expect(reloadedStorage.listWorkspaces()).toEqual([]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves legacy sessions orphaned when matching hostMounts are ambiguous", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-migration-"));
+    const projectDir = join(dataDir, "project");
+
+    try {
+      mkdirSync(projectDir, { recursive: true });
+      const tracePath = join(dataDir, "legacy.jsonl");
+      writeFileSync(
+        tracePath,
+        JSON.stringify({ type: "session", id: "pi-1", cwd: projectDir, timestamp: "now" }) + "\n",
+      );
+
+      const storage = new Storage(dataDir);
+      storage.createWorkspace({ name: "project-a", skills: [], hostMount: projectDir });
+      storage.createWorkspace({ name: "project-b", skills: [], hostMount: projectDir });
+      storage.saveSession({
+        id: "legacy-1",
+        status: "ready",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        piSessionFile: tracePath,
+      });
+
+      const reloaded = new Storage(dataDir).getSession("legacy-1");
+      expect(reloaded?.workspaceId).toBeUndefined();
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
