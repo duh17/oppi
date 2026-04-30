@@ -125,6 +125,12 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
         { text: ":1-50", style: "warning" },
       ],
     },
+    tool_update: {
+      type: "tool_update",
+      tool: "write",
+      args: { path: "README.md", content: "hello" },
+      toolCallId: "tc-update-001",
+    },
     tool_output: {
       type: "tool_output",
       output: "All 42 tests passed",

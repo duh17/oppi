@@ -63,6 +63,7 @@ function makeManagerHarness(status: Session["status"] = "busy") {
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
+    streamingToolUpdatesSeen: new Set(),
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     seq: 0,

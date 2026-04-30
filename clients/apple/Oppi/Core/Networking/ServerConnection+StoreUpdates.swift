@@ -85,7 +85,8 @@ extension ServerConnection {
 
         // MARK: Tool activity tracking
 
-        case .toolStart(let tool, let args, _, _):
+        case .toolStart(let tool, let args, _, _),
+             .toolUpdate(let tool, let args, _, _):
             activityStore.recordToolStart(sessionId: sessionId, tool: tool, args: args)
             return .notHandled  // let active-session path also process (watchdog, coalescer)
 

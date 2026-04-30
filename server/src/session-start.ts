@@ -25,6 +25,7 @@ export interface SessionStartActiveSession {
   toolNames: Map<string, string>;
   shellPreviewLastSent: Map<string, number>;
   streamingArgPreviews: Set<string>;
+  streamingToolUpdatesSeen: Set<string>;
   pendingAsk?: PendingAskState;
   toolFullOutputPaths: Map<string, string>;
   messageQueue?: SessionMessageQueueStore;
@@ -173,6 +174,7 @@ export class SessionStartCoordinator {
           toolNames: new Map(),
           shellPreviewLastSent: new Map(),
           streamingArgPreviews: new Set(),
+          streamingToolUpdatesSeen: new Set(),
           toolFullOutputPaths: new Map(),
           messageQueue: {
             version: 0,

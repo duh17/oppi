@@ -220,6 +220,8 @@ export interface TranslationContext {
   shellPreviewLastSent: Map<string, number>;
   /** toolCallIds with active streaming arg viewport previews (tool_output emitted from args). */
   streamingArgPreviews: Set<string>;
+  /** toolCallIds that already emitted an ephemeral streaming tool update this turn. */
+  streamingToolUpdatesSeen: Set<string>;
 }
 
 /**
@@ -292,12 +294,13 @@ function findLargestStringArg(toolName: string, args: Record<string, unknown>): 
  * Extract streamed tool-call arguments from `message_update` events.
  *
  * Pi streams tool calls via assistantMessageEvent toolcall_* deltas before
- * `tool_execution_start`. We forward these as `tool_start` updates so iOS can
- * render evolving args (notably write.content) in real time.
+ * `tool_execution_start`. We forward these as ephemeral `tool_update`
+ * messages so iOS can create/update the tool row without polluting the
+ * durable event ring or fanout telemetry.
  */
 function extractStreamingToolCallUpdate(
   event: Extract<AgentSessionEvent, { type: "message_update" }>,
-): ServerMessage | null {
+): Extract<ServerMessage, { type: "tool_update" }> | null {
   const evt = event.assistantMessageEvent;
   if (
     evt.type !== "toolcall_start" &&
@@ -346,7 +349,7 @@ function extractStreamingToolCallUpdate(
 
   const args = asRecord(toolCall.arguments) ?? {};
   return {
-    type: "tool_start",
+    type: "tool_update",
     tool: toolName,
     args,
     toolCallId,
@@ -401,10 +404,12 @@ export function translatePiEvent(
   switch (event.type) {
     case "agent_start":
       ctx.streamedAssistantText = "";
+      ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_start" }];
 
     case "agent_end":
       ctx.streamedAssistantText = "";
+      ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_end" }];
 
     case "turn_start":
@@ -438,19 +443,25 @@ export function translatePiEvent(
       }
 
       const toolCallUpdate = extractStreamingToolCallUpdate(event);
-      if (toolCallUpdate && toolCallUpdate.type === "tool_start") {
-        const messages: ServerMessage[] = [toolCallUpdate];
+      if (toolCallUpdate && toolCallUpdate.type === "tool_update") {
+        const messages: ServerMessage[] = [];
+        const updateKey = toolCallUpdate.toolCallId ?? "";
 
-        // Augment streaming tool_start with callSegments so iOS renders a
-        // properly formatted title instead of raw argsSummary.
-        if (ctx.mobileRenderers) {
-          const callSegments = ctx.mobileRenderers.renderCall(
-            toolCallUpdate.tool,
-            toolCallUpdate.args,
-          );
-          if (callSegments) {
-            toolCallUpdate.callSegments = callSegments;
+        if (!ctx.streamingToolUpdatesSeen.has(updateKey)) {
+          ctx.streamingToolUpdatesSeen.add(updateKey);
+
+          // Augment the first streaming tool_update with callSegments so iOS
+          // renders a properly formatted title instead of raw argsSummary.
+          if (ctx.mobileRenderers) {
+            const callSegments = ctx.mobileRenderers.renderCall(
+              toolCallUpdate.tool,
+              toolCallUpdate.args,
+            );
+            if (callSegments) {
+              toolCallUpdate.callSegments = callSegments;
+            }
           }
+          messages.push(toolCallUpdate);
         }
 
         // Stream the largest string arg value as tool_output (replace mode)
@@ -481,6 +492,7 @@ export function translatePiEvent(
       // Track tool name for shell preview decisions in subsequent updates.
       if (toolCallId) {
         ctx.toolNames.set(toolCallId, event.toolName);
+        ctx.streamingToolUpdatesSeen.delete(toolCallId);
       }
 
       const messages: ServerMessage[] = [];

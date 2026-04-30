@@ -57,6 +57,7 @@ enum ServerMessage: Sendable, Equatable {
 
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
+    case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
     case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
@@ -203,7 +204,7 @@ extension ServerMessage: Decodable {
         case reason, source
         // message_end / text_delta / thinking_delta / audio_stream
         case role, content, delta, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, delivery
-        // tool_start / tool_end
+        // tool_start / tool_update / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
         case output, isError, mode, truncated, totalBytes
@@ -315,6 +316,13 @@ extension ServerMessage: Decodable {
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
             let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
             self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs)
+
+        case "tool_update":
+            let tool = try c.decode(String.self, forKey: .tool)
+            let args = try c.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
+            let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
+            let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
+            self = .toolUpdate(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs)
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
@@ -617,6 +625,7 @@ extension ServerMessage {
         case .thinkingDelta: "thinkingDelta"
         case .audioStream: "audioStream"
         case .toolStart: "toolStart"
+        case .toolUpdate: "toolUpdate"
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"
         case .queueState: "queueState"

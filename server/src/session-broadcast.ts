@@ -188,8 +188,8 @@ export class SessionBroadcaster {
     }
 
     // Only emit low-frequency ephemeral events to global observers.
-    // High-frequency deltas (text/thinking/tool_output) should not fan out
-    // through EventEmitter to avoid hot-path overhead.
+    // High-frequency updates (text/thinking/tool_output/tool_update) should
+    // not fan out through EventEmitter to avoid hot-path overhead.
     if (message.type === "state") {
       this.deps.emitSessionEvent({
         sessionId: active.session.id,

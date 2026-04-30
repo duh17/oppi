@@ -143,6 +143,7 @@ describe("SessionBroadcaster", () => {
     const expectedEphemeralTypes: ServerMessage["type"][] = [
       "text_delta",
       "thinking_delta",
+      "tool_update",
       "tool_output",
       "state",
       "connected",

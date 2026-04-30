@@ -183,6 +183,15 @@ struct ProtocolSnapshotTests {
         #expect(tool == "bash")
         #expect(toolCallId == "tc-001")
 
+        // tool_update
+        let updateMsg = try decodeMessage("tool_update")
+        guard case .toolUpdate(let updateTool, _, let updateToolCallId, _) = updateMsg else {
+            Issue.record("Expected .toolUpdate")
+            return
+        }
+        #expect(updateTool == "write")
+        #expect(updateToolCallId == "tc-update-001")
+
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
         guard case .toolOutput(let output, let isError, _, _, _, _) = outputMsg else {
@@ -335,7 +344,7 @@ struct ProtocolSnapshotTests {
             "stop_requested", "stop_confirmed", "stop_failed", "error",
             "agent_start", "agent_end", "message_end",
             "text_delta", "thinking_delta",
-            "tool_start", "tool_output", "tool_end",
+            "tool_start", "tool_update", "tool_output", "tool_end",
             "turn_ack", "command_result",
             "compaction_start", "compaction_end",
             "retry_start", "retry_end",

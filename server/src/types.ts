@@ -1301,6 +1301,13 @@ export type ServerMessage = // ── Connection ──
         callSegments?: StyledSegment[];
       }
     | {
+        type: "tool_update";
+        tool: string;
+        args: Record<string, unknown>;
+        toolCallId?: string;
+        callSegments?: StyledSegment[];
+      }
+    | {
         type: "tool_output";
         output: string;
         isError?: boolean;

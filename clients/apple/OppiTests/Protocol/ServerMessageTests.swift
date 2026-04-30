@@ -178,6 +178,20 @@ struct ServerMessageTests {
         #expect(toolCallId == "tc-42")
     }
 
+    @Test func decodesToolUpdate() throws {
+        let json = """
+        {"type":"tool_update","tool":"write","args":{"path":"README.md","content":"hello"},"toolCallId":"tc-update-1"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .toolUpdate(let tool, let args, let toolCallId, _) = msg else {
+            Issue.record("Expected .toolUpdate")
+            return
+        }
+        #expect(tool == "write")
+        #expect(args["path"] == .string("README.md"))
+        #expect(toolCallId == "tc-update-1")
+    }
+
     @Test func decodesToolOutput() throws {
         let json = """
         {"type":"tool_output","output":"total 42\\ndrwxr-xr-x"}

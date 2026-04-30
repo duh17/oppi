@@ -22,6 +22,7 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
+    streamingToolUpdatesSeen: new Set(),
     ...overrides,
   };
 }
@@ -635,7 +636,7 @@ describe("translatePiEvent", () => {
   });
 
   describe("message_update: toolcall streaming", () => {
-    it("extracts tool_start from toolcall_delta with content array", () => {
+    it("extracts tool_update from toolcall_delta with content array", () => {
       const event = {
         type: "message_update",
         message: {
@@ -650,8 +651,8 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, makeCtx());
       expect(result).toHaveLength(1);
-      expect(result[0]!.type).toBe("tool_start");
-      const msg = result[0] as Extract<ServerMessage, { type: "tool_start" }>;
+      expect(result[0]!.type).toBe("tool_update");
+      const msg = result[0] as Extract<ServerMessage, { type: "tool_update" }>;
       expect(msg.tool).toBe("write");
       expect(msg.toolCallId).toBe("tc-1");
       expect(msg.args).toEqual({ path: "/a.ts" });
@@ -675,7 +676,7 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, makeCtx());
       expect(result).toHaveLength(1);
-      expect((result[0] as Extract<ServerMessage, { type: "tool_start" }>).tool).toBe("edit");
+      expect((result[0] as Extract<ServerMessage, { type: "tool_update" }>).tool).toBe("edit");
     });
 
     it("returns empty when no toolCall found in content", () => {
@@ -715,7 +716,7 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, makeCtx());
       expect(result).toHaveLength(1);
-      expect((result[0] as Extract<ServerMessage, { type: "tool_start" }>).tool).toBe("read");
+      expect((result[0] as Extract<ServerMessage, { type: "tool_update" }>).tool).toBe("read");
     });
   });
 
@@ -740,7 +741,7 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, ctx);
       expect(result).toHaveLength(2);
-      expect(result[0]!.type).toBe("tool_start");
+      expect(result[0]!.type).toBe("tool_update");
       const output = result[1] as Extract<ServerMessage, { type: "tool_output" }>;
       expect(output.type).toBe("tool_output");
       expect(output.output).toBe(largeBody);
@@ -768,8 +769,33 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, ctx);
       expect(result).toHaveLength(1);
-      expect(result[0]!.type).toBe("tool_start");
+      expect(result[0]!.type).toBe("tool_update");
       expect(ctx.streamingArgPreviews.size).toBe(0);
+    });
+
+    it("emits only the first tool_update for repeated toolcall deltas", () => {
+      const ctx = makeCtx();
+      const event = {
+        type: "message_update",
+        message: {
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-repeat-1",
+              name: "write",
+              arguments: { path: "README.md", content: "hello" },
+            },
+          ],
+        },
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{}" },
+      } as unknown as AgentSessionEvent;
+
+      const first = translatePiEvent(event, ctx);
+      const second = translatePiEvent(event, ctx);
+
+      expect(first).toHaveLength(1);
+      expect(first[0]!.type).toBe("tool_update");
+      expect(second).toEqual([]);
     });
 
     it("picks the largest string arg when multiple exceed threshold", () => {
@@ -820,7 +846,7 @@ describe("translatePiEvent", () => {
       } as unknown as AgentSessionEvent;
 
       const result = translatePiEvent(event, ctx);
-      expect(result).toHaveLength(1); // only tool_start, no tool_output
+      expect(result).toHaveLength(1); // only tool_update, no tool_output
     });
 
     it("adds callSegments from mobile renderer during streaming", () => {
@@ -856,8 +882,8 @@ describe("translatePiEvent", () => {
       } as unknown as AgentSessionEvent;
 
       const result = translatePiEvent(event, ctx);
-      const toolStart = result[0] as Extract<ServerMessage, { type: "tool_start" }>;
-      expect(toolStart.callSegments).toEqual([
+      const toolUpdate = result[0] as Extract<ServerMessage, { type: "tool_update" }>;
+      expect(toolUpdate.callSegments).toEqual([
         { text: "todo ", style: "bold" },
         { text: "create", style: "accent" },
       ]);
@@ -2114,9 +2140,9 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // Should emit tool_start + tool_output (preview)
+      // Should emit tool_update + tool_output (preview)
       expect(streaming1).toHaveLength(2);
-      expect(streaming1[0]!.type).toBe("tool_start");
+      expect(streaming1[0]!.type).toBe("tool_update");
       const preview = streaming1[1] as Extract<ServerMessage, { type: "tool_output" }>;
       expect(preview.output).toBe(largeBody);
       expect(preview.mode).toBe("replace");
@@ -2287,7 +2313,7 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toHaveLength(2);
-      expect(result[0]!.type).toBe("tool_start");
+      expect(result[0]!.type).toBe("tool_update");
       const preview = result[1] as Extract<ServerMessage, { type: "tool_output" }>;
       expect(preview.output).toBe(text);
       expect(preview.mode).toBe("replace");

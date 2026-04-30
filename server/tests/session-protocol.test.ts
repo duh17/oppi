@@ -33,6 +33,7 @@ function makeCtx(): TranslationContext {
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingArgPreviews: new Set(),
+    streamingToolUpdatesSeen: new Set(),
   };
 }
 
@@ -77,7 +78,7 @@ describe("session-protocol translatePiEvent", () => {
     expect(translatePiEvent({ type: "turn_end" }, ctx)).toEqual([]);
   });
 
-  it("forwards streamed toolcall args as tool_start updates", () => {
+  it("forwards streamed toolcall args as tool_update messages", () => {
     const ctx = makeCtx();
 
     const messages = translatePiEvent(
@@ -108,7 +109,7 @@ describe("session-protocol translatePiEvent", () => {
 
     expect(messages).toEqual([
       {
-        type: "tool_start",
+        type: "tool_update",
         tool: "write",
         args: { path: "README.md", content: "hello" },
         toolCallId: "tc-write",
