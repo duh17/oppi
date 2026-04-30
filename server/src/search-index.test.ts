@@ -46,6 +46,10 @@ function writeJsonl(path: string, userText: string, assistantText: string): void
   writeFileSync(path, lines.join("\n") + "\n");
 }
 
+function writeRawJsonl(path: string, lines: string[], trailingNewline = true): void {
+  writeFileSync(path, lines.join("\n") + (trailingNewline ? "\n" : ""));
+}
+
 function writeSummary(baseDir: string, piSessionId: string, body: Record<string, unknown>): string {
   const path = join(baseDir, `${piSessionId}.summary.json`);
   writeFileSync(path, JSON.stringify(body, null, 2) + "\n");
@@ -169,6 +173,8 @@ describe("SearchIndex indexes transcript content only", () => {
     try {
       const first = index.sync([session]);
       expect(first.added).toBe(1);
+      expect(first.transcriptsRead).toBe(1);
+      expect(first.transcriptBytesRead).toBeGreaterThan(0);
       expect(index.search("oldtitletoken", "ws-1", 10)).toHaveLength(1);
 
       session.name = "newtitletoken";
@@ -176,8 +182,90 @@ describe("SearchIndex indexes transcript content only", () => {
       const second = index.sync([session]);
       expect(second.reindexed).toBe(1);
       expect(second.skipped).toBe(0);
+      expect(second.transcriptsRead).toBe(0);
+      expect(second.transcriptBytesRead).toBe(0);
+      expect(second.reusedIndexedTranscript).toBe(1);
       expect(index.search("newtitletoken", "ws-1", 10)).toHaveLength(1);
       expect(index.search("oldtitletoken", "ws-1", 10)).toHaveLength(0);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("reindexes changed transcript content and updates search results", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeJsonl(jsonlPath, "old-query-token", "assistant old answer token");
+
+    const session = makeSession({ id: "sess-content", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      const first = index.sync([session]);
+      expect(first.added).toBe(1);
+      expect(first.transcriptsRead).toBe(1);
+      expect(index.search("old-query-token", "ws-1", 10)).toHaveLength(1);
+
+      writeJsonl(jsonlPath, "new-query-token", "assistant new answer token");
+      const future = new Date(Date.now() + 5_000);
+      utimesSync(jsonlPath, future, future);
+
+      const second = index.sync([session]);
+      expect(second.reindexed).toBe(1);
+      expect(second.transcriptsRead).toBe(1);
+      expect(second.transcriptBytesRead).toBeGreaterThan(0);
+      expect(second.reusedIndexedTranscript).toBe(0);
+      expect(index.search("new-query-token", "ws-1", 10)).toHaveLength(1);
+      expect(index.search("old-query-token", "ws-1", 10)).toHaveLength(0);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("parses large JSONL files incrementally and keeps the final line without newline", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const hugeIgnoredLine = JSON.stringify({
+      type: "session",
+      id: randomUUID(),
+      cwd: "/tmp/search-test",
+      note: "x".repeat(200_000),
+    });
+    writeRawJsonl(
+      jsonlPath,
+      [
+        hugeIgnoredLine,
+        "not valid json",
+        JSON.stringify({
+          type: "message",
+          id: "a1",
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "tc-1", name: "late_tool_token", arguments: {} }],
+          },
+        }),
+      ],
+      false,
+    );
+
+    const session = makeSession({ id: "sess-streamed", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      const result = index.sync([session]);
+      expect(result.added).toBe(1);
+      expect(result.transcriptsRead).toBe(1);
+      expect(result.transcriptBytesRead).toBeGreaterThan(200_000);
+      expect(index.search("late_tool_token", "ws-1", 10)).toHaveLength(1);
     } finally {
       index.close();
     }

@@ -12,8 +12,9 @@
  */
 
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -69,6 +70,7 @@ interface TranscriptContent {
   userMessages: string;
   assistantMessages: string;
   toolNames: string;
+  bytesRead: number;
 }
 
 interface ExtractedContent {
@@ -76,68 +78,121 @@ interface ExtractedContent {
   userMessages: string;
   assistantMessages: string;
   toolNames: string;
+  transcriptBytesRead: number;
+  transcriptRead: boolean;
+}
+
+function extractSessionTitle(session: Session): string {
+  return [session.name, session.firstMessage]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .slice(0, 500);
+}
+
+const TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024;
+
+function processTranscriptLine(
+  line: string,
+  state: {
+    userParts: string[];
+    assistantParts: string[];
+    toolNameSet: Set<string>;
+    userLen: number;
+    assistantLen: number;
+  },
+): void {
+  if (!line) return;
+
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (entry.type !== "message") return;
+
+  const msg = entry.message as Record<string, unknown> | undefined;
+  if (!msg?.content) return;
+
+  if (msg.role === "user" && state.userLen < USER_MESSAGE_CAP) {
+    const text = extractTextFromContent(msg.content);
+    state.userParts.push(text);
+    state.userLen += text.length;
+    return;
+  }
+
+  if (msg.role === "assistant" && state.assistantLen < ASSISTANT_MESSAGE_CAP) {
+    const text = extractTextFromContent(msg.content);
+    state.assistantParts.push(text);
+    state.assistantLen += text.length;
+    for (const name of extractToolNames(msg.content)) {
+      state.toolNameSet.add(name);
+    }
+  }
 }
 
 function extractTranscriptContent(jsonlPath: string): TranscriptContent | null {
-  let raw: string;
+  let fd: number;
   try {
-    raw = readFileSync(jsonlPath, "utf-8");
+    fd = openSync(jsonlPath, "r");
   } catch {
     return null;
   }
 
-  const userParts: string[] = [];
-  const assistantParts: string[] = [];
-  const toolNameSet = new Set<string>();
+  const state = {
+    userParts: [] as string[],
+    assistantParts: [] as string[],
+    toolNameSet: new Set<string>(),
+    userLen: 0,
+    assistantLen: 0,
+  };
 
-  let userLen = 0;
-  let assistantLen = 0;
+  const buffer = Buffer.allocUnsafe(TRANSCRIPT_READ_CHUNK_BYTES);
+  const decoder = new StringDecoder("utf8");
+  let bytesReadTotal = 0;
+  let pending = "";
 
-  for (const line of raw.split("\n")) {
-    if (!line) continue;
-    let entry: Record<string, unknown>;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (entry.type !== "message") continue;
-    const msg = entry.message as Record<string, unknown> | undefined;
-    if (!msg?.content) continue;
+  try {
+    while (true) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      bytesReadTotal += bytesRead;
+      pending += decoder.write(buffer.subarray(0, bytesRead));
 
-    if (msg.role === "user" && userLen < USER_MESSAGE_CAP) {
-      const text = extractTextFromContent(msg.content);
-      userParts.push(text);
-      userLen += text.length;
-    } else if (msg.role === "assistant" && assistantLen < ASSISTANT_MESSAGE_CAP) {
-      const text = extractTextFromContent(msg.content);
-      assistantParts.push(text);
-      assistantLen += text.length;
-      for (const name of extractToolNames(msg.content)) {
-        toolNameSet.add(name);
+      let newlineIndex = pending.indexOf("\n");
+      while (newlineIndex !== -1) {
+        processTranscriptLine(pending.slice(0, newlineIndex), state);
+        pending = pending.slice(newlineIndex + 1);
+        newlineIndex = pending.indexOf("\n");
       }
     }
+
+    pending += decoder.end();
+    processTranscriptLine(pending, state);
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
   }
 
   return {
-    userMessages: userParts.join("\n").slice(0, USER_MESSAGE_CAP),
-    assistantMessages: assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
-    toolNames: [...toolNameSet].join(" "),
+    userMessages: state.userParts.join("\n").slice(0, USER_MESSAGE_CAP),
+    assistantMessages: state.assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
+    toolNames: [...state.toolNameSet].join(" "),
+    bytesRead: bytesReadTotal,
   };
 }
 
 function extractIndexedContent(session: Session, jsonlPath?: string): ExtractedContent {
   const transcript = jsonlPath ? extractTranscriptContent(jsonlPath) : null;
-  const title = [session.name, session.firstMessage]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .slice(0, 500);
 
   return {
-    title,
+    title: extractSessionTitle(session),
     userMessages: transcript?.userMessages ?? "",
     assistantMessages: transcript?.assistantMessages ?? "",
     toolNames: transcript?.toolNames ?? "",
+    transcriptBytesRead: transcript?.bytesRead ?? 0,
+    transcriptRead: transcript !== null,
   };
 }
 
@@ -289,7 +344,7 @@ export class SearchIndex {
     );
 
     this.stmtGetIndexedRow = this.db.prepare(
-      "SELECT workspace_id, title FROM session_fts WHERE session_id = ?",
+      "SELECT workspace_id, title, user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
     );
 
     // Search across all workspaces.
@@ -490,6 +545,9 @@ export class SearchIndex {
     added: number;
     removed: number;
     skipped: number;
+    transcriptsRead: number;
+    transcriptBytesRead: number;
+    reusedIndexedTranscript: number;
   } {
     const start = performance.now();
     const indexableSessions = sessions.filter((s) => !s.ephemeral);
@@ -497,6 +555,9 @@ export class SearchIndex {
     let reindexed = 0;
     let added = 0;
     let skipped = 0;
+    let transcriptsRead = 0;
+    let transcriptBytesRead = 0;
+    let reusedIndexedTranscript = 0;
 
     const txn = this.db.transaction(() => {
       for (const session of indexableSessions) {
@@ -514,8 +575,6 @@ export class SearchIndex {
           }
         }
 
-        const content = extractIndexedContent(session, fileStat ? jsonlPath : undefined);
-
         // Check if already indexed with same transcript state.
         const meta = this.stmtGetMeta.get(session.id) as
           | {
@@ -529,6 +588,9 @@ export class SearchIndex {
           | {
               workspace_id: string;
               title: string;
+              user_messages: string;
+              assistant_messages: string;
+              tool_names: string;
             }
           | undefined;
 
@@ -543,14 +605,40 @@ export class SearchIndex {
           meta.jsonl_size === jsonlSize &&
           meta.jsonl_path === expectedJsonlPath;
 
+        const title = extractSessionTitle(session);
         const sameIndexedMetadata =
-          !!indexedRow &&
-          indexedRow.workspace_id === workspaceId &&
-          indexedRow.title === content.title;
+          !!indexedRow && indexedRow.workspace_id === workspaceId && indexedRow.title === title;
 
         if (sameTranscriptState && sameIndexedMetadata) {
           skipped++;
           continue;
+        }
+
+        if (sameTranscriptState && indexedRow) {
+          this.upsertRow(
+            session.id,
+            workspaceId,
+            title,
+            indexedRow.user_messages,
+            indexedRow.assistant_messages,
+            indexedRow.tool_names,
+          );
+          this.stmtUpsertMeta.run(
+            session.id,
+            fileStat ? (jsonlPath ?? null) : null,
+            jsonlMtimeMs,
+            jsonlSize,
+            Date.now(),
+          );
+          reindexed++;
+          reusedIndexedTranscript++;
+          continue;
+        }
+
+        const content = extractIndexedContent(session, fileStat ? jsonlPath : undefined);
+        if (content.transcriptRead) {
+          transcriptsRead++;
+          transcriptBytesRead += content.transcriptBytesRead;
         }
 
         this.upsertRow(
@@ -590,7 +678,15 @@ export class SearchIndex {
         }
       }
 
-      return { reindexed, added, removed, skipped };
+      return {
+        reindexed,
+        added,
+        removed,
+        skipped,
+        transcriptsRead,
+        transcriptBytesRead,
+        reusedIndexedTranscript,
+      };
     });
 
     const result = txn();
@@ -601,6 +697,9 @@ export class SearchIndex {
       reindexed: result.reindexed,
       removed: result.removed,
       skipped: result.skipped,
+      transcriptsRead: result.transcriptsRead,
+      transcriptBytesRead: result.transcriptBytesRead,
+      reusedIndexedTranscript: result.reusedIndexedTranscript,
     });
     return result;
   }
