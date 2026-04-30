@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@mariozechner/pi-coding-agent";
 
 import { resolveSdkSessionCwd, SdkBackend } from "../src/sdk-backend.js";
+import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import type { AskQuestion, Session, Workspace } from "../src/types.js";
 
 describe("resolveSdkSessionCwd", () => {
@@ -65,12 +66,14 @@ describe("SdkBackend prompt templates", () => {
     });
 
     try {
-      const runtime = (backend as unknown as {
-        runtime: {
-          session: { promptTemplates: Array<{ name: string }> };
-          services: { resourceLoader: PiSdk.ResourceLoader };
-        };
-      }).runtime;
+      const runtime = (
+        backend as unknown as {
+          runtime: {
+            session: { promptTemplates: Array<{ name: string }> };
+            services: { resourceLoader: PiSdk.ResourceLoader };
+          };
+        }
+      ).runtime;
 
       const discoveredPromptNames = runtime.services.resourceLoader
         .getPrompts()
@@ -264,23 +267,11 @@ describe("SdkBackend custom UI compatibility", () => {
 
     const mutableBackend = backend as unknown as {
       disposed: boolean;
-      pendingExtensionResponses: Map<
-        string,
-        {
-          resolve: (response: {
-            id: string;
-            value?: string;
-            confirmed?: boolean;
-            cancelled?: boolean;
-          }) => void;
-          cancel: () => void;
-        }
-      >;
+      uiBridge: SdkUiBridge;
       emitEvent: (event: unknown) => void;
     };
 
     mutableBackend.disposed = false;
-    mutableBackend.pendingExtensionResponses = new Map();
 
     const requests: CapturedRequest[] = [];
 
@@ -314,6 +305,10 @@ describe("SdkBackend custom UI compatibility", () => {
         backend.respondToExtensionUIRequest({ id: request.id, ...response });
       });
     };
+    mutableBackend.uiBridge = new SdkUiBridge(
+      mutableBackend.emitEvent,
+      () => mutableBackend.disposed,
+    );
 
     const ui = (
       backend as unknown as {
@@ -562,7 +557,7 @@ describe("SdkBackend.dispose", () => {
 
     const mutableBackend = backend as unknown as {
       disposed: boolean;
-      pendingExtensionResponses: Map<string, { cancel: () => void }>;
+      uiBridge: { dispose: () => void };
       unsub: (() => void) | null;
       runtime: typeof runtime;
       shutdownCleanupPromise: Promise<void> | null;
@@ -573,7 +568,7 @@ describe("SdkBackend.dispose", () => {
     const pendingCancel = vi.fn();
 
     mutableBackend.disposed = false;
-    mutableBackend.pendingExtensionResponses = new Map([["req-1", { cancel: pendingCancel }]]);
+    mutableBackend.uiBridge = { dispose: pendingCancel };
     mutableBackend.unsub = vi.fn();
     mutableBackend.runtime = runtime;
     mutableBackend.shutdownCleanupPromise = null;

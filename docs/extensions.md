@@ -7,6 +7,8 @@ For writing extensions, supported layouts, lifecycle hooks, tool APIs, and TUI r
 - pi extension docs: `server/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
 - pi examples: `server/node_modules/@mariozechner/pi-coding-agent/examples/extensions/`
 
+Oppi has native mobile handling for some extension UI APIs. Keep this page to current Oppi behavior; detailed Extension Bar design belongs in internal design notes until the contract is implemented.
+
 ## What Oppi changes
 
 Oppi adds three behaviors on top of normal pi extension loading:
@@ -116,6 +118,8 @@ Sources:
 - optional sidecars in `~/.pi/agent/mobile-renderers/*.ts`
 
 If an extension looks good in terminal pi but looks generic in Oppi, this is usually why.
+
+Extension UI is separate from tool-row rendering. Today, Oppi handles structured prompts, dialog sheets, composer text handoff, and the existing session extension surface through native mobile views where supported. Do not assume terminal keypress emulation is the primary mobile path.
 
 ## Permission gate gotcha
 
