@@ -67,7 +67,8 @@ final class NativeExpandedReadMediaView: UIView {
                 mimeType: clip.mimeType,
                 delivery: nil,
                 audioPlayer: audioPlayer,
-                palette: palette
+                palette: palette,
+                suppressAutoplay: true
             )
             rootStack.addArrangedSubview(row)
             return

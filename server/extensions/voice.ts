@@ -392,13 +392,19 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
                   : undefined,
               )
             : await fullSpeechToWav(serverUrl, speechRequest, outPath);
+          const streamedDirectSpeakToOppi =
+            params.play !== false && stream && !!audioStream && delivery === "directSpeak";
           let played = false;
           if (params.play !== false && !audioStream) {
             await afplay(outPath);
             played = true;
           }
           const bytes = readFileSync(outPath);
-          const audio = audioDetails(outPath, bytes, params.embedAudio !== false, result.metrics);
+          const shouldEmbed = params.embedAudio !== false && !streamedDirectSpeakToOppi;
+          const audio = audioDetails(outPath, bytes, shouldEmbed, result.metrics);
+          if (streamedDirectSpeakToOppi) {
+            played = true;
+          }
           const details: VoiceToolDetails = {
             serverUrl,
             audio,

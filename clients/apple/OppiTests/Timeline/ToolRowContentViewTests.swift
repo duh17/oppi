@@ -1339,6 +1339,53 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func freshExpandedDirectSpeakVoiceMessageDoesNotAutoplayOnMount() async throws {
+        actor FetchSpy {
+            private(set) var count = 0
+            func record() { count += 1 }
+            func value() -> Int { count }
+        }
+
+        let previousReplyMode = AppPreferences.Voice.replyMode
+        defer { AppPreferences.Voice.setReplyMode(previousReplyMode) }
+        AppPreferences.Voice.setReplyMode(.directSpeak)
+
+        let fetchSpy = FetchSpy()
+        let audioPlayer = AudioPlayerService()
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Already spoke this once.",
+                attachmentId: "att-direct-speak-fresh-expand",
+                mimeType: "audio/wav",
+                durationSeconds: 2.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(audioPlayer)
+            .withSessionAttachmentFetcher { _ in
+                await fetchSpy.record()
+                return Data([0x52, 0x49, 0x46, 0x46])
+            }
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+        let voiceView = try #require(timelineFirstView(ofType: NativeVoiceMessageView.self, in: view))
+        #expect(!voiceView.isHidden)
+
+        let didFetch = await waitUntil(timeoutMs: 150) {
+            await fetchSpy.value() > 0
+        }
+
+        #expect(!didFetch)
+        #expect(audioPlayer.loadingItemID == nil)
+        #expect(audioPlayer.playingItemID == nil)
+    }
+
+    @MainActor
     @Test func expandedVoiceMessageShowsReadableTranscriptWithoutDuplicateTitle() throws {
         let transcript = "Got it. I’m reinstalling the iPhone app now, and I’ll launch it as part of the install so it comes back up cleanly."
         let config = makeTimelineToolConfiguration(

@@ -520,7 +520,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         text: String,
         attachmentId: String,
         mimeType: String,
-        delivery: VoiceReplyDelivery?
+        delivery: VoiceReplyDelivery?,
+        suppressAutoplay: Bool
     ) {
         let native: NativeVoiceMessageView
         if let existing = expandedReadMediaContentView as? NativeVoiceMessageView {
@@ -540,7 +541,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 delivery: delivery,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: nil,
-                palette: ThemeRuntimeState.currentPalette()
+                palette: ThemeRuntimeState.currentPalette(),
+                suppressAutoplay: suppressAutoplay
             )
         } else {
             native.apply(
@@ -551,7 +553,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 delivery: delivery,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
-                palette: ThemeRuntimeState.currentPalette()
+                palette: ThemeRuntimeState.currentPalette(),
+                suppressAutoplay: suppressAutoplay
             )
         }
         native.setNeedsLayout()
@@ -1036,7 +1039,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     outputColor: outputColor,
                     wasExpandedVisible: wasExpandedVisible
                 )
-                applyExpandedRenderOutput(output)
+                applyExpandedRenderOutput(output, isExpandingTransition: isExpandingTransition)
                 showExpanded = true
             } else {
                 hideExpandedContainer(outputColor: outputColor)
@@ -1413,7 +1416,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput) {
+    private func applyExpandedRenderOutput(_ output: ExpandedRenderOutput, isExpandingTransition: Bool) {
         // Execute view-installation intent before surface switch so the
         // hosted view is in the hierarchy when showExpandedHostedView() runs.
         switch output.installAction {
@@ -1422,7 +1425,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine)
         case .voiceMessage(let text, let attachmentId, let mimeType, let delivery):
-            installExpandedVoiceMessageView(text: text, attachmentId: attachmentId, mimeType: mimeType, delivery: delivery)
+            let suppressVoiceAutoplay = isExpandingTransition || delivery == .directSpeak
+            installExpandedVoiceMessageView(
+                text: text,
+                attachmentId: attachmentId,
+                mimeType: mimeType,
+                delivery: delivery,
+                suppressAutoplay: suppressVoiceAutoplay
+            )
         }
 
         switch output.surface {

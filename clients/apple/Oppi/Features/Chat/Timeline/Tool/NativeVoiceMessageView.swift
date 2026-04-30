@@ -22,6 +22,7 @@ final class NativeVoiceMessageView: UIView {
     private var delivery: VoiceReplyDelivery?
     private var decodeTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
+    private var suppressAutoplay = false
     nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
@@ -66,9 +67,11 @@ final class NativeVoiceMessageView: UIView {
         mimeType: String?,
         delivery: VoiceReplyDelivery?,
         audioPlayer: AudioPlayerService?,
-        palette: ThemePalette
+        palette: ThemePalette,
+        suppressAutoplay: Bool = false
     ) {
         prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
+        self.suppressAutoplay = suppressAutoplay
         attachmentId = nil
         attachmentFetcher = nil
 
@@ -116,9 +119,11 @@ final class NativeVoiceMessageView: UIView {
         delivery: VoiceReplyDelivery?,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
-        palette: ThemePalette
+        palette: ThemePalette,
+        suppressAutoplay: Bool = false
     ) {
         prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
+        self.suppressAutoplay = suppressAutoplay
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
 
@@ -270,7 +275,8 @@ final class NativeVoiceMessageView: UIView {
     }
 
     private func maybeAutoplayDecodedDataIfNeeded(palette: ThemePalette) {
-        guard let id, let decodedData, let audioPlayer,
+        guard !suppressAutoplay,
+              let id, let decodedData, let audioPlayer,
               audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
             return
         }
@@ -280,7 +286,8 @@ final class NativeVoiceMessageView: UIView {
     }
 
     private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
-        guard let id, let attachmentId, let attachmentFetcher, let audioPlayer,
+        guard !suppressAutoplay,
+              let id, let attachmentId, let attachmentFetcher, let audioPlayer,
               audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
             return
         }
