@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -89,13 +89,13 @@ describe("telemetry SQLite importer", () => {
       const meta = db.prepare("SELECT parser_version FROM ingested_files").get() as {
         parser_version: number;
       };
-      expect(meta.parser_version).toBe(2);
+      expect(meta.parser_version).toBe(4);
     } finally {
       db.close();
     }
   });
 
-  it("reimports MetricKit files parsed by an older parser even when file metadata is unchanged", () => {
+  it("reimports files parsed by an older parser even when file metadata is unchanged", () => {
     tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
     const dbPath = join(tempDir, "telemetry.db");
     writeFileSync(
@@ -128,7 +128,102 @@ describe("telemetry SQLite importer", () => {
             parser_version: number;
           }
         ).parser_version,
+      ).toBe(4);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("appends only new lines for hot files instead of reimporting the entire file", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const filePath = join(tempDir, "chat-metrics-2026-04-29.jsonl");
+
+    const line1 = JSON.stringify({
+      receivedAt: 100,
+      generatedAt: 90,
+      appVersion: "1.1.0",
+      buildNumber: "29",
+      samples: [{ ts: 1000, metric: "chat.ttft_ms", value: 1200, unit: "ms" }],
+    });
+    const line2 = JSON.stringify({
+      receivedAt: 200,
+      generatedAt: 190,
+      appVersion: "1.1.0",
+      buildNumber: "29",
+      samples: [{ ts: 2000, metric: "chat.ttft_ms", value: 800, unit: "ms" }],
+    });
+
+    writeFileSync(filePath, `${line1}\n`);
+    runImport(tempDir, dbPath);
+
+    writeFileSync(filePath, `${line1}\n${line2}\n`);
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(
+        (db.prepare("SELECT count(*) AS c FROM chat_metric_samples").get() as { c: number }).c,
       ).toBe(2);
+      expect(
+        (
+          db.prepare(
+            "SELECT line_count, processed_offset_bytes, source_file FROM ingested_files WHERE source_file = ?",
+          ).get("chat-metrics-2026-04-29.jsonl") as {
+            line_count: number;
+            processed_offset_bytes: number;
+            source_file: string;
+          }
+        ),
+      ).toMatchObject({
+        line_count: 2,
+        processed_offset_bytes: Buffer.byteLength(`${line1}\n${line2}\n`),
+        source_file: "chat-metrics-2026-04-29.jsonl",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses normalized source file keys so host and container imports do not duplicate rows", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const dirA = join(tempDir, "a");
+    const dirB = join(tempDir, "b");
+    mkdirSync(dirA);
+    mkdirSync(dirB);
+
+    const fileName = "chat-metrics-2026-04-29.jsonl";
+    const contents =
+      JSON.stringify({
+        receivedAt: 100,
+        generatedAt: 90,
+        appVersion: "1.1.0",
+        buildNumber: "29",
+        samples: [{ ts: 1000, metric: "chat.ttft_ms", value: 1200, unit: "ms" }],
+      }) + "\n";
+
+    writeFileSync(join(dirA, fileName), contents);
+    cpSync(join(dirA, fileName), join(dirB, fileName));
+
+    runImport(dirA, dbPath);
+    runImport(dirB, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(
+        (db.prepare("SELECT count(*) AS c FROM chat_metric_samples").get() as { c: number }).c,
+      ).toBe(1);
+      expect(
+        (db.prepare("SELECT count(*) AS c FROM ingested_files").get() as { c: number }).c,
+      ).toBe(1);
+      expect(
+        (
+          db.prepare("SELECT source_file FROM ingested_files LIMIT 1").get() as {
+            source_file: string;
+          }
+        ).source_file,
+      ).toBe(fileName);
     } finally {
       db.close();
     }

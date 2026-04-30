@@ -1,12 +1,26 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { mkdirSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const INGEST_PARSER_VERSION = 2;
+const INGEST_PARSER_VERSION = 4;
+const DEFAULT_BROKEN_BACKUP_KEEP_COUNT = 1;
+const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 
 function parseArgs(argv) {
   const args = {
@@ -49,6 +63,7 @@ function ensureSchema(db) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = 5000;
 
     CREATE TABLE IF NOT EXISTS ingested_files (
       source_file TEXT PRIMARY KEY,
@@ -57,7 +72,8 @@ function ensureSchema(db) {
       mtime_ms INTEGER NOT NULL,
       line_count INTEGER NOT NULL,
       processed_at_ms INTEGER NOT NULL,
-      parser_version INTEGER NOT NULL DEFAULT 0
+      parser_version INTEGER NOT NULL DEFAULT 0,
+      processed_offset_bytes INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS chat_metric_samples (
@@ -138,16 +154,42 @@ function ensureSchema(db) {
 
   const ingestedFileColumns = db.prepare("PRAGMA table_info(ingested_files)").all();
   const hasParserVersion = ingestedFileColumns.some((column) => column.name === "parser_version");
+  const hasProcessedOffset = ingestedFileColumns.some(
+    (column) => column.name === "processed_offset_bytes",
+  );
+
   if (!hasParserVersion) {
     db.exec("ALTER TABLE ingested_files ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0");
   }
+  if (!hasProcessedOffset) {
+    db.exec(
+      "ALTER TABLE ingested_files ADD COLUMN processed_offset_bytes INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+}
+
+function brokenBackupKeepCountFromEnv() {
+  const raw = process.env.OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT?.trim() ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return DEFAULT_BROKEN_BACKUP_KEEP_COUNT;
+}
+
+function staleLockMsFromEnv(intervalMs) {
+  const raw = process.env.OPPI_TELEMETRY_IMPORT_LOCK_STALE_MS?.trim() ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed >= 1000) return parsed;
+  return Math.max(DEFAULT_LOCK_STALE_MS, intervalMs * 10);
+}
+
+function normalizedSourceFile(fileName) {
+  return basename(fileName);
 }
 
 function detectKind(fileName) {
   if (fileName.startsWith("chat-metrics-") && fileName.endsWith(".jsonl")) return "chat";
   if (fileName.startsWith("server-metrics-") && fileName.endsWith(".jsonl")) return "server";
-  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl"))
-    return "server_ops";
+  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl")) return "server_ops";
   if (fileName.startsWith("metrickit-") && fileName.endsWith(".jsonl")) return "metrickit";
   return null;
 }
@@ -202,33 +244,115 @@ function inferWindow(payload) {
   return { start, end };
 }
 
-function ingestChatFile(db, sourceFile, lines, meta) {
-  const del = db.prepare("DELETE FROM chat_metric_samples WHERE source_file = ?");
+function readFileSlice(sourceFile, startOffset, endOffset) {
+  const length = Math.max(0, endOffset - startOffset);
+  if (length === 0) return Buffer.alloc(0);
+
+  const fd = openSync(sourceFile, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    let bytesRead = 0;
+    while (bytesRead < length) {
+      const n = readSync(fd, buffer, bytesRead, length - bytesRead, startOffset + bytesRead);
+      if (n === 0) break;
+      bytesRead += n;
+    }
+    return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function extractCompleteJsonlLines(buffer) {
+  const lastNewline = buffer.lastIndexOf(0x0a);
+  if (lastNewline === -1) {
+    return { lines: [], consumedBytes: 0 };
+  }
+
+  const text = buffer.subarray(0, lastNewline + 1).toString("utf8");
+  const lines = text.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return { lines, consumedBytes: lastNewline + 1 };
+}
+
+function getIngestState(db, sourceFile) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT source_file, file_kind, size_bytes, mtime_ms, line_count, parser_version,
+               processed_offset_bytes
+        FROM ingested_files
+        WHERE source_file = ?
+      `,
+      )
+      .get(sourceFile) ?? null
+  );
+}
+
+function planIngest(state, meta) {
+  if (!state) {
+    return { action: "full", startOffset: 0, lineNumberStart: 0 };
+  }
+
+  if (state.parser_version !== INGEST_PARSER_VERSION) {
+    return { action: "full", startOffset: 0, lineNumberStart: 0 };
+  }
+
+  if (meta.sizeBytes < state.processed_offset_bytes || meta.sizeBytes < state.size_bytes) {
+    return { action: "full", startOffset: 0, lineNumberStart: 0 };
+  }
+
+  const fullyProcessed = state.processed_offset_bytes === meta.sizeBytes;
+  const unchanged = fullyProcessed && meta.mtimeMs === state.mtime_ms;
+  if (unchanged) {
+    return { action: "skip", startOffset: state.processed_offset_bytes, lineNumberStart: state.line_count };
+  }
+
+  if (meta.sizeBytes === state.size_bytes && fullyProcessed && meta.mtimeMs !== state.mtime_ms) {
+    return { action: "full", startOffset: 0, lineNumberStart: 0 };
+  }
+
+  return {
+    action: "append",
+    startOffset: state.processed_offset_bytes,
+    lineNumberStart: state.line_count,
+  };
+}
+
+function ingestChatFile(db, sourceFile, lines, options) {
+  const { replaceExisting = false, lineNumberStart = 0 } = options;
+  if (replaceExisting) {
+    db.prepare("DELETE FROM chat_metric_samples WHERE source_file = ?").run(sourceFile);
+  }
+
   const ins = db.prepare(`
-    INSERT INTO chat_metric_samples (
+    INSERT OR REPLACE INTO chat_metric_samples (
       id, source_file, line_number, sample_index, ts_ms, metric, value, unit,
       generated_at_ms, received_at_ms, app_version, build_number, os_version,
       device_model, session_id, workspace_id, tags_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  del.run(sourceFile);
   let count = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line.trim()) continue;
     const payload = JSON.parse(line);
     const samples = Array.isArray(payload.samples) ? payload.samples : [];
+    const lineNumber = lineNumberStart + lineIndex + 1;
     for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
       const sample = samples[sampleIndex] ?? {};
       const ts = Number(sample.ts);
       const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string")
+      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string") {
         continue;
+      }
+
       ins.run(
-        fileId([sourceFile, lineIndex + 1, sampleIndex]),
+        fileId([sourceFile, lineNumber, sampleIndex]),
         sourceFile,
-        lineIndex + 1,
+        lineNumber,
         sampleIndex,
         ts,
         sample.metric,
@@ -247,21 +371,24 @@ function ingestChatFile(db, sourceFile, lines, meta) {
       count += 1;
     }
   }
-  upsertFileMeta(db, sourceFile, "chat", meta, lines.length);
+
   return count;
 }
 
-function ingestServerFile(db, sourceFile, lines, meta) {
-  const del = db.prepare("DELETE FROM server_metric_samples WHERE source_file = ?");
+function ingestServerFile(db, sourceFile, lines, options) {
+  const { replaceExisting = false, lineNumberStart = 0 } = options;
+  if (replaceExisting) {
+    db.prepare("DELETE FROM server_metric_samples WHERE source_file = ?").run(sourceFile);
+  }
+
   const ins = db.prepare(`
-    INSERT INTO server_metric_samples (
+    INSERT OR REPLACE INTO server_metric_samples (
       id, source_file, line_number, ts_ms, cpu_user, cpu_system, cpu_total,
       mem_heap_used, mem_heap_total, mem_rss, mem_external,
       sessions_busy, sessions_ready, sessions_starting, sessions_total, ws_connections
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  del.run(sourceFile);
   let count = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
@@ -269,10 +396,12 @@ function ingestServerFile(db, sourceFile, lines, meta) {
     const row = JSON.parse(line);
     const ts = Number(row.ts);
     if (!Number.isFinite(ts)) continue;
+
+    const lineNumber = lineNumberStart + lineIndex + 1;
     ins.run(
-      fileId([sourceFile, lineIndex + 1]),
+      fileId([sourceFile, lineNumber]),
       sourceFile,
-      lineIndex + 1,
+      lineNumber,
       ts,
       Number(row.cpu?.user ?? 0),
       Number(row.cpu?.system ?? 0),
@@ -289,35 +418,41 @@ function ingestServerFile(db, sourceFile, lines, meta) {
     );
     count += 1;
   }
-  upsertFileMeta(db, sourceFile, "server", meta, lines.length);
+
   return count;
 }
 
-function ingestServerOpsFile(db, sourceFile, lines, meta) {
-  const del = db.prepare("DELETE FROM server_ops_metric_samples WHERE source_file = ?");
+function ingestServerOpsFile(db, sourceFile, lines, options) {
+  const { replaceExisting = false, lineNumberStart = 0 } = options;
+  if (replaceExisting) {
+    db.prepare("DELETE FROM server_ops_metric_samples WHERE source_file = ?").run(sourceFile);
+  }
+
   const ins = db.prepare(`
-    INSERT INTO server_ops_metric_samples (
+    INSERT OR REPLACE INTO server_ops_metric_samples (
       id, source_file, line_number, sample_index, ts_ms, metric, value, tags_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  del.run(sourceFile);
   let count = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line.trim()) continue;
     const payload = JSON.parse(line);
     const samples = Array.isArray(payload.samples) ? payload.samples : [];
+    const lineNumber = lineNumberStart + lineIndex + 1;
     for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
       const sample = samples[sampleIndex] ?? {};
       const ts = Number(sample.ts);
       const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string")
+      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string") {
         continue;
+      }
+
       ins.run(
-        fileId([sourceFile, lineIndex + 1, sampleIndex]),
+        fileId([sourceFile, lineNumber, sampleIndex]),
         sourceFile,
-        lineIndex + 1,
+        lineNumber,
         sampleIndex,
         ts,
         sample.metric,
@@ -327,34 +462,38 @@ function ingestServerOpsFile(db, sourceFile, lines, meta) {
       count += 1;
     }
   }
-  upsertFileMeta(db, sourceFile, "server_ops", meta, lines.length);
+
   return count;
 }
 
-function ingestMetricKitFile(db, sourceFile, lines, meta) {
-  const del = db.prepare("DELETE FROM metrickit_payloads WHERE source_file = ?");
+function ingestMetricKitFile(db, sourceFile, lines, options) {
+  const { replaceExisting = false, lineNumberStart = 0 } = options;
+  if (replaceExisting) {
+    db.prepare("DELETE FROM metrickit_payloads WHERE source_file = ?").run(sourceFile);
+  }
+
   const ins = db.prepare(`
-    INSERT INTO metrickit_payloads (
+    INSERT OR REPLACE INTO metrickit_payloads (
       id, source_file, line_number, payload_index, kind, window_start_ms, window_end_ms,
       generated_at_ms, received_at_ms, app_version, build_number, os_version, device_model,
       summary_json, raw_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  del.run(sourceFile);
   let count = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line.trim()) continue;
     const record = JSON.parse(line);
     const payloads = Array.isArray(record.payloads) ? record.payloads : [record];
+    const lineNumber = lineNumberStart + lineIndex + 1;
     for (let payloadIndex = 0; payloadIndex < payloads.length; payloadIndex += 1) {
       const payload = payloads[payloadIndex] ?? {};
       const { start, end } = inferWindow(payload);
       ins.run(
-        fileId([sourceFile, lineIndex + 1, payloadIndex]),
+        fileId([sourceFile, lineNumber, payloadIndex]),
         sourceFile,
-        lineIndex + 1,
+        lineNumber,
         payloadIndex,
         payload.kind ?? payload.payloadType ?? "metrickit",
         start,
@@ -382,23 +521,33 @@ function ingestMetricKitFile(db, sourceFile, lines, meta) {
       count += 1;
     }
   }
-  upsertFileMeta(db, sourceFile, "metrickit", meta, lines.length);
+
   return count;
 }
 
-function upsertFileMeta(db, sourceFile, kind, meta, lineCount) {
+function ingestLinesForKind(db, kind, sourceFile, lines, options) {
+  if (kind === "chat") return ingestChatFile(db, sourceFile, lines, options);
+  if (kind === "server") return ingestServerFile(db, sourceFile, lines, options);
+  if (kind === "server_ops") return ingestServerOpsFile(db, sourceFile, lines, options);
+  if (kind === "metrickit") return ingestMetricKitFile(db, sourceFile, lines, options);
+  throw new Error(`Unsupported telemetry kind: ${kind}`);
+}
+
+function upsertFileMeta(db, sourceFile, kind, meta, lineCount, processedOffsetBytes) {
   db.prepare(
     `
     INSERT INTO ingested_files (
-      source_file, file_kind, size_bytes, mtime_ms, line_count, processed_at_ms, parser_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      source_file, file_kind, size_bytes, mtime_ms, line_count, processed_at_ms,
+      parser_version, processed_offset_bytes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(source_file) DO UPDATE SET
       file_kind = excluded.file_kind,
       size_bytes = excluded.size_bytes,
       mtime_ms = excluded.mtime_ms,
       line_count = excluded.line_count,
       processed_at_ms = excluded.processed_at_ms,
-      parser_version = excluded.parser_version
+      parser_version = excluded.parser_version,
+      processed_offset_bytes = excluded.processed_offset_bytes
   `,
   ).run(
     sourceFile,
@@ -408,21 +557,17 @@ function upsertFileMeta(db, sourceFile, kind, meta, lineCount) {
     lineCount,
     Date.now(),
     INGEST_PARSER_VERSION,
+    processedOffsetBytes,
   );
 }
 
-function shouldIngest(db, sourceFile, meta, kind) {
-  const row = db
-    .prepare(
-      "SELECT size_bytes, mtime_ms, parser_version FROM ingested_files WHERE source_file = ?",
-    )
-    .get(sourceFile);
-  if (!row) return true;
-  return (
-    row.size_bytes !== meta.sizeBytes ||
-    row.mtime_ms !== meta.mtimeMs ||
-    (kind === "metrickit" && row.parser_version !== INGEST_PARSER_VERSION)
-  );
+function maintainDb(db, filesIngested) {
+  if (filesIngested <= 0) return;
+  try {
+    db.exec("PRAGMA wal_checkpoint(PASSIVE); PRAGMA optimize;");
+  } catch {
+    // Best effort maintenance only.
+  }
 }
 
 function ingestOnce(db, telemetryDir) {
@@ -434,25 +579,32 @@ function ingestOnce(db, telemetryDir) {
     for (const entry of entries) {
       const kind = detectKind(entry);
       if (!kind) continue;
+
       summary.filesScanned += 1;
-      const sourceFile = join(telemetryDir, entry);
-      const stats = statSync(sourceFile);
+      const sourcePath = join(telemetryDir, entry);
+      const sourceFile = normalizedSourceFile(entry);
+      const stats = statSync(sourcePath);
       const meta = { sizeBytes: stats.size, mtimeMs: Math.trunc(stats.mtimeMs) };
-      if (!shouldIngest(db, sourceFile, meta, kind)) continue;
+      const state = getIngestState(db, sourceFile);
+      const plan = planIngest(state, meta);
+      if (plan.action === "skip") continue;
 
-      const content = readFileSync(sourceFile, "utf8");
-      const lines = content.split("\n");
-      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+      const slice = readFileSlice(sourcePath, plan.startOffset, meta.sizeBytes);
+      const { lines, consumedBytes } = extractCompleteJsonlLines(slice);
+      const lineNumberStart = plan.action === "append" ? plan.lineNumberStart : 0;
+      const rows = ingestLinesForKind(db, kind, sourceFile, lines, {
+        replaceExisting: plan.action === "full",
+        lineNumberStart,
+      });
 
-      let rows = 0;
-      if (kind === "chat") rows = ingestChatFile(db, sourceFile, lines, meta);
-      else if (kind === "server") rows = ingestServerFile(db, sourceFile, lines, meta);
-      else if (kind === "server_ops") rows = ingestServerOpsFile(db, sourceFile, lines, meta);
-      else if (kind === "metrickit") rows = ingestMetricKitFile(db, sourceFile, lines, meta);
+      const nextLineCount = lineNumberStart + lines.length;
+      const nextProcessedOffset = plan.startOffset + consumedBytes;
+      upsertFileMeta(db, sourceFile, kind, meta, nextLineCount, nextProcessedOffset);
 
       summary.filesIngested += 1;
       summary.rowsIngested += rows;
     }
+
     db.exec("COMMIT");
   } catch (error) {
     try {
@@ -464,7 +616,38 @@ function ingestOnce(db, telemetryDir) {
     throw error;
   }
 
+  maintainDb(db, summary.filesIngested);
   return summary;
+}
+
+function pruneBrokenDbBackups(dbPath) {
+  const dir = dirname(dbPath);
+  const prefix = `${basename(dbPath)}.broken-`;
+  const keepCount = brokenBackupKeepCountFromEnv();
+
+  if (!existsSync(dir)) return;
+
+  const backups = readdirSync(dir)
+    .filter((entry) => entry.startsWith(prefix))
+    .map((entry) => {
+      const path = join(dir, entry);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = statSync(path).mtimeMs;
+      } catch {
+        // Ignore stale entries we can no longer stat.
+      }
+      return { entry, path, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.entry.localeCompare(a.entry));
+
+  for (const backup of backups.slice(keepCount)) {
+    try {
+      unlinkSync(backup.path);
+    } catch {
+      // Best effort.
+    }
+  }
 }
 
 function backupBrokenDb(dbPath, reason) {
@@ -475,10 +658,12 @@ function backupBrokenDb(dbPath, reason) {
   rmSync(`${dbPath}-wal`, { force: true });
   rmSync(`${dbPath}-shm`, { force: true });
   console.warn("[telemetry-import] rebuilt malformed database", { dbPath, backupPath, reason });
+  pruneBrokenDbBackups(dbPath);
   return backupPath;
 }
 
 function openDbWithRecovery(dbPath) {
+  pruneBrokenDbBackups(dbPath);
   try {
     const db = new DatabaseSync(dbPath);
     ensureSchema(db);
@@ -502,14 +687,62 @@ function openDbWithRecovery(dbPath) {
   }
 }
 
+function acquireImportLock(dbPath, intervalMs) {
+  const lockPath = `${dbPath}.import.lock`;
+  const staleMs = staleLockMsFromEnv(intervalMs);
+  const payload = JSON.stringify({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  });
+
+  const tryCreate = () => {
+    writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    return lockPath;
+  };
+
+  try {
+    return tryCreate();
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+
+    try {
+      const ageMs = Date.now() - statSync(lockPath).mtimeMs;
+      if (ageMs > staleMs) {
+        unlinkSync(lockPath);
+        return tryCreate();
+      }
+    } catch {
+      // If we can't stat/delete it, treat it as an active lock.
+    }
+
+    return null;
+  }
+}
+
+function releaseImportLock(lockPath) {
+  if (!lockPath) return;
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Best effort.
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   mkdirSync(dirname(args.db), { recursive: true });
-  let db = openDbWithRecovery(args.db);
 
   const run = () => {
+    const lockPath = acquireImportLock(args.db, args.intervalMs);
+    if (!lockPath) {
+      console.log("[telemetry-import] skipped; another importer run is active");
+      return;
+    }
+
     const startedAt = Date.now();
+    let db = null;
     try {
+      db = openDbWithRecovery(args.db);
       const summary = ingestOnce(db, args.telemetryDir);
       console.log("[telemetry-import]", {
         telemetryDir: args.telemetryDir,
@@ -521,8 +754,11 @@ async function main() {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.includes("malformed")) throw error;
       try {
-        db.close();
-      } catch {}
+        db?.close();
+      } catch {
+        // Best effort.
+      }
+      db = null;
       backupBrokenDb(args.db, message);
       db = openDbWithRecovery(args.db);
       const summary = ingestOnce(db, args.telemetryDir);
@@ -533,13 +769,19 @@ async function main() {
         recovered: true,
         ...summary,
       });
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // Best effort.
+      }
+      releaseImportLock(lockPath);
     }
   };
 
   run();
 
   if (!args.watch) {
-    db.close();
     return;
   }
 
@@ -557,12 +799,10 @@ async function main() {
   const timer = setInterval(runOnceIfIdle, args.intervalMs);
   process.on("SIGINT", () => {
     clearInterval(timer);
-    db.close();
     process.exit(0);
   });
   process.on("SIGTERM", () => {
     clearInterval(timer);
-    db.close();
     process.exit(0);
   });
 }

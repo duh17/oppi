@@ -269,9 +269,14 @@ This starts two services:
 
 Importer behavior:
 
-- writes `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db`
+- reads telemetry JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
+- writes SQLite into a Docker-managed volume mounted at `/var/lib/oppi-telemetry-db/telemetry.db`
 - runs one import immediately on startup
 - continues in watch mode (poll interval: `OPPI_TELEMETRY_IMPORT_INTERVAL_MS`, default `15000`)
+- ingests incrementally for append-only daily JSONL files instead of reimporting the whole hot file each cycle
+- normalizes source file keys so Docker and host imports target the same rows
+- keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups (default `1`)
+- uses a short-lived lock file so overlapping importer runs skip instead of clobbering each other
 
 Open:
 
@@ -303,7 +308,8 @@ npm run telemetry:import:watch
 Notes:
 
 - Services are defined in `server/docker-compose.telemetry.yml`.
-- Grafana mounts telemetry read-only; importer mounts the same directory read-write.
+- The Docker stack keeps SQLite inside a named volume instead of the host-mounted telemetry directory. This avoids SQLite corruption on macOS bind mounts while still reading host JSONL input files.
+- Manual `telemetry:import` runs still write `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db` on the host, share the same normalized file keys as the Docker watcher, and skip if another importer run currently holds the lock.
 - If you use a non-default data dir, export `OPPI_DATA_DIR` before running commands.
 
 ## License

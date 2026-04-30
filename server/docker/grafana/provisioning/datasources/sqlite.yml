@@ -8,7 +8,7 @@ datasources:
     isDefault: true
     editable: true
     jsonData:
-      path: /var/lib/oppi-telemetry/telemetry.db
+      path: /var/lib/oppi-telemetry-db/telemetry.db
       pathPrefix: "file:"
       pathOptions: mode=ro
       attachLimit: 0
