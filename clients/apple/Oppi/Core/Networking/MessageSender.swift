@@ -26,6 +26,10 @@ final class MessageSender {
     /// Focused session context used for session envelope framing.
     var focusedSessionProvider: (() -> FocusedSessionContext?)?
 
+    /// Optional recovery hook used before retrying a turn rejected because the
+    /// stream lost its full subscription. Returns after the resubscribe attempt.
+    var recoverNotSubscribedBeforeRetry: ((_ sessionId: String?) async -> Bool)?
+
     private var targetSessionId: String? {
         focusedSessionProvider?()?.sessionId
     }
@@ -199,6 +203,9 @@ final class MessageSender {
             } catch {
                 lastError = error
                 if attempt < Self.turnSendMaxAttempts, Self.isRetryableTurnSendError(error) {
+                    if Self.isNotSubscribedFullTurnSendError(error), let recoverNotSubscribedBeforeRetry {
+                        _ = await recoverNotSubscribedBeforeRetry(sessionIdOverride ?? targetSessionId)
+                    }
                     continue
                 }
                 commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
@@ -796,10 +803,10 @@ final class MessageSender {
     // MARK: - Retry Classification
 
     static func isRetryableTurnSendError(_ error: Error) -> Bool {
-        if CommandTracker.isReconnectableSendError(error) {
-            return true
-        }
+        CommandTracker.isReconnectableSendError(error) || isNotSubscribedFullTurnSendError(error)
+    }
 
+    static func isNotSubscribedFullTurnSendError(_ error: Error) -> Bool {
         guard let ackError = error as? SendAckError,
               case .rejected(let command, let reason) = ackError,
               ["prompt", "steer", "follow_up"].contains(command) else {

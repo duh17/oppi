@@ -62,7 +62,7 @@ final class SessionStreamCoordinator {
     private(set) var state: StreamState = .idle
     private var lastSeenSeqBySession: [String: Int] = [:]
     /// Coalesces multiple not-subscribed errors into a single resubscribe attempt.
-    private(set) var silentResubscribeTask: Task<Void, Never>?
+    private(set) var silentResubscribeTask: Task<Bool, Never>?
     // MARK: - Session lifecycle
 
     func streamSession(
@@ -563,24 +563,68 @@ final class SessionStreamCoordinator {
         connection: ServerConnection,
         sessionId: String
     ) -> Bool {
-        guard connection.isFocusedSession(sessionId),
-              connection.wsClient != nil else {
+        guard canRecoverNotSubscribed(connection: connection, sessionId: sessionId) else {
             return false
         }
 
-        // Already resubscribing — suppress and let the in-flight attempt finish.
-        if silentResubscribeTask != nil { return true }
+        if silentResubscribeTask == nil {
+            silentResubscribeTask = startSilentResubscribe(
+                connection: connection,
+                sessionId: sessionId,
+                debounce: true
+            )
+        }
 
+        return true
+    }
+
+    /// Ensure a full subscription is restored before a user turn is retried.
+    /// Without waiting here the retry can race ahead of the silent resubscribe
+    /// and surface the same rejected prompt to the composer.
+    func recoverNotSubscribedBeforeRetry(
+        connection: ServerConnection,
+        sessionId: String
+    ) async -> Bool {
+        guard canRecoverNotSubscribed(connection: connection, sessionId: sessionId) else {
+            return false
+        }
+
+        if let silentResubscribeTask {
+            return await silentResubscribeTask.value
+        }
+
+        let task = startSilentResubscribe(
+            connection: connection,
+            sessionId: sessionId,
+            debounce: false
+        )
+        silentResubscribeTask = task
+        return await task.value
+    }
+
+    private func canRecoverNotSubscribed(
+        connection: ServerConnection,
+        sessionId: String
+    ) -> Bool {
+        connection.isFocusedSession(sessionId) && connection.wsClient != nil
+    }
+
+    private func startSilentResubscribe(
+        connection: ServerConnection,
+        sessionId: String,
+        debounce: Bool
+    ) -> Task<Bool, Never> {
         streamCoordinatorLogger.info(
             "Silently resubscribing \(sessionId, privacy: .public) after not-subscribed error"
         )
 
-        silentResubscribeTask = Task { [weak self, weak connection] in
-            guard let self, let connection else { return }
+        return Task { [weak self, weak connection] in
+            guard let self, let connection else { return false }
 
-            // Brief debounce: coalesce a burst of errors into one attempt.
-            try? await Task.sleep(for: .milliseconds(100))
-            guard !Task.isCancelled else { return }
+            if debounce {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return false }
+            }
 
             let ok = await self.resubscribeWithRetry(
                 connection: connection,
@@ -593,7 +637,6 @@ final class SessionStreamCoordinator {
                 streamCoordinatorLogger.info(
                     "Silent resubscribe succeeded for \(sessionId, privacy: .public)"
                 )
-                // Re-sync the message queue so we don't miss events.
                 self.scheduleQueueSync(
                     connection: connection,
                     sessionId: sessionId,
@@ -605,10 +648,11 @@ final class SessionStreamCoordinator {
                 )
             }
 
-            self.silentResubscribeTask = nil
+            if self.silentResubscribeTask != nil {
+                self.silentResubscribeTask = nil
+            }
+            return ok
         }
-
-        return true
     }
 
     private func desiredNotificationSessionIds(connection: ServerConnection) -> Set<String> {

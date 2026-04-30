@@ -135,4 +135,74 @@ struct TurnSendTrackingTests {
 
         #expect(!MessageSender.isRetryableTurnSendError(error))
     }
+
+    @Test func notSubscribedPromptWaitsForRecoveryBeforeRetry() async throws {
+        let sender = MessageSender()
+        sender._sendAckTimeoutForTesting = .seconds(1)
+
+        let harness = NotSubscribedRetryHarness(sender: sender)
+        sender.recoverNotSubscribedBeforeRetry = harness.recover(sessionId:)
+        sender._sendMessageForTesting = harness.send(message:)
+
+        try await sender.sendPrompt("use gpt-5.4-mini", sessionIdOverride: "child")
+
+        #expect(harness.sentRequestIds.count == 2)
+        #expect(harness.recoveryStarted)
+        #expect(harness.recoveryFinished)
+    }
+}
+
+@MainActor
+private final class NotSubscribedRetryHarness {
+    let sender: MessageSender
+    var sentRequestIds: [String] = []
+    var recoveryStarted = false
+    var recoveryFinished = false
+
+    init(sender: MessageSender) {
+        self.sender = sender
+    }
+
+    func recover(sessionId: String?) async -> Bool {
+        #expect(sessionId == "child")
+        recoveryStarted = true
+        try? await Task.sleep(for: .milliseconds(50))
+        recoveryFinished = true
+        return true
+    }
+
+    func send(message: ClientMessage) async throws {
+        let requestId: String
+        switch message {
+        case .prompt(_, _, _, let id, _):
+            guard let id else {
+                Issue.record("Expected prompt requestId")
+                return
+            }
+            requestId = id
+        default:
+            Issue.record("Expected prompt message")
+            return
+        }
+
+        sentRequestIds.append(requestId)
+        let attempt = sentRequestIds.count
+        if attempt == 1 {
+            _ = sender.commands.resolveTurnCommandResult(
+                command: "prompt",
+                requestId: requestId,
+                success: false,
+                error: "Session child is not subscribed at level=full"
+            )
+        } else {
+            #expect(recoveryStarted)
+            #expect(recoveryFinished)
+            _ = sender.commands.resolveTurnCommandResult(
+                command: "prompt",
+                requestId: requestId,
+                success: true,
+                error: nil
+            )
+        }
+    }
 }

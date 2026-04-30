@@ -171,6 +171,13 @@ final class ServerConnection {
         silenceWatchdog.onProbe = { [weak self] in
             try? await self?.requestState()
         }
+        sender.recoverNotSubscribedBeforeRetry = { [weak self] sessionId in
+            guard let self, let sessionId else { return false }
+            return await self.sessionStreamCoordinator.recoverNotSubscribedBeforeRetry(
+                connection: self,
+                sessionId: sessionId
+            )
+        }
     }
 
     /// Fingerprint of the currently connected server (set after configure).
