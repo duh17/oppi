@@ -179,8 +179,18 @@ final class NativeFullScreenDiffBody: UIView {
     private let statsLabel = UILabel()
     private let scrollView = UIScrollView()
     private let diffTextView = UITextView()
+    private let progressView = UIActivityIndicatorView(style: .medium)
     private let selectedTextPiRouter: SelectedTextPiActionRouter?
     private let selectedTextSourceContext: SelectedTextSourceContext?
+    private var widthConstraint: NSLayoutConstraint?
+    private var buildTask: Task<Void, Never>?
+
+    private struct BuiltDiff: @unchecked Sendable {
+        let text: NSAttributedString
+        let width: CGFloat
+        let added: Int
+        let removed: Int
+    }
 
     init(
         oldText: String,
@@ -194,14 +204,6 @@ final class NativeFullScreenDiffBody: UIView {
         self.selectedTextPiRouter = selectedTextPiRouter
         self.selectedTextSourceContext = selectedTextSourceContext
 
-        let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
-        let build = DiffAttributedStringBuilder.buildResult(
-            hunks: hunks,
-            filePath: filePath ?? "diff.txt",
-            options: .init(includeStats: true, includeGapSummary: true)
-        )
-
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
@@ -210,12 +212,6 @@ final class NativeFullScreenDiffBody: UIView {
             guard let fileName else { return nil }
             let parent = (path as NSString).deletingLastPathComponent
             return parent == path || parent.isEmpty || parent == "/" ? fileName : parent
-        }
-        let addedCount = lines.reduce(into: 0) { total, line in
-            if line.kind == .added { total += 1 }
-        }
-        let removedCount = lines.reduce(into: 0) { total, line in
-            if line.kind == .removed { total += 1 }
         }
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
@@ -238,7 +234,7 @@ final class NativeFullScreenDiffBody: UIView {
         statsLabel.font = AppFont.systemFeedback
         statsLabel.textColor = UIColor(palette.fgDim)
         statsLabel.textAlignment = .right
-        statsLabel.text = "\(addedCount > 0 ? "+\(addedCount)" : "0")  \(removedCount > 0 ? "-\(removedCount)" : "0")"
+        statsLabel.text = String(localized: "Loading…")
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
@@ -272,16 +268,15 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.textContainer.widthTracksTextView = false
         diffTextView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         diffTextView.delegate = self
-        diffTextView.attributedText = build.attributedText
 
-        let measured = build.attributedText.boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        )
-        let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: ceil(measured.width) + 24)
+        let widthConstraint = diffTextView.widthAnchor.constraint(equalToConstant: 1)
+        self.widthConstraint = widthConstraint
 
         scrollView.addSubview(diffTextView)
+        progressView.translatesAutoresizingMaskIntoConstraints = false
+        progressView.color = UIColor(palette.fgDim)
+        progressView.startAnimating()
+        addSubview(progressView)
 
         NSLayoutConstraint.activate([
             headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -304,7 +299,58 @@ final class NativeFullScreenDiffBody: UIView {
             diffTextView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             widthConstraint,
             diffTextView.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor),
+            progressView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            progressView.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+
+        buildTask = Task { [weak self] in
+            let oldText = oldText
+            let newText = newText
+            let precomputedLines = precomputedLines
+            let displayPath = filePath ?? "diff.txt"
+            let result = await Task.detached(priority: .userInitiated) {
+                let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
+                let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
+                let build = DiffAttributedStringBuilder.buildResult(
+                    hunks: hunks,
+                    filePath: displayPath,
+                    options: .init(includeStats: true, includeGapSummary: true)
+                )
+                let measured = build.attributedText.boundingRect(
+                    with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin],
+                    context: nil
+                )
+                let addedCount = lines.reduce(into: 0) { total, line in
+                    if line.kind == .added { total += 1 }
+                }
+                let removedCount = lines.reduce(into: 0) { total, line in
+                    if line.kind == .removed { total += 1 }
+                }
+                return BuiltDiff(
+                    text: build.attributedText,
+                    width: ceil(measured.width) + 24,
+                    added: addedCount,
+                    removed: removedCount
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+            self?.applyBuiltDiff(result)
+        }
+    }
+
+    deinit {
+        buildTask?.cancel()
+    }
+
+    private func applyBuiltDiff(_ result: BuiltDiff) {
+        diffTextView.attributedText = result.text
+        widthConstraint?.constant = result.width
+        statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
+        progressView.stopAnimating()
+        progressView.removeFromSuperview()
+        setNeedsLayout()
     }
 
     @available(*, unavailable)

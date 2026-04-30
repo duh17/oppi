@@ -255,7 +255,8 @@ enum DiffAttributedStringBuilder {
                    let gap = unchangedLineGap(from: hunks[hunkIndex - 1], to: hunk),
                    gap > 0 {
                     let gapStart = text.length
-                    text.append(" \(gap) unchanged line")
+                    text.append(" … ")
+                    text.append("\(gap) unchanged line")
                     if gap != 1 {
                         text.append("s")
                     }
