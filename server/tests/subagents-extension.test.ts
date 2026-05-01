@@ -10,7 +10,10 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Session, ServerMessage } from "../src/types.js";
-import { createSubagentsFactory, type SubagentsContext } from "../extensions/subagents.js";
+import {
+  createSubagentsFactory,
+  type SubagentsContext,
+} from "../../oppi-extensions/src/subagents/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

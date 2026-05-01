@@ -22,7 +22,7 @@ Create a new session in the current workspace.
 
 **Fire-and-forget** (default): returns immediately with the child's session ID. When the child finishes, the parent gets a `subagent_result` message containing status, cost, changed files, and the child's last response. If the parent is idle, the result is appended without triggering a turn. If the parent is busy, the result is queued as a follow-up so it does not interrupt the current turn.
 
-**Wait mode** (`wait=true`): blocks the parent's context until the child reaches a terminal state. Returns the child's last response, cost, changed files, and duration. Use for sequential dependencies where the parent needs the result before continuing.
+**Wait mode** (`wait=true`): blocks the parent's context until the child finishes its current task, then immediately stops that child and returns the child's last response, cost, changed files, and duration inline. Use for sequential dependencies where the parent needs the result before continuing.
 
 ### inspect_agent
 
@@ -55,6 +55,8 @@ Delivery depends on the target's state:
 
 An agent-origin preamble (`[From agent "Name" (id)]`) is prepended so the recipient knows the source.
 
+Prefer `send_message` over spawning a brand-new child when a prior subagent already investigated the same area. Reusing the same session preserves its context, and stopped sessions auto-resume so you can benefit from a warmer prompt cache.
+
 ### stop_agent
 
 Stop a running child session. Only works on sessions in the caller's spawn tree (not workspace-wide).
@@ -73,7 +75,7 @@ The iOS app renders the spawn tree with a collapsible status bar showing each ch
 
 A parent waiting on a child (via `wait=true`) receives aggregate progress updates — status, message count, cost, and elapsed time. It does **not** receive individual tool calls, streaming text, or tool output from the child. This is intentional: the parent's context window is expensive, and flooding it with every `bash` and `read` from a child would be wasteful.
 
-Progress updates are event-driven. The server's internal subscribe mechanism delivers `state` messages at turn-level boundaries such as agent start, agent end, and message end. Child completion hooks and `wait=true` both rely on those lifecycle events rather than sleep loops or polling.
+Progress updates are event-driven. The server's internal subscribe mechanism delivers `state` messages at turn-level boundaries such as agent start, agent end, and message end. Child completion hooks and `wait=true` both rely on those lifecycle events rather than sleep loops or polling. In wait mode, a child returning to `ready` after producing new output is treated as completion and is stopped immediately.
 
 To inspect a child's detailed execution, use `inspect_agent` after the fact — it reads the child's JSONL trace file and provides progressive disclosure from overview down to individual tool output.
 
@@ -113,7 +115,7 @@ All subagent lifecycle behavior is configurable via `config.extensions.subagents
 | Field                         | Default   | Description                                                                                                                                                                                |
 | ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `maxDepth`                    | `1`       | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled.                                                                       |
-| `autoStopWhenDone`            | `false`   | Whether children automatically stop after completing their work. When `false`, children stay alive for follow-up messages via `send_message`.                                              |
+| `autoStopWhenDone`            | `false`   | Whether fire-and-forget children automatically stop after completing their work. When `false`, they stay alive for follow-up messages via `send_message`. `wait=true` still stops its child immediately after completion. |
 | `startupGraceMs`              | `60000`   | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
 | `defaultWaitTimeoutMs`        | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`.                                                                                       |
 | `modelPolicy.approvedModels`  | none      | Optional allowlist for subagent model IDs. If set, `spawn_agent` rejects anything outside this list.                                                                                       |

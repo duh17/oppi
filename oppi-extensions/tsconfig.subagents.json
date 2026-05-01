@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "../server/dist/oppi-extensions",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "typeRoots": ["../server/node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@mariozechner/pi-coding-agent": [
+        "../server/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts"
+      ],
+      "typebox": ["../server/node_modules/typebox/build/index.d.mts"]
+    }
+  },
+  "include": ["src/subagents/**/*", "extensions/**/*"],
+  "exclude": ["**/*.test.ts", "dist", "node_modules"]
+}

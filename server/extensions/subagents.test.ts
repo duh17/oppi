@@ -3,7 +3,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { createSubagentsFactory, type SubagentsContext } from "./subagents.js";
+import {
+  createSubagentsFactory,
+  type SubagentsContext,
+} from "../../oppi-extensions/src/subagents/index.js";
 import type { Session, ServerMessage, SubagentConfig } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -107,6 +110,8 @@ interface MockCtx extends SubagentsContext {
   spawnChildError?: Error;
   /** Set to throw on next sendMessage call */
   sendMessageError?: Error;
+  /** Set to throw on next stopSession call */
+  stopSessionError?: Error;
 }
 
 function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
@@ -120,6 +125,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
     spawnChildCalls: [],
     spawnDetachedCalls: [],
     spawnChildError: undefined,
+    stopSessionError: undefined,
 
     async spawnChild(params) {
       ctx.spawnChildCalls.push(params);
@@ -177,6 +183,7 @@ function createMockCtx(sessionId: string, workspaceId = "ws-1"): MockCtx {
 
     async stopSession(sessionId: string) {
       ctx.stopSessionCalls.push(sessionId);
+      if (ctx.stopSessionError) throw ctx.stopSessionError;
       const session = ctx.sessions.get(sessionId);
       if (session) {
         ctx.sessions.set(sessionId, makeSession({ ...session, status: "stopped" }));
@@ -727,6 +734,70 @@ describe("subagents-extension", () => {
 
       const result = await promise;
       expect(result.content[0].text).toContain("STOPPED");
+    });
+
+    it("wait mode: stops child immediately when it becomes ready after producing output", async () => {
+      const { ctx, tool } = setup();
+
+      const promise = tool("spawn_agent").execute("tc1", {
+        message: "investigate and report back",
+        name: "investigator",
+        wait: true,
+      });
+
+      await vi.waitFor(() => expect(ctx.spawnChildCalls.length).toBe(1));
+
+      const childId = [...ctx.sessions.keys()].find((k) => k !== "parent-1")!;
+      const child = ctx.sessions.get(childId)!;
+      const baselineOutput = child.tokens.output;
+      const baselineMessageCount = child.messageCount;
+      child.status = "ready";
+      child.tokens.output = baselineOutput + 25;
+      child.messageCount = baselineMessageCount + 1;
+      child.lastMessage = "Investigation complete";
+
+      emitMessage(ctx, childId, {
+        type: "state",
+        session: child,
+      });
+
+      const result = await promise;
+      expect(ctx.stopSessionCalls).toContain(childId);
+      expect(ctx.sessions.get(childId)?.status).toBe("stopped");
+      expect(result.content[0].text).toContain("STOPPED");
+      expect(result.content[0].text).toContain("Investigation complete");
+    });
+
+    it("wait mode: surfaces stopSession failures instead of pretending success", async () => {
+      const { ctx, tool } = setup();
+      ctx.stopSessionError = new Error("stop transport unavailable");
+
+      const promise = tool("spawn_agent").execute("tc1", {
+        message: "investigate and report back",
+        name: "investigator",
+        wait: true,
+      });
+
+      await vi.waitFor(() => expect(ctx.spawnChildCalls.length).toBe(1));
+
+      const childId = [...ctx.sessions.keys()].find((k) => k !== "parent-1")!;
+      const child = ctx.sessions.get(childId)!;
+      const baselineOutput = child.tokens.output;
+      const baselineMessageCount = child.messageCount;
+      child.status = "ready";
+      child.tokens.output = baselineOutput + 25;
+      child.messageCount = baselineMessageCount + 1;
+
+      emitMessage(ctx, childId, {
+        type: "state",
+        session: child,
+      });
+
+      const result = await promise;
+      expect(result.content[0].text).toContain("Failed to spawn agent");
+      expect(result.content[0].text).toContain("could not be stopped");
+      expect(result.content[0].text).toContain("stop transport unavailable");
+      expect(result.details.status).toBe("error");
     });
 
     it("wait mode fast path: already terminal resolves immediately with durationMs=0", async () => {
