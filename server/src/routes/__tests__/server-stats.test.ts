@@ -380,6 +380,76 @@ describe("aggregateStats", () => {
     });
   });
 
+  test("infers cacheWrite from input for OpenRouter Kimi models when cacheWrite is absent", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 5,
+        model: "openrouter/moonshotai/kimi-k2.6",
+        tokens: { input: 1200, output: 300, cacheRead: 5000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "openrouter/moonshotai/kimi-k2.6",
+      inputTokens: 1200,
+      cacheRead: 5000,
+      cacheWrite: 1200,
+      tokens: 6500,
+    });
+  });
+
+  test("infers cacheWrite from input for OpenRouter GLM models when cacheWrite is absent", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 5,
+        model: "openrouter/z.ai/glm-5.1",
+        tokens: { input: 1200, output: 300, cacheRead: 5000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "openrouter/z.ai/glm-5.1",
+      inputTokens: 1200,
+      cacheRead: 5000,
+      cacheWrite: 1200,
+      tokens: 6500,
+    });
+  });
+
+  test("keeps cache-rate inputs consistent when mixing reported and inferred cache writes", () => {
+    const sessions = [
+      makeSession({
+        id: "kimi",
+        createdAt: now - DAY_MS,
+        cost: 3,
+        model: "openrouter/moonshotai/kimi-k2.6",
+        tokens: { input: 200, output: 50, cacheRead: 800, cacheWrite: 0 },
+      }),
+      makeSession({
+        id: "glm",
+        createdAt: now - DAY_MS,
+        cost: 2,
+        model: "openrouter/z.ai/glm-5.1",
+        tokens: { input: 100, output: 25, cacheRead: 400, cacheWrite: 40 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    const kimi = result.modelBreakdown.find((entry) => entry.model.includes("kimi"));
+    const glm = result.modelBreakdown.find((entry) => entry.model.includes("glm"));
+
+    expect(kimi).toMatchObject({ inputTokens: 200, cacheRead: 800, cacheWrite: 200 });
+    expect(glm).toMatchObject({ inputTokens: 100, cacheRead: 400, cacheWrite: 40 });
+  });
+
   test("does not infer cacheWrite for models without an inference rule", () => {
     const sessions = [
       makeSession({

@@ -55,7 +55,22 @@ const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
     description:
       "DeepSeek reports cache read tokens but no explicit cache write counter. " +
       "Use uncached input as a write-equivalent for model-breakdown display.",
-    matches: (modelId: string) => modelId.toLowerCase().startsWith("deepseek/"),
+    matches: (modelId: string) => {
+      const lower = modelId.toLowerCase();
+      return lower.startsWith("deepseek/") || lower.includes("/deepseek/");
+    },
+    estimate: estimateUncachedInputWhenCacheReadPresent,
+  },
+  {
+    id: "openrouter-kimi-glm-uncached-input",
+    description:
+      "OpenRouter Kimi/GLM models report cache reads through provider usage but omit " +
+      "explicit cache write tokens. Use uncached input as a write-equivalent for display.",
+    matches: (modelId: string) => {
+      const lower = modelId.toLowerCase();
+      const isOpenRouter = lower.startsWith("openrouter/");
+      return isOpenRouter && (lower.includes("kimi") || lower.includes("glm"));
+    },
     estimate: estimateUncachedInputWhenCacheReadPresent,
   },
 ];
