@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-type FirstPartyExtensionName = "ask" | "subagents" | "voice";
+type FirstPartyExtensionName = "ask" | "subagents" | "voice" | "oppi-admin";
 
 type FirstPartyFactory = (pi: ExtensionAPI) => void | Promise<void>;
 

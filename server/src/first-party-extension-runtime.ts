@@ -6,12 +6,13 @@ import { dirname, resolve } from "node:path";
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
 import { createAskFactory } from "../extensions/ask.js";
+import { createOppiAdminFactory } from "../extensions/oppi-admin.js";
 import { createSubagentsFactory, type SubagentsContext } from "../extensions/subagents.js";
 import { createVoiceFactory } from "../extensions/voice.js";
 import type { Storage } from "./storage.js";
 import type { SubagentConfig } from "./types.js";
 
-export type ReloadableFirstPartyExtensionName = "ask" | "voice" | "subagents";
+export type ReloadableFirstPartyExtensionName = "ask" | "voice" | "subagents" | "oppi-admin";
 
 export interface ReloadableFirstPartyExtensionContext {
   storage: Storage;
@@ -52,6 +53,8 @@ function loadReloadableFirstPartyExtensionFactory(
         childMode: context.subagents.childMode,
         subagentConfig: context.subagents.subagentConfig,
       });
+    case "oppi-admin":
+      return createOppiAdminFactory(context.storage);
   }
 }
 
@@ -69,14 +72,14 @@ globalThis.__oppiFirstPartyExtensionRuntime ??= {
 
 export function getReloadableFirstPartyExtensionPaths(): string[] {
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  const repoLocalPaths = ["ask", "voice", "subagents"].map((name) =>
+  const repoLocalPaths = ["ask", "voice", "subagents", "oppi-admin"].map((name) =>
     resolve(currentDir, "..", "..", "oppi-extensions", "extensions", `${name}.ts`),
   );
   if (repoLocalPaths.every((filePath) => fs.existsSync(filePath))) {
     return repoLocalPaths;
   }
 
-  const packagedPaths = ["ask", "voice", "subagents"].map((name) =>
+  const packagedPaths = ["ask", "voice", "subagents", "oppi-admin"].map((name) =>
     resolve(currentDir, "..", "oppi-extensions", "extensions", `${name}.js`),
   );
   if (packagedPaths.every((filePath) => fs.existsSync(filePath))) {

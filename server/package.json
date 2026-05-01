@@ -28,7 +28,7 @@
   "homepage": "https://github.com/duh17/oppi/tree/main/server#readme",
   "bugs": "https://github.com/duh17/oppi/issues",
   "license": "MIT",
-  "author": "Da Chen",
+  "author": "Chaos Donkey",
   "keywords": [
     "coding-agent",
     "mobile",
@@ -78,7 +78,7 @@
   },
   "dependencies": {
     "@earendil-works/gondolin": "^0.7.0",
-    "@mariozechner/pi-coding-agent": "0.70.6",
+    "@mariozechner/pi-coding-agent": "0.71.1",
     "diff-match-patch": "^1.0.5",
     "mime-types": "3.0.2",
     "typebox": "1.1.28",

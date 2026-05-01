@@ -9,13 +9,14 @@ import type { Workspace } from "../src/types.js";
 export const MANAGED_EXTENSION_NAMES = ["permission-gate"] as const;
 
 export type ManagedExtensionName = (typeof MANAGED_EXTENSION_NAMES)[number];
-export type FirstPartyExtensionName = "ask" | "subagents" | "voice";
+export type FirstPartyExtensionName = "ask" | "subagents" | "voice" | "oppi-admin";
 
 /** First-party extension names exposed to the workspace UI. */
 export const FIRST_PARTY_EXTENSION_NAMES: readonly FirstPartyExtensionName[] = [
   "ask",
   "subagents",
   "voice",
+  "oppi-admin",
 ];
 
 const MANAGED_EXTENSION_NAME_SET = new Set<string>(MANAGED_EXTENSION_NAMES);

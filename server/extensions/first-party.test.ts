@@ -38,6 +38,7 @@ describe("first-party extension names", () => {
     expect(isFirstPartyExtensionName("ask")).toBe(true);
     expect(isFirstPartyExtensionName("subagents")).toBe(true);
     expect(isFirstPartyExtensionName("voice")).toBe(true);
+    expect(isFirstPartyExtensionName("oppi-admin")).toBe(true);
     expect(isFirstPartyExtensionName("memory")).toBe(false);
   });
 });
@@ -47,12 +48,14 @@ describe("isWorkspaceExtensionEnabled", () => {
     expect(isWorkspaceExtensionEnabled(undefined, "ask")).toBe(false);
     expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "subagents")).toBe(false);
     expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "voice")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace(undefined), "oppi-admin")).toBe(false);
   });
 
   it("treats an explicit empty allowlist as disabling first-party extensions", () => {
     expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "ask")).toBe(false);
     expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "subagents")).toBe(false);
     expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "voice")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(makeWorkspace([]), "oppi-admin")).toBe(false);
   });
 
   it("respects the workspace allowlist", () => {
@@ -60,6 +63,7 @@ describe("isWorkspaceExtensionEnabled", () => {
     expect(isWorkspaceExtensionEnabled(workspace, "ask")).toBe(true);
     expect(isWorkspaceExtensionEnabled(workspace, "subagents")).toBe(false);
     expect(isWorkspaceExtensionEnabled(workspace, "voice")).toBe(false);
+    expect(isWorkspaceExtensionEnabled(workspace, "oppi-admin")).toBe(false);
   });
 
   it("requires canonical extension names in workspace allowlists", () => {

@@ -299,6 +299,8 @@ export class SdkUiBridge {
   ) {}
 
   createContext(): ExtensionUIContext {
+    let editorComponentFactory: ReturnType<ExtensionUIContext["getEditorComponent"]>;
+
     const context = {
       ask: (questions: AskQuestion[], allowCustom = true, opts?: ExtensionUIDialogOptions) => {
         if (!Array.isArray(questions) || questions.length === 0) {
@@ -484,9 +486,13 @@ export class SdkUiBridge {
         // Autocomplete provider stacking requires TUI access; unsupported in Oppi sessions.
       },
 
-      setEditorComponent: (_factory) => {
-        // Custom editor components require TUI access; unsupported in Oppi sessions.
+      setEditorComponent: (factory) => {
+        // Oppi does not render custom TUI editors, but preserving the factory
+        // lets extensions wrap/restore editor state without crashing.
+        editorComponentFactory = factory;
       },
+
+      getEditorComponent: () => editorComponentFactory,
 
       get theme() {
         return {} as ExtensionUIContext["theme"];
