@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -67,8 +68,27 @@ globalThis.__oppiFirstPartyExtensionRuntime ??= {
 };
 
 export function getReloadableFirstPartyExtensionPaths(): string[] {
-  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  return ["ask", "voice", "subagents"].map((name) =>
-    resolve(projectRoot, "dist", "extensions", `${name}.js`),
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  const repoLocalPaths = ["ask", "voice", "subagents"].map((name) =>
+    resolve(currentDir, "..", "..", "oppi-extensions", "extensions", `${name}.ts`),
+  );
+  if (repoLocalPaths.every((filePath) => fs.existsSync(filePath))) {
+    return repoLocalPaths;
+  }
+
+  const packagedPaths = ["ask", "voice", "subagents"].map((name) =>
+    resolve(currentDir, "..", "oppi-extensions", "extensions", `${name}.js`),
+  );
+  if (packagedPaths.every((filePath) => fs.existsSync(filePath))) {
+    return packagedPaths;
+  }
+
+  throw new Error(
+    `Unable to locate reloadable Oppi first-party extensions. Checked:\n${[
+      ...repoLocalPaths,
+      ...packagedPaths,
+    ]
+      .map((filePath) => `  - ${filePath}`)
+      .join("\n")}`,
   );
 }

@@ -77,13 +77,13 @@ Oppi reserves one truly managed server-owned name:
 
 That name is filtered out of host discovery and owned by the server.
 
-Oppi also ships first-party extensions from the repo-local `oppi-extensions` pi package:
+Oppi also ships three server-owned first-party extensions whose source lives in this repo:
 
 - `ask` from `server/extensions/ask.ts`
-- `subagents` from `server/extensions/subagents.ts`
+- `subagents` from `oppi-extensions/src/subagents/index.ts`
 - `voice` from `server/extensions/voice.ts`
 
-They are loaded through reloadable file-based wrappers under `oppi-extensions/extensions/`.
+For `/reload`, the server imports internal wrappers under `oppi-extensions/extensions/`. Those wrappers are an Oppi runtime shim, not generic package-installed pi extensions.
 
 ### Workspace allowlist
 
@@ -133,7 +133,7 @@ Oppi replaces that behavior with an in-process gate wired through the server and
 |---|---|
 | `server/extensions/first-party.ts` | Reserved names and enablement rules |
 | `server/extensions/ask.ts` | First-party ask tool |
-| `server/extensions/subagents.ts` | First-party multi-agent tools |
+| `oppi-extensions/src/subagents/index.ts` | First-party multi-agent tools |
 | `server/extensions/voice.ts` | First-party voice tool |
 | `server/src/extension-loader.ts` | Picker discovery for global + project-local extensions |
 | `server/src/routes/skills.ts` | `GET /extensions` |
