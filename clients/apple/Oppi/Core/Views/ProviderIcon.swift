@@ -17,11 +17,17 @@ struct ProviderIcon: View {
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
-                    .foregroundStyle(providerIconTint(Self.brandColor(for: provider)))
+                    .foregroundStyle(providerIconTint(
+                        Self.brandColor(for: provider),
+                        palette: ThemeRuntimeState.currentPalette()
+                    ))
             } else {
                 Text(Self.mark(for: provider))
                     .font(.system(size: max(8, size * 0.8), weight: .heavy, design: .rounded))
-                    .foregroundStyle(providerIconTint(Self.brandColor(for: provider)))
+                    .foregroundStyle(providerIconTint(
+                        Self.brandColor(for: provider),
+                        palette: ThemeRuntimeState.currentPalette()
+                    ))
             }
         }
         .frame(width: size, height: size, alignment: .center)

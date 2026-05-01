@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 // MARK: - Shared model presentation helpers
 
@@ -164,9 +167,25 @@ struct ProviderGlyph: View {
     }
 }
 
+protocol ProviderIconTintPalette {
+    var bg: Color { get }
+    var bgDark: Color { get }
+    var bgHighlight: Color { get }
+    var fg: Color { get }
+    var fgDim: Color { get }
+}
+
+private struct DefaultProviderIconTintPalette: ProviderIconTintPalette {
+    let bg = Color(red: 0.08, green: 0.09, blue: 0.11)
+    let bgDark = Color(red: 0.05, green: 0.06, blue: 0.07)
+    let bgHighlight = Color(red: 0.14, green: 0.16, blue: 0.19)
+    let fg = Color(red: 0.86, green: 0.88, blue: 0.90)
+    let fgDim = Color(red: 0.62, green: 0.66, blue: 0.70)
+}
+
 func providerIconTint(
     _ preferred: Color,
-    palette: ThemePalette = ThemeRuntimeState.currentPalette(),
+    palette: any ProviderIconTintPalette = DefaultProviderIconTintPalette(),
     minimumContrast: Double = 3.0
 ) -> Color {
     let backgrounds = [palette.bg, palette.bgDark, palette.bgHighlight]
@@ -324,7 +343,10 @@ private func baseHue(for familyKey: String, normalizedModelID: String) -> Double
         return 0.36
     }
     if normalizedModelID.contains("sonnet") || normalizedModelID.contains("opus") || normalizedModelID.contains("haiku") || normalizedModelID.contains("claude") {
-        return 0.08
+        // Anthropic/Claude should stay in the warm clay-orange band. Letting
+        // version offsets push Sonnet 4.6 toward yellow-green made the Server
+        // tab hard to read on the light theme.
+        return 0.055
     }
     if normalizedModelID.contains("deepseek") {
         return 0.58
@@ -374,6 +396,10 @@ private func versionColorHueOffset(for normalizedModelID: String) -> Double {
     }
     if components.indices.contains(2) {
         offset += Double((components[2] % 5) - 2) * 0.012
+    }
+
+    if normalizedModelID.contains("sonnet") || normalizedModelID.contains("opus") || normalizedModelID.contains("haiku") || normalizedModelID.contains("claude") {
+        return clamp(offset, lower: -0.03, upper: 0.03)
     }
 
     return clamp(offset, lower: -0.10, upper: 0.10)

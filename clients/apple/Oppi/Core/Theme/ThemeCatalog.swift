@@ -7,7 +7,7 @@ import os
 ///
 /// 13 base colors (used by `Color.theme*` static accessors) plus 36 semantic
 /// tokens for UI surfaces, syntax highlighting, markdown, diffs, and thinking.
-struct ThemePalette: Sendable {
+struct ThemePalette: Sendable, ProviderIconTintPalette {
     // ── Base (13) ──
     let bg: Color
     let bgDark: Color

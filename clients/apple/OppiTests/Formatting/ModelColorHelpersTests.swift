@@ -32,6 +32,13 @@ struct ModelColorHelpersTests {
         #expect(newer.saturation >= older.saturation)
     }
 
+    @Test func claudeModelsStayInAnthropicOrangeBand() {
+        let color = hsba(UIColor(modelColor("anthropic/claude-sonnet-4-6")))
+
+        #expect(color.hue >= 0.03)
+        #expect(color.hue <= 0.09)
+    }
+
     @Test func siblingVersionsGetNoticeablyDifferentHue() {
         let a = hsba(UIColor(modelColor("openai/gpt-5.5")))
         let b = hsba(UIColor(modelColor("openai/gpt-5.4")))
