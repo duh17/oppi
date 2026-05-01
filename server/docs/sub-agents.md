@@ -1,108 +1,184 @@
 # Sub-agents
 
-Oppi's `subagents` extension lets agents create and manage child sessions within a workspace. The parent agent delegates tasks, monitors progress, and collects results — all without leaving its own context.
+Oppi's `subagents` extension lets an agent create and manage child sessions inside the same workspace. Use it when one session should delegate a task, wait for a result, or inspect another session's trace.
 
-## Tools
+## Enabling the extension
 
-The extension registers four tools. Root sessions get all four; child sessions get `inspect_agent` and `send_message` only (no spawning or stopping).
+`subagents` is a first-party Oppi extension name. It is not enabled automatically.
 
-### spawn_agent
+To use it in a workspace, include `subagents` in that workspace's `extensions` list.
+
+If a workspace sets `extensions`, that list is authoritative. Omitting `subagents` disables it.
+
+## Tool surface
+
+Root sessions get four tools:
+
+- `spawn_agent`
+- `inspect_agent`
+- `send_message`
+- `stop_agent`
+
+Child sessions get the non-spawning subset only:
+
+- `inspect_agent`
+- `send_message`
+
+## spawn_agent
 
 Create a new session in the current workspace.
 
-| Parameter         | Type    | Default           | Description                                                                                                                                        |
-| ----------------- | ------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`         | string  | required          | Task prompt for the child. Include all context — the child has no access to the parent's conversation.                                             |
-| `name`            | string  | truncated message | Display name shown in the app and session tree.                                                                                                    |
-| `model`           | string  | inherited         | Model override (e.g. `anthropic/claude-sonnet-4-6`). Omit to inherit from parent.                                                                  |
-| `thinking`        | string  | inherited         | Thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.                                                                                |
-| `detached`        | boolean | `false`           | If true, creates an independent session with no parent-child link. Gets full capabilities including its own `spawn_agent`. Monitored from the app. |
-| `wait`            | boolean | `false`           | If true, blocks until the child finishes and returns its final response inline.                                                                    |
-| `timeout_seconds` | number  | 1800              | Max seconds to wait (only when `wait=true`).                                                                                                       |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `message` | string | required | Task prompt for the child. Include the context it needs because the child does not see the parent's conversation. |
+| `name` | string | truncated message | Display name shown in the app and session tree. |
+| `profile` | string | none | Optional named preset from `config.extensions.subagents.modelPolicy.profiles`. |
+| `model` | string | inherited | Model override for the child session. |
+| `thinking` | string | inherited | Thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. |
+| `detached` | boolean | `false` | Create an independent session with no parent-child link. Detached sessions can spawn their own children. |
+| `wait` | boolean | `false` | Block until the child finishes its current task and return the result inline. |
+| `timeout_seconds` | number | `1800` | Maximum wait time when `wait=true`. |
 
-**Fire-and-forget** (default): returns immediately with the child's session ID. When the child finishes, the parent gets a `subagent_result` message containing status, cost, changed files, and the child's last response. If the parent is idle, the result is appended without triggering a turn. If the parent is busy, the result is queued as a follow-up so it does not interrupt the current turn.
+### Fire-and-forget mode
 
-**Wait mode** (`wait=true`): blocks the parent's context until the child finishes its current task, then immediately stops that child and returns the child's last response, cost, changed files, and duration inline. Use for sequential dependencies where the parent needs the result before continuing.
+By default, `spawn_agent` returns immediately with the child session ID.
 
-### inspect_agent
+When the child finishes, the parent receives a `subagent_result` message with:
 
-Progressive-disclosure trace inspection. Three levels of detail:
+- final status
+- cost
+- changed files summary
+- the child's last response
 
-1. **Overview** (`inspect_agent(id)`) — turn count, tool breakdown, error markers, changed files. Start here.
-2. **Turn detail** (`inspect_agent(id, turn: N)`) — tool list with condensed args and error previews for a specific turn.
-3. **Tool detail** (`inspect_agent(id, turn: N, tool: M)`) — full tool arguments and output.
+If the parent is idle, Oppi appends that result without starting a new turn. If the parent is busy, Oppi queues it as a follow-up.
 
-Set `response: true` to get the full assistant response text (no truncation). Combine with `turn` to get a specific turn's response.
+### Wait mode
 
-Works on both active and stopped sessions — the trace is read from the session's JSONL file.
+With `wait=true`, the parent blocks until the child finishes its current task. Oppi then stops that child immediately and returns the result inline.
 
-### send_message
+Use wait mode for sequential dependencies, not for long-running background work.
 
-Send a message to another session in the workspace.
+## inspect_agent
 
-| Parameter  | Type                      | Default   | Description                             |
-| ---------- | ------------------------- | --------- | --------------------------------------- |
-| `id`       | string                    | required  | Target session ID.                      |
-| `message`  | string                    | required  | Message content.                        |
-| `behavior` | `"steer"` \| `"followUp"` | `"steer"` | How to deliver when the target is busy. |
+`inspect_agent` reads a session's JSONL trace and returns progressively more detail.
 
-Delivery depends on the target's state:
+Levels:
 
-- **Idle**: starts a new turn (prompt).
-- **Busy + steer**: injected after current tool calls finish, before the next LLM call. Use for course corrections.
-- **Busy + followUp**: queued until the current turn finishes. Use for "do this next."
-- **Stopped**: the session is automatically resumed and the message is delivered as a new prompt. Resuming within ~5 minutes of the child stopping benefits from prompt cache hits.
+1. **Overview**: `inspect_agent(id)`
+2. **Turn detail**: `inspect_agent(id, turn: N)`
+3. **Tool detail**: `inspect_agent(id, turn: N, tool: M)`
 
-An agent-origin preamble (`[From agent "Name" (id)]`) is prepended so the recipient knows the source.
+Set `response: true` to return the full assistant response text instead of the summarized trace view.
 
-Prefer `send_message` over spawning a brand-new child when a prior subagent already investigated the same area. Reusing the same session preserves its context, and stopped sessions auto-resume so you can benefit from a warmer prompt cache.
+Works for both active and stopped sessions.
 
-### stop_agent
+## send_message
 
-Stop a running child session. Only works on sessions in the caller's spawn tree (not workspace-wide).
+Send a message to another session in the same workspace.
 
-| Parameter | Type   | Description         |
-| --------- | ------ | ------------------- |
-| `id`      | string | Session ID to stop. |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | string | required | Target session ID. |
+| `message` | string | required | Message content. |
+| `behavior` | `"steer" \| "followUp"` | `"steer"` | Delivery mode when the target is busy. |
 
-## Spawn tree
+Delivery rules:
 
-Sessions form a tree: each child tracks its `parentSessionId`. The tree has a configurable max depth (default: 1 — children cannot spawn their own children). Set `subagents.maxDepth` to allow deeper trees, or use `detached: true` for independent sessions that bypass the tree entirely with full spawn capability.
+- **Idle**: starts a new turn
+- **Busy + `steer`**: injected after current tool calls, before the next model call
+- **Busy + `followUp`**: queued after the current turn finishes
+- **Stopped**: automatically resumed, then delivered as a new prompt
 
-The iOS app renders the spawn tree with a collapsible status bar showing each child's state, cost, and duration. The parent session's cost aggregates the full tree.
+Oppi prepends an origin marker such as `[From agent "Name" (id)]` so the recipient knows where the message came from.
+
+Prefer `send_message` over spawning a new child when an earlier subagent already investigated the same area.
+
+## stop_agent
+
+Stop a running child session.
+
+This only works for sessions in the caller's spawn tree. It is not a workspace-wide kill switch.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | string | Session ID to stop. |
+
+## Spawn tree and detached sessions
+
+Each normal child session records `parentSessionId`, so sessions form a tree.
+
+Defaults:
+
+- `maxDepth = 1`
+- a child cannot spawn grandchildren unless you raise that limit
+
+If you need a fully independent session, use `detached: true`. Detached sessions are outside the spawn tree and keep full spawn capability.
 
 ## Visibility model
 
-A parent waiting on a child (via `wait=true`) receives aggregate progress updates — status, message count, cost, and elapsed time. It does **not** receive individual tool calls, streaming text, or tool output from the child. This is intentional: the parent's context window is expensive, and flooding it with every `bash` and `read` from a child would be wasteful.
+A parent waiting on a child receives coarse progress updates only:
 
-Progress updates are event-driven. The server's internal subscribe mechanism delivers `state` messages at turn-level boundaries such as agent start, agent end, and message end. Child completion hooks and `wait=true` both rely on those lifecycle events rather than sleep loops or polling. In wait mode, a child returning to `ready` after producing new output is treated as completion and is stopped immediately.
+- status
+- message count
+- cost
+- elapsed time
 
-To inspect a child's detailed execution, use `inspect_agent` after the fact — it reads the child's JSONL trace file and provides progressive disclosure from overview down to individual tool output.
+It does **not** receive the child's tool calls, streaming text, or full tool output.
 
-## Lifecycle configuration
+This is deliberate. The detailed execution history stays in the child's own trace file and is available later through `inspect_agent`.
 
-All subagent lifecycle behavior is configurable via `config.extensions.subagents`:
+In wait mode, Oppi treats a child returning to `ready` after producing new output as completion and stops it immediately.
+
+## Configuration
+
+Configure subagents under `config.extensions.subagents`.
 
 ```json
 {
   "extensions": {
     "subagents": {
       "maxDepth": 1,
-      "autoStopWhenDone": false,
-      "startupGraceMs": 60000,
       "defaultWaitTimeoutMs": 1800000,
       "modelPolicy": {
-        "approvedModels": ["openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.5"],
-        "defaultModel": "openai-codex/gpt-5.5",
+        "defaultModel": "openai-codex/gpt-5.4",
         "defaultThinking": "medium",
         "profiles": {
-          "discovery": {
-            "description": "Fast repo and web discovery.",
-            "model": "openai-codex/gpt-5.4-mini",
-            "thinking": "minimal",
+          "planning": {
+            "description": "High-quality planning and architecture analysis before implementation.",
+            "model": "openai-codex/gpt-5.5",
+            "thinking": "high",
             "guidelines": [
-              "Prefer search and inspection before edits.",
-              "Stay cheap and fast unless evidence says otherwise."
+              "Do not edit files unless explicitly asked; produce concrete plans with file paths and validation steps.",
+              "Prefer reading existing code and tests before proposing new abstractions."
+            ]
+          },
+          "review": {
+            "description": "Careful code review, risk analysis, and regression hunting.",
+            "model": "openai-codex/gpt-5.5",
+            "thinking": "high",
+            "guidelines": [
+              "Review evidence from diffs, tests, and relevant source files before giving conclusions.",
+              "Prioritize correctness, security, data loss, concurrency, and protocol drift over style nits.",
+              "Return findings with severity, confidence, file paths, and concrete fixes."
+            ]
+          },
+          "coding": {
+            "description": "Implementation work in the repo with the codex coding model.",
+            "model": "openai-codex/gpt-5.3-codex",
+            "thinking": "medium",
+            "guidelines": [
+              "Make focused code changes and validate them with the narrowest reliable checks.",
+              "Follow project AGENTS.md rules and avoid touching unrelated files."
+            ]
+          },
+          "research": {
+            "description": "Codebase discovery, documentation lookup, web research, and concise synthesis.",
+            "model": "openai-codex/gpt-5.4",
+            "thinking": "medium",
+            "guidelines": [
+              "Search broadly first, then read primary sources, documentation, or source files before summarizing.",
+              "Prefer targeted reads over exhaustive scanning; note uncertainty clearly.",
+              "Return structured handoff context with links or file paths, relevant symbols, risks, and where to start."
             ]
           }
         }
@@ -112,27 +188,73 @@ All subagent lifecycle behavior is configurable via `config.extensions.subagents
 }
 ```
 
-| Field                         | Default   | Description                                                                                                                                                                                |
-| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `maxDepth`                    | `1`       | How many levels deep agents can spawn. `1` = parent-child only. `2` = allows grandchildren. `0` = spawning disabled.                                                                       |
-| `autoStopWhenDone`            | `false`   | Whether fire-and-forget children automatically stop after completing their work. When `false`, they stay alive for follow-up messages via `send_message`. `wait=true` still stops its child immediately after completion. |
-| `startupGraceMs`              | `60000`   | How long (ms) to wait for a child to start producing output before killing it. Covers VM boot, model loading, and first LLM response. Increase for sandbox environments with slow startup. |
-| `defaultWaitTimeoutMs`        | `1800000` | Default timeout (ms) for `spawn_agent(wait=true)` when the caller doesn't specify `timeout_seconds`.                                                                                       |
-| `modelPolicy.approvedModels`  | none      | Optional allowlist for subagent model IDs. If set, `spawn_agent` rejects anything outside this list.                                                                                       |
-| `modelPolicy.defaultModel`    | none      | Default model for subagents when the caller omits `model`. Useful for steering work toward `openai-codex/*` variants.                                                                      |
-| `modelPolicy.defaultThinking` | none      | Default thinking level when the caller omits `thinking`.                                                                                                                                   |
-| `modelPolicy.profiles.*`      | none      | Named presets such as `discovery`, `coding`, or `review`. Each profile can set `model`, `thinking`, and extra prompt `guidelines`.                                                         |
+### Active configuration fields
 
-`spawn_agent` now also accepts an optional `profile` parameter. Profiles are a clean way to standardize lanes like discovery, code search, web research, and deep implementation work without hard-coding model choices into prompts.
+These settings currently affect runtime behavior:
 
-Set via CLI: `oppi config set extensions '{"subagents":{"modelPolicy":{"defaultModel":"openai-codex/gpt-5.5"}}}'`. Partial updates merge with defaults.
+| Field | Default | What it does |
+| --- | --- | --- |
+| `maxDepth` | `1` | Maximum spawn depth for non-detached sessions. `0` disables spawning. |
+| `defaultWaitTimeoutMs` | `1800000` | Default timeout for `spawn_agent(wait=true)` when `timeout_seconds` is omitted. |
+| `modelPolicy.approvedModels` | none | Optional allowlist for subagent model IDs. |
+| `modelPolicy.defaultModel` | none | Default model when the caller omits `model`. |
+| `modelPolicy.defaultThinking` | none | Default thinking level when the caller omits `thinking`. |
+| `modelPolicy.profiles.*` | none | Named presets that can set `model`, `thinking`, and prompt `guidelines`. |
+
+### Accepted but not currently enforced
+
+The config type also accepts these fields:
+
+- `autoStopWhenDone`
+- `childIdleTimeoutMs`
+- `startupGraceMs`
+
+They are reserved for future lifecycle controls, but they do not currently change runtime behavior.
+
+Use `profile` on `spawn_agent` to select a named preset such as `research`, `coding`, or `review`.
+
+Examples:
+
+```ts
+spawn_agent({
+  profile: "research",
+  message: "Find the files that implement session queue replay. Do not edit files."
+})
+
+spawn_agent({
+  profile: "coding",
+  message: "Implement the focused fix from this plan and run the narrowest relevant checks."
+})
+
+spawn_agent({
+  profile: "review",
+  message: "Review the current diff for correctness, regressions, and missing tests."
+})
+```
+
+### Profile prompt style
+
+Profiles follow the same spirit as Amp's subagent prompts: keep the main thread clean by delegating bounded work into isolated context windows.
+
+Good profile prompts are:
+
+- **Role-specific**: research gathers context and sources, coding changes files, review looks for risk.
+- **Explicit about scope**: include file areas, allowed edits, and what not to touch.
+- **Output-shaped**: ask for file paths, links, findings, validation steps, or a handoff summary.
+- **Cost-aware**: use stronger models for planning/review and faster coding/research models for focused work.
+- **Not magical**: profiles currently set `model`, `thinking`, and prompt guidelines. They do not enforce tool permissions; include read-only or no-edit instructions in the task until tool restrictions exist.
+
+Recommended defaults:
+
+| Profile | Model | Thinking | Use for |
+| --- | --- | --- | --- |
+| `planning` | `openai-codex/gpt-5.5` | `high` | Architecture plans and complex tradeoffs. |
+| `review` | `openai-codex/gpt-5.5` | `high` | Code review, regression hunting, risk analysis. |
+| `coding` | `openai-codex/gpt-5.3-codex` | `medium` | Focused implementation work. |
+| `research` | `openai-codex/gpt-5.4` | `medium` | Codebase discovery, documentation lookup, and source-backed web research. |
 
 ## Git safety
 
-All agents in a workspace share the same working directory. For tasks that touch different files, parallel spawning is safe. For larger changes that overlap, run agents sequentially or use git worktrees.
+All sessions in a workspace share the same working directory.
 
-## Workspace configuration
-
-`subagents` and `ask` are enabled by default.
-
-If a workspace sets `extensions`, that field becomes an authoritative allowlist for optional extensions. Omitting `subagents` or `ask` disables them for that workspace.
+Parallel spawning is fine when tasks touch different files. If multiple sessions may edit the same area, run them sequentially or use separate git worktrees.
