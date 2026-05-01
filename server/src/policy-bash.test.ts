@@ -6,10 +6,10 @@ import { matchBashPattern, parseBashCommand, splitBashCommandChain } from "./pol
 describe("splitBashCommandChain", () => {
   it("splits compound && command into segments", () => {
     const cmd =
-      "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+      "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
     const segments = splitBashCommandChain(cmd);
     expect(segments).toEqual([
-      "cd /Users/chenda/workspace/oppi",
+      "cd /Users/testuser/workspace/oppi",
       "git add -A",
       "git commit --amend --no-edit",
       "git push --force-with-lease origin main 2>&1 | tail -5",
@@ -78,7 +78,7 @@ describe("matchBashPattern", () => {
     });
 
     it("does NOT match cd", () => {
-      expect(matchBashPattern("cd /Users/chenda/workspace/oppi", pattern)).toBe(false);
+      expect(matchBashPattern("cd /Users/testuser/workspace/oppi", pattern)).toBe(false);
     });
   });
 
@@ -122,7 +122,7 @@ describe("matchBashPattern", () => {
 
 describe("compound git push detection (end-to-end)", () => {
   const fullCmd =
-    "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+    "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
 
   it("at least one segment matches git push*", () => {
     const segments = splitBashCommandChain(fullCmd);

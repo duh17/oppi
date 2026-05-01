@@ -1,7 +1,7 @@
 import SwiftUI
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "ServerInitView")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "ServerInitView")
 
 /// Step 3: Initialize the server config and start the server.
 ///

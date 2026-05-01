@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "ProcessRunner")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "ProcessRunner")
 
 /// Shared process-spawning utility for the Mac app.
 ///

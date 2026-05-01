@@ -8,7 +8,7 @@ import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
 import type { PolicyConfig } from "../src/types.js";
 
-const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/chenda/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
+const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
 
 const SESSION_ID = "test-session-1";
 

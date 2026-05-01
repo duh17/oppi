@@ -1,7 +1,7 @@
 import SwiftUI
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "PrerequisitesView")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PrerequisitesView")
 
 /// Step 1: Check that Node.js, pi CLI, and port 7749 are available.
 struct PrerequisitesView: View {

@@ -210,7 +210,7 @@ describe("SessionCommandCoordinator", () => {
             id: "tool-call-1",
             name: "read",
             arguments: {
-              path: "/Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
+              path: "/Users/testuser/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
               offset: 10,
               limit: 5,
             },
@@ -377,7 +377,7 @@ describe("SessionCommandCoordinator", () => {
           matchesFilter: true,
           role: "toolResult",
           textPreview:
-            "[read: ~/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift:10-14]",
+            "[read: /Users/testuser/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift:10-14]",
         },
         {
           id: "entry-7",

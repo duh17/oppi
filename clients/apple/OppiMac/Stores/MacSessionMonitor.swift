@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "MacSessionMonitor")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "MacSessionMonitor")
 
 /// Polls `/server/stats` and publishes the latest ``ServerStats`` to SwiftUI views.
 ///

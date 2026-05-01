@@ -2,7 +2,7 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "PairView")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PairView")
 
 /// Sidebar view for generating new pairing invites.
 ///

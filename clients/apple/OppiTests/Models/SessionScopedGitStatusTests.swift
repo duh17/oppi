@@ -272,7 +272,7 @@ struct SessionScopedGitStatusTests {
         let scoped = SessionScopedGitStatus.filter(
             gitStatus: gitStatus,
             sessionChangedFiles: [
-                "/Users/chenda/workspace/oppi/ios/Oppi/Core/Views/Chat/Support/WorkspaceContextBar.swift"
+                "/Users/testuser/workspace/oppi/ios/Oppi/Core/Views/Chat/Support/WorkspaceContextBar.swift"
             ]
         )
 

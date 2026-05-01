@@ -86,7 +86,7 @@ describe("stress: compound git commands with mixed allow/ask rules", () => {
   const prefixes = [
     "",
     "cd /tmp && ",
-    "cd /Users/chenda/workspace/oppi && ",
+    "cd /Users/testuser/workspace/oppi && ",
     "echo starting && ",
     "pwd && ",
     "true && ",
@@ -132,7 +132,7 @@ describe("stress: compound git commands with mixed allow/ask rules", () => {
   // The exact bug-triggering command
   it("catches: cd && add && commit --amend && push --force-with-lease (the original bug)", () => {
     const cmd =
-      "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+      "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
     const result = engine.evaluateWithRules(bashRequest(cmd), userRules(), SID, WID);
     expect(result.action).toBe("ask");
     expect(result.ruleLabel).toBe("Git push");

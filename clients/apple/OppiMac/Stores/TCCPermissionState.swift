@@ -4,7 +4,7 @@ import CoreGraphics
 import UserNotifications
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "TCCPermissionState")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "TCCPermissionState")
 
 /// Tracks macOS TCC (Transparency, Consent, and Control) permission grants.
 ///

@@ -3,7 +3,7 @@
  *
  * The command:
  *   SESSION="kdev-$(date +%H%M%S)"; tmux new-session -d -s "$SESSION" \
- *     -c /Users/chenda/workspace/kypu \
+ *     -c /Users/testuser/workspace/kypu \
  *     'export PATH=$HOME/go/bin:$HOME/.local/bin:$PATH; make d'; \
  *     echo "session=$SESSION"; sleep 6; \
  *     tmux list-sessions | rg "$SESSION"; echo '---'; \
@@ -58,7 +58,7 @@ function bash(command: string): GateRequest {
 const KYPU_WORKSPACE_ID = "CaDLr396";
 const KYPU_SESSION_ID = "test-session";
 
-const FULL_COMMAND = `SESSION="kdev-$(date +%H%M%S)"; tmux new-session -d -s "$SESSION" -c /Users/chenda/workspace/kypu 'export PATH=$HOME/go/bin:$HOME/.local/bin:$PATH; make d'; echo "session=$SESSION"; sleep 6; tmux list-sessions | rg "$SESSION"; echo '---'; tmux capture-pane -t "$SESSION":0.0 -p -S -120 | tail -n 80`;
+const FULL_COMMAND = `SESSION="kdev-$(date +%H%M%S)"; tmux new-session -d -s "$SESSION" -c /Users/testuser/workspace/kypu 'export PATH=$HOME/go/bin:$HOME/.local/bin:$PATH; make d'; echo "session=$SESSION"; sleep 6; tmux list-sessions | rg "$SESSION"; echo '---'; tmux capture-pane -t "$SESSION":0.0 -p -S -120 | tail -n 80`;
 
 describe("tmux kypu command — chain splitting", () => {
   it("splits into expected segments (semicolons inside single quotes are preserved)", () => {
@@ -178,7 +178,7 @@ describe("tmux kypu command — full evaluateWithRules", () => {
     const engine = new PolicyEngine("default");
     const rules = store.getAll();
 
-    const envCommand = `cd /Users/chenda/workspace/kypu && rg -n "^KYPU_SQLITE_PATH=" .env .env.example .env.template 2>/dev/null || true`;
+    const envCommand = `cd /Users/testuser/workspace/kypu && rg -n "^KYPU_SQLITE_PATH=" .env .env.example .env.template 2>/dev/null || true`;
     const req = bash(envCommand);
     const decision = engine.evaluateWithRules(req, rules, KYPU_SESSION_ID, KYPU_WORKSPACE_ID);
     console.log(".env command decision:", decision);

@@ -15,7 +15,7 @@ import UIKit
 struct MarkdownRenderingIntegrationTests {
 
     static let artifactDir = URL(
-        fileURLWithPath: "/Users/chenda/workspace/oppi/clients/apple/.build/rendering-integration-artifacts"
+        fileURLWithPath: NSHomeDirectory() + "/workspace/oppi/clients/apple/.build/rendering-integration-artifacts"
     )
 
     // MARK: - Helpers

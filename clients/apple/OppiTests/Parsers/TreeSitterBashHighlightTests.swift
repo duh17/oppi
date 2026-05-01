@@ -142,7 +142,7 @@ struct TreeSitterBashCommandTests {
     }
 
     @Test func commandWithPath() {
-        let code = "cd /Users/chenda/workspace/oppi"
+        let code = "cd /Users/testuser/workspace/oppi"
         expectToken("cd", is: .function, in: code)
     }
 
@@ -457,7 +457,7 @@ struct TreeSitterBashRealWorldTests {
     @Test func gitCommitWithMultiLineMessage() {
         // Exact pattern from the screenshot that triggered this work
         let code = """
-        cd /Users/chenda/workspace/oppi && git commit -m "feat: show blue Question pill in session list
+        cd /Users/testuser/workspace/oppi && git commit -m "feat: show blue Question pill in session list
         when agent asks a question
 
         Add AskRequestStore to track pending ask tool

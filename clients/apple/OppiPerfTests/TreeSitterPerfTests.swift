@@ -14,7 +14,7 @@ class TreeSitterPerfTests: XCTestCase {
 
     /// Typical bash command from agent tool calls (~100 chars)
     func testBashTypicalCommand() {
-        let code = "cd /Users/chenda/workspace/oppi && git commit -m \"feat: improve syntax highlighting\""
+        let code = "cd /Users/testuser/workspace/oppi && git commit -m \"feat: improve syntax highlighting\""
         measure {
             for _ in 0..<100 {
                 _ = TreeSitterHighlighter.scanTokenRanges(code, language: .shell)

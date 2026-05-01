@@ -140,8 +140,8 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
       onData: (d) => chunks.push(d),
       env: {
         ANTHROPIC_API_KEY: "sk-ant-real-key-12345",
-        HOME: "/Users/chenda",
-        USER: "chenda",
+        HOME: "/Users/testuser",
+        USER: "testuser",
         SECRET_TOKEN: "super-secret",
         SAFE_VAR: "this-is-fine",
       } as unknown as NodeJS.ProcessEnv,
@@ -149,8 +149,8 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     const env = Buffer.concat(chunks).toString();
 
     // STRIP_ENV removes HOME, USER, LOGNAME, SHELL, PATH
-    expect(env).not.toContain("HOME=/Users/chenda");
-    expect(env).not.toContain("USER=chenda");
+    expect(env).not.toContain("HOME=/Users/testuser");
+    expect(env).not.toContain("USER=testuser");
   });
 
   it("STRIP_ENV does not filter arbitrary env var names", async () => {

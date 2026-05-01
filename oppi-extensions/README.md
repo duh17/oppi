@@ -7,5 +7,5 @@ Oppi server sessions load these wrappers directly from this repo when the worksp
 If you want the same extensions in plain pi TUI sessions, install the package by local path so it loads everywhere while still editing in place:
 
 ```bash
-pi install /Users/chenda/workspace/oppi/oppi-extensions
+pi install ~/workspace/oppi/oppi-extensions
 ```

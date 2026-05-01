@@ -219,7 +219,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
 
     // Must NOT be the host user's home
     expect(home).not.toContain("/Users/");
-    expect(home).not.toContain("chenda");
+    expect(home).not.toContain("testuser");
   });
 
   it("whoami is NOT the host user", async () => {
@@ -230,7 +230,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     await ops.exec("whoami", hostDir, { onData: (d) => chunks.push(d) });
     const user = Buffer.concat(chunks).toString().trim();
 
-    expect(user).not.toBe("chenda");
+    expect(user).not.toBe("testuser");
     // VM typically runs as root
     expect(user).toBe("root");
   });
@@ -244,7 +244,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     const hostname = Buffer.concat(chunks).toString().trim();
 
     expect(hostname).not.toBe("mac-studio");
-    expect(hostname).not.toContain("chenda");
+    expect(hostname).not.toContain("testuser");
   });
 
   it("cannot read /etc/passwd from host", async () => {
@@ -256,7 +256,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     const passwd = Buffer.concat(chunks).toString();
 
     // Host /etc/passwd would contain the host username
-    expect(passwd).not.toContain("chenda");
+    expect(passwd).not.toContain("testuser");
     // VM passwd should have root
     expect(passwd).toContain("root");
   });
@@ -266,7 +266,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
 
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
-    await ops.exec("ls /Users/chenda/workspace 2>&1 || true", hostDir, {
+    await ops.exec("ls /Users/testuser/workspace 2>&1 || true", hostDir, {
       onData: (d) => chunks.push(d),
     });
     const output = Buffer.concat(chunks).toString();
@@ -295,9 +295,9 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     await ops.exec("echo HOME=$HOME USER=$USER", hostDir, {
       onData: (d) => chunks.push(d),
       env: {
-        HOME: "/Users/chenda",
-        USER: "chenda",
-        LOGNAME: "chenda",
+        HOME: "/Users/testuser",
+        USER: "testuser",
+        LOGNAME: "testuser",
         PATH: "/usr/local/bin:/usr/bin",
         SOME_SAFE_VAR: "kept",
       } as unknown as NodeJS.ProcessEnv,
@@ -305,8 +305,8 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     const output = Buffer.concat(chunks).toString().trim();
 
     // HOME and USER should have been stripped, not forwarded
-    expect(output).not.toContain("HOME=/Users/chenda");
-    expect(output).not.toContain("USER=chenda");
+    expect(output).not.toContain("HOME=/Users/testuser");
+    expect(output).not.toContain("USER=testuser");
   });
 
   // ─── VM reuse ───

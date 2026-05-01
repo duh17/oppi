@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "MacAPIClient")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "MacAPIClient")
 
 /// Thin REST client for the local Oppi server.
 ///

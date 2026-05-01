@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "ServerProcessManager")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "ServerProcessManager")
 
 /// Manages the lifecycle of a local Oppi server (Node.js child process).
 ///

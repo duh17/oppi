@@ -2,7 +2,7 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "PairingView")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "PairingView")
 
 /// Step 4: Generate a QR code for iPhone pairing via `oppi pair --json`.
 struct PairingView: View {

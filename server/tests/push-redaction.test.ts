@@ -142,7 +142,7 @@ describe("APNs signing-key failure fallback", () => {
       keyPath: "/definitely/missing/key.p8",
       keyId: "ABC123DEF4",
       teamId: "TEAM123456",
-      bundleId: "dev.chenda.Oppi",
+      bundleId: "com.example.oppi",
       environment: "sandbox",
     });
 

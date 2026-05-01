@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.OppiMac", category: "OnboardingState")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "OnboardingState")
 
 /// State machine for the first-run onboarding wizard.
 ///

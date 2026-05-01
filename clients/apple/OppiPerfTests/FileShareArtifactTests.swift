@@ -20,7 +20,7 @@ struct FileShareArtifactTests {
     /// Simulator shares /Users with the host, so this is directly accessible.
     /// After test run: `open clients/apple/.build/share-artifacts`
     static let artifactDir = URL(
-        fileURLWithPath: "/Users/chenda/workspace/oppi/clients/apple/.build/share-artifacts"
+        fileURLWithPath: NSHomeDirectory() + "/workspace/oppi/clients/apple/.build/share-artifacts"
     )
 
     static let fixtures: [(name: String, content: FileShareService.ShareableContent)] = [

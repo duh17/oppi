@@ -69,7 +69,7 @@ describe("PolicyEngine.evaluate — git push detection", () => {
 
   it("catches compound: cd && add && commit --amend && push --force-with-lease", () => {
     const cmd =
-      "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+      "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
     const result = engine.evaluate(bashRequest(cmd));
     expect(result.action).toBe("ask");
   });
@@ -134,7 +134,7 @@ describe("PolicyEngine.evaluateWithRules — git push with user rules", () => {
 
   it("catches compound command with git push --force-with-lease via user rules", () => {
     const cmd =
-      "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+      "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
     const result = engine.evaluateWithRules(bashRequest(cmd), rules, SESSION_ID, WORKSPACE_ID);
     expect(result.action).toBe("ask");
   });
@@ -225,7 +225,7 @@ describe("BUG: compound command with git commit allow + git push ask", () => {
 
   it("compound command with commit + push — push ask wins (most restrictive)", () => {
     const cmd =
-      "cd /Users/chenda/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
+      "cd /Users/testuser/workspace/oppi && git add -A && git commit --amend --no-edit && git push --force-with-lease origin main 2>&1 | tail -5";
     const result = engine.evaluateWithRules(bashRequest(cmd), rules, SESSION_ID, WORKSPACE_ID);
     expect(result.action).toBe("ask");
     expect(result.ruleLabel).toBe("Git push");

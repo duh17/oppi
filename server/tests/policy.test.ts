@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PolicyEngine, parseBashCommand, matchBashPattern, splitBashCommandChain } from "../src/policy.js";
 
-const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/chenda/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
+const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
 
 // ─── Bash Parsing ───
 
@@ -15,7 +15,7 @@ describe("parseBashCommand", () => {
 
   it("splits chained git push command without breaking quoted commit message", () => {
     expect(splitBashCommandChain(CHAINED_GIT_PUSH_COMMAND)).toEqual([
-      "cd /Users/chenda/workspace/oppi",
+      "cd /Users/testuser/workspace/oppi",
       "git add -A",
       'git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify',
       "git push origin main",

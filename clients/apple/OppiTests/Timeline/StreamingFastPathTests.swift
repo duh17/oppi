@@ -290,7 +290,7 @@ struct StreamingFastPathTests {
         h.apply(items: [
             .assistantMessage(id: streamingID, text: "Running bash command", timestamp: timestamp),
             .toolCall(
-                id: "tool-1", tool: "bash", argsSummary: "$ cd /Users/chenda/workspace",
+                id: "tool-1", tool: "bash", argsSummary: "$ cd /Users/testuser/workspace",
                 outputPreview: "", outputByteCount: 0, isError: false, isDone: false
             ),
         ], streamingAssistantID: streamingID)
@@ -301,7 +301,7 @@ struct StreamingFastPathTests {
             return
         }
         #expect(
-            summary2 == "$ cd /Users/chenda/workspace",
+            summary2 == "$ cd /Users/testuser/workspace",
             "Tool argsSummary should update via fast path after structural insert"
         )
     }

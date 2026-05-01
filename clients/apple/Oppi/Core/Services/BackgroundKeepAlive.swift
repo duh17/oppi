@@ -14,7 +14,7 @@ import UIKit
 /// - iOS expires the background task (~30s, but often longer on modern devices)
 @MainActor
 struct BackgroundKeepAlive {
-    private static let log = Logger(subsystem: "dev.chenda.Oppi", category: "BackgroundKeepAlive")
+    private static let log = Logger(subsystem: AppIdentifiers.subsystem, category: "BackgroundKeepAlive")
 
     private var taskID: UIBackgroundTaskIdentifier = .invalid
     private var pollingTask: Task<Void, Never>?

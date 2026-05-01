@@ -2,7 +2,7 @@ import OSLog
 import UIKit
 import WebKit
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "MarkdownImage")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "MarkdownImage")
 
 /// UIKit view that loads and displays an image referenced in markdown.
 ///

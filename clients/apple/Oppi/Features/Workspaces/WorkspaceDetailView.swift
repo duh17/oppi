@@ -128,7 +128,7 @@ struct WorkspaceDetailView: View {
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
     ///
     /// The hostMount uses `~` (e.g. `~/workspace/oppi`) while CWD from the server
-    /// is absolute (e.g. `/Users/chenda/workspace/oppi`). We match by checking if
+    /// is absolute (e.g. `/Users/testuser/workspace/oppi`). We match by checking if
     /// the CWD ends with the path after `~/`.
     private var filteredLocalSessions: [LocalSession] {
         guard let mount = currentWorkspace.hostMount, !mount.isEmpty else { return [] }
@@ -155,7 +155,7 @@ struct WorkspaceDetailView: View {
                 return true
             }
 
-            // Check if CWD ends with the suffix (e.g. "/Users/chenda/workspace/oppi" ends with "workspace/oppi")
+            // Check if CWD ends with the suffix (e.g. "/Users/testuser/workspace/oppi" ends with "workspace/oppi")
             // Also verify a path separator precedes the suffix to avoid partial matches
             if local.cwd == mount { return true }
             if local.cwd.hasSuffix("/" + suffix) { return true }

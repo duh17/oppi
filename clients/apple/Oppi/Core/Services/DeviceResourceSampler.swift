@@ -3,7 +3,7 @@ import Foundation
 import os
 import UIKit
 
-private let samplerLog = Logger(subsystem: "dev.chenda.Oppi", category: "DeviceResourceSampler")
+private let samplerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "DeviceResourceSampler")
 
 /// Samples CPU, memory, and thermal metrics every 10 seconds while the app is
 /// foregrounded. All sampling and uploads are gated by `TelemetrySettings`.
