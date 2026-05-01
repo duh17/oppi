@@ -259,7 +259,7 @@ struct QuickSessionTests {
         #expect(AppPreferences.QuickSession.defaultWorkspaceId == nil)
     }
 
-    @Test func preferredWorkspacePrefersExplicitDefault() {
+    @Test func preferredWorkspacePrefersLastUsed() {
         AppPreferences.QuickSession.saveWorkspaceId("last-ws")
         AppPreferences.QuickSession.saveDefaultWorkspaceId("explicit-ws")
 
@@ -271,14 +271,14 @@ struct QuickSessionTests {
             ]
         )
 
-        #expect(preferred == "explicit-ws")
+        #expect(preferred == "last-ws")
         AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
         )
     }
 
-    @Test func preferredWorkspaceFallsBackToOppiAdminBeforeLastUsed() {
+    @Test func preferredWorkspaceDoesNotSpecialCaseOppiAdmin() {
         AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
         AppPreferences.QuickSession.saveWorkspaceId("last-ws")
 
@@ -289,7 +289,7 @@ struct QuickSessionTests {
             ]
         )
 
-        #expect(preferred == "admin-ws")
+        #expect(preferred == "last-ws")
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
         )

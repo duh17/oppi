@@ -373,7 +373,7 @@ struct QuickSessionSheet: View {
     // MARK: - Actions
 
     private func setupInitialState() async {
-        // Select workspace: explicit default > oppi-admin > last used > first available.
+        // Select workspace: last used > explicit default > first available.
         let all = allServerWorkspaces
         let preferredId = AppPreferences.QuickSession.preferredWorkspaceId(
             in: all.map { (id: $0.workspace.id, name: $0.workspace.name) }

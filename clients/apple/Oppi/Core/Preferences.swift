@@ -255,7 +255,6 @@ enum AppPreferences {
 
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
         private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
-        private static let adminWorkspaceName = "oppi-admin"
 
         // MARK: Workspace
 
@@ -283,16 +282,12 @@ enum AppPreferences {
             guard !workspaces.isEmpty else { return nil }
 
             let ids = Set(workspaces.map(\.id))
-            if let explicitDefault = defaultWorkspaceId, ids.contains(explicitDefault) {
-                return explicitDefault
-            }
-
-            if let adminWorkspace = workspaces.first(where: { $0.name == adminWorkspaceName }) {
-                return adminWorkspace.id
-            }
-
             if let lastWorkspaceId, ids.contains(lastWorkspaceId) {
                 return lastWorkspaceId
+            }
+
+            if let explicitDefault = defaultWorkspaceId, ids.contains(explicitDefault) {
+                return explicitDefault
             }
 
             return workspaces[0].id
