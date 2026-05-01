@@ -23,7 +23,7 @@ struct FullScreenSelectedTextTests {
         #expect(commentAction.title == "Comment")
     }
 
-    @Test func diffBodyPrependsCommentAction() throws {
+    @Test func diffBodyKeepsSelectableTextWhileRichRenderBuilds() throws {
         let controller = makeController(
             content: .diff(
                 oldText: "let value = 1",
@@ -36,7 +36,7 @@ struct FullScreenSelectedTextTests {
             )
         )
         let textView = try #require(timelineAllTextViews(in: controller.view).first {
-            timelineRenderedText(of: $0).contains("let value = 2")
+            timelineRenderedText(of: $0).contains("+ let value = 2")
         })
 
         let menu = try #require(textView.delegate?.textView?(

@@ -303,36 +303,18 @@ final class NativeFullScreenDiffBody: UIView {
             progressView.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
+        diffTextView.text = Self.initialSelectableText(
+            newText: newText,
+            precomputedLines: precomputedLines
+        )
+        let displayPath = filePath ?? "diff.txt"
         buildTask = Task { [weak self] in
             let oldText = oldText
             let newText = newText
             let precomputedLines = precomputedLines
-            let displayPath = filePath ?? "diff.txt"
             let result = await Task.detached(priority: .userInitiated) {
                 let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
-                let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
-                let build = DiffAttributedStringBuilder.buildResult(
-                    hunks: hunks,
-                    filePath: displayPath,
-                    options: .init(includeStats: true, includeGapSummary: true)
-                )
-                let measured = build.attributedText.boundingRect(
-                    with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin],
-                    context: nil
-                )
-                let addedCount = lines.reduce(into: 0) { total, line in
-                    if line.kind == .added { total += 1 }
-                }
-                let removedCount = lines.reduce(into: 0) { total, line in
-                    if line.kind == .removed { total += 1 }
-                }
-                return BuiltDiff(
-                    text: build.attributedText,
-                    width: ceil(measured.width) + 24,
-                    added: addedCount,
-                    removed: removedCount
-                )
+                return Self.buildDiff(lines: lines, displayPath: displayPath)
             }.value
 
             guard !Task.isCancelled else { return }
@@ -342,6 +324,40 @@ final class NativeFullScreenDiffBody: UIView {
 
     deinit {
         buildTask?.cancel()
+    }
+
+    private static func initialSelectableText(
+        newText: String,
+        precomputedLines: [DiffLine]?
+    ) -> String {
+        guard let precomputedLines else { return newText }
+        return DiffEngine.formatUnified(precomputedLines)
+    }
+
+    nonisolated private static func buildDiff(lines: [DiffLine], displayPath: String) -> BuiltDiff {
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
+        let build = DiffAttributedStringBuilder.buildResult(
+            hunks: hunks,
+            filePath: displayPath,
+            options: .init(includeStats: true, includeGapSummary: true)
+        )
+        let measured = build.attributedText.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        let addedCount = lines.reduce(into: 0) { total, line in
+            if line.kind == .added { total += 1 }
+        }
+        let removedCount = lines.reduce(into: 0) { total, line in
+            if line.kind == .removed { total += 1 }
+        }
+        return BuiltDiff(
+            text: build.attributedText,
+            width: ceil(measured.width) + 24,
+            added: addedCount,
+            removed: removedCount
+        )
     }
 
     private func applyBuiltDiff(_ result: BuiltDiff) {
