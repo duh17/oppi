@@ -358,7 +358,29 @@ describe("aggregateStats", () => {
     expect(result.modelBreakdown[0]?.cacheWrite).toBe(77);
   });
 
-  test("does not infer cacheWrite for non-OpenAI models", () => {
+  test("infers cacheWrite from input for DeepSeek models when cacheWrite is absent", () => {
+    const sessions = [
+      makeSession({
+        id: "s1",
+        createdAt: now - DAY_MS,
+        cost: 5,
+        model: "deepseek/deepseek-v4-pro",
+        tokens: { input: 1200, output: 300, cacheRead: 5000, cacheWrite: 0 },
+      }),
+    ];
+
+    const result = aggregate({ sessions });
+    expect(result.modelBreakdown).toHaveLength(1);
+    expect(result.modelBreakdown[0]).toMatchObject({
+      model: "deepseek/deepseek-v4-pro",
+      inputTokens: 1200,
+      cacheRead: 5000,
+      cacheWrite: 1200,
+      tokens: 6500,
+    });
+  });
+
+  test("does not infer cacheWrite for models without an inference rule", () => {
     const sessions = [
       makeSession({
         id: "s1",

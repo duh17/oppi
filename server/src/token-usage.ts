@@ -48,14 +48,24 @@ const CACHE_WRITE_INFERENCE_RULES: CacheWriteInferenceRule[] = [
         lower.includes("/openai/");
       return isOpenAIFamily && lower.includes("gpt-");
     },
-    estimate: (tokens: TokenCounts) => {
-      if (tokens.cacheRead <= 0 || tokens.input <= 0) {
-        return 0;
-      }
-      return tokens.input;
-    },
+    estimate: estimateUncachedInputWhenCacheReadPresent,
+  },
+  {
+    id: "deepseek-uncached-input",
+    description:
+      "DeepSeek reports cache read tokens but no explicit cache write counter. " +
+      "Use uncached input as a write-equivalent for model-breakdown display.",
+    matches: (modelId: string) => modelId.toLowerCase().startsWith("deepseek/"),
+    estimate: estimateUncachedInputWhenCacheReadPresent,
   },
 ];
+
+function estimateUncachedInputWhenCacheReadPresent(tokens: TokenCounts): number {
+  if (tokens.cacheRead <= 0 || tokens.input <= 0) {
+    return 0;
+  }
+  return tokens.input;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
