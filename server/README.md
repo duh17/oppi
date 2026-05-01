@@ -62,9 +62,10 @@ Create a workspace in the app and start a session.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 23.6+
 - [pi](https://github.com/badlogic/pi-mono) runtime dependency (installed automatically with npm package)
 - macOS or Linux
+- OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 
 ## Docker (skills-ready compose setup)
 

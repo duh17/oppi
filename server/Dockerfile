@@ -1,4 +1,4 @@
-FROM node:22-bookworm
+FROM node:24-bookworm
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     jq \
+    openssl \
     python3 \
     python3-pip \
     python3-venv \

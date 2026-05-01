@@ -35,7 +35,7 @@ The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly —
 
 ## Install
 
-Requires Node.js 22+ and [pi](https://github.com/badlogic/pi-mono) with at least one provider authenticated (`pi auth`).
+Requires Node.js 23.6+ and [pi](https://github.com/badlogic/pi-mono) with at least one provider authenticated (`pi auth`). Linux self-signed TLS also requires `openssl` on PATH.
 
 One-line bootstrap (choose one):
 
