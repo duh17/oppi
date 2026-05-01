@@ -251,10 +251,55 @@ struct QuickSessionTests {
         )
     }
 
+    @Test func defaultWorkspaceIdRoundTrip() {
+        AppPreferences.QuickSession.saveDefaultWorkspaceId("admin-ws")
+        #expect(AppPreferences.QuickSession.defaultWorkspaceId == "admin-ws")
+
+        AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
+        #expect(AppPreferences.QuickSession.defaultWorkspaceId == nil)
+    }
+
+    @Test func preferredWorkspacePrefersExplicitDefault() {
+        AppPreferences.QuickSession.saveWorkspaceId("last-ws")
+        AppPreferences.QuickSession.saveDefaultWorkspaceId("explicit-ws")
+
+        let preferred = AppPreferences.QuickSession.preferredWorkspaceId(
+            in: [
+                (id: "last-ws", name: "oppi"),
+                (id: "explicit-ws", name: "something-else"),
+                (id: "admin-ws", name: "oppi-admin"),
+            ]
+        )
+
+        #expect(preferred == "explicit-ws")
+        AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
+        )
+    }
+
+    @Test func preferredWorkspaceFallsBackToOppiAdminBeforeLastUsed() {
+        AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
+        AppPreferences.QuickSession.saveWorkspaceId("last-ws")
+
+        let preferred = AppPreferences.QuickSession.preferredWorkspaceId(
+            in: [
+                (id: "last-ws", name: "oppi"),
+                (id: "admin-ws", name: "oppi-admin"),
+            ]
+        )
+
+        #expect(preferred == "admin-ws")
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
+        )
+    }
+
     @Test func workspaceIdNilWhenNotSet() {
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
         )
+        AppPreferences.QuickSession.saveDefaultWorkspaceId(nil)
         #expect(AppPreferences.QuickSession.lastWorkspaceId == nil)
     }
 

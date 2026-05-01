@@ -254,14 +254,48 @@ enum AppPreferences {
         private static let prefix = "\(AppIdentifiers.subsystem).quickSession"
 
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
+        private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
+        private static let adminWorkspaceName = "oppi-admin"
+
         // MARK: Workspace
 
         static var lastWorkspaceId: String? {
             UserDefaults.standard.string(forKey: lastWorkspaceIdKey)
         }
 
+        static var defaultWorkspaceId: String? {
+            UserDefaults.standard.string(forKey: defaultWorkspaceIdKey)
+        }
+
         static func saveWorkspaceId(_ id: String) {
             UserDefaults.standard.set(id, forKey: lastWorkspaceIdKey)
+        }
+
+        static func saveDefaultWorkspaceId(_ id: String?) {
+            if let id, !id.isEmpty {
+                UserDefaults.standard.set(id, forKey: defaultWorkspaceIdKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultWorkspaceIdKey)
+            }
+        }
+
+        static func preferredWorkspaceId(in workspaces: [(id: String, name: String)]) -> String? {
+            guard !workspaces.isEmpty else { return nil }
+
+            let ids = Set(workspaces.map(\.id))
+            if let explicitDefault = defaultWorkspaceId, ids.contains(explicitDefault) {
+                return explicitDefault
+            }
+
+            if let adminWorkspace = workspaces.first(where: { $0.name == adminWorkspaceName }) {
+                return adminWorkspace.id
+            }
+
+            if let lastWorkspaceId, ids.contains(lastWorkspaceId) {
+                return lastWorkspaceId
+            }
+
+            return workspaces[0].id
         }
 
     }

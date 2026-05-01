@@ -63,6 +63,16 @@ struct WorkspaceEntityQuery: EntityQuery {
         )
 
         let workspaces = try await api.listWorkspaces()
-        return workspaces.map { WorkspaceEntity(id: $0.id, name: $0.name) }
+        let preferredId = AppPreferences.QuickSession.preferredWorkspaceId(
+            in: workspaces.map { (id: $0.id, name: $0.name) }
+        )
+
+        let sorted = workspaces.sorted { lhs, rhs in
+            if lhs.id == preferredId { return true }
+            if rhs.id == preferredId { return false }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+
+        return sorted.map { WorkspaceEntity(id: $0.id, name: $0.name) }
     }
 }
