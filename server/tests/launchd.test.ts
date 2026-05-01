@@ -37,6 +37,7 @@ vi.mock("node:os", () => ({
 const originalGetuid = process.getuid;
 beforeEach(() => {
   process.getuid = () => 501;
+  mockUnlinkSync.mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -61,8 +62,10 @@ describe("plist path resolution", () => {
   it("derives plist path from homedir", () => {
     mockExistsSync.mockReturnValue(false);
     const status = getServiceStatus();
-    expect(status.plistPath).toBe("/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist");
-    expect(status.label).toBe("dev.chenda.oppi");
+    expect(status.plistPath).toBe(
+      "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
+    );
+    expect(status.label).toBe("dev.chaosdonkey.oppi");
   });
 });
 
@@ -94,7 +97,7 @@ describe("plist XML generation", () => {
     expect(xml).toContain("<!DOCTYPE plist");
     expect(xml).toContain('<plist version="1.0">');
     expect(xml).toContain("<key>Label</key>");
-    expect(xml).toContain("<string>dev.chenda.oppi</string>");
+    expect(xml).toContain("<string>dev.chaosdonkey.oppi</string>");
   });
 
   it("sets ProgramArguments with runtime, CLI, serve, and data-dir", () => {
@@ -251,9 +254,7 @@ describe("CLI resolution", () => {
 
     const result = installService("/tmp/data");
     expect(result.ok).toBe(true);
-    expect(result.cliPath).toBe(
-      "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js",
-    );
+    expect(result.cliPath).toBe("/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js");
   });
 });
 
@@ -274,10 +275,9 @@ describe("installService", () => {
     setupValidInstall();
     installService("/tmp/data");
 
-    expect(mockMkdirSync).toHaveBeenCalledWith(
-      "/Users/testuser/Library/LaunchAgents",
-      { recursive: true },
-    );
+    expect(mockMkdirSync).toHaveBeenCalledWith("/Users/testuser/Library/LaunchAgents", {
+      recursive: true,
+    });
   });
 
   it("writes plist with mode 0o644", () => {
@@ -285,7 +285,7 @@ describe("installService", () => {
     installService("/tmp/data");
 
     expect(mockWriteFileSync).toHaveBeenCalledWith(
-      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+      "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
       expect.any(String),
       { mode: 0o644 },
     );
@@ -300,7 +300,7 @@ describe("installService", () => {
     );
     expect(bootstrapCall).toBeDefined();
     expect(bootstrapCall![0]).toBe(
-      "launchctl bootstrap gui/501 /Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+      "launchctl bootstrap gui/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
     );
   });
 
@@ -308,18 +308,65 @@ describe("installService", () => {
     mockExistsSync.mockImplementation((p: string) => {
       if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
       if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
-      if (p.endsWith(".plist")) return true; // plist already exists
+      if (p === "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist") return true;
       return false;
     });
     mockExecSync.mockReturnValue("");
 
     installService("/tmp/data");
 
-    const bootoutCall = mockExecSync.mock.calls.find(([cmd]) =>
-      (cmd as string).includes("bootout"),
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist 2>/dev/null",
+      { stdio: "pipe" },
     );
-    expect(bootoutCall).toBeDefined();
-    expect(bootoutCall![0]).toContain("bootout gui/501");
+  });
+
+  it("disables legacy dev.chenda LaunchAgent before installing", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
+      if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
+      if (p === "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist") return false;
+      return false;
+    });
+    mockExecSync.mockReturnValue("");
+
+    const result = installService("/tmp/data");
+
+    expect(result.ok).toBe(true);
+    expect(result.legacyRemoved).toEqual([
+      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+    ]);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501/dev.chenda.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501 /Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockUnlinkSync).toHaveBeenCalledWith(
+      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+    );
+  });
+
+  it("fails install when legacy LaunchAgent plist cannot be removed", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/Applications/Oppi.app/Contents/Resources/bun") return true;
+      if (p === "/Users/testuser/.config/oppi/server-runtime/dist/src/cli.js") return true;
+      if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
+      return false;
+    });
+    mockExecSync.mockReturnValue("");
+    mockUnlinkSync.mockImplementation(() => {
+      throw new Error("EACCES: permission denied");
+    });
+
+    const result = installService("/tmp/data");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to disable legacy LaunchAgent");
+    expect(result.message).toContain("EACCES");
   });
 
   it("handles error 37 (already loaded) by kickstarting", () => {
@@ -338,7 +385,7 @@ describe("installService", () => {
       (cmd as string).includes("kickstart"),
     );
     expect(kickstartCall).toBeDefined();
-    expect(kickstartCall![0]).toBe("launchctl kickstart -k gui/501/dev.chenda.oppi");
+    expect(kickstartCall![0]).toBe("launchctl kickstart -k gui/501/dev.chaosdonkey.oppi");
   });
 
   it("returns error on non-37 bootstrap failure", () => {
@@ -392,7 +439,7 @@ describe("uninstallService", () => {
     );
     expect(bootoutCall).toBeDefined();
     expect(mockUnlinkSync).toHaveBeenCalledWith(
-      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+      "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
     );
   });
 
@@ -441,7 +488,7 @@ describe("restartService", () => {
     expect(result.ok).toBe(true);
     expect(result.message).toContain("restarted");
     expect(mockExecSync).toHaveBeenCalledWith(
-      "launchctl kickstart -k gui/501/dev.chenda.oppi",
+      "launchctl kickstart -k gui/501/dev.chaosdonkey.oppi",
       { stdio: "pipe" },
     );
   });
@@ -477,10 +524,9 @@ describe("stopService", () => {
 
     expect(result.ok).toBe(true);
     expect(result.message).toContain("stopped");
-    expect(mockExecSync).toHaveBeenCalledWith(
-      "launchctl bootout gui/501/dev.chenda.oppi",
-      { stdio: "pipe" },
-    );
+    expect(mockExecSync).toHaveBeenCalledWith("launchctl bootout gui/501/dev.chaosdonkey.oppi", {
+      stdio: "pipe",
+    });
   });
 
   it("treats 'No such process' as success (already stopped)", () => {
@@ -533,10 +579,10 @@ describe("getServiceStatus", () => {
     mockExistsSync.mockReturnValue(true);
     mockExecSync.mockReturnValue(
       [
-        "dev.chenda.oppi = {",
+        "dev.chaosdonkey.oppi = {",
         "  active count = 1",
         "  pid = 12345",
-        '  state = running',
+        "  state = running",
         "}",
       ].join("\n"),
     );
@@ -550,12 +596,7 @@ describe("getServiceStatus", () => {
   it("detects running state even without PID line", () => {
     mockExistsSync.mockReturnValue(true);
     mockExecSync.mockReturnValue(
-      [
-        "dev.chenda.oppi = {",
-        "  active count = 1",
-        '  state = running',
-        "}",
-      ].join("\n"),
+      ["dev.chaosdonkey.oppi = {", "  active count = 1", "  state = running", "}"].join("\n"),
     );
 
     const status = getServiceStatus();
@@ -567,12 +608,7 @@ describe("getServiceStatus", () => {
   it("treats pid = 0 as not running", () => {
     mockExistsSync.mockReturnValue(true);
     mockExecSync.mockReturnValue(
-      [
-        "dev.chenda.oppi = {",
-        "  pid = 0",
-        '  state = waiting',
-        "}",
-      ].join("\n"),
+      ["dev.chaosdonkey.oppi = {", "  pid = 0", "  state = waiting", "}"].join("\n"),
     );
 
     const status = getServiceStatus();
@@ -597,9 +633,9 @@ describe("getServiceStatus", () => {
     mockExistsSync.mockReturnValue(false);
     const status = getServiceStatus();
 
-    expect(status.label).toBe("dev.chenda.oppi");
+    expect(status.label).toBe("dev.chaosdonkey.oppi");
     expect(status.plistPath).toBe(
-      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
+      "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
     );
   });
 });
@@ -669,7 +705,7 @@ describe("readInstalledPlist", () => {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.chenda.oppi</string>
+    <string>dev.chaosdonkey.oppi</string>
 </dict>
 </plist>`;
 

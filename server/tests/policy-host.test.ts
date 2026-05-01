@@ -16,7 +16,7 @@ import { PolicyEngine, type GateRequest } from "../src/policy.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/chenda/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
+const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
 
 // ─── Helpers ───
 
@@ -188,12 +188,16 @@ describe("host preset: host-control flows gated", () => {
   });
 
   it("asks for launchctl stop oppi service", () => {
+    expect(policy.evaluate(bash("launchctl stop dev.chaosdonkey.oppi")).action).toBe("ask");
+  });
+
+  it("asks for launchctl stop legacy oppi service", () => {
     expect(policy.evaluate(bash("launchctl stop dev.chenda.oppi")).action).toBe("ask");
   });
 
   it("asks for launchctl kickstart oppi service", () => {
     expect(
-      policy.evaluate(bash("launchctl kickstart -kp gui/501/dev.chenda.oppi")).action,
+      policy.evaluate(bash("launchctl kickstart -kp gui/501/dev.chaosdonkey.oppi")).action,
     ).toBe("ask");
   });
 
@@ -203,7 +207,7 @@ describe("host preset: host-control flows gated", () => {
 
   it("asks for chained launchctl restart", () => {
     expect(
-      policy.evaluate(bash("cd /repo/server && launchctl stop dev.chenda.oppi")).action,
+      policy.evaluate(bash("cd /repo/server && launchctl stop dev.chaosdonkey.oppi")).action,
     ).toBe("ask");
   });
 });

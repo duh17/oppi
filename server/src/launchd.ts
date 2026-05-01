@@ -5,8 +5,8 @@
  * running in the background. The server survives app quits, terminal closes,
  * and reboots.
  *
- * Label: dev.chenda.oppi
- * Plist: ~/Library/LaunchAgents/dev.chenda.oppi.plist
+ * Label: dev.chaosdonkey.oppi
+ * Plist: ~/Library/LaunchAgents/dev.chaosdonkey.oppi.plist
  *
  * Key design decisions (learned from OpenClaw #40659):
  * - All paths in ProgramArguments are resolved to absolute paths at install time
@@ -19,7 +19,8 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const LABEL = "dev.chenda.oppi";
+const LABEL = "dev.chaosdonkey.oppi";
+const LEGACY_LABELS = ["dev.chenda.oppi"] as const;
 
 function uid(): number {
   const id = process.getuid?.();
@@ -27,8 +28,47 @@ function uid(): number {
   return id;
 }
 
+function plistPathForLabel(label: string): string {
+  return join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
+}
+
 function plistPath(): string {
-  return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
+  return plistPathForLabel(LABEL);
+}
+
+function bootoutLabel(label: string): void {
+  try {
+    execSync(`launchctl bootout gui/${uid()}/${label} 2>/dev/null`, { stdio: "pipe" });
+  } catch {
+    // Not loaded — fine.
+  }
+}
+
+function bootoutPlist(path: string): void {
+  try {
+    execSync(`launchctl bootout gui/${uid()} ${path} 2>/dev/null`, { stdio: "pipe" });
+  } catch {
+    // Not loaded — fine.
+  }
+}
+
+function disableLegacyLaunchAgents(): string[] {
+  const removed: string[] = [];
+
+  for (const legacyLabel of LEGACY_LABELS) {
+    const legacyPlist = plistPathForLabel(legacyLabel);
+    bootoutLabel(legacyLabel);
+
+    if (!existsSync(legacyPlist)) {
+      continue;
+    }
+
+    bootoutPlist(legacyPlist);
+    unlinkSync(legacyPlist);
+    removed.push(legacyPlist);
+  }
+
+  return removed;
 }
 
 export interface LaunchdStatus {
@@ -162,6 +202,7 @@ export function installService(dataDir?: string): {
   message: string;
   runtimePath?: string;
   cliPath?: string;
+  legacyRemoved?: string[];
 } {
   const runtimePath = resolveRuntimeAbsolute();
   if (!runtimePath) {
@@ -183,16 +224,23 @@ export function installService(dataDir?: string): {
   const resolvedDataDir = dataDir || join(homedir(), ".config", "oppi");
   const plist = plistPath();
   const launchAgentsDir = join(homedir(), "Library", "LaunchAgents");
+  let legacyRemoved: string[] = [];
+
+  try {
+    legacyRemoved = disableLegacyLaunchAgents();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      message: `Failed to disable legacy LaunchAgent: ${msg}`,
+      runtimePath,
+      cliPath,
+    };
+  }
 
   // Unload existing if present
   if (existsSync(plist)) {
-    try {
-      execSync(`launchctl bootout gui/${uid()} ${plist} 2>/dev/null`, {
-        stdio: "pipe",
-      });
-    } catch {
-      // May not be loaded — that's fine
-    }
+    bootoutPlist(plist);
   }
 
   // Ensure LaunchAgents directory exists
@@ -226,6 +274,7 @@ export function installService(dataDir?: string): {
     message: `LaunchAgent installed and started`,
     runtimePath,
     cliPath,
+    legacyRemoved,
   };
 }
 

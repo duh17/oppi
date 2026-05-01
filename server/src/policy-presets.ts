@@ -312,6 +312,55 @@ export function defaultPolicy(): PolicyConfig {
         reason: "Modifying the rule store changes how permission rules are stored and matched",
         match: { tool: "write", pathMatches: "**/rules.ts" },
       },
+      {
+        id: "ask-edit-workspace-config-json",
+        decision: "ask",
+        label: "Edit workspace config",
+        reason: "Modifying workspace JSON changes Oppi runtime behavior",
+        match: { tool: "edit", pathMatches: "**/oppi/workspaces/*.json" },
+      },
+      {
+        id: "ask-write-workspace-config-json",
+        decision: "ask",
+        label: "Overwrite workspace config",
+        reason: "Modifying workspace JSON changes Oppi runtime behavior",
+        match: { tool: "write", pathMatches: "**/oppi/workspaces/*.json" },
+      },
+      {
+        id: "ask-bash-workspace-config-json",
+        decision: "ask",
+        label: "Bash touches workspace config",
+        reason: "Modifying workspace JSON changes Oppi runtime behavior",
+        match: { tool: "bash", commandMatches: "*workspaces/*.json*" },
+      },
+      {
+        id: "ask-oppi-admin-create-workspace-tool",
+        decision: "ask",
+        label: "Create workspace",
+        reason: "Creating workspaces changes Oppi runtime configuration",
+        match: { tool: "oppi_admin_create_workspace" },
+      },
+      {
+        id: "ask-oppi-admin-update-workspace-tool",
+        decision: "ask",
+        label: "Update workspace",
+        reason: "Updating workspaces changes Oppi runtime configuration",
+        match: { tool: "oppi_admin_update_workspace" },
+      },
+      {
+        id: "ask-oppi-admin-delete-workspace-tool",
+        decision: "ask",
+        label: "Delete workspace",
+        reason: "Deleting workspaces changes Oppi runtime configuration",
+        match: { tool: "oppi_admin_delete_workspace" },
+      },
+      {
+        id: "ask-build-theme-tool",
+        decision: "ask",
+        label: "Build Oppi theme",
+        reason: "Creating themes changes Oppi runtime appearance configuration",
+        match: { tool: "build_theme" },
+      },
 
       // ── Network allowlist protection ──
       // Adding domains to the fetch allowlist expands what the agent can access.
@@ -680,7 +729,6 @@ export function defaultPolicy(): PolicyConfig {
         reason: "Sending email on your behalf is irreversible",
         match: { tool: "bash", commandMatches: "*send-email.sh*" },
       },
-
       // ── Local machine control → ask ──
       {
         id: "ask-apple-install",
@@ -702,6 +750,12 @@ export function defaultPolicy(): PolicyConfig {
         id: "ask-launchctl-oppi",
         decision: "ask",
         label: "Manage oppi server service",
+        match: { tool: "bash", executable: "launchctl", commandMatches: "*dev.chaosdonkey.oppi*" },
+      },
+      {
+        id: "ask-launchctl-oppi-legacy",
+        decision: "ask",
+        label: "Manage legacy oppi server service",
         match: { tool: "bash", executable: "launchctl", commandMatches: "*dev.chenda.oppi*" },
       },
     ],
@@ -1288,7 +1342,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     action: "ask",
     label: "Send email",
   },
-
   // Local machine control flows (explicit approval required)
   {
     tool: "bash",
@@ -1306,9 +1359,16 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   {
     tool: "bash",
     exec: "launchctl",
-    pattern: "*dev.chenda.oppi*",
+    pattern: "*dev.chaosdonkey.oppi*",
     action: "ask",
     label: "Manage oppi server service",
+  },
+  {
+    tool: "bash",
+    exec: "launchctl",
+    pattern: "*dev.chenda.oppi*",
+    action: "ask",
+    label: "Manage legacy oppi server service",
   },
   {
     tool: "bash",

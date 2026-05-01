@@ -149,9 +149,13 @@ struct OppiMacApp: App {
         token: String,
         client: MacAPIClient
     ) {
-        let plistPath = NSString("~/Library/LaunchAgents/dev.chenda.oppi.plist")
-            .expandingTildeInPath
-        let launchdInstalled = FileManager.default.fileExists(atPath: plistPath)
+        let launchAgentPlists = [
+            "~/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
+            "~/Library/LaunchAgents/dev.chenda.oppi.plist",
+        ].map { NSString(string: $0).expandingTildeInPath }
+        let launchdInstalled = launchAgentPlists.contains {
+            FileManager.default.fileExists(atPath: $0)
+        }
 
         if launchdInstalled {
             // LaunchAgent is installed — probe health to see if it's running.

