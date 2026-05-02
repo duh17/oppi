@@ -54,7 +54,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     func makeTimeline(
         toolArgsStore: ToolArgsStore,
         toolOutputStore: ToolOutputStore,
-        toolSegmentStore: ToolSegmentStore
+        toolSegmentStore: ToolSegmentStore,
+        toolDetailsStore: ToolDetailsStore
     ) -> [ChatItem] {
         var items: [ChatItem] = []
 
@@ -66,7 +67,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
             itemID: targetItemID,
             toolArgsStore: toolArgsStore,
             toolOutputStore: toolOutputStore,
-            toolSegmentStore: toolSegmentStore
+            toolSegmentStore: toolSegmentStore,
+            toolDetailsStore: toolDetailsStore
         ))
 
         for index in 0..<12 {
@@ -81,7 +83,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         itemID: String,
         toolArgsStore: ToolArgsStore,
         toolOutputStore: ToolOutputStore,
-        toolSegmentStore: ToolSegmentStore
+        toolSegmentStore: ToolSegmentStore,
+        toolDetailsStore: ToolDetailsStore
     ) -> ChatItem {
         switch self {
         case .writeCode:
@@ -319,6 +322,11 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 StyledSegment(text: "voice_speak ", style: .bold),
                 StyledSegment(text: "direct", style: .accent),
             ], for: itemID)
+            toolDetailsStore.set(.object([
+                "presentation": .string("voice"),
+                "message": .string(text),
+                "delivery": .string("directSpeak"),
+            ]), for: itemID)
 
             return .toolCall(
                 id: itemID,
@@ -341,6 +349,15 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 StyledSegment(text: "voice_speak ", style: .bold),
                 StyledSegment(text: "direct", style: .accent),
             ], for: itemID)
+            toolDetailsStore.set(.object([
+                "message": .string(text),
+                "audio": .object([
+                    "kind": .string("audio"),
+                    "id": .string("att-tool-matrix-voice"),
+                    "mimeType": .string("audio/wav"),
+                    "durationSeconds": .number(1.2),
+                ]),
+            ]), for: itemID)
 
             return .toolCall(
                 id: itemID,
@@ -445,7 +462,8 @@ struct ToolExpandScrollMatrixFixture {
         let items = toolCase.makeTimeline(
             toolArgsStore: harness.toolArgsStore,
             toolOutputStore: harness.toolOutputStore,
-            toolSegmentStore: harness.toolSegmentStore
+            toolSegmentStore: harness.toolSegmentStore,
+            toolDetailsStore: harness.reducer.toolDetailsStore
         )
         harness.applyItems(items, isBusy: false)
 

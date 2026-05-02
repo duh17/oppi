@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var showCrossSessionPermissionSheet = false
+    @State private var audioPlaybackRefreshID = 0
 
     /// Pending permissions from ALL servers, excluding the active session's
     /// (those are shown inline in the chat view's PermissionOverlay).
@@ -36,6 +37,11 @@ struct ContentView: View {
         coordinator.hasActiveSessions
             ? [.medium, .large]
             : [.height(130), .medium]
+    }
+
+    private var hasGlobalAudioPlayback: Bool {
+        _ = audioPlaybackRefreshID
+        return coordinator.hasActiveAudioPlayback
     }
 
     var body: some View {
@@ -79,20 +85,7 @@ struct ContentView: View {
         }
         .environment(\.selectedTextActionScope, navigation.makeQuickSessionActionScope())
         .safeAreaInset(edge: .top, spacing: 0) {
-            if !navigation.showOnboarding,
-               let request = crossSessionPrimary {
-                CrossSessionPermissionBanner(
-                    request: request,
-                    totalCount: crossSessionPending.count,
-                    sessionLabel: sessionLabel(for: request.sessionId),
-                    serverLabel: serverLabel(for: request),
-                    onReview: reviewCrossSessionPermissions
-                )
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-                .padding(.bottom, 4)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            topInsetBanners
         }
         .sheet(isPresented: $showCrossSessionPermissionSheet) {
             PermissionSheet(
@@ -170,9 +163,45 @@ struct ContentView: View {
                 .presentationCornerRadius(24)
         })
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
-            guard newValue > 0, !navigation.showOnboarding else { return }
-            navigation.showQuickSession = true
+            handleQuickSessionPresentationRequestChange(newValue)
         }
+        .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
+            audioPlaybackRefreshID &+= 1
+        }
+    }
+
+    @ViewBuilder
+    private var topInsetBanners: some View {
+        if !navigation.showOnboarding,
+           crossSessionPrimary != nil || hasGlobalAudioPlayback {
+            VStack(spacing: 6) {
+                if let request = crossSessionPrimary {
+                    CrossSessionPermissionBanner(
+                        request: request,
+                        totalCount: crossSessionPending.count,
+                        sessionLabel: sessionLabel(for: request.sessionId),
+                        serverLabel: serverLabel(for: request),
+                        onReview: reviewCrossSessionPermissions
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                if hasGlobalAudioPlayback {
+                    GlobalAudioPlaybackBanner(onStop: coordinator.stopAllAudioPlayback)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+        }
+    }
+
+    private func handleQuickSessionPresentationRequestChange(_ newValue: Int) {
+        let shouldPresent = newValue > 0
+        let showingOnboarding = navigation.showOnboarding
+        guard shouldPresent, !showingOnboarding else { return }
+        navigation.showQuickSession = true
     }
 
     private func sessionLabel(for sessionId: String) -> String {
@@ -309,6 +338,50 @@ private struct CrossSessionPermissionBanner: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Cross-session permission request")
         .accessibilityHint("Opens approval sheet")
+    }
+}
+
+struct GlobalAudioPlaybackBanner: View {
+    let onStop: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.themePurple)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Voice reply playing")
+                    .font(.caption.bold())
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+
+                Text("You can stop it here or from the Lock Screen.")
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Stop", action: onStop)
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.themePurple, in: Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.themePurple.opacity(0.4), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Voice reply playing")
+        .accessibilityHint("Stops audio playback")
     }
 }
 

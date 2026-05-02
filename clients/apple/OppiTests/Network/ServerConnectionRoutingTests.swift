@@ -644,7 +644,7 @@ struct ServerConnectionRoutingTests {
             .whenHandle(.agentStart)
             .whenHandle(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil))
             .whenFlush()
-            .whenHandle(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1", mode: .append, truncated: false, totalBytes: nil))
+            .whenHandle(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1", mode: .append, truncated: false, totalBytes: nil, details: nil))
             .whenFlush()
             .whenHandle(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil))
             .whenFlush()

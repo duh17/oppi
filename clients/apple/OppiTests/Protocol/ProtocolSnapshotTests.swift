@@ -194,7 +194,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
-        guard case .toolOutput(let output, let isError, _, _, _, _) = outputMsg else {
+        guard case .toolOutput(let output, let isError, _, _, _, _, _) = outputMsg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -203,7 +203,7 @@ struct ProtocolSnapshotTests {
 
         // tool_output_preview (replace mode)
         let previewMsg = try decodeMessage("tool_output_preview")
-        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes) = previewMsg else {
+        guard case .toolOutput(let previewOutput, _, _, let mode, let truncated, let totalBytes, _) = previewMsg else {
             Issue.record("Expected .toolOutput (preview)")
             return
         }

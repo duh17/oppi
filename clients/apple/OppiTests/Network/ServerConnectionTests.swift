@@ -313,7 +313,7 @@ struct ServerConnectionTests {
         pipe.handle(.agentStart, sessionId: "s1")
         pipe.handle(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
         pipe.flushNow()
-        pipe.handle(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1", mode: .append, truncated: false, totalBytes: nil), sessionId: "s1")
+        pipe.handle(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1", mode: .append, truncated: false, totalBytes: nil, details: nil), sessionId: "s1")
         pipe.flushNow()
         pipe.handle(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil), sessionId: "s1")
         pipe.flushNow()

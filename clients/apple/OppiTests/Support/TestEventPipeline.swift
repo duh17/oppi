@@ -93,9 +93,9 @@ final class TestEventPipeline {
              .toolUpdate(let tool, let args, let toolCallId, let callSegments):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes))
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details))
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
