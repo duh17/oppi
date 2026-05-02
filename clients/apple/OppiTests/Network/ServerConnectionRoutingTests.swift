@@ -26,6 +26,18 @@ struct ServerConnectionRoutingTests {
         #expect(conn.sessionStore.sessions[0].status == .busy)
     }
 
+    @Test func agentLifecycleTracksCurrentTurnStart() {
+        let (conn, pipe) = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s1", status: .ready))
+
+        pipe.handle(.agentStart, sessionId: "s1")
+        let turnStartedAt = conn.sessionStore.session(id: "s1")?.currentTurnStartedAt
+        #expect(turnStartedAt != nil)
+
+        pipe.handle(.agentEnd, sessionId: "s1")
+        #expect(conn.sessionStore.session(id: "s1")?.currentTurnStartedAt == nil)
+    }
+
     @Test func stateUpdateCarriesPreviousContextAndReleasesRecoveredActivity() {
         let (conn, _) = makeTestConnection()
         var idleTimerUpdates: [Bool] = []

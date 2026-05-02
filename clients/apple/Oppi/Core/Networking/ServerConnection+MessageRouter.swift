@@ -376,6 +376,9 @@ extension ServerConnection {
         guard var current = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
         if let onlyFrom, current.status != onlyFrom { return }
         current.status = status
+        if status == .ready || status == .stopped || status == .error {
+            current.currentTurnStartedAt = nil
+        }
         current.lastActivity = Date()
         sessionStore.upsert(current)
     }

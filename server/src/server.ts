@@ -890,6 +890,7 @@ export class Server {
       // Non-active sessions stuck in running states
       if (s.status !== "stopped" && s.status !== "error") {
         s.status = "stopped";
+        s.currentTurnStartedAt = undefined;
         this.storage.saveSession(s);
         healed++;
         continue;
@@ -903,6 +904,7 @@ export class Server {
         statusById.get(s.parentSessionId) === "stopped"
       ) {
         s.status = "stopped";
+        s.currentTurnStartedAt = undefined;
         this.storage.saveSession(s);
         healed++;
       }

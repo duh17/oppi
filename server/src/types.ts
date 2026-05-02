@@ -87,6 +87,8 @@ export interface Session {
   status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
   createdAt: number;
   lastActivity: number;
+  /** Timestamp (ms) when the currently active agent turn began. */
+  currentTurnStartedAt?: number;
   model?: string;
 
   // Stats

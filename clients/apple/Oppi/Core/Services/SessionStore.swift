@@ -211,7 +211,23 @@ final class SessionStore {
         if merged.contextWindow == nil {
             merged.contextWindow = existing.contextWindow
         }
+
+        if merged.currentTurnStartedAt == nil,
+           existing.currentTurnStartedAt != nil,
+           isWorkingStatus(merged.status) {
+            merged.currentTurnStartedAt = existing.currentTurnStartedAt
+        }
+
         return merged
+    }
+
+    private func isWorkingStatus(_ status: SessionStatus) -> Bool {
+        switch status {
+        case .starting, .busy, .stopping:
+            return true
+        case .ready, .stopped, .error:
+            return false
+        }
     }
 
 

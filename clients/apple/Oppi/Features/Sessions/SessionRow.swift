@@ -125,6 +125,15 @@ struct SessionRow: View {
         return SessionModelSummaryBuilder.summaries(primaryModel: session.model)
     }
 
+    private var currentTurnStartedAt: Date? {
+        switch session.status {
+        case .starting, .busy, .stopping:
+            return session.currentTurnStartedAt
+        case .ready, .stopped, .error:
+            return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // Row 1: title + time
@@ -138,10 +147,7 @@ struct SessionRow: View {
 
                 Spacer(minLength: 4)
 
-                Text(session.lastActivity.relativeString())
-                    .font(.caption2)
-                    .foregroundStyle(.themeComment)
-                    .fixedSize()
+                timeLabel
             }
 
             // Row 1.5: lineage hint (stopped sessions only)
@@ -221,6 +227,24 @@ struct SessionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
         .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var timeLabel: some View {
+        if let currentTurnStartedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(SessionFormatting.durationString(since: currentTurnStartedAt))
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
+                    .monospacedDigit()
+                    .fixedSize()
+            }
+        } else {
+            Text(session.lastActivity.relativeString())
+                .font(.caption2)
+                .foregroundStyle(.themeComment)
+                .fixedSize()
+        }
     }
 
     // MARK: - Child Badge

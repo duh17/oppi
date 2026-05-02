@@ -181,17 +181,21 @@ export class SessionEventProcessor {
     const sessionId = session.id;
 
     switch (event.type) {
-      case "agent_start":
+      case "agent_start": {
         if (session.status !== "stopping") {
           session.status = "busy";
         }
-        active.turnStartedAt = Date.now();
+        const now = Date.now();
+        session.currentTurnStartedAt = now;
+        active.turnStartedAt = now;
         active.turnFirstTokenRecorded = false;
         active.turnToolCallCount = 0;
         break;
+      }
 
       case "agent_end":
         session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
+        session.currentTurnStartedAt = undefined;
         shouldFlushNow = true;
 
         // Turn duration

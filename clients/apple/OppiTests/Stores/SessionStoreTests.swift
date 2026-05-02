@@ -106,6 +106,20 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextTokens == 142_198)
     }
 
+    @Test func upsertPreservesWorkingTurnStartWhenIncomingBusyUpdateOmitsIt() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        let turnStart = Date(timeIntervalSince1970: 1_700_000_123)
+        let initial = makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: turnStart)
+        store.upsert(initial)
+
+        let incoming = makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: nil)
+        store.upsert(incoming)
+
+        #expect(store.session(id: "s1")?.currentTurnStartedAt == turnStart)
+    }
+
     // MARK: - Remove
 
     @Test func removeClearsActiveSessionId() {

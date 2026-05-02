@@ -192,6 +192,7 @@ export class SessionStartCoordinator {
         this.deps.runtimeManager.markSessionReady(identity);
 
         session.status = "ready";
+        session.currentTurnStartedAt = undefined;
         session.lastActivity = Date.now();
         this.deps.persistSessionNow(key, session);
         this.deps.resetIdleTimer(key);
@@ -201,6 +202,7 @@ export class SessionStartCoordinator {
         return session;
       } catch (err) {
         session.status = previousStatus;
+        session.currentTurnStartedAt = undefined;
         session.lastActivity = Date.now();
         this.deps.persistSessionNow(key, session);
         this.deps.gate.destroySessionGuard(sessionId);

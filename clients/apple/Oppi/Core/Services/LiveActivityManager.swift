@@ -171,7 +171,9 @@ final class LiveActivityManager {
             case .starting, .busy, .stopping:
                 entry.phaseHint = .working
                 entry.readySince = nil
-                if !isWorkingStatus(previousStatus) || entry.startDate == nil {
+                if let currentTurnStartedAt = session.currentTurnStartedAt {
+                    entry.startDate = currentTurnStartedAt
+                } else if !isWorkingStatus(previousStatus) || entry.startDate == nil {
                     // Fallback when we don't observe an explicit agentStart
                     // (e.g. app relaunch while session is already busy).
                     entry.startDate = session.lastActivity

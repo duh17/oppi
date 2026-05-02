@@ -30,6 +30,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var status: SessionStatus
     let createdAt: Date
     var lastActivity: Date
+    var currentTurnStartedAt: Date? = nil
     var model: String?
 
     var messageCount: Int
@@ -111,7 +112,7 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
 extension Session: Codable {
     enum CodingKeys: String, CodingKey {
         case id, workspaceId, workspaceName
-        case name, status, createdAt, lastActivity
+        case name, status, createdAt, lastActivity, currentTurnStartedAt
         case model, messageCount, tokens, cost, changeStats
         case contextTokens, contextWindow, firstMessage, lastMessage
         case thinkingLevel, ephemeral, parentSessionId
@@ -144,6 +145,12 @@ extension Session: Codable {
 
         let activityMs = try c.decode(Double.self, forKey: .lastActivity)
         lastActivity = Date(timeIntervalSince1970: activityMs / 1000)
+
+        if let currentTurnStartedMs = try c.decodeIfPresent(Double.self, forKey: .currentTurnStartedAt) {
+            currentTurnStartedAt = Date(timeIntervalSince1970: currentTurnStartedMs / 1000)
+        } else {
+            currentTurnStartedAt = nil
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -168,6 +175,10 @@ extension Session: Codable {
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)
+        try c.encodeIfPresent(
+            currentTurnStartedAt.map { $0.timeIntervalSince1970 * 1000 },
+            forKey: .currentTurnStartedAt
+        )
     }
 }
 

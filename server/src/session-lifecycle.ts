@@ -69,6 +69,7 @@ export class SessionLifecycleCoordinator {
     }
 
     active.session.status = "stopped";
+    active.session.currentTurnStartedAt = undefined;
     this.deps.persistSessionNow(key, active.session);
 
     if (active.session.parentSessionId) {

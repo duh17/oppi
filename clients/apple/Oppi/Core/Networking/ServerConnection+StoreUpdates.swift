@@ -95,8 +95,10 @@ extension ServerConnection {
         case .agentStart:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
                current.status != .stopping {
+                let now = Date()
                 current.status = .busy
-                current.lastActivity = Date()
+                current.currentTurnStartedAt = now
+                current.lastActivity = now
                 sessionStore.upsert(current)
             }
             screenAwakeController.setSessionActivity(true, sessionId: sessionId)
@@ -107,6 +109,7 @@ extension ServerConnection {
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
                current.status.isRunning {
                 current.status = .ready
+                current.currentTurnStartedAt = nil
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
@@ -159,6 +162,7 @@ extension ServerConnection {
         case .sessionEnded:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .stopped
+                current.currentTurnStartedAt = nil
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }

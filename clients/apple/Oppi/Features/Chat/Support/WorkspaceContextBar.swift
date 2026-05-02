@@ -925,9 +925,10 @@ struct WorkspaceContextBar: View {
                         if child.cost > 0 {
                             Text(SessionFormatting.costString(child.cost))
                         }
-                        if child.status == .busy || child.status == .starting || child.status == .stopping {
-                            TimelineView(.periodic(from: .now, by: 5)) { _ in
-                                Text(SessionFormatting.durationString(since: child.createdAt))
+                        if let currentTurnStartedAt = child.currentTurnStartedAt,
+                           child.status == .busy || child.status == .starting || child.status == .stopping {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                Text(SessionFormatting.durationString(since: currentTurnStartedAt))
                             }
                         }
                     }

@@ -130,6 +130,17 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.sessionsWorking == 1)
     }
 
+    @Test("sync busy session carries turn start date")
+    @MainActor func syncBusyCarriesTurnStartDate() {
+        let mgr = LiveActivityManager()
+        let turnStart = Date(timeIntervalSince1970: 1_700_000_123)
+        let session = makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: turnStart)
+
+        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+
+        #expect(mgr.currentState.sessionStartDate == turnStart)
+    }
+
     @Test("sync stopped session produces ended phase")
     @MainActor func syncStoppedEnded() {
         let mgr = LiveActivityManager()

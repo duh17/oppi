@@ -166,4 +166,23 @@ describe("direct ask flow", () => {
     expect(active.pendingAsk).toBeUndefined();
     expect(broadcast).not.toHaveBeenCalled();
   });
+
+  it("tracks the active turn start on agent_start and clears it on agent_end", () => {
+    const { key, active, processor } = createHarness();
+
+    processor.updateSessionFromEvent(key, active, {
+      type: "agent_start",
+    } as never);
+
+    expect(active.session.status).toBe("busy");
+    expect(typeof active.session.currentTurnStartedAt).toBe("number");
+
+    processor.updateSessionFromEvent(key, active, {
+      type: "agent_end",
+      messages: [],
+    } as never);
+
+    expect(active.session.status).toBe("ready");
+    expect(active.session.currentTurnStartedAt).toBeUndefined();
+  });
 });

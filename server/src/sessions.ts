@@ -737,6 +737,7 @@ export class SessionManager extends EventEmitter {
       }
       const failedSession = this.storage.getSession(session.id) ?? session;
       failedSession.status = "error";
+      failedSession.currentTurnStartedAt = undefined;
       const msg = err instanceof Error ? err.message : String(err);
       failedSession.warnings = [...(failedSession.warnings ?? []), `Spawn failed: ${msg}`];
       this.storage.saveSession(failedSession);
@@ -802,6 +803,7 @@ export class SessionManager extends EventEmitter {
       }
       const failedSession = this.storage.getSession(session.id) ?? session;
       failedSession.status = "error";
+      failedSession.currentTurnStartedAt = undefined;
       const msg = err instanceof Error ? err.message : String(err);
       failedSession.warnings = [...(failedSession.warnings ?? []), `Detached spawn failed: ${msg}`];
       this.storage.saveSession(failedSession);

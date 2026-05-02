@@ -453,6 +453,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       await ctx.sessions.stopSession(sessionId);
     } else {
       hydratedSession.status = "stopped";
+      hydratedSession.currentTurnStartedAt = undefined;
       hydratedSession.lastActivity = Date.now();
       ctx.storage.saveSession(hydratedSession);
     }
