@@ -534,6 +534,18 @@ final class ConnectionCoordinator {
         }
     }
 
+    /// Whether any audio playback is active across all servers.
+    var hasActiveAudioPlayback: Bool {
+        connections.values.contains { $0.audioPlayer.hasActivePlayback }
+    }
+
+    /// Stop all audio playback across all servers.
+    func stopAllAudioPlayback() {
+        for connection in connections.values {
+            connection.audioPlayer.stop()
+        }
+    }
+
     /// All pending permissions across all servers.
     var allPendingPermissions: [PermissionRequest] {
         connections.values.flatMap { $0.permissionStore.pending }

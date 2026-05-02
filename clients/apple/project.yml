@@ -95,6 +95,7 @@ targets:
         UILaunchScreen: {}
         UIBackgroundModes:
           - remote-notification
+          - audio
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: "Oppi uses the camera to take photos for agent conversations."
         NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."

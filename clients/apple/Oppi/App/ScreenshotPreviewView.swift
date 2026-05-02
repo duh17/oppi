@@ -25,6 +25,8 @@ struct ScreenshotPreviewView: View {
             SessionTimelinePreview()
         case "voice-message-expanded":
             VoiceMessageExpandedPreview()
+        case "global-audio-banner":
+            GlobalAudioBannerPreview()
         case "share-redaction-report":
             ShareRedactionReportPreview()
         case "share-redaction-settings":
@@ -306,6 +308,49 @@ private struct SessionTimelinePreview: View {
                 for: "entry-tool-1"
             )
         }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Global Audio Banner Preview
+
+private struct GlobalAudioBannerPreview: View {
+    var body: some View {
+        TabView {
+            NavigationStack {
+                List {
+                    Section("Recent") {
+                        Label("Albert TTS plan", systemImage: "waveform")
+                        Label("Branch + fork UX", systemImage: "arrow.triangle.branch")
+                        Label("Release checklist", systemImage: "checklist")
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.themeBg)
+                .navigationTitle("Workspaces")
+            }
+            .tabItem {
+                Label("Workspaces", systemImage: "square.grid.2x2")
+            }
+
+            NavigationStack {
+                Color.themeBg
+                    .navigationTitle("Settings")
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gear")
+            }
+        }
+        .toolbarBackground(Color.themeBg, for: .tabBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 6) {
+                GlobalAudioPlaybackBanner(onStop: {})
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+        }
+        .background(Color.themeBg.ignoresSafeArea())
         .accessibilityIdentifier("screenshot.ready")
     }
 }

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import MediaPlayer
 import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
@@ -19,6 +20,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     nonisolated static let playingItemIDUserInfoKey = "playingItemID"
     nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
     nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
+
+    private static var activePlaybackOwner: AudioPlayerService?
+    private static var remoteCommandTargetsInstalled = false
+    private static let nowPlayingTitle = "Voice reply"
+    private static let nowPlayingArtist = "Oppi"
 
     /// ID of the ChatItem currently playing (nil when idle).
     private(set) var playingItemID: String?
@@ -96,9 +102,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
         deactivatePlaybackAudioSessionIfPossible()
         setPlaybackState(playing: nil, loading: nil)
+        clearGlobalPlaybackOwnershipIfNeeded()
     }
 
-    func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?) -> Bool {
+    func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?, sessionId: String? = nil) -> Bool {
         !playbackSuppressedForCapture
             && AppPreferences.Voice.shouldAutoplay(delivery: delivery)
             && !autoPlayedVoiceReplyItemIDs.contains(itemID)
@@ -118,7 +125,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// Supports 16-bit little-endian PCM (`audio/pcm; codecs=s16le`) for true
     /// streaming playback. WAV stream chunks are ignored here; completed WAVs
     /// should be rendered through normal tool-result audio attachments.
-    func handleAudioStream(_ stream: AudioStreamMessage) {
+    func handleAudioStream(_ stream: AudioStreamMessage, sessionId: String? = nil) {
         if suppressedAudioStreamIDs.contains(stream.id) {
             if stream.event == .done || stream.event == .error {
                 suppressedAudioStreamIDs.remove(stream.id)
@@ -174,6 +181,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(data: Data, itemID: String) throws {
         guard !playbackSuppressedForCapture else { return }
+        claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         // Configure audio session for playback
         let audioSession = AVAudioSession.sharedInstance()
@@ -187,6 +195,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(fileURL: URL, itemID: String) throws {
         guard !playbackSuppressedForCapture else { return }
+        claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.playback, mode: .default)
@@ -205,6 +214,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 self.playbackDelegate = nil
                 self.deactivatePlaybackAudioSessionIfPossible()
                 self.setPlaybackState(playing: nil, loading: nil)
+                self.clearGlobalPlaybackOwnershipIfNeeded()
             }
         }
         audioPlayer.delegate = delegate
@@ -212,6 +222,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         self.player = audioPlayer
         self.playbackDelegate = delegate
         setPlaybackState(playing: itemID, loading: nil)
+        updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
 
         audioPlayer.play()
     }
@@ -242,6 +253,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         stop()
+        claimGlobalPlaybackOwnership()
 
         do {
             let audioSession = AVAudioSession.sharedInstance()
@@ -268,6 +280,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamReceivedDone = false
             markVoiceReplyAutoplayed(itemID: id)
             setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
+            updateNowPlayingInfo(durationSeconds: nil, isLiveStream: true)
         } catch {
             logger.error("Audio stream start failed: \(error.localizedDescription)")
             stopAudioStream(clearState: true)
@@ -352,6 +365,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         if clearState {
             deactivatePlaybackAudioSessionIfPossible()
             setPlaybackState(playing: nil, loading: nil)
+            clearGlobalPlaybackOwnershipIfNeeded()
         }
     }
 
@@ -392,6 +406,59 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 Self.loadingItemIDUserInfoKey: loading ?? "",
             ]
         )
+    }
+
+    private func claimGlobalPlaybackOwnership() {
+        if let activeOwner = Self.activePlaybackOwner, activeOwner !== self {
+            activeOwner.stop()
+        }
+        Self.installRemoteCommandTargetsIfNeeded()
+        Self.activePlaybackOwner = self
+    }
+
+    private func clearGlobalPlaybackOwnershipIfNeeded() {
+        guard Self.activePlaybackOwner === self, !hasActivePlayback else {
+            return
+        }
+        Self.activePlaybackOwner = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    private func updateNowPlayingInfo(durationSeconds: Double?, isLiveStream: Bool) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: Self.nowPlayingTitle,
+            MPMediaItemPropertyArtist: Self.nowPlayingArtist,
+            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: player?.currentTime ?? 0,
+        ]
+        if let durationSeconds {
+            info[MPMediaItemPropertyPlaybackDuration] = durationSeconds
+        }
+        if isLiveStream {
+            info[MPNowPlayingInfoPropertyIsLiveStream] = true
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private static func installRemoteCommandTargetsIfNeeded() {
+        guard !remoteCommandTargetsInstalled else { return }
+        remoteCommandTargetsInstalled = true
+
+        let center = MPRemoteCommandCenter.shared()
+        let stopHandler: (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus = { _ in
+            Task { @MainActor in
+                Self.activePlaybackOwner?.stop()
+            }
+            return .success
+        }
+
+        center.playCommand.isEnabled = false
+        center.pauseCommand.isEnabled = true
+        center.stopCommand.isEnabled = true
+        center.togglePlayPauseCommand.isEnabled = true
+        center.pauseCommand.addTarget(handler: stopHandler)
+        center.stopCommand.addTarget(handler: stopHandler)
+        center.togglePlayPauseCommand.addTarget(handler: stopHandler)
     }
 
     private static func streamingPlaybackItemID(for streamID: String) -> String {

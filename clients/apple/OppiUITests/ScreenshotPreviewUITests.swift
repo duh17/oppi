@@ -89,6 +89,16 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "voice-message-expanded")
     }
 
+    func testGlobalAudioPlaybackBannerPreview() throws {
+        launchPreview(screen: "global-audio-banner")
+
+        let title = app.staticTexts["Voice reply playing"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Global audio playback banner title not found")
+
+        sleep(1)
+        saveScreenshot(name: "global-audio-banner")
+    }
+
     func testShareRedactionReportPreview() throws {
         launchPreview(screen: "share-redaction-report")
 

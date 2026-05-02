@@ -345,43 +345,75 @@ struct GlobalAudioPlaybackBanner: View {
     let onStop: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "speaker.wave.2.fill")
+        HStack(spacing: 12) {
+            GlobalAudioWaveformGlyph()
+
+            Text("Voice reply playing")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themePurple)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Voice reply playing")
-                    .font(.caption.bold())
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-
-                Text("You can stop it here or from the Lock Screen.")
-                    .font(.caption2)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-            }
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
 
             Spacer(minLength: 8)
 
             Button("Stop", action: onStop)
                 .font(.caption.bold())
-                .foregroundStyle(.white)
+                .foregroundStyle(.themeOnPurple)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(Color.themePurple, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.themePurple.opacity(0.28), lineWidth: 1)
+                )
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.themeBgHighlight.opacity(0.94))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.themePurple.opacity(0.4), lineWidth: 1)
+                .stroke(Color.themeComment.opacity(0.18), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Voice reply playing")
         .accessibilityHint("Stops audio playback")
+    }
+}
+
+private struct GlobalAudioWaveformGlyph: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.16)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(0..<4, id: \.self) { index in
+                    Capsule(style: .continuous)
+                        .fill(Color.themePurple)
+                        .frame(width: 4, height: barHeight(index: index, time: time))
+                }
+            }
+            .frame(width: 26, height: 18)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 6)
+            .background(Color.themePurple.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .frame(width: 40, height: 30)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(index: Int, time: TimeInterval) -> CGFloat {
+        let restingHeights: [CGFloat] = [9, 15, 11, 7]
+        guard !reduceMotion else {
+            return restingHeights[index]
+        }
+
+        let phase = time * 7 + Double(index) * 0.8
+        let normalized = (sin(phase) + 1) * 0.5
+        return 6 + normalized * 10
     }
 }
 
