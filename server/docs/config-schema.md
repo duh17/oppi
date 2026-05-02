@@ -296,6 +296,22 @@ oppi token rotate
 }
 ```
 
+## Agent-friendly config changes
+
+Prefer the `oppi config` CLI over direct edits to `~/.config/oppi/config.json`. The CLI preserves managed auth fields, validates the result, and supports nested paths.
+
+Examples:
+
+```bash
+oppi config get asr.sttEndpoint
+oppi config set asr.sttEndpoint http://127.0.0.1:7936
+oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config set extensions.voice.defaultVoiceId warm-technical-teammate
+oppi config validate
+```
+
+Direct agent edits to `config.json` are protected and should require approval. Most server config changes need an Oppi server restart before they take effect.
+
 ## Validate
 
 ```bash

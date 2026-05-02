@@ -830,28 +830,101 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
 // ─── Config Command ───
 
-/** Settable config keys and their types for `oppi config set`. */
-const SETTABLE_KEYS: Record<
-  string,
-  { type: "number" | "string" | "boolean" | "json"; desc: string }
-> = {
+type ConfigValueType = "number" | "string" | "boolean" | "json";
+
+type SettableConfigPath = {
+  type: ConfigValueType;
+  desc: string;
+};
+
+/** Settable config paths and their types for `oppi config set`. */
+const SETTABLE_KEYS: Record<string, SettableConfigPath> = {
   port: { type: "number", desc: "Server port" },
   host: { type: "string", desc: "Bind address" },
+  defaultModel: { type: "string", desc: "Default model for new sessions" },
+  thinkingLevelByModel: { type: "json", desc: "Per-model thinking levels JSON object" },
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
   workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
   approvalTimeoutMs: { type: "number", desc: "Permission approval timeout (ms)" },
+  permissionGate: { type: "boolean", desc: "Enable mobile approval gate" },
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
-  tls: { type: "json", desc: "TLS config JSON (mode/certPath/keyPath/caPath)" },
+  tls: { type: "json", desc: "TLS config JSON object" },
+  "tls.mode": { type: "string", desc: "TLS mode" },
+  "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },
+  "tls.keyPath": { type: "string", desc: "Manual TLS private key path" },
+  "tls.caPath": { type: "string", desc: "Self-signed CA certificate path" },
+  autoTitle: { type: "json", desc: "Auto-title config JSON object" },
+  "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
+  "autoTitle.model": { type: "string", desc: "Auto-title model" },
+  asr: { type: "json", desc: "ASR config JSON object" },
+  "asr.sttEndpoint": { type: "string", desc: "STT backend base URL" },
+  uploadStore: { type: "json", desc: "Upload store config JSON object" },
+  "uploadStore.mode": { type: "string", desc: "Upload store mode" },
+  "uploadStore.path": { type: "string", desc: "Upload store path" },
+  "uploadStore.maxFileBytes": { type: "number", desc: "Max attachment file size" },
+  "uploadStore.maxTurnBytes": { type: "number", desc: "Max attachment bytes per turn" },
+  "uploadStore.unusedTtlMs": { type: "number", desc: "Unused upload TTL" },
+  "uploadStore.retainedTtlMs": { type: "number", desc: "Retained upload TTL" },
+  "uploadStore.allowedMimeTypes": { type: "json", desc: "Allowed MIME types JSON array" },
+  policy: { type: "json", desc: "Policy config JSON object" },
+  "policy.fallback": { type: "string", desc: "Policy fallback decision" },
+  "policy.guardrails": { type: "json", desc: "Policy guardrails JSON array" },
+  "policy.permissions": { type: "json", desc: "Policy permissions JSON array" },
+  "policy.heuristics": { type: "json", desc: "Policy heuristics JSON object" },
   extensions: {
     type: "json",
-    desc: "Extension config JSON (for example voice.defaultVoiceId, subagents.*)",
+    desc: "Extension config JSON object",
+  },
+  "extensions.voice": { type: "json", desc: "Voice extension config JSON object" },
+  "extensions.voice.defaultVoiceId": { type: "string", desc: "Default saved voice ID" },
+  "extensions.subagents": { type: "json", desc: "Subagent config JSON object" },
+  "extensions.subagents.maxDepth": { type: "number", desc: "Max subagent depth" },
+  "extensions.subagents.autoStopWhenDone": {
+    type: "boolean",
+    desc: "Stop child sessions after completion",
+  },
+  "extensions.subagents.startupGraceMs": {
+    type: "number",
+    desc: "Subagent startup grace period",
+  },
+  "extensions.subagents.defaultWaitTimeoutMs": {
+    type: "number",
+    desc: "Default spawn_agent wait timeout",
+  },
+  "extensions.subagents.modelPolicy": {
+    type: "json",
+    desc: "Subagent model policy JSON object",
+  },
+  "extensions.subagents.modelPolicy.approvedModels": {
+    type: "json",
+    desc: "Approved subagent models JSON array",
+  },
+  "extensions.subagents.modelPolicy.defaultModel": {
+    type: "string",
+    desc: "Default subagent model",
+  },
+  "extensions.subagents.modelPolicy.defaultThinking": {
+    type: "string",
+    desc: "Default subagent thinking level",
+  },
+  "extensions.subagents.modelPolicy.profiles": {
+    type: "json",
+    desc: "Subagent profile map JSON object",
   },
 };
 
-function coerceValue(raw: string, type: "number" | "string" | "boolean" | "json"): unknown {
+function metadataForConfigPath(path: string): SettableConfigPath | undefined {
+  if (SETTABLE_KEYS[path]) return SETTABLE_KEYS[path];
+  if (path.startsWith("runtimeEnv.") && path.length > "runtimeEnv.".length) {
+    return { type: "string", desc: "Runtime env entry" };
+  }
+  return undefined;
+}
+
+function coerceValue(raw: string, type: ConfigValueType): unknown {
   switch (type) {
     case "number": {
       const n = Number(raw);
@@ -876,6 +949,56 @@ function coerceValue(raw: string, type: "number" | "string" | "boolean" | "json"
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function splitConfigPath(path: string): string[] {
+  return path.split(".").filter((part) => part.length > 0);
+}
+
+function readConfigPath(config: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = config;
+  for (const part of splitConfigPath(path)) {
+    if (!isRecord(cursor) || !(part in cursor)) return undefined;
+    cursor = cursor[part];
+  }
+  return cursor;
+}
+
+function cloneConfig(config: ServerConfig): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
+}
+
+function setConfigPath(config: ServerConfig, path: string, value: unknown): ServerConfig {
+  const parts = splitConfigPath(path);
+  if (parts.length === 0) throw new Error("Config key cannot be empty");
+
+  const next = cloneConfig(config);
+  let cursor = next;
+  for (const part of parts.slice(0, -1)) {
+    const current = cursor[part];
+    if (!isRecord(current)) {
+      cursor[part] = {};
+    }
+    cursor = cursor[part] as Record<string, unknown>;
+  }
+  const lastPart = parts[parts.length - 1];
+  if (!lastPart) throw new Error("Config key cannot be empty");
+  cursor[lastPart] = value;
+  return next as unknown as ServerConfig;
+}
+
+function formatConfigValue(value: unknown): string {
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function formatInlineConfigValue(value: unknown): string {
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
 function cmdConfig(
   storage: Storage,
   action: string | undefined,
@@ -894,17 +1017,13 @@ function cmdConfig(
     }
 
     const config = storage.getConfig() as unknown as Record<string, unknown>;
-    const value = config[key];
+    const value = readConfigPath(config, key);
     if (value === undefined) {
-      console.error(`Unknown key: ${key}`);
+      console.error(`Config key is unset: ${key}`);
       process.exit(1);
     }
 
-    if (typeof value === "object") {
-      console.log(JSON.stringify(value, null, 2));
-    } else {
-      console.log(String(value));
-    }
+    console.log(formatConfigValue(value));
     return;
   }
 
@@ -961,27 +1080,35 @@ function cmdConfig(
       console.log("");
       console.log(c.bold("  Available keys:"));
       console.log("");
+      const config = storage.getConfig() as unknown as Record<string, unknown>;
       for (const [k, meta] of Object.entries(SETTABLE_KEYS)) {
-        const current = (storage.getConfig() as unknown as Record<string, unknown>)[k];
-        console.log(`    ${c.cyan(k.padEnd(28))} ${c.dim(meta.desc)}`);
-        console.log(`    ${"".padEnd(28)} ${c.dim("current:")} ${current}`);
+        const current = readConfigPath(config, k);
+        console.log(`    ${c.cyan(k.padEnd(48))} ${c.dim(meta.desc)}`);
+        if (current !== undefined) {
+          console.log(
+            `    ${"".padEnd(48)} ${c.dim("current:")} ${formatInlineConfigValue(current)}`,
+          );
+        }
       }
+      console.log("");
+      console.log(c.dim("  Dynamic keys are also supported for runtimeEnv.<NAME>."));
       console.log("");
       process.exit(1);
     }
 
-    const meta = SETTABLE_KEYS[key];
+    const meta = metadataForConfigPath(key);
     if (!meta) {
       console.log(c.red(`  Unknown config key: ${key}`));
-      console.log(c.dim(`  Available: ${Object.keys(SETTABLE_KEYS).join(", ")}`));
+      console.log(c.dim(`  Run 'oppi config set' with no value to list supported keys.`));
       console.log("");
       process.exit(1);
     }
 
     try {
       const coerced = coerceValue(value, meta.type);
-      storage.updateConfig({ [key]: coerced } as Partial<ServerConfig>);
-      console.log(c.green(`  ✓ ${key} = ${coerced}`));
+      const nextConfig = setConfigPath(storage.getConfig(), key, coerced);
+      storage.updateConfig(nextConfig);
+      console.log(c.green(`  ✓ ${key} = ${formatConfigValue(coerced)}`));
       console.log(c.dim(`    Saved to ${storage.getConfigPath()}`));
       console.log("");
     } catch (err: unknown) {
@@ -1270,6 +1397,8 @@ function cmdHelp(): void {
     `    ${c.dim("pi /settings   # configure defaultProvider/defaultModel/defaultThinkingLevel")}`,
   );
   console.log(`    ${c.dim("oppi config set port 8080")}`);
+  console.log(`    ${c.dim("oppi config set asr.sttEndpoint http://127.0.0.1:7936")}`);
+  console.log(`    ${c.dim("oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937")}`);
   console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
   console.log("");
 }

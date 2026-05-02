@@ -140,6 +140,31 @@ describe("oppi config", () => {
     expect(stdout.trim()).toContain("anthropic/claude-sonnet-4-20250514");
   });
 
+  it("config set/get supports nested config paths", () => {
+    run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
+    const { stdout } = run(["config", "get", "asr.sttEndpoint"]);
+    expect(stdout.trim()).toBe("http://127.0.0.1:7936");
+  });
+
+  it("config set preserves siblings when updating nested config paths", () => {
+    run([
+      "config",
+      "set",
+      "extensions.subagents.modelPolicy.defaultModel",
+      "anthropic/claude-sonnet-4-20250514",
+    ]);
+    run(["config", "set", "extensions.voice.defaultVoiceId", "warm-technical-teammate"]);
+    const { stdout } = run(["config", "get", "extensions"]);
+    expect(stdout).toContain("warm-technical-teammate");
+    expect(stdout).toContain("anthropic/claude-sonnet-4-20250514");
+  });
+
+  it("config set supports dynamic runtimeEnv keys", () => {
+    run(["config", "set", "runtimeEnv.PI_VOICE_TTS_URL", "http://127.0.0.1:7937"]);
+    const { stdout } = run(["config", "get", "runtimeEnv.PI_VOICE_TTS_URL"]);
+    expect(stdout.trim()).toBe("http://127.0.0.1:7937");
+  });
+
   it("config validate succeeds on valid config", () => {
     const { stdout, exitCode } = run(["config", "validate"]);
     expect(exitCode).toBe(0);
@@ -398,16 +423,14 @@ describe("oppi serve (first-run tls bootstrap)", () => {
       );
       expect(setDisabledExitCode).toBe(0);
 
-      const { exitCode: setPortExitCode } = run(
-        ["config", "set", "port", String(freePort)],
-        { OPPI_DATA_DIR: serveDir },
-      );
+      const { exitCode: setPortExitCode } = run(["config", "set", "port", String(freePort)], {
+        OPPI_DATA_DIR: serveDir,
+      });
       expect(setPortExitCode).toBe(0);
 
-      const { exitCode: setHostExitCode } = run(
-        ["config", "set", "host", "127.0.0.1"],
-        { OPPI_DATA_DIR: serveDir },
-      );
+      const { exitCode: setHostExitCode } = run(["config", "set", "host", "127.0.0.1"], {
+        OPPI_DATA_DIR: serveDir,
+      });
       expect(setHostExitCode).toBe(0);
 
       const { stdout: beforeTlsJson, exitCode: beforeExitCode } = run(["config", "get", "tls"], {
