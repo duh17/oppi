@@ -16,6 +16,20 @@ final class NativeExpandedReadMediaView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        let targetWidth = max(1, targetSize.width > 0 ? targetSize.width : bounds.width)
+        let stackSize = rootStack.systemLayoutSizeFitting(
+            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return CGSize(width: targetWidth, height: max(1, ceil(stackSize.height)))
+    }
+
     func apply(
         output: String,
         isError: Bool,
@@ -66,6 +80,7 @@ final class NativeExpandedReadMediaView: UIView {
                 base64: clip.base64,
                 mimeType: clip.mimeType,
                 delivery: nil,
+                sessionId: nil,
                 audioPlayer: audioPlayer,
                 palette: palette,
                 suppressAutoplay: true
@@ -423,9 +438,12 @@ private enum ToolAudioAttachmentCache {
 }
 
 final class NativeExpandedInlineImageView: UIView {
+    private static let minPreviewHeight: CGFloat = 80
+
     private let imageView = UIImageView()
     private let placeholder = UIActivityIndicatorView(style: .medium)
-    private var aspectRatioConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var naturalHeightToWidthRatio: CGFloat?
     private var decodeTask: Task<Void, Never>?
     private var decodedKey: String?
     private let maxPixelSize: CGFloat
@@ -443,6 +461,28 @@ final class NativeExpandedInlineImageView: UIView {
 
     deinit {
         decodeTask?.cancel()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updatePreviewHeightIfNeeded()
+    }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        if let naturalHeightToWidthRatio, targetSize.width > 0 {
+            let height = Self.previewHeight(forWidth: targetSize.width, ratio: naturalHeightToWidthRatio)
+            return CGSize(width: targetSize.width, height: height)
+        }
+
+        return super.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: horizontalFittingPriority,
+            verticalFittingPriority: verticalFittingPriority
+        )
     }
 
     private let animatedImageView = AnimatedImageWebContainerView()
@@ -523,8 +563,11 @@ final class NativeExpandedInlineImageView: UIView {
             animatedImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
         ])
+
+        let heightConstraint = heightAnchor.constraint(equalToConstant: Self.minPreviewHeight)
+        heightConstraint.isActive = true
+        self.heightConstraint = heightConstraint
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         imageView.addGestureRecognizer(tap)
@@ -533,6 +576,28 @@ final class NativeExpandedInlineImageView: UIView {
         doubleTap.numberOfTapsRequired = 2
         animatedImageView.addGestureRecognizer(doubleTap)
         animatedImageView.isUserInteractionEnabled = true
+    }
+
+    private func updatePreviewHeightIfNeeded() {
+        guard let naturalHeightToWidthRatio else {
+            heightConstraint?.constant = Self.minPreviewHeight
+            return
+        }
+
+        let availableWidth = bounds.width > 1
+            ? bounds.width
+            : (superview?.bounds.width ?? UIScreen.main.bounds.width)
+        heightConstraint?.constant = Self.previewHeight(
+            forWidth: max(1, availableWidth),
+            ratio: naturalHeightToWidthRatio
+        )
+    }
+
+    private static func previewHeight(forWidth width: CGFloat, ratio: CGFloat) -> CGFloat {
+        guard width.isFinite, width > 0, ratio.isFinite, ratio > 0 else {
+            return minPreviewHeight
+        }
+        return max(minPreviewHeight, width * ratio)
     }
 
     private func applyDecodedImage(_ image: UIImage?) {
@@ -545,18 +610,15 @@ final class NativeExpandedInlineImageView: UIView {
         previewMimeType = nil
         previewData = nil
 
-        aspectRatioConstraint?.isActive = false
-        aspectRatioConstraint = nil
-
         guard let image, image.size.width > 0, image.size.height > 0 else {
+            naturalHeightToWidthRatio = nil
+            heightConstraint?.constant = Self.minPreviewHeight
             ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
             return
         }
-        let aspectRatio = image.size.height / image.size.width
-        let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: aspectRatio)
-        constraint.priority = .required
-        constraint.isActive = true
-        aspectRatioConstraint = constraint
+
+        naturalHeightToWidthRatio = image.size.height / image.size.width
+        updatePreviewHeightIfNeeded()
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
@@ -576,15 +638,12 @@ final class NativeExpandedInlineImageView: UIView {
         previewData = data
         previewMimeType = mimeType
 
-        aspectRatioConstraint?.isActive = false
-        aspectRatioConstraint = nil
-
         if let aspectRatio, aspectRatio > 0 {
-            let constraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: 1 / aspectRatio)
-            constraint.priority = .required
-            constraint.isActive = true
-            aspectRatioConstraint = constraint
+            naturalHeightToWidthRatio = 1 / aspectRatio
+        } else {
+            naturalHeightToWidthRatio = nil
         }
+        updatePreviewHeightIfNeeded()
 
         ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }

@@ -365,23 +365,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     for: mode, geometry: geometry
                 )
             } else if expandedUsesReadMediaLayout {
-                // Read-media rows can reveal their real height asynchronously
-                // after image decode (for example once an SVG or tall photo
-                // reports its aspect ratio). Bucketed text heuristics and
-                // cached pre-decode measurements both under-size these rows,
-                // so measure the hosted view directly on each layout pass.
+                // Read-media images should size vertically to show the whole
+                // image in the timeline. Do not clamp to the generic text
+                // viewport max; the outer timeline owns vertical scrolling.
                 let expandedContentView = expandedReadMediaContentView ?? expandedReadMediaContainer
-                expandedViewportHeightConstraint.constant = ToolRowViewportCalculator.preferredViewportHeight(
+                let width = max(100, expandedContainer.bounds.width - 12)
+                let measured = ToolRowViewportCalculator.measuredExpandedContentHeight(
                     for: expandedContentView,
-                    in: self.expandedContainer,
-                    mode: mode,
-                    expandedScrollView: self.expandedScrollView,
-                    expandedLabelWidthConstraint: self.expandedLabelWidthConstraint,
-                    outputScrollView: self.outputScrollView,
-                    outputUsesUnwrappedLayout: self.bashToolRowView.outputUsesUnwrappedLayout,
-                    outputLabelWidthConstraint: self.bashToolRowView.outputLabelWidthConstraint,
-                    geometry: geometry
+                    width: width
                 )
+                expandedViewportHeightConstraint.constant = min(Self.maxValidHeight, max(Self.minOutputViewportHeight, measured))
             } else {
                 let expandedContentView = expandedUsesMarkdownLayout ? expandedMarkdownView : expandedLabel
                 let widthBucket = Int(expandedContainer.bounds.width.rounded())
@@ -539,6 +532,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 delivery: delivery,
+                sessionId: currentConfiguration.selectedTextSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: nil,
                 palette: ThemeRuntimeState.currentPalette(),
@@ -551,6 +545,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 delivery: delivery,
+                sessionId: currentConfiguration.selectedTextSessionId,
                 audioPlayer: currentConfiguration.audioPlayer,
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
                 palette: ThemeRuntimeState.currentPalette(),
@@ -1146,7 +1141,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case .voiceMessage:
             return true
         case .readMedia(_, let filePath, _):
-            return configuration.toolNamePrefix == "voice_speak" || filePath == "Voice message"
+            return filePath == "Voice message"
         case .bash, .diff, .code, .markdown, .status, .text, .none:
             return false
         }

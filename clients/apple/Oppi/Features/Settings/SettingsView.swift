@@ -176,11 +176,9 @@ struct SettingsView: View {
                     AppPreferences.Voice.setReplyMode(newValue)
                 }
 
-                if voiceReplyMode == .voice {
-                    Text(AppPreferences.Voice.ReplyMode.voice.detail)
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                }
+                Text(voiceReplyMode.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
 
                 Picker("Dictation Engine", selection: $voiceEngineMode) {
                     ForEach(AppPreferences.Voice.supportedModes) { mode in
@@ -194,8 +192,8 @@ struct SettingsView: View {
                 Text("Voice")
             } footer: {
                 Text(
-                    "Voice mode autoplays only when the agent explicitly requests direct playback. "
-                        + "Voice message mode never autoplays. Direct speak autoplays all voice replies. "
+                    "Choose whether voice replies autoplay by default or appear as tap-to-play cards. "
+                        + "The agent can still switch behavior for the current session if you ask. "
                         + "Server dictation uses your Mac's ASR model. On-device uses Apple's local dictation."
                 )
             }

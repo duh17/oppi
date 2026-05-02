@@ -149,6 +149,23 @@ struct AudioLifecycleCoordinatorTests {
         #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-3", delivery: .directSpeak))
     }
 
+    @Test func audioPlayerUsesSessionReplyModeOverrideForAutoplay() {
+        let player = AudioPlayerService()
+        let sessionId = "session-voice-override"
+        let previousReplyMode = AppPreferences.Voice.replyMode
+        let previousSessionReplyMode = AppPreferences.Voice.sessionReplyMode(for: sessionId)
+        defer {
+            AppPreferences.Voice.setReplyMode(previousReplyMode)
+            AppPreferences.Voice.setSessionReplyMode(previousSessionReplyMode, for: sessionId)
+        }
+
+        AppPreferences.Voice.setReplyMode(.autoplay)
+        AppPreferences.Voice.setSessionReplyMode(.manual, for: sessionId)
+
+        #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-session-manual", delivery: .voiceMessage, sessionId: sessionId))
+        #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-session-direct", delivery: .directSpeak, sessionId: sessionId))
+    }
+
     @Test func validMicrophoneFormatPassesAudioEngineValidation() throws {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
 

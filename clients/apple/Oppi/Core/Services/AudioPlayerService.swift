@@ -107,7 +107,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func shouldAutoplayVoiceMessage(itemID: String, delivery: VoiceReplyDelivery?, sessionId: String? = nil) -> Bool {
         !playbackSuppressedForCapture
-            && AppPreferences.Voice.shouldAutoplay(delivery: delivery)
+            && AppPreferences.Voice.shouldAutoplay(delivery: delivery, sessionId: sessionId)
             && !autoPlayedVoiceReplyItemIDs.contains(itemID)
     }
 
@@ -141,7 +141,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        guard AppPreferences.Voice.shouldAutoplay(delivery: stream.delivery) else {
+        guard AppPreferences.Voice.shouldAutoplay(delivery: stream.delivery, sessionId: sessionId) else {
             if stream.event == .error, stream.delivery == .directSpeak {
                 logger.error("Suppressed audio stream \(stream.id, privacy: .public) reported error: \(stream.text ?? "unknown", privacy: .public)")
             }

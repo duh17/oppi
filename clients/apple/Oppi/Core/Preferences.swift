@@ -5,6 +5,7 @@ enum VoiceReplyDelivery: String, Codable, Sendable, Equatable {
     case directSpeak
 }
 
+
 /// Unified preference system for all UserDefaults-backed settings.
 ///
 /// Organized by domain — each is an enum with static getters and setters,
@@ -122,28 +123,24 @@ enum AppPreferences {
         }
 
         enum ReplyMode: String, CaseIterable, Identifiable {
-            case voice
-            case voiceMessage
-            case directSpeak
+            case manual
+            case autoplay
 
             var id: String { rawValue }
 
             var label: String {
                 switch self {
-                case .voice: return "Voice"
-                case .voiceMessage: return "Voice message"
-                case .directSpeak: return "Direct speak"
+                case .manual: return "Tap to play"
+                case .autoplay: return "Autoplay"
                 }
             }
 
             var detail: String {
                 switch self {
-                case .voice:
-                    return "Autoplay only when the agent explicitly asks for direct playback."
-                case .voiceMessage:
-                    return "Never autoplay. Voice replies appear as playable cards."
-                case .directSpeak:
-                    return "Autoplay all voice replies right away."
+                case .manual:
+                    return "Default to playable voice cards. The agent can still speak out loud in this session if you ask."
+                case .autoplay:
+                    return "Default to speaking voice replies out loud. The agent can still switch this session back to tap-to-play if you ask."
                 }
             }
         }
@@ -154,6 +151,7 @@ enum AppPreferences {
 
         private static let engineModeKey = "\(AppIdentifiers.subsystem).voice.engineMode"
         private static let replyModeKey = "\(AppIdentifiers.subsystem).voice.replyMode"
+        private static let sessionReplyModeOverridesKey = "\(AppIdentifiers.subsystem).voice.sessionReplyModeOverrides"
 
         static var engineMode: EngineMode {
             guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
@@ -165,12 +163,17 @@ enum AppPreferences {
         }
 
         static var replyMode: ReplyMode {
-            guard let raw = UserDefaults.standard.string(forKey: replyModeKey),
-                  let mode = ReplyMode(rawValue: raw)
-            else {
-                return .voice
+            guard let raw = UserDefaults.standard.string(forKey: replyModeKey) else {
+                return .manual
             }
-            return mode
+            switch raw {
+            case ReplyMode.manual.rawValue, "voice", "voiceMessage":
+                return .manual
+            case ReplyMode.autoplay.rawValue, "directSpeak":
+                return .autoplay
+            default:
+                return .manual
+            }
         }
 
         static func setEngineMode(_ mode: EngineMode) {
@@ -182,15 +185,60 @@ enum AppPreferences {
             UserDefaults.standard.set(mode.rawValue, forKey: replyModeKey)
         }
 
-        static func shouldAutoplay(delivery: VoiceReplyDelivery?) -> Bool {
-            switch replyMode {
-            case .voice:
-                return delivery == .directSpeak
-            case .voiceMessage:
-                return false
-            case .directSpeak:
-                return true
+        static func sessionReplyMode(for sessionId: String?) -> ReplyMode? {
+            guard let sessionId = normalizedSessionId(sessionId) else { return nil }
+            let stored = sessionReplyModeOverrides()[sessionId]
+            return stored.flatMap(ReplyMode.init(rawValue:))
+        }
+
+        static func setSessionReplyMode(_ mode: ReplyMode?, for sessionId: String?) {
+            guard let sessionId = normalizedSessionId(sessionId) else { return }
+            var overrides = sessionReplyModeOverrides()
+            overrides[sessionId] = mode?.rawValue
+            if overrides.isEmpty {
+                UserDefaults.standard.removeObject(forKey: sessionReplyModeOverridesKey)
+            } else {
+                UserDefaults.standard.set(overrides, forKey: sessionReplyModeOverridesKey)
             }
+        }
+
+        static func applySessionReplyModeDetails(_ details: JSONValue?, sessionId: String?) {
+            guard let object = details?.objectValue,
+                  object["kind"]?.stringValue == "voice_reply_mode"
+            else {
+                return
+            }
+
+            switch object["mode"]?.stringValue {
+            case ReplyMode.manual.rawValue:
+                setSessionReplyMode(.manual, for: sessionId)
+            case ReplyMode.autoplay.rawValue:
+                setSessionReplyMode(.autoplay, for: sessionId)
+            case "default", nil:
+                setSessionReplyMode(nil, for: sessionId)
+            default:
+                break
+            }
+        }
+
+        static func shouldAutoplay(delivery: VoiceReplyDelivery?, sessionId: String? = nil) -> Bool {
+            switch sessionReplyMode(for: sessionId) ?? replyMode {
+            case .manual:
+                return delivery == .directSpeak
+            case .autoplay:
+                return delivery != .voiceMessage
+            }
+        }
+
+        private static func sessionReplyModeOverrides() -> [String: String] {
+            UserDefaults.standard.dictionary(forKey: sessionReplyModeOverridesKey) as? [String: String] ?? [:]
+        }
+
+        private static func normalizedSessionId(_ sessionId: String?) -> String? {
+            guard let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sessionId.isEmpty else {
+                return nil
+            }
+            return sessionId
         }
     }
 

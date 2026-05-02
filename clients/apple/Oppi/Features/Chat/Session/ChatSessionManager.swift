@@ -765,7 +765,7 @@ final class ChatSessionManager {
             break
 
         case .audioStream(let stream):
-            connection.audioPlayer.handleAudioStream(stream)
+            connection.audioPlayer.handleAudioStream(stream, sessionId: sessionId)
 
         case .toolStart(let tool, let args, let toolCallId, let callSegments),
              .toolUpdate(let tool, let args, let toolCallId, let callSegments):
@@ -782,7 +782,10 @@ final class ChatSessionManager {
                 details: details
             ))
 
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
+        case .toolEnd(let tool, let toolCallId, let details, let isError, let resultSegments):
+            if tool == "voice_reply_mode" {
+                AppPreferences.Voice.applySessionReplyModeDetails(details, sessionId: sessionId)
+            }
             coalescer.receive(toolCallCorrelator.end(
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,

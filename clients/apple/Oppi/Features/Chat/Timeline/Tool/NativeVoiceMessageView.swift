@@ -20,6 +20,7 @@ final class NativeVoiceMessageView: UIView {
     private var attachmentId: String?
     private var attachmentFetcher: ((String) async throws -> Data)?
     private var delivery: VoiceReplyDelivery?
+    private var sessionId: String?
     private var decodeTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
     private var suppressAutoplay = false
@@ -66,11 +67,12 @@ final class NativeVoiceMessageView: UIView {
         base64: String,
         mimeType: String?,
         delivery: VoiceReplyDelivery?,
+        sessionId: String?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette,
         suppressAutoplay: Bool = false
     ) {
-        prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, delivery: delivery, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
         self.suppressAutoplay = suppressAutoplay
         attachmentId = nil
         attachmentFetcher = nil
@@ -117,12 +119,13 @@ final class NativeVoiceMessageView: UIView {
         attachmentId: String,
         mimeType: String?,
         delivery: VoiceReplyDelivery?,
+        sessionId: String?,
         audioPlayer: AudioPlayerService?,
         attachmentFetcher: ((String) async throws -> Data)?,
         palette: ThemePalette,
         suppressAutoplay: Bool = false
     ) {
-        prepareForApply(id: id, message: message, delivery: delivery, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(id: id, message: message, delivery: delivery, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
         self.suppressAutoplay = suppressAutoplay
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
@@ -143,12 +146,14 @@ final class NativeVoiceMessageView: UIView {
         id: String,
         message: String,
         delivery: VoiceReplyDelivery?,
+        sessionId: String?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette
     ) {
         self.id = id
         self.audioPlayer = audioPlayer
         self.delivery = delivery
+        self.sessionId = sessionId
         self.decodedData = nil
         self.attachmentId = nil
         self.attachmentFetcher = nil
@@ -277,7 +282,7 @@ final class NativeVoiceMessageView: UIView {
     private func maybeAutoplayDecodedDataIfNeeded(palette: ThemePalette) {
         guard !suppressAutoplay,
               let id, let decodedData, let audioPlayer,
-              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
+              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery, sessionId: sessionId) else {
             return
         }
         audioPlayer.markVoiceReplyAutoplayed(itemID: id)
@@ -288,7 +293,7 @@ final class NativeVoiceMessageView: UIView {
     private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
         guard !suppressAutoplay,
               let id, let attachmentId, let attachmentFetcher, let audioPlayer,
-              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery) else {
+              audioPlayer.shouldAutoplayVoiceMessage(itemID: id, delivery: delivery, sessionId: sessionId) else {
             return
         }
         spinner.startAnimating()

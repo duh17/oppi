@@ -1348,7 +1348,7 @@ struct ToolTimelineRowContentViewTests {
 
         let previousReplyMode = AppPreferences.Voice.replyMode
         defer { AppPreferences.Voice.setReplyMode(previousReplyMode) }
-        AppPreferences.Voice.setReplyMode(.directSpeak)
+        AppPreferences.Voice.setReplyMode(.autoplay)
 
         let fetchSpy = FetchSpy()
         let audioPlayer = AudioPlayerService()
