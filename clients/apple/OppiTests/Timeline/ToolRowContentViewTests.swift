@@ -611,22 +611,31 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func inlineSVGPreviewAppliesAspectRatioConstraintAfterAsyncDecode() async throws {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 320 180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let view = NativeExpandedInlineImageView(maxPixelSize: 1_600)
-        view.frame = CGRect(x: 0, y: 0, width: 320, height: 80)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
         view.apply(base64: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
 
-        let appliedConstraint = await waitForTimelineCondition(timeoutMs: 1_500) {
+        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
             await MainActor.run {
-                view.constraints.contains {
-                    $0.firstAttribute == .height
-                        && $0.secondItem === view
-                        && $0.secondAttribute == .width
-                        && abs($0.multiplier - (180.0 / 320.0)) < 0.001
-                }
+                container.setNeedsLayout()
+                container.layoutIfNeeded()
+                let fitted = view.systemLayoutSizeFitting(
+                    CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                return abs(fitted.height - 180) < 2
             }
         }
 
-        #expect(appliedConstraint, "Expected SVG preview height to track the viewBox aspect ratio")
+        #expect(updated, "Expected SVG preview height to track the viewBox aspect ratio")
     }
 
     @MainActor

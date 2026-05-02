@@ -538,7 +538,8 @@ private struct ShareRedactionSettingsPreview: View {
         userPaths: true,
         ipAddresses: true,
         jwtAndBearer: true,
-        namesHeuristic: true
+        namesHeuristic: true,
+        skills: true
     )
 
     private let preflight = ShareSessionPrepareResult(
@@ -556,7 +557,8 @@ private struct ShareRedactionSettingsPreview: View {
                 userPaths: true,
                 ipAddresses: true,
                 jwtAndBearer: true,
-                namesHeuristic: true
+                namesHeuristic: true,
+                skills: true
             ),
             totalReplacements: 11,
             findings: [

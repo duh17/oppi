@@ -327,7 +327,8 @@ struct ServerConnectionModelCommandsTests {
                 userPaths: true,
                 ipAddresses: true,
                 jwtAndBearer: true,
-                namesHeuristic: false
+                namesHeuristic: false,
+                skills: true
             ),
             totalReplacements: 3,
             findings: [

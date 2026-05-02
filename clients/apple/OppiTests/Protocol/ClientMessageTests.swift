@@ -272,7 +272,8 @@ struct ClientMessageTests {
             userPaths: true,
             ipAddresses: true,
             jwtAndBearer: true,
-            namesHeuristic: true
+            namesHeuristic: true,
+            skills: true
         )
 
         let json = try decode(
@@ -288,6 +289,7 @@ struct ClientMessageTests {
         #expect(payload?["emails"] as? Bool == true)
         #expect(payload?["phones"] as? Bool == false)
         #expect(payload?["namesHeuristic"] as? Bool == true)
+        #expect(payload?["skills"] as? Bool == true)
     }
 
     @Test func encodesSubscribeGeneration() throws {
