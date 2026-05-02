@@ -12,6 +12,7 @@ struct WorkspaceStoppedSessionsSection: View {
     let onResumeSession: (Session) -> Void
     let onDeleteSession: (Session) -> Void
     let onImportLocal: (LocalSession) -> Void
+    let onOpenSession: () -> Void
 
     @Binding var expandedGroupIDs: Set<String>
     @Binding var collapsedGroupIDs: Set<String>
@@ -146,6 +147,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                     searchSnippet: searchSnippet(session.id)
                                 )
                             }
+                            .simultaneousGesture(TapGesture().onEnded { onOpenSession() })
                             .listRowBackground(Color.themeBg)
                             .swipeActions(edge: .leading) {
                                 if session.ephemeral != true {
