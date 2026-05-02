@@ -1,7 +1,6 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { isValidExtensionName } from "../src/extension-loader.js";
@@ -371,7 +370,7 @@ export function createOppiAdminFactory(storage: Storage): ExtensionFactory {
         const colors = params.colors as Record<string, string>;
         const theme = buildThemePayload(name, colorScheme, colors);
 
-        const themesDir = join(homedir(), ".config", "oppi", "themes");
+        const themesDir = join(storage.getDataDir(), "themes");
         if (!existsSync(themesDir)) {
           mkdirSync(themesDir, { recursive: true });
         }

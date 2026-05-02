@@ -71,7 +71,7 @@ describe("createOppiAdminFactory", () => {
     expect(details.workspaces.some((workspace) => workspace.name === "oppi-admin")).toBe(true);
   });
 
-  it("builds a theme into ~/.config/oppi/themes", async () => {
+  it("builds a theme into the configured data dir themes folder", async () => {
     const storage = new Storage(tempDir);
     const api = createMockAPI();
     createOppiAdminFactory(storage)(api as never);
@@ -140,6 +140,7 @@ describe("createOppiAdminFactory", () => {
     });
 
     const details = result.details as { filePath: string };
+    expect(details.filePath).toBe(join(tempDir, "themes", "admin-theme.json"));
     expect(readFileSync(details.filePath, "utf8")).toContain('"name": "Admin Theme"');
   });
 });
