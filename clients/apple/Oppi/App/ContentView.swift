@@ -420,6 +420,8 @@ private struct ExtensionDialogSheet: View {
                         .frame(minHeight: 240)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        .scrollContentBackground(.hidden)
+                        .themedTextInputCard()
                 } header: {
                     Text(request.placeholder ?? "Edit text")
                 }
@@ -441,6 +443,7 @@ private struct ExtensionDialogSheet: View {
                 }
             }
         }
+        .themedListSurface()
     }
 
     private var compatibilityContent: some View {

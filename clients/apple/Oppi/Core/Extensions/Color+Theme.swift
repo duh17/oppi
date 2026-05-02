@@ -150,6 +150,26 @@ extension View {
         self
             .background(Color.themeBg.ignoresSafeArea())
     }
+
+    /// Use for freeform text entry surfaces that need stable contrast and a
+    /// consistent inset card shape across editors and multiline inputs.
+    func themedTextInputCard(
+        background: Color = .themeBgDark,
+        cornerRadius: CGFloat = 14,
+        contentPadding: CGFloat = 10,
+        strokeOpacity: Double = 0.18
+    ) -> some View {
+        self
+            .padding(contentPadding)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(background)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.themeComment.opacity(strokeOpacity), lineWidth: 1)
+            )
+    }
 }
 
 // MARK: - Theme Contrast Helpers

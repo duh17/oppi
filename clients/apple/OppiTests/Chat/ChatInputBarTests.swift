@@ -171,8 +171,8 @@ struct ChatInputBarTests {
         #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "   ") == nil)
     }
 
-    @Test("Composer text does not guess which multi-question ask page to answer")
-    func composerTextIgnoresMultiQuestionAsk() {
+    @Test("Composer text answers the active page in a multi-question ask")
+    func composerTextAnswersActiveMultiQuestionPage() throws {
         let request = AskRequest(
             id: "ask-1",
             sessionId: "s1",
@@ -184,6 +184,103 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "answer") == nil)
+        let answers = try #require(ChatInputBar<EmptyView>.customAskAnswers(
+            request: request,
+            activeQuestionID: "q2",
+            draftAnswers: ["q1": .single("a")],
+            text: "  answer the visible page  "
+        ))
+
+        #expect(answers == [
+            "q1": .single("a"),
+            "q2": .custom("answer the visible page")
+        ])
+    }
+
+    @Test("Custom ask send advances instead of submitting on non-final page")
+    func customAskSendAdvancesOnNonFinalPage() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [
+                AskQuestion(id: "q1", question: "First?", options: [], multiSelect: false),
+                AskQuestion(id: "q2", question: "Second?", options: [], multiSelect: false)
+            ],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        #expect(!ChatInputBar<EmptyView>.shouldSubmitAskResponseImmediately(request: request, currentPage: 0))
+        #expect(ChatInputBar<EmptyView>.shouldSubmitAskResponseImmediately(request: request, currentPage: 1))
+    }
+
+    @Test("Ask composer send transition advances and keeps prior answers")
+    func askComposerSendTransitionAdvancesAndKeepsPriorAnswers() throws {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [
+                AskQuestion(id: "q1", question: "First?", options: [], multiSelect: false),
+                AskQuestion(id: "q2", question: "Second?", options: [], multiSelect: false)
+            ],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+            request: request,
+            currentPage: 0,
+            draftAnswers: ["q2": .custom("saved second")],
+            text: " first custom answer "
+        ))
+
+        #expect(transition.nextPage == 1)
+        #expect(!transition.shouldSubmit)
+        #expect(transition.answers == [
+            "q1": .custom("first custom answer"),
+            "q2": .custom("saved second")
+        ])
+        #expect(transition.nextComposerText == "saved second")
+    }
+
+    @Test("Ask composer send transition submits on final page")
+    func askComposerSendTransitionSubmitsOnFinalPage() throws {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [
+                AskQuestion(id: "q1", question: "First?", options: [], multiSelect: false),
+                AskQuestion(id: "q2", question: "Second?", options: [], multiSelect: false)
+            ],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+            request: request,
+            currentPage: 1,
+            draftAnswers: ["q1": .single("picked")],
+            text: " second custom answer "
+        ))
+
+        #expect(transition.nextPage == 1)
+        #expect(transition.shouldSubmit)
+        #expect(transition.answers == [
+            "q1": .single("picked"),
+            "q2": .custom("second custom answer")
+        ])
+        #expect(transition.nextComposerText.isEmpty)
+    }
+
+    @Test("Stored custom ask text can be restored when revisiting a page")
+    func storedCustomAskTextRestoresForPage() {
+        let answers: [String: AskAnswer] = [
+            "q1": .custom("saved first answer"),
+            "q2": .single("picked option")
+        ]
+
+        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q1") == "saved first answer")
+        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q2") == "")
+        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil) == "")
     }
 }

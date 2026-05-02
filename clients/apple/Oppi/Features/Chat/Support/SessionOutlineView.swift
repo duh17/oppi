@@ -634,10 +634,9 @@ struct SessionOutlineView: View {
                 TextEditor(text: $customSummaryInstructions)
                     .font(.body)
                     .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityIdentifier("tree-summary-instructions")
                     .frame(minHeight: 160)
+                    .themedTextInputCard(cornerRadius: 12, contentPadding: 8)
 
                 Spacer(minLength: 0)
             }

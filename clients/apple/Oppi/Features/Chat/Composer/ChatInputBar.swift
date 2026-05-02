@@ -55,6 +55,8 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var showCamera = false
     @State private var showFileImporter = false
     @State private var inlineVisualLineCount = 1
+    @State private var askCurrentPage = 0
+    @State private var askDraftAnswers: [String: AskAnswer] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Bumped to programmatically focus the text field.
@@ -104,8 +106,22 @@ struct ChatInputBar<ActionRow: View>: View {
         return hasText || hasImages || hasFiles || hasReviewComments
     }
 
+    private var activeAskQuestionID: String? {
+        guard let askRequest,
+              askCurrentPage >= 0,
+              askCurrentPage < askRequest.questions.count else {
+            return nil
+        }
+        return askRequest.questions[askCurrentPage].id
+    }
+
     private var pendingAskCustomAnswers: [String: AskAnswer]? {
-        Self.customAskAnswers(request: askRequest, text: composerDisplayText)
+        Self.customAskAnswers(
+            request: askRequest,
+            activeQuestionID: activeAskQuestionID,
+            draftAnswers: askDraftAnswers,
+            text: composerDisplayText
+        )
     }
 
     private var accentColor: Color { .themeBlue }
@@ -253,6 +269,16 @@ struct ChatInputBar<ActionRow: View>: View {
                 onFileSuggestionQuery: onFileSuggestionQuery
             )
         }
+        .onChange(of: askRequest?.id) { _, _ in
+            askCurrentPage = 0
+            askDraftAnswers = [:]
+        }
+        .onChange(of: askCurrentPage) { _, _ in
+            syncComposerTextWithActiveAskQuestion()
+        }
+        .onChange(of: askDraftAnswers) { _, _ in
+            syncComposerTextWithActiveAskQuestion()
+        }
         .onChange(of: photoSelection) { _, items in
             ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
             photoSelection = []
@@ -293,6 +319,8 @@ struct ChatInputBar<ActionRow: View>: View {
             if let askRequest {
                 AskCard(
                     request: askRequest,
+                    currentPage: $askCurrentPage,
+                    answers: $askDraftAnswers,
                     onSubmit: { answers in onAskSubmit?(answers) },
                     onIgnoreAll: { onAskIgnoreAll?() },
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
@@ -739,16 +767,100 @@ struct ChatInputBar<ActionRow: View>: View {
         return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
     }
 
-    static func customAskAnswers(request: AskRequest?, text: String) -> [String: AskAnswer]? {
+    static func customAskAnswers(
+        request: AskRequest?,
+        activeQuestionID: String? = nil,
+        draftAnswers: [String: AskAnswer] = [:],
+        text: String
+    ) -> [String: AskAnswer]? {
         guard let request,
               request.allowCustom,
-              request.questions.count == 1,
-              let question = request.questions.first else { return nil }
+              let question = customAskQuestion(request: request, activeQuestionID: activeQuestionID)
+        else { return nil }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        return [question.id: .custom(trimmed)]
+        var answers = draftAnswers
+        answers[question.id] = .custom(trimmed)
+        return answers
+    }
+
+    private static func customAskQuestion(request: AskRequest, activeQuestionID: String?) -> AskQuestion? {
+        if let activeQuestionID,
+           let question = request.questions.first(where: { $0.id == activeQuestionID }) {
+            return question
+        }
+        return request.questions.first
+    }
+
+    static func shouldSubmitAskResponseImmediately(request: AskRequest?, currentPage: Int) -> Bool {
+        guard let request else { return false }
+        guard request.allowCustom else { return false }
+        guard request.questions.count > 1 else { return true }
+        return currentPage >= request.questions.count - 1
+    }
+
+    static func customAskText(answers: [String: AskAnswer], questionID: String?) -> String {
+        guard let questionID, case .custom(let text) = answers[questionID] else {
+            return ""
+        }
+        return text
+    }
+
+    struct AskComposerSendTransition: Equatable {
+        let nextPage: Int
+        let answers: [String: AskAnswer]
+        let nextComposerText: String
+        let shouldSubmit: Bool
+    }
+
+    static func askComposerSendTransition(
+        request: AskRequest?,
+        currentPage: Int,
+        draftAnswers: [String: AskAnswer],
+        text: String
+    ) -> AskComposerSendTransition? {
+        guard let request,
+              request.questions.indices.contains(currentPage) else {
+            return nil
+        }
+
+        let activeQuestionID = request.questions[currentPage].id
+        guard let answers = customAskAnswers(
+            request: request,
+            activeQuestionID: activeQuestionID,
+            draftAnswers: draftAnswers,
+            text: text
+        ) else {
+            return nil
+        }
+
+        if shouldSubmitAskResponseImmediately(request: request, currentPage: currentPage) {
+            return AskComposerSendTransition(
+                nextPage: currentPage,
+                answers: answers,
+                nextComposerText: "",
+                shouldSubmit: true
+            )
+        }
+
+        let nextPage = min(currentPage + 1, request.questions.count - 1)
+        let nextQuestionID = request.questions[nextPage].id
+        return AskComposerSendTransition(
+            nextPage: nextPage,
+            answers: answers,
+            nextComposerText: customAskText(answers: answers, questionID: nextQuestionID),
+            shouldSubmit: false
+        )
+    }
+
+    private func syncComposerTextWithActiveAskQuestion() {
+        guard let askRequest, askRequest.allowCustom else { return }
+        let desiredText = Self.customAskText(answers: askDraftAnswers, questionID: activeAskQuestionID)
+        guard text != desiredText || textBeforeRecording != nil else { return }
+        text = desiredText
+        textBeforeRecording = nil
     }
 
     private func handleSend() {
@@ -769,21 +881,41 @@ struct ChatInputBar<ActionRow: View>: View {
                 } else {
                     await manager.cancelRecording()
                 }
-                submitAskCustomAnswerIfNeeded() ?? onSend()
+                if !handleAskComposerSendIfNeeded() {
+                    onSend()
+                }
             }
             return
         }
 
-        submitAskCustomAnswerIfNeeded() ?? onSend()
+        if !handleAskComposerSendIfNeeded() {
+            onSend()
+        }
     }
 
-    @discardableResult
-    private func submitAskCustomAnswerIfNeeded() -> Void? {
-        guard let answers = pendingAskCustomAnswers else { return nil }
-        onAskSubmit?(answers)
-        text = ""
+    private func handleAskComposerSendIfNeeded() -> Bool {
+        guard let transition = Self.askComposerSendTransition(
+            request: askRequest,
+            currentPage: askCurrentPage,
+            draftAnswers: askDraftAnswers,
+            text: composerDisplayText
+        ) else {
+            return false
+        }
+
+        askDraftAnswers = transition.answers
+        text = transition.nextComposerText
         textBeforeRecording = nil
-        return ()
+
+        if transition.shouldSubmit {
+            onAskSubmit?(transition.answers)
+        } else {
+            withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
+                askCurrentPage = transition.nextPage
+            }
+        }
+
+        return true
     }
 
     private func handleAlternateSend() {

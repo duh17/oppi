@@ -40,6 +40,7 @@ struct WorkspaceEditView: View {
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
+    @State private var isShowingSystemPromptEditor = false
     @State private var runtime: WorkspaceRuntime?
     @State private var allowedHostsText: String = ""
     @State private var loadedWorkspaceID: String?
@@ -145,31 +146,40 @@ struct WorkspaceEditView: View {
     var body: some View {
         List(selection: selectableRowSelection) {
             Section("System Prompt") {
-                NavigationLink {
-                    WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
+                Button {
+                    isShowingSystemPromptEditor = true
                 } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("Edit workspace prompt")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.themeFg)
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("Edit workspace prompt")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.themeFg)
 
-                            Spacer(minLength: 8)
+                                Spacer(minLength: 8)
 
-                            Text(systemPromptEditorSummary)
+                                Text(systemPromptEditorSummary)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.themeComment)
+                            }
+
+                            Text(systemPromptPreviewText)
                                 .font(.caption.monospaced())
-                                .foregroundStyle(.themeComment)
+                                .foregroundStyle(systemPrompt.isEmpty ? .themeComment : .themeFg)
+                                .lineLimit(6)
+                                .multilineTextAlignment(.leading)
                         }
 
-                        Text(systemPromptPreviewText)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(systemPrompt.isEmpty ? .themeComment : .themeFg)
-                            .lineLimit(6)
-                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.themeComment)
                     }
                     .padding(.vertical, 2)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(.themeFg)
+                .buttonStyle(.plain)
 
                 Text("Add workspace-specific instructions after Pi’s base prompt.")
                     .font(.caption)
@@ -259,6 +269,8 @@ struct WorkspaceEditView: View {
                             .frame(minHeight: 80)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
+                            .scrollContentBackground(.hidden)
+                            .themedTextInputCard()
                         Text("One host pattern per line. Use * to allow all.")
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
@@ -293,6 +305,9 @@ struct WorkspaceEditView: View {
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
             SkillDetailView(skillName: dest.skillName)
+        }
+        .navigationDestination(isPresented: $isShowingSystemPromptEditor) {
+            WorkspaceSystemPromptEditorView(systemPrompt: $systemPrompt)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
@@ -527,15 +542,7 @@ private struct WorkspaceSystemPromptEditorView: View {
                 .textInputAutocapitalization(.never)
                 .scrollContentBackground(.hidden)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.themeBgDark)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
-                )
+                .themedTextInputCard(strokeOpacity: 0.25)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }

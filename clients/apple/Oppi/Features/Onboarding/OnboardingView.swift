@@ -217,9 +217,12 @@ private struct ManualEntryView: View {
                 Section("Auth") {
                     SecureField("Token", text: $token)
                         .textContentType(.password)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                     TextField("Name", text: $name)
                 }
             }
+            .themedListSurface()
             .navigationTitle("Connect Manually")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

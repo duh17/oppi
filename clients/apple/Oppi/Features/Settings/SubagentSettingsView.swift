@@ -381,11 +381,14 @@ private struct SubagentProfileEditorView: View {
                 TextEditor(text: $draft.guidelinesText)
                     .frame(minHeight: 120)
                     .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .themedTextInputCard()
                 Text("One guideline per line. These are injected ahead of the child task prompt.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
         }
+        .themedListSurface()
         .navigationTitle(draft.key.isEmpty ? "New Profile" : draft.key)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

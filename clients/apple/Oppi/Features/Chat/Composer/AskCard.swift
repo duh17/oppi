@@ -66,6 +66,8 @@ enum AskResponseEncoder {
 /// button appears which opens `AskCardExpanded` via `.fullScreenCover`.
 struct AskCard: View {
     let request: AskRequest
+    @Binding var currentPage: Int
+    @Binding var answers: [String: AskAnswer]
     let onSubmit: ([String: AskAnswer]) -> Void
     let onIgnoreAll: () -> Void
     var voiceInputManager: VoiceInputManager? = nil
@@ -73,8 +75,6 @@ struct AskCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var currentPage: Int = 0
-    @State private var answers: [String: AskAnswer] = [:]
     @State private var isExpanded: Bool = false
 
     /// Scales option card width for accessibility Dynamic Type sizes.
@@ -360,7 +360,6 @@ struct AskCard: View {
             currentPage += 1
         }
     }
-
 }
 
 // MARK: - Page Count Helper (testable)
