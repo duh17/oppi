@@ -135,6 +135,8 @@ Requirements: macOS 15+, [pi](https://github.com/badlogic/pi-mono) CLI.
 - [Server README](server/README.md) — server setup, Docker, development
 - [Onboarding and pairing](docs/onboarding.md) — intended first-run user flow
 - [Config schema](server/docs/config-schema.md) — all config options
+- [Dictation / ASR](docs/asr.md) — server dictation setup
+- [Voice replies / TTS](docs/tts.md) — voice extension setup
 - [Policy engine](server/docs/policy-engine.md) — permission rules and heuristics
 - [Extensions](docs/extensions.md) — Oppi-specific extension behavior, workspace filtering, and mobile rendering gotchas
 - [Custom themes](docs/theme-system.md) — creating color themes for the iOS app
