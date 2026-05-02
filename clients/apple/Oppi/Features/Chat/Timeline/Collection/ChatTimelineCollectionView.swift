@@ -410,7 +410,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             if changedIDs.isEmpty {
                 targetIDs = currentAudioItemIDs()
             } else {
-                targetIDs = currentIDs.filter { changedIDs.contains($0) && isAudioClipItem(id: $0) }
+                let correlatedIDs = Set(changedIDs.flatMap { id -> [String] in
+                    if let toolID = Self.toolItemID(fromAudioPlaybackItemID: id) {
+                        return [id, toolID]
+                    }
+                    return [id]
+                })
+                targetIDs = currentIDs.filter { correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0) }
             }
 
             guard !targetIDs.isEmpty else { return }
@@ -423,15 +429,23 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         private func currentAudioItemIDs() -> [String] {
-            currentIDs.filter { isAudioClipItem(id: $0) }
+            currentIDs.filter { isAudioStateReactiveItem(id: $0) }
         }
 
-        private func isAudioClipItem(id: String) -> Bool {
+        private func isAudioStateReactiveItem(id: String) -> Bool {
             guard let item = currentItemByID[id] else { return false }
-            if case .audioClip = item {
+            switch item {
+            case .audioClip, .toolCall:
                 return true
+            case .assistantMessage, .error, .permission, .permissionResolved, .systemEvent, .thinking, .userMessage:
+                return false
             }
-            return false
+        }
+
+        private static func toolItemID(fromAudioPlaybackItemID id: String) -> String? {
+            let prefix = "audio-stream-"
+            guard id.hasPrefix(prefix) else { return nil }
+            return String(id.dropFirst(prefix.count))
         }
 
         private static func audioStateItemIDs(from userInfo: [AnyHashable: Any]?) -> [String] {

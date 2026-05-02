@@ -838,6 +838,50 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func audioStateChangeReconfiguresCorrelatedToolVoiceRows() async {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+
+        let rows: [ChatItem] = [
+            .toolCall(
+                id: "tool-voice-1",
+                tool: "example_tts_speak",
+                argsSummary: "text: hi",
+                outputPreview: "Voice message",
+                outputByteCount: 13,
+                isError: false,
+                isDone: false
+            ),
+        ]
+        let config = makeTimelineConfiguration(
+            items: rows,
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        NotificationCenter.default.post(
+            name: AudioPlayerService.stateDidChangeNotification,
+            object: harness.audioPlayer,
+            userInfo: [
+                AudioPlayerService.playingItemIDUserInfoKey: "audio-stream-tool-voice-1",
+            ]
+        )
+
+        #expect(await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run {
+                harness.coordinator._audioStateRefreshCountForTesting == 1
+            }
+        })
+
+        #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["tool-voice-1"])
+    }
+
+    @MainActor
     @Test func audioStateChangeWithoutIDsRefreshesAllVisibleAudioRows() async {
         let harness = makeTimelineHarness(sessionId: "session-a")
 

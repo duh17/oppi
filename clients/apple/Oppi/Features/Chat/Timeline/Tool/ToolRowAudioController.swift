@@ -32,8 +32,7 @@ final class ToolRowAudioController: NSObject {
 
         let hasReplayableVoiceAudio = collapsedVoiceAudioAttachment(in: configuration) != nil
             || collapsedVoiceAudioBase64(in: configuration) != nil
-        let hasLiveStreamPlayback = configuration.toolNamePrefix == "voice_speak"
-            && (configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false)
+        let hasLiveStreamPlayback = configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false
         guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
             button.isHidden = true
             return
@@ -83,8 +82,8 @@ final class ToolRowAudioController: NSObject {
     }
 
     private func collapsedVoiceAudioBase64(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard configuration.toolNamePrefix == "voice_speak",
-              case .readMedia(let output, _, _) = configuration.expandedContent,
+        guard case .readMedia(let output, let filePath, _) = configuration.expandedContent,
+              filePath == "Voice message",
               let clip = AudioExtractor.extract(from: output).first else {
             return nil
         }

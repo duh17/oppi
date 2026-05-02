@@ -4,6 +4,74 @@ Oppi TTS is exposed through the **`voice` workspace extension**. It is not wired
 
 The voice extension uses local [Yuwp](https://github.com/duh17/yuwp) TTS to generate WAV audio for agent replies. The iOS app can render those replies as playable voice-message cards or direct playback when allowed.
 
+For provider-agnostic extension work, see `server/src/tts-provider.ts`. That file defines the generic live audio stream shape and the generic voice tool details shape that Oppi consumes.
+
+A custom extension does not need to implement a shared provider base class. It only needs to:
+
+1. emit in-flight voice presentation details with `createTTSVoicePresentationDetails({ ... })`
+2. stream optional live audio with `createTTSAudioStreamEmitter({ ui: ctx?.ui, toolCallId, delivery })`
+3. return final details with `createTTSToolVoiceDetails({ message, provider, audio, ... })`
+
+Minimal shape:
+
+```ts
+import {
+  createTTSAudioStreamEmitter,
+  createTTSToolVoiceDetails,
+  createTTSVoicePresentationDetails,
+} from "../src/tts-provider.js";
+
+onUpdate?.({
+  content: [{ type: "text", text: spokenText }],
+  details: createTTSVoicePresentationDetails({
+    message: spokenText,
+    delivery: "directSpeak",
+    provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
+    extra: { status: "speaking" },
+  }),
+});
+
+const emitAudio = createTTSAudioStreamEmitter({
+  ui: ctx?.ui,
+  toolCallId,
+  delivery: "directSpeak",
+});
+
+emitAudio?.({
+  kind: "audio-stream",
+  event: "metadata",
+  mimeType: "audio/pcm; codecs=s16le",
+  sampleRate: 24000,
+  channels: 1,
+});
+
+emitAudio?.({
+  kind: "audio-stream",
+  event: "chunk",
+  mimeType: "audio/pcm; codecs=s16le",
+  chunkIndex: 0,
+  audioBase64: pcmChunkBase64,
+});
+
+return {
+  content: [{ type: "text", text: spokenText }],
+  details: createTTSToolVoiceDetails({
+    message: spokenText,
+    delivery: "directSpeak",
+    provider: { id: "example-tts", model: "v1", voiceId: "warm-1" },
+    audio: {
+      kind: "audio",
+      mimeType: "audio/wav",
+      path: outPath,
+      fileName: "reply.wav",
+      sizeBytes: bytes.length,
+    },
+  }),
+};
+```
+
+Use `toolCallId` as the live audio stream id. That correlation is what lets Oppi attach stream playback controls to the right tool row.
+
 ## What the voice extension adds
 
 Enable `voice` on a workspace to expose these tools:
@@ -110,9 +178,10 @@ Use voice_speak to reply as a voice message.
 
 In **Settings → Voice → Voice Replies**:
 
-- **Voice** — autoplay only when the agent explicitly requests direct playback.
-- **Voice message** — never autoplay; render a playable voice card.
-- **Direct speak** — autoplay all voice replies immediately when allowed.
+- **Tap to play** — voice replies default to playable cards.
+- **Autoplay** — voice replies default to speaking out loud immediately.
+
+The agent can still change the behavior for the current session with `voice_reply_mode`, so a user can say things like “for this session, speak out loud” or “stop autoplaying in this chat.”
 
 ## Notes
 

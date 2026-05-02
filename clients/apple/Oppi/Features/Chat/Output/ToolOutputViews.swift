@@ -118,6 +118,11 @@ extension ToolPresentationBuilder {
         let delivery: VoiceReplyDelivery?
     }
 
+    struct ToolVoicePresentationDetails: Equatable {
+        let message: String?
+        let delivery: VoiceReplyDelivery?
+    }
+
     private struct ParsedUnifiedDiff {
         let lines: [DiffLine]
         let path: String?
@@ -210,6 +215,19 @@ extension ToolPresentationBuilder {
         }
 
         return (.text(text: textOutput, language: nil), textOutput)
+    }
+
+    static func toolVoicePresentationDetails(from details: JSONValue?) -> ToolVoicePresentationDetails? {
+        guard let object = details?.objectValue,
+              object["presentation"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "voice" else {
+            return nil
+        }
+
+        let message = object["message"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ToolVoicePresentationDetails(
+            message: message?.isEmpty == false ? message : nil,
+            delivery: object["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+        )
     }
 
     static func toolAudioAttachmentDetails(from details: JSONValue?) -> ToolAudioAttachmentDetails? {

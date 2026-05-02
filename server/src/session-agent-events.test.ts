@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionBackendEvent } from "./pi-events.js";
 import {
   SessionAgentEventCoordinator,
@@ -21,6 +24,13 @@ function makeSession(overrides?: Partial<Session>): Session {
 }
 
 describe("SessionAgentEventCoordinator", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   function makeActiveSession(overrides?: Partial<Session>): SessionAgentEventState {
     return {
       session: makeSession(overrides),
@@ -40,7 +50,10 @@ describe("SessionAgentEventCoordinator", () => {
     };
   }
 
-  function makeCoordinator(active: SessionAgentEventState): {
+  function makeCoordinator(
+    active: SessionAgentEventState,
+    options?: { dataDir?: string },
+  ): {
     broadcast: ReturnType<typeof vi.fn>;
     coordinator: SessionAgentEventCoordinator;
     resetIdleTimer: ReturnType<typeof vi.fn>;
@@ -59,7 +72,10 @@ describe("SessionAgentEventCoordinator", () => {
           partialResults: active.partialResults,
           streamedAssistantText: active.streamedAssistantText,
           hasStreamedThinking: active.hasStreamedThinking,
-          mobileRenderers: {} as never,
+          mobileRenderers: {
+            renderCall: vi.fn(),
+            renderResult: vi.fn(),
+          } as never,
           toolNames: active.toolNames,
           shellPreviewLastSent: active.shellPreviewLastSent,
           streamingArgPreviews: active.streamingArgPreviews,
@@ -76,6 +92,7 @@ describe("SessionAgentEventCoordinator", () => {
       } as never,
       broadcast,
       resetIdleTimer,
+      ...(options?.dataDir ? { dataDir: options.dataDir } : {}),
     });
 
     return { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent };
@@ -132,5 +149,47 @@ describe("SessionAgentEventCoordinator", () => {
     });
     expect(updateSessionFromEvent).not.toHaveBeenCalled();
     expect(resetIdleTimer).toHaveBeenCalledWith("child-1");
+  });
+
+  it("materializes session attachments for any tool that returns audio details", () => {
+    const active = makeActiveSession();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-agent-events-"));
+    tempDirs.push(dataDir);
+    const { broadcast, coordinator } = makeCoordinator(active, { dataDir });
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "tts-tool-1",
+      toolName: "example_tts_speak",
+      result: {
+        content: [{ type: "text", text: "Hello from a custom TTS extension." }],
+        details: {
+          presentation: "voice",
+          message: "Hello from a custom TTS extension.",
+          audio: {
+            kind: "audio",
+            mimeType: "audio/wav",
+            base64: Buffer.from("RIFFtest-audio").toString("base64"),
+            fileName: "reply.wav",
+          },
+        },
+      },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+
+    const toolEnd = broadcast.mock.calls
+      .map(([, message]) => message)
+      .find((message) => message.type === "tool_end") as
+      | {
+          details?: {
+            audio?: { id?: string; storageKey?: string; base64?: string; path?: string };
+          };
+        }
+      | undefined;
+
+    expect(toolEnd?.details?.audio?.id).toContain("att_tts-tool-1_");
+    expect(toolEnd?.details?.audio?.storageKey).toContain("child-1/");
+    expect(toolEnd?.details?.audio?.base64).toBeUndefined();
+    expect(toolEnd?.details?.audio?.path).toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ struct ToolOutputEventPayload: Sendable {
     let mode: ToolOutputMode
     let truncated: Bool
     let totalBytes: Int?
+    let details: JSONValue?
 }
 
 /// Transport-agnostic domain events from the agent.
@@ -51,7 +52,8 @@ enum AgentEvent: Sendable {
         isError: Bool,
         mode: ToolOutputMode = .append,
         truncated: Bool = false,
-        totalBytes: Int? = nil
+        totalBytes: Int? = nil,
+        details: JSONValue? = nil
     ) -> Self {
         .toolOutput(.init(
             sessionId: sessionId,
@@ -60,7 +62,8 @@ enum AgentEvent: Sendable {
             isError: isError,
             mode: mode,
             truncated: truncated,
-            totalBytes: totalBytes
+            totalBytes: totalBytes,
+            details: details
         ))
     }
 

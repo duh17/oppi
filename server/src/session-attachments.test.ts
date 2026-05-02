@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   getSessionAttachment,
-  materializeVoiceSpeakAudioDetails,
+  materializeToolAudioDetails,
   sessionAttachmentDetailsForToolCall,
 } from "./session-attachments.js";
 
@@ -25,7 +25,7 @@ describe("session attachments", () => {
     const bytes = Buffer.from("RIFFtest-audio");
     await writeFile(sourcePath, bytes);
 
-    const details = materializeVoiceSpeakAudioDetails({
+    const details = materializeToolAudioDetails({
       dataDir: root,
       sessionId: "s1",
       toolCallId: "tool-1",
@@ -56,7 +56,7 @@ describe("session attachments", () => {
   });
 
   it("replays sanitized attachment details from the manifest", () => {
-    const materialized = materializeVoiceSpeakAudioDetails({
+    const materialized = materializeToolAudioDetails({
       dataDir: root,
       sessionId: "s2",
       toolCallId: "tool-2",

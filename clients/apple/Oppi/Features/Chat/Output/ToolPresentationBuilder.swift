@@ -77,11 +77,12 @@ enum ToolPresentationBuilder {
             outputPreview: outputPreview
         )
 
-        let isVoiceAudioResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
+        let isVoicePresentationResult = Self.toolAudioAttachmentDetails(from: context.details) != nil
+            || Self.toolVoicePresentationDetails(from: context.details) != nil
 
         // Expanded presentation
         let expanded: ExpandedPresentation
-        if isExpanded || isVoiceAudioResult {
+        if isExpanded || isVoicePresentationResult {
             expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 rawToolName: tool,
@@ -135,7 +136,7 @@ enum ToolPresentationBuilder {
         // segment title commands there to avoid duplicate command text.
         let segmentAttributedTitle: NSAttributedString?
         let isBuiltInFileTool = normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit"
-        if isVoiceAudioResult || isBuiltInFileTool || (isExpanded && normalizedTool == "bash") {
+        if isVoicePresentationResult || isBuiltInFileTool || (isExpanded && normalizedTool == "bash") {
             segmentAttributedTitle = nil
         } else if let callSegs = context.callSegments, !callSegs.isEmpty {
             let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
@@ -162,7 +163,7 @@ enum ToolPresentationBuilder {
             expandedContent: expanded.content,
             copyCommandText: expanded.copyCommandText,
             copyOutputText: expanded.copyOutputText,
-            languageBadge: isVoiceAudioResult ? nil : languageBadge,
+            languageBadge: isVoicePresentationResult ? nil : languageBadge,
             trailing: segmentAttributedTrailing != nil ? nil : trailing,
             titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
             toolNamePrefix: segmentAttributedTitle != nil
@@ -178,8 +179,8 @@ enum ToolPresentationBuilder {
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError,
-            startedAt: isVoiceAudioResult ? nil : context.startedAt,
-            elapsedSeconds: isVoiceAudioResult ? nil : context.elapsedSeconds,
+            startedAt: isVoicePresentationResult ? nil : context.startedAt,
+            elapsedSeconds: isVoicePresentationResult ? nil : context.elapsedSeconds,
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
@@ -273,7 +274,8 @@ enum ToolPresentationBuilder {
         default:
             // Extension tools are rendered via server-provided StyledSegments.
             // This default case is the fallback when segments aren't available.
-            if Self.toolAudioAttachmentDetails(from: details) != nil {
+            if Self.toolAudioAttachmentDetails(from: details) != nil
+                || Self.toolVoicePresentationDetails(from: details) != nil {
                 result.title = "Voice message"
                 result.languageBadge = nil
                 result.toolNamePrefix = normalizedTool
@@ -428,17 +430,24 @@ enum ToolPresentationBuilder {
             }
 
         default:
-            if !outputTrimmed.isEmpty {
+            let voicePresentation = Self.toolVoicePresentationDetails(from: details)
+            let hasStructuredVoiceContent = Self.toolAudioAttachmentDetails(from: details) != nil
+                || voicePresentation != nil
+            if !outputTrimmed.isEmpty || hasStructuredVoiceContent {
                 if !isError,
-                   normalizedTool == "voice_speak",
+                   let voicePresentation,
                    Self.toolAudioAttachmentDetails(from: details) == nil {
-                    let transcript = voiceSpeakTranscript(output: outputTrimmed, args: args)
+                    let transcript = voicePresentationTranscript(
+                        output: outputTrimmed,
+                        details: voicePresentation,
+                        args: args
+                    )
                     content = .voiceMessage(
                         text: transcript,
                         attachmentId: "",
                         mimeType: "audio/wav",
                         durationSeconds: nil,
-                        delivery: args?["delivery"]?.stringValue.flatMap(VoiceReplyDelivery.init(rawValue:))
+                        delivery: voicePresentation.delivery
                     )
                     copyOutput = transcript.isEmpty ? nil : transcript
                 } else {
@@ -584,13 +593,24 @@ enum ToolPresentationBuilder {
         return editText.oldText
     }
 
-    private static func voiceSpeakTranscript(output: String, args: [String: JSONValue]?) -> String {
+    private static func voicePresentationTranscript(
+        output: String,
+        details: ToolVoicePresentationDetails,
+        args: [String: JSONValue]?
+    ) -> String {
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitMessage = details.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let argText = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if trimmedOutput == "Voice message" || trimmedOutput == "Streaming speech from Yuwp..." {
+        if !explicitMessage.isEmpty {
+            return explicitMessage
+        }
+        if trimmedOutput == "Voice message" {
             return argText
         }
-        return trimmedOutput
+        if !trimmedOutput.isEmpty {
+            return trimmedOutput
+        }
+        return argText
     }
 
     private static func pendingStatusMessage(normalizedTool: String) -> String {

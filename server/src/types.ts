@@ -1341,6 +1341,8 @@ export type ServerMessage = // ── Connection ──
         truncated?: boolean;
         /** Total bytes of full output on the server (hint for UI). */
         totalBytes?: number;
+        /** Optional structured details for in-flight tool presentation updates. */
+        details?: unknown;
       }
     | {
         type: "tool_end";

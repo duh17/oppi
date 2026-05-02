@@ -14,7 +14,7 @@ import type {
 } from "./session-events.js";
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
-import { materializeVoiceSpeakAudioDetails } from "./session-attachments.js";
+import { materializeToolAudioDetails } from "./session-attachments.js";
 import type { ServerMessage } from "./types.js";
 
 export interface SessionAgentEventState
@@ -24,6 +24,19 @@ export interface SessionAgentEventState
 }
 
 const log = createLogger({ base: { component: "session_agent_events" } });
+
+function hasToolAudioDetails(details: unknown): boolean {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return false;
+  }
+  const audio = (details as { audio?: unknown }).audio;
+  return Boolean(
+    audio &&
+    typeof audio === "object" &&
+    !Array.isArray(audio) &&
+    (audio as { kind?: unknown }).kind === "audio",
+  );
+}
 
 export interface SessionAgentEventCoordinatorDeps {
   getActiveSession: (key: string) => SessionAgentEventState | undefined;
@@ -152,14 +165,14 @@ export class SessionAgentEventCoordinator {
     for (const message of messages) {
       if (
         message.type === "tool_end" &&
-        (message.tool === "voice_speak" || message.tool === "voice_create") &&
         message.details !== undefined &&
-        this.deps.dataDir
+        this.deps.dataDir &&
+        hasToolAudioDetails(message.details)
       ) {
         try {
           this.deps.broadcast(key, {
             ...message,
-            details: materializeVoiceSpeakAudioDetails({
+            details: materializeToolAudioDetails({
               dataDir: this.deps.dataDir,
               sessionId: active.session.id,
               toolCallId: message.toolCallId,
@@ -167,7 +180,7 @@ export class SessionAgentEventCoordinator {
             }),
           });
         } catch (error) {
-          log.error("session_agent_events.voice_attachment_materialize.failed", {
+          log.error("session_agent_events.tool_audio_attachment_materialize.failed", {
             sessionId: active.session.id,
             toolCallId: message.toolCallId,
             tool: message.tool,

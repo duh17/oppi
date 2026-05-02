@@ -36,7 +36,7 @@ interface SessionAttachmentManifest {
   attachments: SessionAttachmentRecord[];
 }
 
-export interface MaterializeVoiceAudioOptions {
+export interface MaterializeToolAudioOptions {
   dataDir: string;
   sessionId: string;
   toolCallId?: string;
@@ -116,7 +116,7 @@ function normalizeAudioMimeType(value: unknown): string {
 }
 
 function safeFileName(value: unknown, mimeType: string): string {
-  const raw = typeof value === "string" && value.trim() ? basename(value.trim()) : "voice-speak";
+  const raw = typeof value === "string" && value.trim() ? basename(value.trim()) : "tool-audio";
   const ext = extname(raw) ? "" : `.${mimeExtension(mimeType)}`;
   return `${raw}${ext}`;
 }
@@ -156,12 +156,12 @@ function sanitizeAudioDetails(
   return { ...root, audio: sanitizedAudio };
 }
 
-export function materializeVoiceSpeakAudioDetails({
+export function materializeToolAudioDetails({
   dataDir,
   sessionId,
   toolCallId,
   details,
-}: MaterializeVoiceAudioOptions): unknown {
+}: MaterializeToolAudioOptions): unknown {
   const root = asRecord(details);
   const audio = asRecord(root?.audio);
   if (!root || !audio || audio.kind !== "audio") return details;

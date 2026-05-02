@@ -161,7 +161,8 @@ struct TimelineReducerAskTests {
         reducer.process(.toolOutput(.init(
             sessionId: "s1", toolEventId: "ask-evt-1",
             output: "approach: full_rewrite",
-            isError: false, mode: .append, truncated: false, totalBytes: nil
+            isError: false, mode: .append, truncated: false, totalBytes: nil,
+            details: nil
         )))
         // toolEnd should clear the output and mark done with empty preview
         reducer.process(.toolEnd(

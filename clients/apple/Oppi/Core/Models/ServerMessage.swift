@@ -58,7 +58,7 @@ enum ServerMessage: Sendable, Equatable {
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
     case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
-    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
     // Message queue
@@ -331,7 +331,8 @@ extension ServerMessage: Decodable {
             let mode = try c.decodeIfPresent(ToolOutputMode.self, forKey: .mode) ?? .append
             let truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
             let totalBytes = try c.decodeIfPresent(Int.self, forKey: .totalBytes)
-            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes)
+            let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
+            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details)
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)

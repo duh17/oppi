@@ -158,25 +158,36 @@ struct ToolPresentationBuilderTests {
         #expect(config.languageBadge == "Markdown")
     }
 
-    @Test("streaming voice speak text uses compact voice transcript presentation")
-    func streamingVoiceSpeakTextUsesCompactVoiceTranscriptPresentation() {
+    @Test("streaming generic voice details use compact voice transcript presentation")
+    func streamingGenericVoiceDetailsUseCompactVoiceTranscriptPresentation() {
         let transcript = "This voice text is still streaming but should render like spoken output, not a large generic text viewport."
+        let details: JSONValue = .object([
+            "presentation": .string("voice"),
+            "message": .string(transcript),
+            "delivery": .string("directSpeak"),
+        ])
 
         let config = ToolPresentationBuilder.build(
-            itemID: "voice-streaming", tool: "voice_speak",
+            itemID: "voice-streaming", tool: "example_tts_speak",
             argsSummary: "text: hi",
             outputPreview: transcript,
             isError: false, isDone: false,
-            context: emptyContext(args: ["text": .string(transcript)], expanded: ["voice-streaming"])
+            context: emptyContext(
+                args: ["text": .string(transcript)],
+                details: details,
+                expanded: ["voice-streaming"]
+            )
         )
 
-        guard case .voiceMessage(let text, let attachmentId, let mimeType, _, _) = config.expandedContent else {
-            Issue.record("Expected streaming voice_speak text to use .voiceMessage compact content")
+        #expect(config.title == "Voice message")
+        guard case .voiceMessage(let text, let attachmentId, let mimeType, _, let delivery) = config.expandedContent else {
+            Issue.record("Expected generic voice presentation to use .voiceMessage compact content")
             return
         }
         #expect(text == transcript)
         #expect(attachmentId.isEmpty)
         #expect(mimeType == "audio/wav")
+        #expect(delivery == .directSpeak)
     }
 
     @Test("voice_speak errors render generic text instead of a voice card")
@@ -291,6 +302,38 @@ struct ToolPresentationBuilderTests {
         #expect(mimeType == "audio/wav")
         #expect(durationSeconds == 1.2)
         #expect(delivery == nil)
+    }
+
+    @Test("generic voice attachment renders even when output text is empty")
+    func genericVoiceAttachmentRendersWithEmptyOutput() {
+        let details: JSONValue = .object([
+            "presentation": .string("voice"),
+            "message": .string("This should still be replayable."),
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-generic-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(2.4),
+            ]),
+        ])
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "generic-voice-1", tool: "example_tts_speak",
+            argsSummary: "text: hi",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(details: details)
+        )
+
+        #expect(config.title == "Voice message")
+        guard case .voiceMessage(let text, let attachmentId, let mimeType, let durationSeconds, _) = config.expandedContent else {
+            Issue.record("Expected generic voice attachment content")
+            return
+        }
+        #expect(text == "This should still be replayable.")
+        #expect(attachmentId == "att-generic-1")
+        #expect(mimeType == "audio/wav")
+        #expect(durationSeconds == 2.4)
     }
 
     // MARK: - Read

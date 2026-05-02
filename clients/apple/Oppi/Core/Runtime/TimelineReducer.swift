@@ -701,6 +701,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     pendingToolOutputOrder.append(toolEventId)
                 }
                 pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || payload.isError
+                if let details = payload.details,
+                   toolDetailsStore.details(for: toolEventId) != details {
+                    toolDetailsStore.set(details, for: toolEventId)
+                    didMutate = true
+                }
 
                 if payload.mode == .replace {
                     pendingToolOutputChunksByID[toolEventId] = [payload.output]
@@ -824,8 +829,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             } else {
                 outputDidChange = toolOutputStore.append(payload.output, to: payload.toolEventId)
             }
+            let previousDetails = toolDetailsStore.details(for: payload.toolEventId)
+            if let details = payload.details {
+                toolDetailsStore.set(details, for: payload.toolEventId)
+            }
             let previewDidChange = updateToolCallPreview(id: payload.toolEventId, isError: payload.isError)
-            return outputDidChange || previewDidChange
+            return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
 
         case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
             return handleToolEnd(toolEventId: toolEventId, details: details, isError: isError, resultSegments: resultSegments)

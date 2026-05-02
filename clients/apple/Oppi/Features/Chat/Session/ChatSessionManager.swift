@@ -774,11 +774,12 @@ final class ChatSessionManager {
                 toolCallId: toolCallId, callSegments: callSegments
             ))
 
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details):
             coalescer.receive(toolCallCorrelator.output(
                 sessionId: sessionId, output: output, isError: isError,
                 toolCallId: toolCallId, mode: mode,
-                truncated: truncated, totalBytes: totalBytes
+                truncated: truncated, totalBytes: totalBytes,
+                details: details
             ))
 
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):

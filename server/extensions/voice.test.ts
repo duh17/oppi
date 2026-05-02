@@ -174,6 +174,23 @@ describe("createVoiceFactory", () => {
   });
 });
 
+describe("voice reply mode", () => {
+  it("registers a session-scoped voice reply mode tool", async () => {
+    const api = createMockAPI();
+    createVoiceFactory()(api as never);
+    const tool = api.tools.get("voice_reply_mode");
+    expect(tool).toBeDefined();
+
+    const result = await tool!.execute("tc-session-mode", { mode: "autoplay" });
+    expect(result.content[0]?.text).toContain("autoplay voice replies by default");
+    expect(result.details).toMatchObject({
+      kind: "voice_reply_mode",
+      scope: "session",
+      mode: "autoplay",
+    });
+  });
+});
+
 describe("voice preferences", () => {
   let tempDir: string;
 
