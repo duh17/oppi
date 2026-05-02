@@ -49,12 +49,13 @@ Default model lookup checks Qwen3-TTS snapshots under:
 ~/.cache/huggingface/hub
 ```
 
-If your paths are different, set these before starting Oppi server:
+If your paths are different, save them in Oppi config:
 
 ```bash
-export PI_VOICE_TTS_BIN=/path/to/yuwp-tts
-export PI_VOICE_MODEL=/path/to/qwen3-tts-model
-export PI_VOICE_TTS_URL=http://127.0.0.1:7937
+oppi config set runtimeEnv.PI_VOICE_TTS_BIN /path/to/yuwp-tts
+oppi config set runtimeEnv.PI_VOICE_MODEL /path/to/qwen3-tts-model
+oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config validate
 ```
 
 Then restart Oppi server.
@@ -76,10 +77,11 @@ Check it:
 curl -sf http://127.0.0.1:7937/v1/info | jq .
 ```
 
-If you use a non-default URL, set it for Oppi server:
+If you use a non-default URL, save it for Oppi server:
 
 ```bash
-export PI_VOICE_TTS_URL=http://127.0.0.1:7937
+oppi config set runtimeEnv.PI_VOICE_TTS_URL http://127.0.0.1:7937
+oppi config validate
 ```
 
 Then restart Oppi server.

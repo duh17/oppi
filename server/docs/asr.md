@@ -82,9 +82,8 @@ curl -sf http://127.0.0.1:7936/v1/info | jq .
 Configure Oppi server:
 
 ```bash
-jq '.asr = {"sttEndpoint":"http://127.0.0.1:7936"}' \
-  ~/.config/oppi/config.json > /tmp/oppi-config.json \
-  && mv /tmp/oppi-config.json ~/.config/oppi/config.json
+oppi config set asr.sttEndpoint http://127.0.0.1:7936
+oppi config validate
 ```
 
 Restart Oppi server, then choose **Settings → Voice → Dictation Engine → Server** in the iOS app.
