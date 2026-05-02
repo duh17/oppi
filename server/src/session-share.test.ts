@@ -119,6 +119,7 @@ describe("shareSession", () => {
   it("removes system prompt, tool definitions, and pre-user setup from embedded share payloads", async () => {
     const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
     const openAiKey = `sk-${"B".repeat(24)}`;
+    const expandedSkill = `<skill name="writing" location="/Users/alice/.pi/agent/skills/writing/SKILL.md">\nUse the writing skill.\nKeep prose tight.\n</skill>\n\nemail alice@example.com key ${openAiKey}`;
     const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
       const html = buildExportHtmlWithSessionData({
         header: {
@@ -147,7 +148,7 @@ describe("shareSession", () => {
             timestamp: "2026-04-22T00:00:02.000Z",
             message: {
               role: "user",
-              content: `email alice@example.com key ${openAiKey}`,
+              content: expandedSkill,
             },
           },
           {
@@ -163,6 +164,12 @@ describe("shareSession", () => {
         ],
         leafId: "entry-assistant",
         systemPrompt: "You are an internal agent with hidden instructions.",
+        skills: ["search", "fetch"],
+        availableSkills: [{ name: "search" }, { name: "fetch" }],
+        workspace: {
+          id: "ws-demo",
+          skills: ["search", "fetch"],
+        },
         tools: [
           {
             name: "bash",
@@ -210,6 +217,10 @@ describe("shareSession", () => {
 
     expect(payload.systemPrompt).toBeUndefined();
     expect(payload.tools).toBeUndefined();
+    expect(payload.skills).toBeUndefined();
+    expect(payload.availableSkills).toBeUndefined();
+    expect(payload.workspace).toMatchObject({ id: "ws-demo" });
+    expect((payload.workspace as Record<string, unknown>).skills).toBeUndefined();
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({
       id: "entry-user",
@@ -225,6 +236,7 @@ describe("shareSession", () => {
     });
     expect(payload.leafId).toBe("entry-assistant");
 
+    expect(payloadText).toContain("[REDACTED_SKILL]");
     expect(payloadText).toContain("[REDACTED_OPENAI_API_KEY]");
     expect(payloadText).toContain("[REDACTED_EMAIL]");
     expect(payloadText).toContain("/Users/[REDACTED_USER]/workspace/oppi");
@@ -232,6 +244,9 @@ describe("shareSession", () => {
     expect(payloadText).not.toContain("Run shell commands");
     expect(payloadText).not.toContain("entry-setup-model");
     expect(payloadText).not.toContain("entry-setup-thinking");
+    expect(payloadText).not.toContain("Use the writing skill.");
+    expect(payloadText).not.toContain("Keep prose tight.");
+    expect(payloadText).not.toContain("/Users/alice/.pi/agent/skills/writing/SKILL.md");
     expect(payloadText).not.toContain(openAiKey);
     expect(payloadText).not.toContain("alice@example.com");
     expect(payloadText).not.toContain("/Users/alice");
@@ -247,6 +262,80 @@ describe("shareSession", () => {
     expect(
       result.redaction.findings.some((finding) => finding.kind === "pre_user_entries_removed"),
     ).toBe(true);
+    expect(
+      result.redaction.findings.some((finding) => finding.kind === "skill_block_removed"),
+    ).toBe(true);
+    expect(result.redaction.findings.some((finding) => finding.kind === "skills_removed")).toBe(
+      true,
+    );
+    expect(existsSync(tempHtmlPath)).toBe(false);
+  });
+
+  it("keeps skill metadata when skill redaction is turned off", async () => {
+    const tempHtmlPath = join(tmpdir(), `oppi-share-test-${randomUUID()}.html`);
+    const exportSessionToHtml = vi.fn(async (_session: AgentSession, outputPath: string) => {
+      const html = buildExportHtmlWithSessionData({
+        entries: [
+          {
+            id: "entry-user",
+            parentId: null,
+            type: "message",
+            timestamp: "2026-04-22T00:00:00.000Z",
+            message: {
+              role: "user",
+              content: "share this",
+            },
+          },
+        ],
+        leafId: "entry-user",
+        skills: ["search", "fetch"],
+        workspace: {
+          id: "ws-demo",
+          skills: ["search", "fetch"],
+        },
+      });
+      writeFileSync(outputPath, html, "utf-8");
+    });
+
+    let uploadedHtml = "";
+    const result = await shareSession(
+      makeSession("/tmp/session.jsonl"),
+      {
+        ensureGhAuthenticated: () => {},
+        exportSessionToHtml,
+        createSecretGist: async (htmlPath) => {
+          uploadedHtml = readFileSync(htmlPath, "utf-8");
+          return {
+            stdout: "https://gist.github.com/demo-user/abc123\n",
+            stderr: "",
+            code: 0,
+          };
+        },
+        makeTempPath: () => tempHtmlPath,
+      },
+      {
+        action: "publish",
+        redactionPolicy: {
+          skills: false,
+        },
+      },
+    );
+
+    expect(result.phase).toBe("published");
+    if (result.phase !== "published") {
+      throw new Error("Expected published result");
+    }
+
+    const payload = decodeExportSessionData(uploadedHtml);
+    expect(payload.skills).toEqual(["search", "fetch"]);
+    expect(payload.workspace).toMatchObject({
+      id: "ws-demo",
+      skills: ["search", "fetch"],
+    });
+    expect(result.redaction.findings.some((finding) => finding.kind === "skills_removed")).toBe(
+      false,
+    );
+    expect(result.redaction.policy.skills).toBe(false);
     expect(existsSync(tempHtmlPath)).toBe(false);
   });
 

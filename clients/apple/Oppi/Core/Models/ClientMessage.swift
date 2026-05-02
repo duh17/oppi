@@ -215,6 +215,7 @@ struct ShareSessionRedactionPolicy: Codable, Sendable, Equatable {
     var ipAddresses: Bool
     var jwtAndBearer: Bool
     var namesHeuristic: Bool
+    var skills: Bool
 
     static let recommended = ShareSessionRedactionPolicy(
         secrets: true,
@@ -223,7 +224,8 @@ struct ShareSessionRedactionPolicy: Codable, Sendable, Equatable {
         userPaths: true,
         ipAddresses: true,
         jwtAndBearer: true,
-        namesHeuristic: false
+        namesHeuristic: false,
+        skills: true
     )
 
     var normalized: ShareSessionRedactionPolicy {

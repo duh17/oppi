@@ -1113,6 +1113,7 @@ export interface ShareSessionRedactionPolicy {
   ipAddresses?: boolean;
   jwtAndBearer?: boolean;
   namesHeuristic?: boolean;
+  skills?: boolean;
 }
 
 export type TurnCommand = "prompt" | "steer" | "follow_up";

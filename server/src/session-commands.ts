@@ -653,6 +653,7 @@ function readShareSessionRedactionPolicy(
     ipAddresses: readOptionalBoolean(raw.ipAddresses),
     jwtAndBearer: readOptionalBoolean(raw.jwtAndBearer),
     namesHeuristic: readOptionalBoolean(raw.namesHeuristic),
+    skills: readOptionalBoolean(raw.skills),
   };
 }
 

@@ -45,6 +45,7 @@ export interface ShareSessionRedactionPolicyInput {
   ipAddresses?: boolean;
   jwtAndBearer?: boolean;
   namesHeuristic?: boolean;
+  skills?: boolean;
 }
 
 export interface ShareSessionRedactionPolicy {
@@ -55,6 +56,7 @@ export interface ShareSessionRedactionPolicy {
   ipAddresses: boolean;
   jwtAndBearer: boolean;
   namesHeuristic: boolean;
+  skills: boolean;
 }
 
 export interface ShareSessionRedactionSummary {
@@ -396,6 +398,7 @@ const DEFAULT_SHARE_REDACTION_POLICY: ShareSessionRedactionPolicy = {
   ipAddresses: true,
   jwtAndBearer: true,
   namesHeuristic: false,
+  skills: true,
 };
 
 function parseBoolEnv(name: string, fallback: boolean): boolean {
@@ -437,6 +440,7 @@ function defaultRedactionPolicyFromEnv(): ShareSessionRedactionPolicy {
       "OPPI_SHARE_REDACT_NAMES_HEURISTIC",
       DEFAULT_SHARE_REDACTION_POLICY.namesHeuristic,
     ),
+    skills: parseBoolEnv("OPPI_SHARE_REDACT_SKILLS", DEFAULT_SHARE_REDACTION_POLICY.skills),
   };
 }
 
@@ -455,6 +459,7 @@ function normalizeRedactionPolicy(
       typeof input?.jwtAndBearer === "boolean" ? input.jwtAndBearer : fallback.jwtAndBearer,
     namesHeuristic:
       typeof input?.namesHeuristic === "boolean" ? input.namesHeuristic : fallback.namesHeuristic,
+    skills: typeof input?.skills === "boolean" ? input.skills : fallback.skills,
   };
 }
 
@@ -764,8 +769,13 @@ function redactTextWithPatterns(
   text: string,
   patterns: ReadonlyArray<ShareRedactionPattern>,
   findingsByKind: Map<string, ShareRedactionFinding>,
+  policy: ShareSessionRedactionPolicy,
 ): string {
   let redacted = text;
+
+  if (policy.skills) {
+    redacted = redactSkillBlockText(redacted, findingsByKind);
+  }
 
   for (const pattern of patterns) {
     const result = applyRedactionPattern(redacted, pattern);
@@ -781,13 +791,14 @@ function redactSessionDataStrings(
   value: unknown,
   patterns: ReadonlyArray<ShareRedactionPattern>,
   findingsByKind: Map<string, ShareRedactionFinding>,
+  policy: ShareSessionRedactionPolicy,
 ): unknown {
   if (typeof value === "string") {
-    return redactTextWithPatterns(value, patterns, findingsByKind);
+    return redactTextWithPatterns(value, patterns, findingsByKind, policy);
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => redactSessionDataStrings(item, patterns, findingsByKind));
+    return value.map((item) => redactSessionDataStrings(item, patterns, findingsByKind, policy));
   }
 
   if (!value || typeof value !== "object") {
@@ -796,7 +807,7 @@ function redactSessionDataStrings(
 
   const next: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    next[key] = redactSessionDataStrings(item, patterns, findingsByKind);
+    next[key] = redactSessionDataStrings(item, patterns, findingsByKind, policy);
   }
   return next;
 }
@@ -847,6 +858,52 @@ function notePreUserEntriesRemoval(
     replacement: "[REMOVED_PRE_USER_ENTRIES]",
     samples: [`${removedCount} pre-user entries omitted`],
   });
+}
+
+function countRedactedSkills(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+
+  return value === undefined ? 0 : 1;
+}
+
+function noteSkillsRemoval(
+  findingsByKind: Map<string, ShareRedactionFinding>,
+  removedCount: number,
+): void {
+  if (removedCount <= 0) {
+    return;
+  }
+
+  mergeRedactionFinding(findingsByKind, {
+    kind: "skills_removed",
+    count: removedCount,
+    replacement: "[REMOVED_SKILLS]",
+    samples: [`${removedCount} skills omitted`],
+  });
+}
+
+function redactSkillBlockText(
+  text: string,
+  findingsByKind: Map<string, ShareRedactionFinding>,
+): string {
+  const match = text.match(
+    /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/,
+  );
+  if (!match) {
+    return text;
+  }
+
+  const trailingUserMessage = match[4]?.trim();
+  mergeRedactionFinding(findingsByKind, {
+    kind: "skill_block_removed",
+    count: 1,
+    replacement: "[REDACTED_SKILL]",
+    samples: ["[skill block omitted]"],
+  });
+
+  return trailingUserMessage ? `[REDACTED_SKILL]\n\n${trailingUserMessage}` : "[REDACTED_SKILL]";
 }
 
 function isUserMessageEntry(entry: unknown): boolean {
@@ -954,6 +1011,7 @@ function lastSessionEntryId(entries: unknown): string | null {
 
 function sanitizeSessionDataForShare(
   sessionData: Record<string, unknown>,
+  policy: ShareSessionRedactionPolicy = normalizeRedactionPolicy(undefined),
   findingsByKind?: Map<string, ShareRedactionFinding>,
 ): { sessionData: Record<string, unknown>; changed: boolean } {
   const nextSessionData = { ...sessionData };
@@ -973,6 +1031,34 @@ function sanitizeSessionDataForShare(
     }
     delete nextSessionData.tools;
     changed = true;
+  }
+
+  if (policy.skills) {
+    let removedSkills = 0;
+    const skillKeys = ["skills", "availableSkills", "workspaceSkills", "skillCatalog"];
+    for (const key of skillKeys) {
+      if (!(key in nextSessionData)) {
+        continue;
+      }
+      removedSkills += countRedactedSkills(nextSessionData[key]);
+      delete nextSessionData[key];
+      changed = true;
+    }
+
+    const workspace = nextSessionData.workspace;
+    if (workspace && typeof workspace === "object" && !Array.isArray(workspace)) {
+      const workspaceRecord = { ...(workspace as Record<string, unknown>) };
+      if ("skills" in workspaceRecord) {
+        removedSkills += countRedactedSkills(workspaceRecord.skills);
+        delete workspaceRecord.skills;
+        nextSessionData.workspace = workspaceRecord;
+        changed = true;
+      }
+    }
+
+    if (removedSkills > 0 && findingsByKind) {
+      noteSkillsRemoval(findingsByKind, removedSkills);
+    }
   }
 
   const trimmedEntries = trimSessionEntriesToFirstUser(nextSessionData.entries);
@@ -1009,13 +1095,16 @@ function sanitizeSessionDataForShare(
   };
 }
 
-function defaultSanitizeHtmlForShare(html: string): string {
+function defaultSanitizeHtmlForShare(
+  html: string,
+  policy: ShareSessionRedactionPolicy = normalizeRedactionPolicy(undefined),
+): string {
   const embedded = extractEmbeddedSessionData(html);
   if (!embedded) {
     return html;
   }
 
-  const sanitized = sanitizeSessionDataForShare(embedded.sessionData);
+  const sanitized = sanitizeSessionDataForShare(embedded.sessionData, policy);
   if (!sanitized.changed) {
     return html;
   }
@@ -1092,12 +1181,13 @@ function defaultRedactHtmlForShare(
 
   const embedded = extractEmbeddedSessionData(redactedHtml);
   if (embedded) {
-    const sanitized = sanitizeSessionDataForShare(embedded.sessionData, findingsByKind);
+    const sanitized = sanitizeSessionDataForShare(embedded.sessionData, policy, findingsByKind);
 
     const redactedSessionData = redactSessionDataStrings(
       sanitized.sessionData,
       patterns,
       findingsByKind,
+      policy,
     ) as Record<string, unknown>;
 
     redactedHtml = embedded.rewriteHtml(redactedSessionData);
@@ -1335,7 +1425,7 @@ export async function shareSession(
 
     const redactionEnabled = isAutoRedactionEnabled();
     if (!redactionEnabled) {
-      const sanitizedHtml = defaultSanitizeHtmlForShare(html);
+      const sanitizedHtml = defaultSanitizeHtmlForShare(html, redactionPolicy);
       if (sanitizedHtml !== html) {
         html = sanitizedHtml;
         try {

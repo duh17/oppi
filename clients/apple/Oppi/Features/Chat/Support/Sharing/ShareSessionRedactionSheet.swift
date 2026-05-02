@@ -37,6 +37,7 @@ struct ShareSessionRedactionSheet: View {
                     Toggle("IP addresses", isOn: binding(\.ipAddresses))
                     Toggle("JWT tokens", isOn: binding(\.jwtAndBearer))
                     Toggle("Names (heuristic)", isOn: binding(\.namesHeuristic))
+                    Toggle("Skills", isOn: binding(\.skills))
                 } header: {
                     Text("Redaction settings")
                 } footer: {

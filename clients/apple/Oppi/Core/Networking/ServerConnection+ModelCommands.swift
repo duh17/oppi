@@ -297,7 +297,8 @@ extension ServerConnection {
             userPaths: bool("userPaths", fallback: ShareSessionRedactionPolicy.recommended.userPaths),
             ipAddresses: bool("ipAddresses", fallback: ShareSessionRedactionPolicy.recommended.ipAddresses),
             jwtAndBearer: bool("jwtAndBearer", fallback: ShareSessionRedactionPolicy.recommended.jwtAndBearer),
-            namesHeuristic: bool("namesHeuristic", fallback: ShareSessionRedactionPolicy.recommended.namesHeuristic)
+            namesHeuristic: bool("namesHeuristic", fallback: ShareSessionRedactionPolicy.recommended.namesHeuristic),
+            skills: bool("skills", fallback: ShareSessionRedactionPolicy.recommended.skills)
         )
     }
 
