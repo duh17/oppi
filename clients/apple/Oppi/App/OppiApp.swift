@@ -86,6 +86,7 @@ struct OppiApp: App {
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some Scene {
         WindowGroup {
@@ -126,6 +127,12 @@ struct OppiApp: App {
             .environment(\.theme, themeStore.appTheme)
             .tint(.themeBlue)
             .preferredColorScheme(themeStore.preferredColorScheme)
+            .onAppear {
+                themeStore.updateSystemColorScheme(colorScheme)
+            }
+            .onChange(of: colorScheme) { _, scheme in
+                themeStore.updateSystemColorScheme(scheme)
+            }
             .onChange(of: scenePhase) { _, phase in
                 handleScenePhase(phase)
             }
@@ -402,11 +409,17 @@ struct OppiApp: App {
             }
             if hasActiveAgent {
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
+            } else if coordinator.hasActiveAudioPlayback {
+                // Let active playback continue under the audio background mode.
+                // Avoid proactively closing the stream while a reply is still
+                // speaking; local clips can finish and live streams get the
+                // best chance to drain naturally.
+                backgroundKeepAlive.end()
             } else {
-                // No active agents — send graceful close so the server sees
-                // 1001 (going away) instead of discovering the dead connection
-                // via ping timeout (1006). This avoids a 30-60s server-side
-                // wait and produces cleaner telemetry.
+                // No active agents or playback — send graceful close so the
+                // server sees 1001 (going away) instead of discovering the
+                // dead connection via ping timeout (1006). This avoids a 30-60s
+                // server-side wait and produces cleaner telemetry.
                 connection.prepareForBackground()
                 backgroundKeepAlive.end()
             }

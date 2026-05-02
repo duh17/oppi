@@ -19,23 +19,42 @@ struct SettingsView: View {
     var body: some View {
         List {
             Section("Appearance") {
-                Picker("Theme", selection: Binding(
-                    get: { themeStore.selectedThemeID },
-                    set: { themeStore.selectedThemeID = $0 }
+                Picker("Theme Mode", selection: Binding(
+                    get: { themeStore.mode },
+                    set: { themeStore.mode = $0 }
                 )) {
-                    ForEach(ThemeID.builtins, id: \.self) { themeID in
-                        Text(themeID.displayName).tag(themeID)
-                    }
-                    let customNames = CustomThemeStore.names()
-                    if !customNames.isEmpty {
-                        ForEach(customNames, id: \.self) { name in
-                            Text(name).tag(ThemeID.custom(name))
-                        }
+                    ForEach(ThemeMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
                     }
                 }
 
-                if !themeStore.selectedThemeID.detail.isEmpty {
-                    Text(themeStore.selectedThemeID.detail)
+                Text(themeStore.mode.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+
+                if themeStore.mode == .manual {
+                    themePicker("Theme", selection: Binding(
+                        get: { themeStore.manualThemeID },
+                        set: { themeStore.manualThemeID = $0 }
+                    ))
+
+                    if !themeStore.manualThemeID.detail.isEmpty {
+                        Text(themeStore.manualThemeID.detail)
+                            .font(.footnote)
+                            .foregroundStyle(.themeComment)
+                    }
+                } else {
+                    themePicker("Light Theme", selection: Binding(
+                        get: { themeStore.lightThemeID },
+                        set: { themeStore.lightThemeID = $0 }
+                    ))
+
+                    themePicker("Dark Theme", selection: Binding(
+                        get: { themeStore.darkThemeID },
+                        set: { themeStore.darkThemeID = $0 }
+                    ))
+
+                    Text("Uses your iOS Display & Brightness setting, including Apple's automatic schedule.")
                         .font(.footnote)
                         .foregroundStyle(.themeComment)
                 }
@@ -219,6 +238,21 @@ struct SettingsView: View {
         }
         .themedListSurface()
         .navigationTitle("Settings")
+    }
+
+    @ViewBuilder
+    private func themePicker(_ title: String, selection: Binding<ThemeID>) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(ThemeID.builtins, id: \.self) { themeID in
+                Text(themeID.displayName).tag(themeID)
+            }
+            let customNames = CustomThemeStore.names()
+            if !customNames.isEmpty {
+                ForEach(customNames, id: \.self) { name in
+                    Text(name).tag(ThemeID.custom(name))
+                }
+            }
+        }
     }
 
     private var liveActivityToggle: Binding<Bool> {
