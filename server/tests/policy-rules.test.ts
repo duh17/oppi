@@ -207,6 +207,19 @@ describe("evaluateWithRules", () => {
     expect(decision.reason).toContain("always require approval");
   });
 
+  it("oppi config set always asks", () => {
+    const { store } = makeStore();
+    const decision = engine.evaluateWithRules(
+      bash("oppi config set asr.sttEndpoint http://127.0.0.1:7936"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
   it("respects configured fallback when no rule matches", () => {
     const { store } = makeStore();
     const decision = engine.evaluateWithRules(bash("echo hello"), store.getAll(), "s1", "ws1");

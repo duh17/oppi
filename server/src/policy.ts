@@ -45,6 +45,7 @@ import type {
   CompiledPolicy,
   GateRequest,
   PolicyEngineConfig,
+  ParsedCommand,
   PolicyEvalResult,
   PolicyRule,
 } from "./policy-types.js";
@@ -87,6 +88,26 @@ const FILE_PATH_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
 
 function executableName(raw: string): string {
   return raw.includes("/") ? raw.split("/").pop() || raw : raw;
+}
+
+function parsedCommandMatchesOppiConfigSet(parsed: ParsedCommand): boolean {
+  const executable = executableName(parsed.executable);
+  if (executable === "oppi") {
+    return parsed.args[0] === "config" && parsed.args[1] === "set";
+  }
+  if (executable === "npx") {
+    return parsed.args[0] === "oppi" && parsed.args[1] === "config" && parsed.args[2] === "set";
+  }
+  return false;
+}
+
+function isOppiConfigSetCommand(command: string): boolean {
+  if (!command.includes("oppi") || !command.includes("config") || !command.includes("set")) {
+    return false;
+  }
+  return splitBashCommandChain(command).some((segment) =>
+    parsedCommandMatchesOppiConfigSet(parseBashCommand(segment)),
+  );
 }
 
 function collectDefinedStrings(values: Array<string | undefined>): string[] {
@@ -466,6 +487,15 @@ export class PolicyEngine {
       }
     }
 
+    if (tool === "bash" && isOppiConfigSetCommand((input as { command?: string }).command || "")) {
+      return {
+        action: "ask",
+        reason: "Changing Oppi server config requires approval",
+        layer: "rule",
+        ruleLabel: "config guard",
+      };
+    }
+
     // Layer 1.5: Structural heuristics (configurable via policy.heuristics)
     const heuristicDecision = evaluateConfiguredHeuristics(req, this.policy.heuristics);
     if (heuristicDecision) {
@@ -543,6 +573,18 @@ export class PolicyEngine {
         reason: "Policy changes always require approval",
         layer: "rule",
         ruleLabel: "policy guard",
+      };
+    }
+
+    if (
+      req.tool === "bash" &&
+      isOppiConfigSetCommand((req.input as { command?: string }).command || "")
+    ) {
+      return {
+        action: "ask",
+        reason: "Changing Oppi server config requires approval",
+        layer: "rule",
+        ruleLabel: "config guard",
       };
     }
 
