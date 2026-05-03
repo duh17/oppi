@@ -1,12 +1,12 @@
 import CoreFoundation
 import Foundation
 
-/// Fire-and-forget telemetry helpers for ChatSessionManager.
+/// Fire-and-forget telemetry helpers for chat runtime and nearby product flows.
 ///
 /// Each method captures Sendable arguments and dispatches to
 /// `ChatMetricsService.shared` on a utility-priority detached task.
-/// This keeps the session lifecycle code free of 10-line telemetry
-/// blocks that obscure the actual control flow.
+/// This keeps feature code free of repetitive telemetry blocks that
+/// obscure the actual control flow.
 enum ChatSessionTelemetry {
 
     /// Process start timestamp for app launch metric.
@@ -159,6 +159,83 @@ enum ChatSessionTelemetry {
             sessionId: sessionId,
             tags: ["action": action]
         )
+    }
+
+    // MARK: - Shared helpers
+
+    static func recordTimingMetric(
+        _ metric: ChatMetricName,
+        durationMs: Int64,
+        sessionId: String? = nil,
+        workspaceId: String? = nil,
+        tags: [String: String] = [:]
+    ) {
+        emit(
+            metric,
+            Double(max(0, durationMs)),
+            .ms,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            tags: tags
+        )
+    }
+
+    static func recordCountMetric(
+        _ metric: ChatMetricName,
+        value: Int = 1,
+        sessionId: String? = nil,
+        workspaceId: String? = nil,
+        tags: [String: String] = [:]
+    ) {
+        emit(
+            metric,
+            Double(max(0, value)),
+            .count,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            tags: tags
+        )
+    }
+
+    static func metricErrorKind(for error: Error) -> String {
+        if error is CancellationError {
+            return "cancelled"
+        }
+
+        if let quickSessionError = error as? QuickSessionError {
+            switch quickSessionError {
+            case .noConnection:
+                return "no_connection"
+            }
+        }
+
+        if let shareSessionError = error as? ShareSessionRequestError {
+            switch shareSessionError {
+            case .timedOut:
+                return "timeout"
+            case .failed:
+                return "request_failed"
+            }
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "timeout"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                return "network"
+            case .cancelled:
+                return "cancelled"
+            default:
+                return "url_error"
+            }
+        }
+
+        if error is DecodingError {
+            return "decode"
+        }
+
+        return "other"
     }
 
     // MARK: - Private

@@ -326,19 +326,30 @@ enum AppPreferences {
             }
         }
 
-        static func preferredWorkspaceId(in workspaces: [(id: String, name: String)]) -> String? {
+        struct PreferredWorkspaceSelection: Sendable, Equatable {
+            let id: String
+            let source: String
+        }
+
+        static func preferredWorkspaceSelection(
+            in workspaces: [(id: String, name: String)]
+        ) -> PreferredWorkspaceSelection? {
             guard !workspaces.isEmpty else { return nil }
 
             let ids = Set(workspaces.map(\.id))
             if let lastWorkspaceId, ids.contains(lastWorkspaceId) {
-                return lastWorkspaceId
+                return PreferredWorkspaceSelection(id: lastWorkspaceId, source: "last_used")
             }
 
             if let explicitDefault = defaultWorkspaceId, ids.contains(explicitDefault) {
-                return explicitDefault
+                return PreferredWorkspaceSelection(id: explicitDefault, source: "default")
             }
 
-            return workspaces[0].id
+            return PreferredWorkspaceSelection(id: workspaces[0].id, source: "first_available")
+        }
+
+        static func preferredWorkspaceId(in workspaces: [(id: String, name: String)]) -> String? {
+            preferredWorkspaceSelection(in: workspaces)?.id
         }
 
     }

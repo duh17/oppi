@@ -901,6 +901,15 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Voice first-result latency.",
   },
+  "chat.voice_playback_start_ms": {
+    unit: "ms",
+    description:
+      "Audio playback startup latency for voice replies and replayable voice media. Tags: source, mode, status.",
+  },
+  "chat.voice_playback_error": {
+    unit: "count",
+    description: "Audio playback failure count. Tags: source, phase, error_kind.",
+  },
   "chat.voice_remote_chunk_upload_ms": {
     unit: "ms",
     description: "Remote ASR chunk upload/request latency.",
@@ -994,6 +1003,34 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description:
       "Share sheet export rendering duration (offscreen render to shareable format). Tags: format, content_type.",
+  },
+  "chat.share_prepare_ms": {
+    unit: "ms",
+    description:
+      "Shared-session redaction preflight duration. Tags: status, blocked, can_publish, findings, replacements, emails, phones, user_paths, ip_addresses, jwt_bearer, names, skills.",
+  },
+  "chat.share_publish_ms": {
+    unit: "ms",
+    description:
+      "Shared-session publish duration. Tags: status, findings, replacements, emails, phones, user_paths, ip_addresses, jwt_bearer, names, skills.",
+  },
+  "chat.share_error": {
+    unit: "count",
+    description: "Shared-session request failure count. Tags: action, error_kind.",
+  },
+  "chat.quick_session_create_ms": {
+    unit: "ms",
+    description:
+      "Quick session creation duration. Tags: source, status, selection, has_message, has_attachments, has_repo_refs, has_model.",
+  },
+  "chat.quick_session_error": {
+    unit: "count",
+    description: "Quick session failure count. Tags: source, selection, error_kind.",
+  },
+  "chat.tool_update_count": {
+    unit: "count",
+    description:
+      "Ephemeral tool update messages received by the active chat session. Tags: tool, has_segments.",
   },
 
   // ── Session list rendering ──
@@ -1198,6 +1235,7 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
       }
     | { type: "cycle_thinking_level"; requestId?: string }
     // ── Session ──
+    | { type: "reload"; requestId?: string }
     | { type: "new_session"; requestId?: string }
     | { type: "set_session_name"; name: string; requestId?: string }
     | { type: "compact"; customInstructions?: string; requestId?: string }

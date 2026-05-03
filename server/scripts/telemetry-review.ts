@@ -3,7 +3,7 @@
 /**
  * Oppi telemetry review — reads JSONL metric files, computes percentiles,
  * flags SLO reference threshold violations, and provides dictation-focused
- * dashboard views with provider/model/locale breakdowns.
+ * dashboard views with engine/source/provider/model breakdowns.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -64,9 +64,19 @@ interface LoadResult {
   filesRead: number;
 }
 
+interface DictationErrorSummary {
+  attempts: number;
+  errors: number;
+  setupErrors: number;
+  streamErrors: number;
+  otherErrors: number;
+  errorRate: number | null;
+}
+
 interface BreakdownEntry {
   sampleCount: number;
   metrics: Record<string, MetricResult>;
+  dictationErrors?: DictationErrorSummary;
 }
 
 interface BreakdownSection {
@@ -81,7 +91,7 @@ interface ReviewSummary {
   violations: number;
   sloMetricCount: number;
   groups: Record<string, { pass: number; over: number; missing: number }>;
-  statusBasis: "tm99_vs_slo_p95";
+  statusBasis: "p95_vs_slo_p95";
 }
 
 interface DictationConfigSummary {
@@ -366,6 +376,12 @@ const DICTATION_COMPARE_METRICS = [
   "server.dictation_stt_ms",
   "server.dictation_stt_audio_ratio",
 ] as const;
+
+const DICTATION_BREAKDOWN_METRICS = new Set<string>([
+  ...DICTATION_COMPARE_METRICS,
+  "server.dictation_finalize_ms",
+  "chat.dictation_error",
+]);
 
 function inferUnit(metric: string): string {
   if (metric.endsWith("_ratio") || metric.includes("_delta")) return "ratio";
@@ -717,6 +733,10 @@ export function computeStats(vals: number[]): MetricStats {
   };
 }
 
+function metricPassesSlo(stats: MetricStats, slo: SloThreshold): boolean {
+  return slo.lowerIsBad ? stats.p95 >= slo.p95 : stats.p95 <= slo.p95;
+}
+
 function buildMetricResult(metric: string, vals: number[], unit: string): MetricResult {
   const stats = computeStats(vals);
   const slo = SLO_THRESHOLDS[metric];
@@ -725,11 +745,7 @@ function buildMetricResult(metric: string, vals: number[], unit: string): Metric
     unit: slo?.displayUnit ?? unit,
     slo_p95: slo?.p95 ?? null,
     group: slo?.group ?? "Informational",
-    status: slo
-      ? (slo.lowerIsBad ? stats.tm99 >= slo.p95 : stats.tm99 <= slo.p95)
-        ? "pass"
-        : "over"
-      : "no_slo",
+    status: slo ? (metricPassesSlo(stats, slo) ? "pass" : "over") : "no_slo",
   };
 }
 
@@ -742,15 +758,51 @@ function buildBreakdowns(
 
   for (const tag of byTags) {
     const buckets: Record<string, Record<string, MetricBucket>> = {};
+    const dictationErrorsByValue: Record<
+      string,
+      {
+        attempts: number;
+        errors: number;
+        setupErrors: number;
+        streamErrors: number;
+        otherErrors: number;
+      }
+    > = {};
     let sawAny = false;
 
     for (const sample of data.samples) {
       if (!shouldIncludeMetric(sample.metric, dictationOnly)) continue;
+      if (dictationOnly && !DICTATION_BREAKDOWN_METRICS.has(sample.metric)) continue;
       const tagValue = sample.tags?.[tag];
       if (!tagValue) continue;
       sawAny = true;
       if (!buckets[tagValue]) buckets[tagValue] = {};
+      if (!dictationErrorsByValue[tagValue]) {
+        dictationErrorsByValue[tagValue] = {
+          attempts: 0,
+          errors: 0,
+          setupErrors: 0,
+          streamErrors: 0,
+          otherErrors: 0,
+        };
+      }
       pushValue(buckets[tagValue], sample.metric, sample.value, sample.unit);
+
+      if (sample.metric === "chat.dictation_setup_ms") {
+        dictationErrorsByValue[tagValue].attempts += 1;
+      } else if (sample.metric === "chat.dictation_error") {
+        const count = Math.max(0, Math.round(sample.value));
+        const phase = sample.tags?.phase;
+        dictationErrorsByValue[tagValue].errors += count;
+        if (phase === "setup") {
+          dictationErrorsByValue[tagValue].setupErrors += count;
+          dictationErrorsByValue[tagValue].attempts += count;
+        } else if (phase === "stream") {
+          dictationErrorsByValue[tagValue].streamErrors += count;
+        } else {
+          dictationErrorsByValue[tagValue].otherErrors += count;
+        }
+      }
     }
 
     if (!sawAny) continue;
@@ -763,13 +815,29 @@ function buildBreakdowns(
         metricResults[metric] = buildMetricResult(metric, bucket.vals, bucket.unit);
         sampleCount += bucket.vals.length;
       }
-      values[tagValue] = { sampleCount, metrics: metricResults };
+      const errorSummary = dictationErrorsByValue[tagValue];
+      values[tagValue] = {
+        sampleCount,
+        metrics: metricResults,
+        dictationErrors:
+          errorSummary && (errorSummary.attempts > 0 || errorSummary.errors > 0)
+            ? {
+                ...errorSummary,
+                errorRate:
+                  errorSummary.attempts > 0 ? errorSummary.errors / errorSummary.attempts : null,
+              }
+            : undefined,
+      };
     }
 
     sections.push({
       tag,
       values: Object.fromEntries(
-        Object.entries(values).sort((a, b) => b[1].sampleCount - a[1].sampleCount),
+        Object.entries(values).sort(
+          (a, b) =>
+            (b[1].dictationErrors?.attempts ?? b[1].sampleCount) -
+            (a[1].dictationErrors?.attempts ?? a[1].sampleCount),
+        ),
       ),
     });
   }
@@ -820,7 +888,7 @@ export function review(
         shouldIncludeMetric(metric, options.dictationOnly),
       ).length,
       groups,
-      statusBasis: "tm99_vs_slo_p95",
+      statusBasis: "p95_vs_slo_p95",
     },
     metrics,
     builds,
@@ -931,11 +999,21 @@ function printDictationAssets(
   console.log();
 }
 
+function fmtPercent(ratio: number | null): string {
+  if (ratio == null || !Number.isFinite(ratio)) return "—";
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
+function fmtDictationErrorSummary(summary?: DictationErrorSummary): string {
+  if (!summary || summary.attempts === 0) return "—";
+  return `${summary.errors}/${fmtPercent(summary.errorRate)}`;
+}
+
 function printBreakdowns(result: ReviewOutput, c: ReturnType<typeof makeColors>): void {
   for (const section of result.breakdowns) {
     console.log(`${c.bold}${c.cyan}Breakdown by ${section.tag}${c.reset}`);
     console.log(
-      `  ${"Value".padEnd(32)} ${"Samples".padStart(7)} ${"setup p95".padStart(10)} ${"first p95".padStart(10)} ${"final p95".padStart(10)} ${"delta p95".padStart(10)} ${"stt p95".padStart(10)} ${"model".padStart(0)}`,
+      `  ${"Value".padEnd(32)} ${"Attempts".padStart(8)} ${"setup p95".padStart(10)} ${"first p95".padStart(10)} ${"final p95".padStart(10)} ${"delta p95".padStart(10)} ${"stt p95".padStart(10)} ${"errors".padStart(12)}`,
     );
     for (const [tagValue, entry] of Object.entries(section.values)) {
       const setup = entry.metrics["chat.dictation_setup_ms"];
@@ -943,14 +1021,15 @@ function printBreakdowns(result: ReviewOutput, c: ReturnType<typeof makeColors>)
       const final = entry.metrics["chat.dictation_finalize_ms"];
       const delta = entry.metrics["chat.dictation_preview_final_delta"];
       const stt = entry.metrics["server.dictation_stt_ms"];
-      const modelName =
-        section.tag === "model"
-          ? tagValue
-          : entry.metrics["server.dictation_stt_ms"]?.group
-            ? ""
-            : "";
+      const attempts =
+        entry.dictationErrors?.attempts ??
+        setup?.count ??
+        stt?.count ??
+        first?.count ??
+        entry.sampleCount;
+      const errorSummary = fmtDictationErrorSummary(entry.dictationErrors);
       console.log(
-        `  ${tagValue.slice(0, 32).padEnd(32)} ${String(entry.sampleCount).padStart(7)} ${setup ? fmtValue(setup.p95, setup.unit).padStart(10) : "—".padStart(10)} ${first ? fmtValue(first.p95, first.unit).padStart(10) : "—".padStart(10)} ${final ? fmtValue(final.p95, final.unit).padStart(10) : "—".padStart(10)} ${delta ? fmtValue(delta.p95, delta.unit).padStart(10) : "—".padStart(10)} ${stt ? fmtValue(stt.p95, stt.unit).padStart(10) : "—".padStart(10)} ${modelName}`,
+        `  ${tagValue.slice(0, 32).padEnd(32)} ${String(attempts).padStart(8)} ${setup ? fmtValue(setup.p95, setup.unit).padStart(10) : "—".padStart(10)} ${first ? fmtValue(first.p95, first.unit).padStart(10) : "—".padStart(10)} ${final ? fmtValue(final.p95, final.unit).padStart(10) : "—".padStart(10)} ${delta ? fmtValue(delta.p95, delta.unit).padStart(10) : "—".padStart(10)} ${stt ? fmtValue(stt.p95, stt.unit).padStart(10) : "—".padStart(10)} ${errorSummary.padStart(12)}`,
       );
     }
     console.log();
@@ -999,10 +1078,10 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
         continue;
       }
       const over = r.status === "over";
-      const tmStr = fmtValue(r.tm99, r.unit).padStart(VAL_W);
+      const p95Str = fmtValue(r.p95, r.unit).padStart(VAL_W);
       const sloStr = fmtValue(r.slo_p95 ?? 0, r.unit).padStart(SLO_W);
       console.log(
-        `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${tmStr}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
+        `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${p95Str}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
       );
     }
     console.log();
@@ -1210,7 +1289,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
   result.byTags = [...new Set(result.byTags)];
   if (result.dictation && result.byTags.length === 0) {
-    result.byTags = ["provider_id", "model", "ui_locale"];
+    result.byTags = ["engine", "source", "provider_id", "model"];
   }
   return result;
 }
@@ -1224,14 +1303,15 @@ Phone-friendly by default. Use --wide for full tables.
   bun server/scripts/telemetry-review.ts --wide
   bun server/scripts/telemetry-review.ts --days 1
   bun server/scripts/telemetry-review.ts --dictation --wide
-  bun server/scripts/telemetry-review.ts --dictation --by provider_id,model,ui_locale
+  bun server/scripts/telemetry-review.ts --dictation --by engine,source,provider_id,model
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
   --days <n>            Days of data (default: 7)
   --wide                Full table with all columns
   --dictation           Dictation-focused dashboard (UX + backend + assets)
-  --by <tags>           Breakdown tags (comma-separated). Example: provider_id,model,ui_locale
+                        Defaults to --by engine,source,provider_id,model
+  --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
   --fields <list>       Columns: p50,p95,p99,max,count,slo,status,tm99

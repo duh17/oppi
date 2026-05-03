@@ -50,8 +50,10 @@ struct AskOppiIntent: AppIntent {
         )
 
         let targetWorkspaceId: String
+        let workspaceSelectionSource: String
         if let workspace {
             targetWorkspaceId = workspace.id
+            workspaceSelectionSource = "explicit"
         } else {
             do {
                 let workspaces = try await api.listWorkspaces()
@@ -59,18 +61,28 @@ struct AskOppiIntent: AppIntent {
                     return .result(dialog: "No workspaces configured on the server.")
                 }
 
-                if let preferredId = AppPreferences.QuickSession.preferredWorkspaceId(
+                if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
                     in: workspaces.map { (id: $0.id, name: $0.name) }
                 ) {
-                    targetWorkspaceId = preferredId
+                    targetWorkspaceId = preferred.id
+                    workspaceSelectionSource = preferred.source
                 } else {
                     targetWorkspaceId = workspaces[0].id
+                    workspaceSelectionSource = "first_available"
                 }
             } catch {
                 logger.error("Failed to list workspaces: \(error)")
                 return .result(dialog: "Could not connect to server.")
             }
         }
+
+        let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()
+        let telemetryTags = [
+            "source": "intent",
+            "selection": workspaceSelectionSource,
+            "has_message": message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "0" : "1",
+            "has_model": model == nil ? "0" : "1",
+        ]
 
         do {
             let response = try await api.createWorkspaceSession(
@@ -81,14 +93,51 @@ struct AskOppiIntent: AppIntent {
             )
             let prompted = response.prompted ?? false
             let sessionName = response.session.name ?? response.session.id
+            ChatSessionTelemetry.recordTimingMetric(
+                .quickSessionCreateMs,
+                durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
+                workspaceId: targetWorkspaceId,
+                tags: telemetryTags.merging([
+                    "status": prompted ? "ok" : "error",
+                    "delivery": prompted ? "prompted" : "created_only",
+                ]) { _, new in new }
+            )
             if prompted {
                 logger.error("Quick dispatch succeeded: session=\(response.session.id)")
                 return .result(dialog: "Session started: \(sessionName)")
             } else {
+                ChatSessionTelemetry.recordCountMetric(
+                    .quickSessionError,
+                    workspaceId: targetWorkspaceId,
+                    tags: [
+                        "source": "intent",
+                        "selection": workspaceSelectionSource,
+                        "error_kind": "prompt_delivery",
+                    ]
+                )
                 logger.warning("Session created but prompt delivery failed: \(response.session.id)")
                 return .result(dialog: "Session created but agent failed to start. Open Oppi to retry.")
             }
         } catch {
+            let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
+            ChatSessionTelemetry.recordTimingMetric(
+                .quickSessionCreateMs,
+                durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
+                workspaceId: targetWorkspaceId,
+                tags: telemetryTags.merging([
+                    "status": "error",
+                    "error_kind": errorKind,
+                ]) { _, new in new }
+            )
+            ChatSessionTelemetry.recordCountMetric(
+                .quickSessionError,
+                workspaceId: targetWorkspaceId,
+                tags: [
+                    "source": "intent",
+                    "selection": workspaceSelectionSource,
+                    "error_kind": errorKind,
+                ]
+            )
             logger.error("Quick dispatch failed: \(error)")
             return .result(dialog: "Failed to create session: \(error.localizedDescription)")
         }

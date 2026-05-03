@@ -53,31 +53,35 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     /// Play a pre-generated local audio clip file.
-    func toggleFilePlayback(fileURL: URL, itemID: String) {
+    func toggleFilePlayback(fileURL: URL, itemID: String, mode: String = "manual") {
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
         }
 
+        let startedAtMs = ChatSessionTelemetry.nowMs()
         stop()
         do {
-            try play(fileURL: fileURL, itemID: itemID)
+            try play(fileURL: fileURL, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
+            recordVoicePlaybackError(source: "file", phase: "start", error: error)
             logger.error("Audio file playback failed: \(error.localizedDescription)")
         }
     }
 
     /// Play an in-memory base64-decoded audio blob.
-    func toggleDataPlayback(data: Data, itemID: String) {
+    func toggleDataPlayback(data: Data, itemID: String, mode: String = "manual") {
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
         }
 
+        let startedAtMs = ChatSessionTelemetry.nowMs()
         stop()
         do {
-            try play(data: data, itemID: itemID)
+            try play(data: data, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
+            recordVoicePlaybackError(source: "data", phase: "start", error: error)
             logger.error("Audio blob playback failed: \(error.localizedDescription)")
         }
     }
@@ -154,7 +158,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         guard stream.mimeType == "audio/pcm; codecs=s16le" else {
-            if stream.event == .error { logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)") }
+            if stream.event == .error {
+                recordVoicePlaybackError(source: "stream_unknown", phase: "stream", errorKind: "unsupported_mime")
+                logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
+            }
             return
         }
 
@@ -172,6 +179,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamReceivedDone = true
             finishAudioStreamIfDrained(id: stream.id)
         case .error:
+            recordVoicePlaybackError(source: "stream_pcm", phase: "stream", errorKind: "remote_error")
             logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             stopAudioStream(clearState: true)
         }
@@ -179,7 +187,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     // MARK: - Private
 
-    private func play(data: Data, itemID: String) throws {
+    private func play(data: Data, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
@@ -190,10 +198,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         let audioPlayer = try AVAudioPlayer(data: data)
         attachAndStartPlayer(audioPlayer, itemID: itemID)
+        recordVoicePlaybackStart(source: "data", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio data for item \(itemID), duration: \(audioPlayer.duration, format: .fixed(precision: 1))s")
     }
 
-    private func play(fileURL: URL, itemID: String) throws {
+    private func play(fileURL: URL, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
@@ -203,6 +212,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         let audioPlayer = try AVAudioPlayer(contentsOf: fileURL)
         attachAndStartPlayer(audioPlayer, itemID: itemID)
+        recordVoicePlaybackStart(source: "file", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio file for item \(itemID): \(fileURL.lastPathComponent, privacy: .public)")
     }
 
@@ -237,8 +247,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 return
             }
             markVoiceReplyAutoplayed(itemID: stream.id)
-            toggleDataPlayback(data: data, itemID: Self.streamingPlaybackItemID(for: stream.id))
+            toggleDataPlayback(data: data, itemID: Self.streamingPlaybackItemID(for: stream.id), mode: "autoplay")
         case .error:
+            recordVoicePlaybackError(source: "stream_wav", phase: "stream", errorKind: "remote_error")
             logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             stopAudioStream(clearState: true)
         case .metadata:
@@ -247,7 +258,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     private func startAudioStream(id: String, sampleRate: Double, channels: AVAudioChannelCount) {
+        let startedAtMs = ChatSessionTelemetry.nowMs()
         guard (8_000...48_000).contains(sampleRate), channels == 1 || channels == 2 else {
+            recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
             logger.error("Ignoring invalid audio stream format: \(sampleRate)Hz \(channels)ch")
             return
         }
@@ -263,6 +276,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             let engine = AVAudioEngine()
             let node = AVAudioPlayerNode()
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
+                recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
                 logger.error("Failed to create audio stream format")
                 return
             }
@@ -281,7 +295,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             markVoiceReplyAutoplayed(itemID: id)
             setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
             updateNowPlayingInfo(durationSeconds: nil, isLiveStream: true)
+            recordVoicePlaybackStart(source: "stream_pcm", mode: "autoplay", durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         } catch {
+            recordVoicePlaybackError(source: "stream_pcm", phase: "start", error: error)
             logger.error("Audio stream start failed: \(error.localizedDescription)")
             stopAudioStream(clearState: true)
         }
@@ -305,11 +321,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         guard data.count <= 384 * 1024 else {
+            recordVoicePlaybackError(source: "stream_pcm", phase: "chunk", errorKind: "oversized_chunk")
             logger.error("Ignoring oversized audio stream chunk: \(data.count) bytes")
             return
         }
 
         guard let buffer = pcm16LEBuffer(data: data, format: format) else {
+            recordVoicePlaybackError(source: "stream_pcm", phase: "chunk", errorKind: "decode")
             logger.error("Failed to decode audio stream PCM chunk")
             return
         }
@@ -323,6 +341,34 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             }
         }
         if !node.isPlaying { node.play() }
+    }
+
+    private func recordVoicePlaybackStart(source: String, mode: String, durationMs: Int64) {
+        ChatSessionTelemetry.recordTimingMetric(
+            .voicePlaybackStartMs,
+            durationMs: durationMs,
+            tags: [
+                "source": source,
+                "mode": mode,
+                "status": "ok",
+            ]
+        )
+    }
+
+    private func recordVoicePlaybackError(
+        source: String,
+        phase: String,
+        error: Error? = nil,
+        errorKind: String? = nil
+    ) {
+        ChatSessionTelemetry.recordCountMetric(
+            .voicePlaybackError,
+            tags: [
+                "source": source,
+                "phase": phase,
+                "error_kind": errorKind ?? error.map(ChatSessionTelemetry.metricErrorKind(for:)) ?? "other",
+            ]
+        )
     }
 
     private func pcm16LEBuffer(data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {

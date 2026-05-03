@@ -767,8 +767,21 @@ final class ChatSessionManager {
         case .audioStream(let stream):
             connection.audioPlayer.handleAudioStream(stream, sessionId: sessionId)
 
-        case .toolStart(let tool, let args, let toolCallId, let callSegments),
-             .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments):
+            coalescer.receive(toolCallCorrelator.start(
+                sessionId: sessionId, tool: tool, args: args,
+                toolCallId: toolCallId, callSegments: callSegments
+            ))
+
+        case .toolUpdate(let tool, let args, let toolCallId, let callSegments):
+            ChatSessionTelemetry.recordCountMetric(
+                .toolUpdateCount,
+                sessionId: sessionId,
+                tags: [
+                    "tool": tool,
+                    "has_segments": (callSegments?.isEmpty == false) ? "1" : "0",
+                ]
+            )
             coalescer.receive(toolCallCorrelator.start(
                 sessionId: sessionId, tool: tool, args: args,
                 toolCallId: toolCallId, callSegments: callSegments

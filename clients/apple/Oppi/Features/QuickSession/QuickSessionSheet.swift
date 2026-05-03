@@ -26,6 +26,7 @@ struct QuickSessionSheet: View {
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var selectedWorkspace: Workspace?
+    @State private var selectedWorkspaceSelectionSource = "unknown"
     @State private var selectedServerId: String?
     @State private var selectedModelId: String?
     @State private var thinkingLevel: ThinkingLevel = .medium
@@ -355,6 +356,7 @@ struct QuickSessionSheet: View {
     private func workspaceMenuButton(_ workspace: Workspace, serverId: String) -> some View {
         Button {
             selectedWorkspace = workspace
+            selectedWorkspaceSelectionSource = "manual"
             selectedServerId = serverId
             AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
         } label: {
@@ -375,14 +377,15 @@ struct QuickSessionSheet: View {
     private func setupInitialState() async {
         // Select workspace: last used > explicit default > first available.
         let all = allServerWorkspaces
-        let preferredId = AppPreferences.QuickSession.preferredWorkspaceId(
+        if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
             in: all.map { (id: $0.workspace.id, name: $0.workspace.name) }
-        )
-        if let preferredId, let match = all.first(where: { $0.workspace.id == preferredId }) {
+        ), let match = all.first(where: { $0.workspace.id == preferred.id }) {
             selectedWorkspace = match.workspace
+            selectedWorkspaceSelectionSource = preferred.source
             selectedServerId = match.serverId
         } else if let first = all.first {
             selectedWorkspace = first.workspace
+            selectedWorkspaceSelectionSource = "first_available"
             selectedServerId = first.serverId
         }
 
@@ -420,6 +423,16 @@ struct QuickSessionSheet: View {
         isCreating = true
         error = nil
 
+        let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()
+        let telemetryTags = [
+            "source": "sheet",
+            "selection": selectedWorkspaceSelectionSource,
+            "has_message": trimmed.isEmpty ? "0" : "1",
+            "has_attachments": pendingAttachments.isEmpty ? "0" : "1",
+            "has_repo_refs": pendingRepoPointers.isEmpty ? "0" : "1",
+            "has_model": modelId == nil ? "0" : "1",
+        ]
+
         // Capture references before dismiss invalidates environment
         let nav = navigation
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
@@ -445,6 +458,12 @@ struct QuickSessionSheet: View {
 
                 // Save defaults for next time
                 AppPreferences.QuickSession.saveWorkspaceId(workspace.id)
+                ChatSessionTelemetry.recordTimingMetric(
+                    .quickSessionCreateMs,
+                    durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
+                    workspaceId: workspace.id,
+                    tags: telemetryTags.merging(["status": "ok"]) { _, new in new }
+                )
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
                 // Single atomic write — ContentView.onDismiss unpacks.
@@ -457,6 +476,25 @@ struct QuickSessionSheet: View {
 
                 dismiss()
             } catch {
+                let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
+                ChatSessionTelemetry.recordTimingMetric(
+                    .quickSessionCreateMs,
+                    durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
+                    workspaceId: workspace.id,
+                    tags: telemetryTags.merging([
+                        "status": "error",
+                        "error_kind": errorKind,
+                    ]) { _, new in new }
+                )
+                ChatSessionTelemetry.recordCountMetric(
+                    .quickSessionError,
+                    workspaceId: workspace.id,
+                    tags: [
+                        "source": "sheet",
+                        "selection": selectedWorkspaceSelectionSource,
+                        "error_kind": errorKind,
+                    ]
+                )
                 self.error = error.localizedDescription
                 isCreating = false
                 logger.error("Quick session creation failed: \(error.localizedDescription, privacy: .public)")
