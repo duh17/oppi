@@ -157,6 +157,132 @@ struct ServerConnectionReconnectTests {
         }
     }
 
+    // MARK: - Reconnect restores all tracked subscriptions
+
+    @Test func reconnectResubscribesAllDesiredFullSessions() async {
+        let (conn, _) = makeTestConnection()
+        let subscribeRecorder = SubscribeRecorder()
+
+        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
+        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .busy))
+        conn.focusSession("s2")
+        conn.subscriptionRegistry.setDesired(.full, for: "s1")
+        conn.subscriptionRegistry.setDesired(.full, for: "s2")
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .subscribe(let sessionId, let level, _, let requestId, _):
+                await subscribeRecorder.record(sessionId: sessionId, level: level)
+                conn.routeStreamMessage(StreamMessage(
+                    sessionId: sessionId,
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "subscribe", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            case .getQueue(let requestId):
+                conn.routeStreamMessage(StreamMessage(
+                    sessionId: "s2",
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "get_queue", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            default:
+                break
+            }
+        }
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", asrAvailable: false)
+        ))
+
+        let resubscribed = await waitForTestCondition(timeoutMs: 2_000) {
+            await subscribeRecorder.sessions(level: .full).count == 2
+        }
+        #expect(resubscribed)
+        let fullSessions = await subscribeRecorder.sessions(level: .full)
+        #expect(fullSessions == ["s2", "s1"],
+                "Reconnect must restore focused full session first, then background full subscriptions")
+    }
+
+    @Test func reconnectResubscribesNotificationSessionsByRecentActivity() async {
+        let (conn, _) = makeTestConnection(sessionId: "focus")
+        let subscribeRecorder = SubscribeRecorder()
+
+        conn.sessionStore.upsert(makeTestSession(id: "focus", workspaceId: "w1", status: .busy))
+        conn.focusSession("focus")
+
+        for index in 1...25 {
+            let sessionId = "n\(index)"
+            conn.sessionStore.upsert(makeTestSession(
+                id: sessionId,
+                workspaceId: "w1",
+                status: .busy,
+                lastActivity: Date(timeIntervalSince1970: TimeInterval(index))
+            ))
+            conn.subscriptionRegistry.setDesired(.notifications, for: sessionId)
+        }
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .subscribe(let sessionId, let level, _, let requestId, _):
+                await subscribeRecorder.record(sessionId: sessionId, level: level)
+                conn.routeStreamMessage(StreamMessage(
+                    sessionId: sessionId,
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "subscribe", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            case .getQueue(let requestId):
+                conn.routeStreamMessage(StreamMessage(
+                    sessionId: "focus",
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "get_queue", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            default:
+                break
+            }
+        }
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
+            message: .streamConnected(userName: "test", asrAvailable: false)
+        ))
+
+        let expected = (6...25).reversed().map { "n\($0)" }
+        let resubscribed = await waitForTestCondition(timeoutMs: 3_000) {
+            await subscribeRecorder.sessions(level: .notifications).count == expected.count
+        }
+        #expect(resubscribed)
+        let notificationSessions = await subscribeRecorder.sessions(level: .notifications)
+        #expect(notificationSessions == expected,
+                "Reconnect should spend notification slots on the 20 most recent sessions in deterministic order")
+    }
+
+    @Test func notificationSyncClearsFailedDesiredEntriesOutsideRecentWindow() async {
+        let (conn, _) = makeTestConnection(sessionId: "focus")
+        conn.sessionStore.upsert(makeTestSession(id: "focus", workspaceId: "w1", status: .busy))
+        conn.focusSession("focus")
+        conn.subscriptionRegistry.setDesired(.notifications, for: "stale")
+        conn.subscriptionRegistry.markSubscribeSent(sessionId: "stale", requestId: "stale-r1", level: .notifications)
+        conn.subscriptionRegistry.markSubscribeFailed(sessionId: "stale", requestId: "stale-r1", reason: "network")
+
+        await conn.sessionStreamCoordinator.syncNotificationSubscriptions(connection: conn)
+
+        #expect(conn.subscriptionRegistry.desiredLevel(for: "stale") == .none,
+                "Failed notification subscriptions outside the recent window must not poison reconnect slots forever")
+        #expect(conn.subscriptionRegistry.ackState(for: "stale") == .idle)
+    }
+
     // MARK: - Stale queue sync doesn't send get_queue before resubscribe
 
     /// Regression test: before the fix, a deferred queue sync task from the
@@ -240,5 +366,19 @@ private actor CommandOrderTracker {
 
     func commands() -> [String] {
         log
+    }
+}
+
+private actor SubscribeRecorder {
+    private var log: [(sessionId: String, level: StreamSubscriptionLevel)] = []
+
+    func record(sessionId: String, level: StreamSubscriptionLevel) {
+        log.append((sessionId, level))
+    }
+
+    func sessions(level: StreamSubscriptionLevel) -> [String] {
+        log.compactMap { entry in
+            entry.level == level ? entry.sessionId : nil
+        }
     }
 }

@@ -234,35 +234,21 @@ final class SessionStreamCoordinator {
     func syncNotificationSubscriptions(connection: ServerConnection) async {
         guard connection.wsClient != nil else { return }
 
-        let desired = desiredNotificationSessionIds(connection: connection).filter {
+        let desiredOrdered = orderedDesiredNotificationSessionIds(connection: connection).filter {
             connection.subscriptionRegistry.desiredLevel(for: $0) != .full
         }
-        for sessionId in desired {
+        let desired = Set(desiredOrdered)
+
+        for sessionId in desiredOrdered {
             connection.subscriptionRegistry.setDesired(.notifications, for: sessionId)
         }
+        await clearStaleNotificationDesiredEntries(connection: connection, desired: desired)
 
         let tracked = connection.subscriptionRegistry.sessionIds(acked: .notifications)
         let pending = connection.subscriptionRegistry.sessionIds(inFlight: .notifications)
-
-        let toRemove = tracked.subtracting(desired)
         let toAdd = desired.subtracting(tracked).subtracting(pending)
 
-        for sessionId in toRemove {
-            let generation = connection.subscriptionRegistry.generation(for: sessionId)
-            connection.subscriptionRegistry.markUnsubscribeSent(
-                sessionId: sessionId,
-                generation: generation
-            )
-            try? await connection.wsClient?.send(
-                .unsubscribe(
-                    sessionId: sessionId,
-                    requestId: UUID().uuidString,
-                    subscriptionGeneration: generation
-                )
-            )
-        }
-
-        for sessionId in toAdd {
+        for sessionId in desiredOrdered where toAdd.contains(sessionId) {
             if let pendingUnsub = connection.pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
                 pendingUnsub.cancel()
             }
@@ -294,7 +280,8 @@ final class SessionStreamCoordinator {
                     )
                 }
 
-                let stillDesired = desiredNotificationSessionIds(connection: connection).contains(sessionId)
+                let latestDesired = Set(orderedDesiredNotificationSessionIds(connection: connection))
+                let stillDesired = latestDesired.contains(sessionId)
                     && connection.subscriptionRegistry.desiredLevel(for: sessionId) != .full
                 if !stillDesired {
                     let generation = connection.subscriptionRegistry.generation(for: sessionId)
@@ -472,39 +459,52 @@ final class SessionStreamCoordinator {
     private func resubscribeTrackedSessions(connection: ServerConnection) async {
         guard connection.wsClient != nil else { return }
 
+        let focusedSessionId = connection.focusedSessionId
         var focusedResubscribed = false
-        if let focusedSessionId = connection.focusedSessionId {
+
+        for sessionId in orderedFullSubscriptionSessionIds(connection: connection) {
             let ok = await resubscribeWithRetry(
                 connection: connection,
-                sessionId: focusedSessionId,
+                sessionId: sessionId,
                 level: .full,
                 maxAttempts: ServerConnection.resubscribeMaxAttempts,
                 reason: "stream_reconnect"
             )
-            if ok {
-                focusedResubscribed = true
-            } else {
+            if sessionId == focusedSessionId {
+                if ok {
+                    focusedResubscribed = true
+                } else {
+                    streamCoordinatorLogger.error(
+                        "Resubscription failed for focused session \(sessionId, privacy: .public)"
+                    )
+                    ClientLog.error(
+                        "WebSocket",
+                        "Resubscription failed for focused session",
+                        metadata: ["sessionId": sessionId]
+                    )
+                    ClientLog.error("StreamCoordinator", "Connection recovered but session sync failed", metadata: ["sessionId": sessionId])
+                }
+            } else if !ok {
                 streamCoordinatorLogger.error(
-                    "Resubscription failed for focused session \(focusedSessionId, privacy: .public)"
+                    "Resubscription failed for background full session \(sessionId, privacy: .public)"
                 )
-                ClientLog.error(
-                    "WebSocket",
-                    "Resubscription failed for focused session",
-                    metadata: ["sessionId": focusedSessionId]
-                )
-                ClientLog.error("StreamCoordinator", "Connection recovered but session sync failed", metadata: ["sessionId": focusedSessionId])
             }
         }
 
-        let notificationSessionIds = connection.subscriptionRegistry.sessionIds(desired: .notifications)
-        let focusedSessionId = connection.focusedSessionId
+        let notificationCandidates = orderedNotificationCandidateSessionIds(connection: connection).filter {
+            $0 != focusedSessionId && connection.subscriptionRegistry.desiredLevel(for: $0) != .full
+        }
+        let batch = Array(notificationCandidates.prefix(Self.maxNotificationSubscriptions))
+        let desiredNotifications = Set(batch)
 
-        let sortedNotifications = Array(notificationSessionIds.filter { $0 != focusedSessionId })
-        let batch = sortedNotifications.prefix(Self.maxNotificationSubscriptions)
+        for sessionId in batch {
+            connection.subscriptionRegistry.setDesired(.notifications, for: sessionId)
+        }
+        await clearStaleNotificationDesiredEntries(connection: connection, desired: desiredNotifications)
 
-        if sortedNotifications.count > Self.maxNotificationSubscriptions {
+        if notificationCandidates.count > Self.maxNotificationSubscriptions {
             streamCoordinatorLogger.info(
-                "Reconnect: resubscribing \(batch.count)/\(sortedNotifications.count) notification sessions (capped)"
+                "Reconnect: resubscribing \(batch.count)/\(notificationCandidates.count) notification sessions (capped)"
             )
         }
 
@@ -754,14 +754,90 @@ final class SessionStreamCoordinator {
         }
     }
 
-    private func desiredNotificationSessionIds(connection: ServerConnection) -> Set<String> {
+    private func orderedFullSubscriptionSessionIds(connection: ServerConnection) -> [String] {
+        var fullSessionIds = connection.subscriptionRegistry.sessionIds(desired: .full)
+        if let focusedSessionId = connection.focusedSessionId {
+            fullSessionIds.insert(focusedSessionId)
+        }
+        return orderedSessionIds(fullSessionIds, connection: connection, focusedFirst: true)
+    }
+
+    private func orderedDesiredNotificationSessionIds(connection: ServerConnection) -> [String] {
+        Array(orderedNotificationCandidateSessionIds(connection: connection).prefix(Self.maxNotificationSubscriptions))
+    }
+
+    private func orderedNotificationCandidateSessionIds(connection: ServerConnection) -> [String] {
         let active = connection.focusedSessionId
-        let candidates = connection.sessionStore.sessions
+        return connection.sessionStore.sessions
             .filter { $0.status != .stopped && $0.id != active }
-            .sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
-            .prefix(Self.maxNotificationSubscriptions)
+            .sorted { lhs, rhs in
+                let lhsActivity = lhs.lastActivity ?? .distantPast
+                let rhsActivity = rhs.lastActivity ?? .distantPast
+                if lhsActivity != rhsActivity {
+                    return lhsActivity > rhsActivity
+                }
+                return lhs.id < rhs.id
+            }
             .map(\.id)
-        return Set(candidates)
+    }
+
+    private func clearStaleNotificationDesiredEntries(
+        connection: ServerConnection,
+        desired: Set<String>
+    ) async {
+        let staleDesired = connection.subscriptionRegistry
+            .sessionIds(desired: .notifications)
+            .subtracting(desired)
+        for sessionId in orderedSessionIds(staleDesired, connection: connection, focusedFirst: false) {
+            switch connection.subscriptionRegistry.ackState(for: sessionId) {
+            case .acked:
+                let generation = connection.subscriptionRegistry.generation(for: sessionId)
+                connection.subscriptionRegistry.markUnsubscribeSent(
+                    sessionId: sessionId,
+                    generation: generation
+                )
+                try? await connection.wsClient?.send(
+                    .unsubscribe(
+                        sessionId: sessionId,
+                        requestId: UUID().uuidString,
+                        subscriptionGeneration: generation
+                    )
+                )
+            case .inFlight:
+                // Let the in-flight subscribe settle; the post-ack desired check
+                // below will unsubscribe if it no longer belongs in the window.
+                continue
+            case .failed, .idle:
+                connection.subscriptionRegistry.setDesired(.none, for: sessionId)
+            }
+        }
+    }
+
+    private func orderedSessionIds(
+        _ sessionIds: Set<String>,
+        connection: ServerConnection,
+        focusedFirst: Bool
+    ) -> [String] {
+        let activityBySessionId = Dictionary(
+            uniqueKeysWithValues: connection.sessionStore.sessions.map { session in
+                (session.id, session.lastActivity ?? .distantPast)
+            }
+        )
+        let focusedSessionId = connection.focusedSessionId
+
+        return sessionIds.sorted { lhs, rhs in
+            if focusedFirst, let focusedSessionId {
+                if lhs == focusedSessionId, rhs != focusedSessionId { return true }
+                if rhs == focusedSessionId, lhs != focusedSessionId { return false }
+            }
+
+            let lhsActivity = activityBySessionId[lhs] ?? .distantPast
+            let rhsActivity = activityBySessionId[rhs] ?? .distantPast
+            if lhsActivity != rhsActivity {
+                return lhsActivity > rhsActivity
+            }
+            return lhs < rhs
+        }
     }
 
     private func recordResubscribeMetric(
