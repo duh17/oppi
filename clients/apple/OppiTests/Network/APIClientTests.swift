@@ -807,6 +807,93 @@ struct APIClientTests {
         #expect(content == "print(\"hello\")")
     }
 
+    @Test func fileEndpointsPercentEncodePathSegmentsAndUseStructuredQueries() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        let workspacePath = "folder one/plus+?hash#percent%&/日本語 image.png"
+        let directoryPath = "folder one/日本語 #?/"
+        let expectedFilePath = "/workspaces/w1/files/folder%20one/plus%2B%3Fhash%23percent%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20image.png"
+        let expectedDirectoryPath = "/workspaces/w1/files/folder%20one/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F/"
+        var step = 0
+
+        MockURLProtocol.handler = { request in
+            step += 1
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            switch step {
+            case 1:
+                #expect(components?.percentEncodedPath == expectedFilePath)
+                #expect(components?.queryItems?.isEmpty ?? true)
+            case 2:
+                #expect(components?.percentEncodedPath == expectedFilePath)
+                #expect(components?.queryItems?.first(where: { $0.name == "mode" })?.value == "browse")
+            case 3:
+                #expect(components?.percentEncodedPath == expectedDirectoryPath)
+                #expect(components?.queryItems?.isEmpty ?? true)
+            default:
+                Issue.record("Unexpected request count: \(step)")
+            }
+            return self.mockResponse(json: "{\"path\":\"/\",\"entries\":[],\"truncated\":false}")
+        }
+
+        _ = try await client.fetchWorkspaceFile(workspaceID: "w1", path: workspacePath)
+        _ = try await client.browseWorkspaceFile(workspaceId: "w1", path: workspacePath)
+        _ = try await client.listWorkspaceDirectory(workspaceId: "w1", path: directoryPath)
+        #expect(step == 3)
+    }
+
+    @Test func browseFileStreamURLUsesEncodedPathSegmentsAndQueryItems() async throws {
+        let client = makeClient()
+        let url = try await client.browseFileStreamURL(
+            workspaceId: "w1",
+            path: "clips/space +?#%&/日本語 sample.mov"
+        )
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        #expect(
+            components?.percentEncodedPath ==
+                "/workspaces/w1/files/clips/space%20%2B%3F%23%25%26/%E6%97%A5%E6%9C%AC%E8%AA%9E%20sample.mov"
+        )
+        let items = components?.queryItems ?? []
+        #expect(items.contains(where: { $0.name == "mode" && $0.value == "browse" }))
+        #expect(items.contains(where: { $0.name == "token" && $0.value == "sk_test" }))
+    }
+
+    @Test func sessionAndSkillFileURLsUseQueryItemsForSpecialCharacters() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        let specialPath = "/tmp/space +?#%&=/日本語.swift"
+        let specialSkillPath = "nested dir/+?#%&=/日本語.md"
+        var step = 0
+
+        MockURLProtocol.handler = { request in
+            step += 1
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
+            let encodedQuery = components?.percentEncodedQuery ?? ""
+            #expect(encodedQuery.contains("%2B"))
+            #expect(encodedQuery.contains("%26"))
+            #expect(encodedQuery.contains("%3D"))
+            #expect(encodedQuery.contains("+") == false)
+            if step == 1 {
+                #expect(components?.percentEncodedPath == "/workspaces/w1/sessions/s1/touched-file")
+                #expect(pathQuery == specialPath)
+            } else if step == 2 {
+                #expect(components?.percentEncodedPath == "/skills/fetch/file")
+                #expect(pathQuery == specialSkillPath)
+            } else {
+                Issue.record("Unexpected request count: \(step)")
+            }
+            return self.mockResponse(json: step == 1 ? "{}" : "{\"content\":\"ok\"}")
+        }
+
+        _ = try await client.browseSessionTouchedFile(workspaceId: "w1", sessionId: "s1", path: specialPath)
+        let content = try await client.getSkillFile(name: "fetch", path: specialSkillPath)
+        #expect(content == "ok")
+        #expect(step == 2)
+    }
+
     // MARK: - Permissions
 
     @Test func respondToPermissionUsesRestEndpoint() async throws {

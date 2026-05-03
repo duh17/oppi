@@ -791,7 +791,7 @@ actor APIClient {
 
     /// Get a single file's content from a skill directory.
     func getSkillFile(name: String, path: String) async throws -> String {
-        let data = try await get("/skills/\(name)/file?path=\(encodeQueryPath(path))")
+        let data = try await get(url: makeSkillFileURL(name: name, path: path))
         struct Response: Decodable { let content: String }
         return try JSONDecoder().decode(Response.self, from: data).content
     }
@@ -1064,7 +1064,8 @@ actor APIClient {
     /// Session attachments are server-owned artifacts (for example, voice_speak audio)
     /// stored in the Oppi data directory rather than the workspace checkout.
     func fetchSessionAttachment(workspaceId: String, sessionId: String, attachmentId: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/attachments/\(attachmentId)")
+        let url = try makeURL(pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "attachments", attachmentId])
+        return try await get(url: url)
     }
 
     /// Fetch a file from the session's working directory.
@@ -1073,7 +1074,7 @@ actor APIClient {
     /// in a tool call row to view the current file on disk.
     // periphery:ignore - used by APIClientTests + RemoteFileView (transitively unused)
     func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(encodeQueryPath(path))")
+        let data = try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "files", path: path))
         // File content is returned as raw bytes — decode as UTF-8 text
         guard let text = String(data: data, encoding: .utf8) else {
             throw APIError.server(status: 422, message: "File is not text (binary content)")
@@ -1084,7 +1085,7 @@ actor APIClient {
     // periphery:ignore - used by RemoteFileView (transitively unused)
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(encodeQueryPath(path))")
+        return try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "files", path: path))
     }
 
     /// Fetch a workspace file by path (images, etc.) from the workspace file endpoint.
@@ -1092,7 +1093,7 @@ actor APIClient {
     /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
     /// Returns raw `Data` so the caller can decode as `UIImage`.
     func fetchWorkspaceFile(workspaceID: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceID)/files/\(path)")
+        return try await get(url: makeWorkspaceFileURL(workspaceId: workspaceID, path: path))
     }
 
     // MARK: - Workspace File Browser
@@ -1102,12 +1103,13 @@ actor APIClient {
     /// Pass an empty string or "/" for the workspace root. Subdirectory paths
     /// should include a trailing slash (e.g. "src/").
     func listWorkspaceDirectory(workspaceId: String, path: String = "") async throws -> DirectoryListingResponse {
-        let route = if path.isEmpty || path == "/" {
-            "/workspaces/\(workspaceId)/files/"
-        } else {
-            "/workspaces/\(workspaceId)/files/\(path)"
-        }
-        let data = try await get(route)
+        let data = try await get(
+            url: makeWorkspaceFileURL(
+                workspaceId: workspaceId,
+                path: path,
+                directory: true
+            )
+        )
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
     }
 
@@ -1124,7 +1126,13 @@ actor APIClient {
     ///
     /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
     func browseWorkspaceFile(workspaceId: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/files/\(path)?mode=browse")
+        return try await get(
+            url: makeWorkspaceFileURL(
+                workspaceId: workspaceId,
+                path: path,
+                queryItems: [URLQueryItem(name: "mode", value: "browse")]
+            )
+        )
     }
 
     /// Build an authenticated URL for streaming media via AVPlayer.
@@ -1133,7 +1141,14 @@ actor APIClient {
     /// server without needing custom header injection. No data is downloaded
     /// by this method — AVPlayer handles progressive download and buffering.
     func browseFileStreamURL(workspaceId: String, path: String) throws -> URL {
-        return try makeURL(path: "/workspaces/\(workspaceId)/files/\(path)?mode=browse&token=\(token)")
+        try makeWorkspaceFileURL(
+            workspaceId: workspaceId,
+            path: path,
+            queryItems: [
+                URLQueryItem(name: "mode", value: "browse"),
+                URLQueryItem(name: "token", value: token),
+            ]
+        )
     }
 
     /// Fetch content of a file that was touched (written/edited) by a specific session.
@@ -1141,7 +1156,7 @@ actor APIClient {
     /// Works for both workspace-relative paths and absolute paths (e.g. ~/.agent/diagrams/).
     /// The server validates the path exists in the session's `changeStats.changedFiles`.
     func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/touched-file?path=\(encodeQueryPath(path))")
+        return try await get(url: makeSessionFileURL(workspaceId: workspaceId, sessionId: sessionId, route: "touched-file", path: path))
     }
 
     // MARK: - Device Token
@@ -1198,6 +1213,12 @@ actor APIClient {
         return data
     }
 
+    private func get(url: URL) async throws -> Data {
+        let (data, response) = try await request("GET", url: url)
+        try checkStatus(response, data: data)
+        return data
+    }
+
     private func post<T: Encodable>(_ path: String, body: T) async throws -> Data {
         let (data, response) = try await request("POST", path: path, body: body)
         try checkStatus(response, data: data)
@@ -1215,6 +1236,14 @@ actor APIClient {
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         logger.debug("\(method) \(path)")
+        return try await session.data(for: req)
+    }
+
+    private func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        logger.debug("\(method) \(url.path)")
         return try await session.data(for: req)
     }
 
@@ -1248,14 +1277,114 @@ actor APIClient {
     }
 
     private func encodeQueryPath(_ path: String) throws -> String {
-        // urlQueryAllowed preserves `+`, but URLSearchParams decodes `+` as
-        // space. Remove `+` from the allowed set so it gets percent-encoded.
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove("+")
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) else {
+        try percentEncodeQueryComponent(path)
+    }
+
+    private func percentEncodeQueryComponent(_ component: String) throws -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let encoded = component.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            throw APIError.server(status: 400, message: "Invalid query value")
+        }
+        return encoded
+    }
+
+    private func makePercentEncodedQuery(_ queryItems: [URLQueryItem]) throws -> String? {
+        guard !queryItems.isEmpty else { return nil }
+
+        let parts = try queryItems.map { item in
+            let name = try percentEncodeQueryComponent(item.name)
+            guard let value = item.value else { return name }
+            return "\(name)=\(try percentEncodeQueryComponent(value))"
+        }
+        return parts.joined(separator: "&")
+    }
+
+    private func percentEncodePathSegment(_ segment: String) throws -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/%+?#&")
+        guard let encoded = segment.addingPercentEncoding(withAllowedCharacters: allowed) else {
             throw APIError.server(status: 400, message: "Invalid file path")
         }
         return encoded
+    }
+
+    private func makeWorkspaceFileURL(
+        workspaceId: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        directory: Bool = false
+    ) throws -> URL {
+        let normalizedPath = path == "/" ? "" : path
+        let trailingSlash = directory || normalizedPath.hasSuffix("/")
+        return try makeURL(
+            pathSegments: ["workspaces", workspaceId, "files"],
+            appendedPath: normalizedPath,
+            queryItems: queryItems,
+            trailingSlash: trailingSlash
+        )
+    }
+
+    private func makeSessionFileURL(
+        workspaceId: String,
+        sessionId: String,
+        route: String,
+        path: String
+    ) throws -> URL {
+        try makeURL(
+            pathSegments: ["workspaces", workspaceId, "sessions", sessionId, route],
+            queryItems: [URLQueryItem(name: "path", value: path)]
+        )
+    }
+
+    private func makeSkillFileURL(name: String, path: String) throws -> URL {
+        try makeURL(
+            pathSegments: ["skills", name, "file"],
+            queryItems: [URLQueryItem(name: "path", value: path)]
+        )
+    }
+
+    private func makeURL(
+        pathSegments: [String],
+        appendedPath: String? = nil,
+        queryItems: [URLQueryItem] = [],
+        trailingSlash: Bool = false
+    ) throws -> URL {
+        let encodedSegments = try pathSegments.map(percentEncodePathSegment)
+        let normalizedAppendedPath = appendedPath?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        let appendedSegments = try normalizedAppendedPath.isEmpty
+            ? []
+            : normalizedAppendedPath.split(separator: "/", omittingEmptySubsequences: true).map {
+                try percentEncodePathSegment(String($0))
+            }
+        let combined = encodedSegments + appendedSegments
+        var percentEncodedPath = "/\(combined.joined(separator: "/"))"
+        if trailingSlash {
+            percentEncodedPath += "/"
+        }
+        return try makeURL(percentEncodedPath: percentEncodedPath, queryItems: queryItems)
+    }
+
+    private func makeURL(percentEncodedPath: String, queryItems: [URLQueryItem]) throws -> URL {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
+
+        let normalizedBasePath: String = {
+            if components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/" { return "" }
+            if components.percentEncodedPath.hasSuffix("/") { return String(components.percentEncodedPath.dropLast()) }
+            return components.percentEncodedPath
+        }()
+
+        let normalizedRequestPath = percentEncodedPath.hasPrefix("/") ? percentEncodedPath : "/\(percentEncodedPath)"
+        components.percentEncodedPath = normalizedBasePath + normalizedRequestPath
+        components.percentEncodedQuery = try makePercentEncodedQuery(queryItems)
+
+        guard let url = components.url else {
+            throw APIError.invalidResponse
+        }
+
+        return url
     }
 
     /// Build a request URL from an API path that may include a query string.
