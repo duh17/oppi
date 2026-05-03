@@ -546,9 +546,18 @@ final class ServerConnection {
         }
 
         // Also route notification-level events to the active session handler
-        // (permissions from other sessions still need processing)
+        // (permissions from other sessions still need processing). If a
+        // non-focused full session has its own live consumer, let that
+        // per-session pipeline own destructive permission-store updates so
+        // its reducer still receives resolution metadata.
         if let sessionId, !isFocusedSession(sessionId) {
-            handleCrossSessionMessage(message, sessionId: sessionId)
+            let hasLiveSessionConsumer = sessionEventContinuations[sessionId] != nil
+                || sessionContinuations[sessionId] != nil
+            handleCrossSessionMessage(
+                message,
+                sessionId: sessionId,
+                deferSharedStoreToLiveSession: hasLiveSessionConsumer
+            )
         }
     }
 
@@ -627,7 +636,17 @@ final class ServerConnection {
     /// Delegates store mutations to `applySharedStoreUpdate` (same logic
     /// as the active-session path), then records Live Activity events
     /// directly (cross-session events bypass the coalescer).
-    private func handleCrossSessionMessage(_ message: ServerMessage, sessionId: String) {
+    private func handleCrossSessionMessage(
+        _ message: ServerMessage,
+        sessionId: String,
+        deferSharedStoreToLiveSession: Bool = false
+    ) {
+        if deferSharedStoreToLiveSession,
+           shouldDeferSharedStoreUpdateToLiveSessionConsumer(message) {
+            handleInactiveSessionUI(message, sessionId: sessionId)
+            return
+        }
+
         let result = applySharedStoreUpdate(for: message, sessionId: sessionId)
         handleInactiveSessionUI(message, sessionId: sessionId)
 
@@ -654,6 +673,15 @@ final class ServerConnection {
             syncLiveActivityPermissions()
         default:
             break
+        }
+    }
+
+    private func shouldDeferSharedStoreUpdateToLiveSessionConsumer(_ message: ServerMessage) -> Bool {
+        switch message {
+        case .permissionRequest, .permissionExpired, .permissionCancelled:
+            return true
+        default:
+            return false
         }
     }
 

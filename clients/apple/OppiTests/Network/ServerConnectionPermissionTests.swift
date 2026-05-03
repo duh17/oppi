@@ -177,4 +177,125 @@ struct ServerConnectionPermissionTests {
         #expect(hasMarker,
                 "Same-session permission approval should inject marker into active timeline")
     }
+
+    @Test func nonFocusedFullSessionPermissionCancellationReachesItsTimeline() async {
+        let parentId = "parent-perm"
+        let focusedId = "focused-perm"
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        connection.wsClient?._setStatusForTesting(.connected)
+
+        connection.sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
+        connection.sessionStore.upsert(makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .subscribe(let sessionId, _, _, let requestId, _):
+                connection.routeStreamMessage(StreamMessage(
+                    sessionId: sessionId,
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "subscribe", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            case .getQueue(let requestId):
+                connection.routeStreamMessage(StreamMessage(
+                    sessionId: connection.focusedSessionId,
+                    streamSeq: nil, seq: nil, currentSeq: nil,
+                    message: .commandResult(
+                        command: "get_queue", requestId: requestId,
+                        success: true, data: nil, error: nil
+                    )
+                ))
+            default:
+                break
+            }
+        }
+
+        let parentManager = ChatSessionManager(sessionId: parentId)
+        let focusedManager = ChatSessionManager(sessionId: focusedId)
+        parentManager._loadHistoryForTesting = { _, _ in nil }
+        focusedManager._loadHistoryForTesting = { _, _ in nil }
+
+        let parentTask = Task { @MainActor in
+            await parentManager.connect(connection: connection, sessionStore: connection.sessionStore)
+        }
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { connection.sessionEventContinuations[parentId] != nil }
+        })
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: parentId,
+            streamSeq: nil, seq: nil, currentSeq: 0,
+            message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
+        ))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { parentManager.entryState == .streaming }
+        })
+
+        let focusedTask = Task { @MainActor in
+            await focusedManager.connect(connection: connection, sessionStore: connection.sessionStore)
+        }
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { connection.sessionEventContinuations[focusedId] != nil }
+        })
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: focusedId,
+            streamSeq: nil, seq: nil, currentSeq: 0,
+            message: .connected(session: makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
+        ))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { focusedManager.entryState == .streaming && connection.focusedSessionId == focusedId }
+        })
+
+        let permission = PermissionRequest(
+            id: "parent-perm-1",
+            sessionId: parentId,
+            tool: "bash",
+            input: [:],
+            displaySummary: "parent command",
+            reason: "Test",
+            timeoutAt: Date().addingTimeInterval(60)
+        )
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: parentId,
+            streamSeq: nil, seq: nil, currentSeq: nil,
+            message: .permissionRequest(permission)
+        ))
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                connection.permissionStore.pending.contains { $0.id == permission.id }
+            }
+        })
+
+        connection.routeStreamMessage(StreamMessage(
+            sessionId: parentId,
+            streamSeq: nil, seq: nil, currentSeq: nil,
+            message: .permissionCancelled(id: permission.id)
+        ))
+
+        let resolved = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                parentManager.reducer.items.contains {
+                    if case .permissionResolved(let id, let outcome, let tool, _) = $0 {
+                        return id == permission.id && outcome == .cancelled && tool == "bash"
+                    }
+                    return false
+                }
+            }
+        }
+        #expect(resolved,
+                "Non-focused full session must receive its own permission cancellation marker")
+
+        parentTask.cancel()
+        focusedTask.cancel()
+        connection.sessionEventContinuations[parentId]?.finish()
+        connection.sessionEventContinuations[focusedId]?.finish()
+        await parentTask.value
+        await focusedTask.value
+        connection.disconnectStream()
+    }
 }
