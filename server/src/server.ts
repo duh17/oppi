@@ -66,6 +66,12 @@ import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
+import { isQueryTokenAllowed } from "./http-auth.js";
+import {
+  garbageCollectUploadStore,
+  resolveUploadStoreConfig,
+  type UploadStoreConfigResolved,
+} from "./uploads/local-upload-store.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -88,6 +94,8 @@ function secureTokenEquals(expected: string, actual: string): boolean {
 
 const WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const WS_CLOSE_GOING_AWAY = 1001;
+const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
 const log = createLogger({ base: { component: "server" } });
 
@@ -349,6 +357,7 @@ export class Server {
   private wsMessageHandler!: WsMessageHandler;
   // Dictation pipeline (multiplexed over /stream WS)
   private dictationManager: DictationManager | undefined;
+  private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
@@ -766,6 +775,7 @@ export class Server {
 
         this.resourceSampler.start();
         this.opsMetrics.start();
+        this.startUploadGcLoop();
 
         // Background: sync search index (non-blocking, fires after listen)
         if (this.searchIndex) {
@@ -799,6 +809,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.stopUploadGcLoop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
     this.stopBonjourAdvertisement();
@@ -811,6 +822,50 @@ export class Server {
     this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
     this.wss.close();
     this.httpServer.close();
+  }
+
+  private uploadGcIntervalMs(config: UploadStoreConfigResolved): number {
+    const ttlFloor = Math.min(config.unusedTtlMs, config.retainedTtlMs);
+    return Math.max(
+      MIN_UPLOAD_GC_INTERVAL_MS,
+      Math.min(MAX_UPLOAD_GC_INTERVAL_MS, Math.max(1, Math.floor(ttlFloor / 2))),
+    );
+  }
+
+  private startUploadGcLoop(): void {
+    const config = resolveUploadStoreConfig(this.storage.getConfig());
+    const run = async (): Promise<void> => {
+      try {
+        const result = await garbageCollectUploadStore(
+          resolveUploadStoreConfig(this.storage.getConfig()),
+        );
+        if (result.removedRecords || result.removedTmpFiles || result.removedBlobs) {
+          log.info("upload_store.gc.completed", {
+            removedRecords: result.removedRecords,
+            removedTmpFiles: result.removedTmpFiles,
+            removedBlobs: result.removedBlobs,
+          });
+        }
+      } catch (err: unknown) {
+        log.warn("upload_store.gc.failed", {
+          error: safeErrorMessage(err),
+        });
+      }
+    };
+
+    void run();
+    this.uploadGcTimer = setInterval(() => {
+      void run();
+    }, this.uploadGcIntervalMs(config));
+    this.uploadGcTimer.unref?.();
+  }
+
+  private stopUploadGcLoop(): void {
+    if (!this.uploadGcTimer) {
+      return;
+    }
+    clearInterval(this.uploadGcTimer);
+    this.uploadGcTimer = null;
   }
 
   private startBonjourAdvertisement(): void {
@@ -1094,8 +1149,8 @@ export class Server {
       if (this.matchToken(auth.slice(7))) return true;
     }
 
-    // Query-param token — for browser-loadable content
-    if (url) {
+    // Query-param token — only for a narrow set of browser-loadable GET routes.
+    if (url && isQueryTokenAllowed(req.method || "GET", url.pathname, url)) {
       const queryToken = url.searchParams.get("token");
       if (queryToken && this.matchToken(queryToken)) return true;
     }

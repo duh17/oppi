@@ -59,6 +59,11 @@ export function createSessionFileHandlers(
       return;
     }
 
+    if (isSensitivePath(reqPath)) {
+      helpers.error(res, 403, "Access denied: sensitive file");
+      return;
+    }
+
     const workRoot = await resolveWorkRoot(session.workspaceId);
     if (!workRoot) {
       helpers.error(res, 404, "No workspace root for session");

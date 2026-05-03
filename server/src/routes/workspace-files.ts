@@ -193,8 +193,17 @@ const SENSITIVE_PATH_SEGMENTS = new Set([".git"]);
  * Sensitive files still appear in directory listings (users should know
  * they exist), but their content is not served.
  */
+export function decodeWorkspaceRoutePath(encodedPath: string): string | null {
+  try {
+    return decodeURIComponent(encodedPath);
+  } catch {
+    return null;
+  }
+}
+
 export function isSensitivePath(requestedPath: string): boolean {
-  const segments = requestedPath.split("/");
+  const normalizedPath = requestedPath.replaceAll("\\", "/");
+  const segments = normalizedPath.split("/");
 
   // Check directory segments for sensitive path components
   for (let i = 0; i < segments.length - 1; i++) {
@@ -661,7 +670,11 @@ export function createWorkspaceFileRoutes(
     const match = path.match(/^\/workspaces\/([^/]+)\/files\/(.*)$/);
     if (match && method === "GET") {
       const wsId = match[1];
-      const requestedPath = match[2];
+      const requestedPath = decodeWorkspaceRoutePath(match[2]);
+      if (requestedPath === null) {
+        helpers.error(res, 400, "Invalid file path encoding");
+        return true;
+      }
 
       if (requestedPath === "" || requestedPath.endsWith("/")) {
         await handleListDirectory(wsId, requestedPath, res);

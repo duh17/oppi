@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 
@@ -23,6 +23,8 @@ export interface UploadRecord {
   purpose: "chat_attachment";
   createdAt: number;
   updatedAt: number;
+  completedAt?: number;
+  usedAt?: number;
   expiresAt: number;
 }
 
@@ -31,7 +33,17 @@ export interface UploadStoreConfigResolved {
   maxFileBytes: number;
   maxTurnBytes: number;
   unusedTtlMs: number;
+  retainedTtlMs: number;
+  allowedMimeTypes: string[];
 }
+
+export interface UploadStoreGcResult {
+  removedRecords: number;
+  removedTmpFiles: number;
+  removedBlobs: number;
+}
+
+const ORPHAN_BLOB_GC_GRACE_MS = 5 * 60 * 1000;
 
 export class UploadStoreError extends Error {
   constructor(
@@ -78,6 +90,61 @@ function classifyFromMime(mimeType: string): AttachmentKind {
   return "unknown";
 }
 
+function normalizeMimeType(mimeType: string | undefined): string {
+  const normalized = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return normalized || "application/octet-stream";
+}
+
+function normalizeAllowedMimeTypes(mimeTypes: string[] | undefined): string[] {
+  if (!mimeTypes?.length) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of mimeTypes) {
+    const mimeType = normalizeMimeType(value);
+    if (seen.has(mimeType)) {
+      continue;
+    }
+    seen.add(mimeType);
+    normalized.push(mimeType);
+  }
+  return normalized;
+}
+
+function validateAllowedMimeType(
+  config: UploadStoreConfigResolved,
+  mimeType: string | undefined,
+  phase: "Declared" | "Detected",
+): string {
+  const normalized = normalizeMimeType(mimeType);
+  if (config.allowedMimeTypes.length === 0) {
+    return normalized;
+  }
+  if (config.allowedMimeTypes.includes(normalized)) {
+    return normalized;
+  }
+  throw new UploadStoreError(415, `${phase} MIME type not allowed: ${normalized}`);
+}
+
+function isUploadExpired(record: UploadRecord, now = Date.now()): boolean {
+  if (record.status === "complete" && record.usedAt) {
+    return false;
+  }
+  return record.expiresAt <= now;
+}
+
+const SNIFFED_BINARY_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "application/zip",
+  "application/gzip",
+]);
+
 function detectMimeType(header: Buffer, declaredMimeType?: string, name?: string): string {
   if (
     header.length >= 8 &&
@@ -117,10 +184,17 @@ function detectMimeType(header: Buffer, declaredMimeType?: string, name?: string
     return "application/gzip";
   }
   const ext = extname(name ?? "").toLowerCase();
-  if ((ext === ".heic" || ext === ".heif") && declaredMimeType) {
-    return declaredMimeType;
+  const normalizedDeclaredMimeType = normalizeMimeType(declaredMimeType);
+  if (
+    (ext === ".heic" || ext === ".heif") &&
+    normalizedDeclaredMimeType !== "application/octet-stream"
+  ) {
+    return normalizedDeclaredMimeType;
   }
-  return declaredMimeType?.trim() || "application/octet-stream";
+  if (SNIFFED_BINARY_MIME_TYPES.has(normalizedDeclaredMimeType)) {
+    return "application/octet-stream";
+  }
+  return normalizedDeclaredMimeType;
 }
 
 function blobPathFor(rootPath: string, sha256: string): string {
@@ -150,13 +224,65 @@ async function writeRecord(rootPath: string, record: UploadRecord): Promise<void
   );
 }
 
+async function rmIfExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+  } catch {
+    return false;
+  }
+
+  try {
+    await rm(path, { force: true, recursive: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isOlderThan(path: string, now: number, ageMs: number): Promise<boolean> {
+  const info = await lstat(path).catch(() => null);
+  if (!info) {
+    return false;
+  }
+  return info.mtimeMs <= now - ageMs;
+}
+
+async function collectFiles(rootPath: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(rootPath);
+  } catch {
+    return [];
+  }
+
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const absolutePath = join(rootPath, entry);
+    const info = await lstat(absolutePath).catch(() => null);
+    if (!info || info.isSymbolicLink()) {
+      continue;
+    }
+    if (info.isDirectory()) {
+      paths.push(...(await collectFiles(absolutePath)));
+      continue;
+    }
+    if (info.isFile()) {
+      paths.push(absolutePath);
+    }
+  }
+  return paths;
+}
+
 export function resolveUploadStoreConfig(config: ServerConfig): UploadStoreConfigResolved {
   const rootPath = config.uploadStore?.path?.trim() || join(config.dataDir, "uploads");
+  const unusedTtlMs = config.uploadStore?.unusedTtlMs ?? 24 * 60 * 60 * 1000;
   return {
     rootPath,
     maxFileBytes: config.uploadStore?.maxFileBytes ?? 50 * 1024 * 1024,
     maxTurnBytes: config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024,
-    unusedTtlMs: config.uploadStore?.unusedTtlMs ?? 24 * 60 * 60 * 1000,
+    unusedTtlMs,
+    retainedTtlMs: config.uploadStore?.retainedTtlMs ?? unusedTtlMs,
+    allowedMimeTypes: normalizeAllowedMimeTypes(config.uploadStore?.allowedMimeTypes),
   };
 }
 
@@ -182,6 +308,7 @@ export async function createUploadRecord(args: {
     throw new UploadStoreError(400, "name required");
   }
 
+  const declaredMimeType = validateAllowedMimeType(args.config, args.mimeType, "Declared");
   const now = Date.now();
   const id = `upl_${randomBytes(9).toString("hex")}`;
   const record: UploadRecord = {
@@ -190,9 +317,9 @@ export async function createUploadRecord(args: {
     status: "created",
     originalName: args.name,
     safeName,
-    declaredMimeType: args.mimeType,
-    mimeType: args.mimeType || "application/octet-stream",
-    kind: classifyFromMime(args.mimeType || "application/octet-stream"),
+    declaredMimeType,
+    mimeType: declaredMimeType,
+    kind: classifyFromMime(declaredMimeType),
     declaredSizeBytes: args.sizeBytes,
     purpose: "chat_attachment",
     createdAt: now,
@@ -229,7 +356,7 @@ export async function writeUploadContent(args: {
   if (record.status !== "created") {
     throw new UploadStoreError(409, "Upload is not in created state");
   }
-  if (record.expiresAt < Date.now()) {
+  if (isUploadExpired(record)) {
     throw new UploadStoreError(409, "Upload has expired");
   }
 
@@ -279,6 +406,20 @@ export async function writeUploadContent(args: {
     );
   }
 
+  const declaredMimeType = normalizeMimeType(record.declaredMimeType);
+  const detectedMimeType = validateAllowedMimeType(
+    args.config,
+    detectMimeType(Buffer.concat(headerChunks), record.declaredMimeType, record.safeName),
+    "Detected",
+  );
+  if (declaredMimeType !== "application/octet-stream" && detectedMimeType !== declaredMimeType) {
+    await rm(tmpPath, { force: true }).catch(() => undefined);
+    throw new UploadStoreError(
+      415,
+      `Upload MIME type mismatch: declared ${declaredMimeType}, detected ${detectedMimeType}`,
+    );
+  }
+
   const sha256 = hash.digest("hex");
   const blobPath = blobPathFor(args.config.rootPath, sha256);
   await mkdir(dirname(blobPath), { recursive: true });
@@ -288,11 +429,7 @@ export async function writeUploadContent(args: {
     await rename(tmpPath, blobPath);
   }
 
-  const detectedMimeType = detectMimeType(
-    Buffer.concat(headerChunks),
-    record.declaredMimeType,
-    record.safeName,
-  );
+  const completedAt = Date.now();
   const updated: UploadRecord = {
     ...record,
     status: "complete",
@@ -302,7 +439,9 @@ export async function writeUploadContent(args: {
     sizeBytes: totalBytes,
     sha256,
     blobPath,
-    updatedAt: Date.now(),
+    updatedAt: completedAt,
+    completedAt,
+    expiresAt: completedAt + args.config.retainedTtlMs,
   };
   await writeRecord(args.config.rootPath, updated);
   return updated;
@@ -323,7 +462,7 @@ export async function resolveUploadAttachment(args: {
   if (record.status !== "complete" || !record.blobPath || !record.sizeBytes || !record.sha256) {
     throw new UploadStoreError(409, "Upload is not complete");
   }
-  if (record.expiresAt < Date.now()) {
+  if (isUploadExpired(record)) {
     throw new UploadStoreError(409, "Upload has expired");
   }
   const blobStats = await stat(record.blobPath).catch(() => null);
@@ -333,7 +472,7 @@ export async function resolveUploadAttachment(args: {
   if (args.ref.name && sanitizeFileName(args.ref.name) !== record.safeName) {
     throw new UploadStoreError(409, "Upload name mismatch");
   }
-  if (args.ref.mimeType && args.ref.mimeType !== record.mimeType) {
+  if (args.ref.mimeType && normalizeMimeType(args.ref.mimeType) !== record.mimeType) {
     throw new UploadStoreError(409, "Upload MIME type mismatch");
   }
   if (args.ref.sizeBytes && args.ref.sizeBytes !== record.sizeBytes) {
@@ -342,7 +481,84 @@ export async function resolveUploadAttachment(args: {
   if (args.ref.sha256 && args.ref.sha256 !== record.sha256) {
     throw new UploadStoreError(409, "Upload hash mismatch");
   }
-  return record;
+
+  if (record.usedAt) {
+    return record;
+  }
+
+  const updated = {
+    ...record,
+    usedAt: Date.now(),
+    updatedAt: Date.now(),
+  } satisfies UploadRecord;
+  await writeRecord(args.config.rootPath, updated);
+  return updated;
+}
+
+export async function garbageCollectUploadStore(
+  config: UploadStoreConfigResolved,
+  now = Date.now(),
+): Promise<UploadStoreGcResult> {
+  await ensureDirs(config.rootPath);
+
+  const liveBlobPaths = new Set<string>();
+  const liveTmpPaths = new Set<string>();
+  const recordPaths = await collectFiles(join(config.rootPath, "records"));
+
+  let removedRecords = 0;
+  let removedTmpFiles = 0;
+  let removedBlobs = 0;
+
+  for (const recordPath of recordPaths) {
+    let record: UploadRecord;
+    try {
+      const content = await readFile(recordPath, "utf8");
+      record = JSON.parse(content) as UploadRecord;
+    } catch {
+      continue;
+    }
+
+    const expired = isUploadExpired(record, now);
+    if (expired) {
+      if (await rmIfExists(recordPath)) {
+        removedRecords += 1;
+      }
+      if (await rmIfExists(tmpPathFor(config.rootPath, record.id))) {
+        removedTmpFiles += 1;
+      }
+      continue;
+    }
+
+    if (record.blobPath) {
+      liveBlobPaths.add(record.blobPath);
+    }
+    if (record.status === "created") {
+      liveTmpPaths.add(tmpPathFor(config.rootPath, record.id));
+    }
+  }
+
+  for (const tmpPath of await collectFiles(join(config.rootPath, "tmp"))) {
+    if (liveTmpPaths.has(tmpPath)) {
+      continue;
+    }
+    if (await rmIfExists(tmpPath)) {
+      removedTmpFiles += 1;
+    }
+  }
+
+  for (const blobPath of await collectFiles(join(config.rootPath, "blobs"))) {
+    if (liveBlobPaths.has(blobPath)) {
+      continue;
+    }
+    if (!(await isOlderThan(blobPath, now, ORPHAN_BLOB_GC_GRACE_MS))) {
+      continue;
+    }
+    if (await rmIfExists(blobPath)) {
+      removedBlobs += 1;
+    }
+  }
+
+  return { removedRecords, removedTmpFiles, removedBlobs };
 }
 
 export function uploadRecordToAttachmentRef(record: UploadRecord): ChatAttachmentRef {

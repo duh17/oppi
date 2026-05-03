@@ -423,8 +423,15 @@ describe("workspace file serving", () => {
     expect(res.status).toBe(401);
   });
 
-  it("supports query-param token auth", async () => {
-    const res = await fetch(`${baseUrl}/workspaces/${wsId}/files/chart.png?token=${token}`);
+  it("supports query-param token auth only for browse-mode file reads", async () => {
+    const withoutBrowse = await fetch(
+      `${baseUrl}/workspaces/${wsId}/files/chart.png?token=${token}`,
+    );
+    expect(withoutBrowse.status).toBe(401);
+
+    const res = await fetch(
+      `${baseUrl}/workspaces/${wsId}/files/chart.png?mode=browse&token=${token}`,
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
   });
