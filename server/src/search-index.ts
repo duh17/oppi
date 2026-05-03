@@ -201,19 +201,60 @@ function extractIndexedContent(session: Session, jsonlPath?: string): ExtractedC
 // ---------------------------------------------------------------------------
 
 /** Characters that break FTS5 syntax. */
-const FTS5_SPECIAL = /[{}[\]():^"]/g;
+const FTS5_SPECIAL = /[{}[\]():^]/g;
+
+function sanitizeFtsSegment(raw: string): string {
+  return raw.replace(FTS5_SPECIAL, " ").replace(/\s+/g, " ").trim();
+}
 
 /**
  * Sanitize a user query for FTS5 MATCH.
- * Strips special chars, wraps each term in quotes for safety.
+ * - Preserves quoted phrases.
+ * - Supports explicit uppercase OR operators.
+ * - Wraps terms/phrases in quotes for safety.
  */
 function sanitizeFtsQuery(raw: string): string {
-  const cleaned = raw.replace(FTS5_SPECIAL, " ").trim();
-  if (!cleaned) return "";
-  const terms = cleaned.split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return "";
-  // Wrap each term in quotes to avoid syntax errors, join with implicit AND
-  return terms.map((t) => `"${t}"`).join(" ");
+  const tokens: string[] = [];
+  let current = "";
+  let inQuote = false;
+
+  const pushCurrent = (): void => {
+    const value = sanitizeFtsSegment(current);
+    current = "";
+    if (!value) return;
+
+    if (inQuote) {
+      tokens.push(`"${value}"`);
+      return;
+    }
+
+    for (const part of value.split(/\s+/).filter(Boolean)) {
+      if (part === "OR") {
+        if (tokens.length > 0 && tokens[tokens.length - 1] !== "OR") {
+          tokens.push("OR");
+        }
+      } else {
+        tokens.push(`"${part}"`);
+      }
+    }
+  };
+
+  for (const char of raw) {
+    if (char === '"') {
+      pushCurrent();
+      inQuote = !inQuote;
+      continue;
+    }
+    current += char;
+  }
+  pushCurrent();
+
+  // Trim dangling OR to avoid invalid MATCH syntax.
+  while (tokens[tokens.length - 1] === "OR") {
+    tokens.pop();
+  }
+
+  return tokens.join(" ");
 }
 
 function parseReindexDebounceMs(): number {

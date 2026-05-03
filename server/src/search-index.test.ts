@@ -303,4 +303,32 @@ describe("SearchIndex indexes transcript content only", () => {
       index.close();
     }
   });
+
+  it("supports explicit OR in quoted phrase queries", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-"));
+    cleanupPaths.add(dataDir);
+
+    const bugPath = join(dataDir, "bug.jsonl");
+    const architecturePath = join(dataDir, "arch.jsonl");
+    writeJsonl(bugPath, "bug hunt findings", "fixed flaky search behavior");
+    writeJsonl(architecturePath, "architecture doc outline", "notes on leaky abstractions");
+
+    const bugSession = makeSession({ id: "sess-bug", piSessionFile: bugPath });
+    const architectureSession = makeSession({ id: "sess-arch", piSessionFile: architecturePath });
+    const sessions = new Map([
+      [bugSession.id, bugSession],
+      [architectureSession.id, architectureSession],
+    ]);
+
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      index.sync([bugSession, architectureSession]);
+      const results = index.search('"bug hunt" OR "architecture doc"', "ws-1", 10);
+      expect(results.map((result) => result.sessionId).sort()).toEqual(["sess-arch", "sess-bug"]);
+    } finally {
+      index.close();
+    }
+  });
 });
