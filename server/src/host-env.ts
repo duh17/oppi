@@ -11,6 +11,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ServerConfig } from "./types.js";
 
+const initialHostEnv = { ...process.env } as Record<string, string>;
+let lastAppliedRuntimeEnvKeys = new Set<string>();
+
 export interface ResolvedHostEnv {
   configuredPathEntries: string[];
   env: Record<string, string>;
@@ -53,8 +56,11 @@ function buildPath(entries: string[]): string {
   return out.join(":");
 }
 
-export function buildHostEnv(config: ServerConfig): Record<string, string> {
-  const env = { ...process.env } as Record<string, string>;
+export function buildHostEnv(
+  config: ServerConfig,
+  baseEnv: Record<string, string> = initialHostEnv,
+): Record<string, string> {
+  const env = { ...baseEnv } as Record<string, string>;
   const configuredEntries = normalizePathEntries(config.runtimePathEntries);
 
   // Explicit runtime PATH: configured entries only.
@@ -67,9 +73,12 @@ export function buildHostEnv(config: ServerConfig): Record<string, string> {
   return env;
 }
 
-export function resolveHostEnv(config: ServerConfig): ResolvedHostEnv {
+export function resolveHostEnv(
+  config: ServerConfig,
+  baseEnv: Record<string, string> = initialHostEnv,
+): ResolvedHostEnv {
   const configuredPathEntries = normalizePathEntries(config.runtimePathEntries);
-  const env = buildHostEnv(config);
+  const env = buildHostEnv(config, baseEnv);
 
   return {
     configuredPathEntries,
@@ -78,11 +87,30 @@ export function resolveHostEnv(config: ServerConfig): ResolvedHostEnv {
 }
 
 /** Apply resolved runtime environment to process.env (used by server runtime). */
-export function applyHostEnv(config: ServerConfig): ResolvedHostEnv {
-  const resolved = resolveHostEnv(config);
+export function applyHostEnv(
+  config: ServerConfig,
+  baseEnv: Record<string, string> = initialHostEnv,
+): ResolvedHostEnv {
+  const resolved = resolveHostEnv(config, baseEnv);
+  const nextRuntimeEnvKeys = new Set(Object.keys(config.runtimeEnv || {}));
+
+  for (const key of lastAppliedRuntimeEnvKeys) {
+    if (nextRuntimeEnvKeys.has(key)) {
+      continue;
+    }
+    const restoredValue = resolved.env[key];
+    if (typeof restoredValue === "string") {
+      process.env[key] = restoredValue;
+    } else {
+      delete process.env[key];
+    }
+  }
+
   for (const [key, value] of Object.entries(resolved.env)) {
     process.env[key] = value;
   }
+
+  lastAppliedRuntimeEnvKeys = nextRuntimeEnvKeys;
   return resolved;
 }
 

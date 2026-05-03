@@ -484,6 +484,16 @@ export class SdkBackend {
     return this.uiBridge.respond(response);
   }
 
+  async reloadResources(): Promise<{ success: true }> {
+    if (this.disposed) {
+      throw new Error("Session backend is disposed");
+    }
+
+    await this.runtime.services.resourceLoader.reload();
+    await this.refreshRuntimeSessionBindings();
+    return { success: true };
+  }
+
   async newSession(): Promise<{ cancelled: boolean }> {
     if (this.disposed) {
       return { cancelled: true };

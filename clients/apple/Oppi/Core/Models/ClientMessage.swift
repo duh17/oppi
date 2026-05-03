@@ -36,6 +36,7 @@ enum ClientMessage: Sendable {
     case cycleThinkingLevel(requestId: String? = nil)
 
     // ── Session ──
+    case reload(requestId: String? = nil)
     case newSession(requestId: String? = nil)
     case setSessionName(name: String, requestId: String? = nil)
     case compact(customInstructions: String? = nil, requestId: String? = nil)
@@ -328,6 +329,10 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Session ──
+        case .reload(let reqId):
+            try c.encode("reload", forKey: .type)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         case .newSession(let reqId):
             try c.encode("new_session", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
@@ -538,6 +543,7 @@ extension ClientMessage {
         case .cycleThinkingLevel: return "cycle_thinking_level"
         case .newSession: return "new_session"
         case .setSessionName: return "set_session_name"
+        case .reload: return "reload"
         case .compact: return "compact"
         case .setAutoCompaction: return "set_auto_compaction"
         case .fork: return "fork"

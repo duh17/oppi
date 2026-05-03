@@ -126,6 +126,29 @@ async function drain(): Promise<void> {
 // ─── Tests ───
 
 describe("UserStreamMux — multiple full subscriptions", () => {
+  it("routes reload commands through the full subscription harness", async () => {
+    const session = makeSession("sess-reload");
+    const { ctx } = createMockContext([session]);
+
+    const mux = new UserStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket(ws as unknown as WebSocket);
+    await drain();
+
+    ws.receive({ type: "subscribe", sessionId: session.id, level: "full", requestId: "sub-1" });
+    await drain();
+
+    ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-1" } as ClientMessage);
+    await drain();
+
+    expect(ctx.handleClientMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id }),
+      expect.objectContaining({ type: "reload", requestId: "reload-1" }),
+      expect.any(Function),
+      expect.any(Object),
+    );
+  });
+
   it("allows two sessions to be subscribed at full level simultaneously", async () => {
     const sessA = makeSession("sess-a");
     const sessB = makeSession("sess-b");

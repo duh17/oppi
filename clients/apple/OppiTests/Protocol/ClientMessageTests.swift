@@ -173,6 +173,12 @@ struct ClientMessageTests {
         #expect(json["level"] as? String == "high")
     }
 
+    @Test func encodesReload() throws {
+        let json = try decode(ClientMessage.reload(requestId: "req-reload"))
+        #expect(json["type"] as? String == "reload")
+        #expect(json["requestId"] as? String == "req-reload")
+    }
+
     @Test func encodesNewSession() throws {
         let json = try decode(ClientMessage.newSession())
         #expect(json["type"] as? String == "new_session")

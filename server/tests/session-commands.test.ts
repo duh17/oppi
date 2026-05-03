@@ -103,6 +103,11 @@ describe("SessionCommandCoordinator", () => {
     expect(result).toEqual({
       commands: [
         {
+          name: "reload",
+          description: "Reload extensions, skills, prompts, and context files",
+          source: "builtin",
+        },
+        {
           name: "share",
           description: "Share session as an auto-redacted secret GitHub gist",
           source: "builtin",

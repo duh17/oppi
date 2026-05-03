@@ -1088,6 +1088,17 @@ struct ChatView: View {
 
     private func sendPrompt() {
         let rawTrimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
+            inputText = ""
+            actionHandler.reloadResources(
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                sessionId: sessionId
+            )
+            return
+        }
+
         if rawTrimmedInput.caseInsensitiveCompare("/share") == .orderedSame {
             sendShareSlashCommand(clearComposer: true, restoreInputOnFailure: inputText)
             return

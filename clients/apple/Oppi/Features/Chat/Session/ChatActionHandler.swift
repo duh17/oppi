@@ -571,6 +571,26 @@ final class ChatActionHandler {
         }
     }
 
+    func reloadResources(
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionStore: SessionStore,
+        sessionId: String
+    ) {
+        Task { @MainActor in
+            do {
+                try await connection.reloadResources()
+                try? await connection.requestState()
+                if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                    await connection.refreshSlashCommands(for: session, force: true)
+                }
+                connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
     // periphery:ignore - future UI wiring point for new session creation
     func newSession(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task { @MainActor in

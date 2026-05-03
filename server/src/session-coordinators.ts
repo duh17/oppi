@@ -1,4 +1,5 @@
 import type { GateServer } from "./gate.js";
+import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -159,6 +160,9 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => deps.broadcast(key, message),
     applyPiStateSnapshot: (session, state) => stateCoordinator.applyPiStateSnapshot(session, state),
     getContextWindowResolver: () => deps.getContextWindowResolver(),
+    reloadRuntimeConfig: () => {
+      applyHostEnv(deps.storage.getConfig());
+    },
   });
 
   const startCoordinator = new SessionStartCoordinator({

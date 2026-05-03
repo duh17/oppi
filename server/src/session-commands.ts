@@ -100,6 +100,11 @@ function collectSessionContextComposition(
 
 const BUILTIN_SLASH_COMMANDS: readonly SessionCommandDescriptor[] = [
   {
+    name: "reload",
+    description: "Reload extensions, skills, prompts, and context files",
+    source: "builtin",
+  },
+  {
     name: "share",
     description: "Share session as an auto-redacted secret GitHub gist",
     source: "builtin",
@@ -668,6 +673,7 @@ export interface SessionCommandCoordinatorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   applyPiStateSnapshot: (session: Session, state: PiStateSnapshot | null | undefined) => boolean;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
+  reloadRuntimeConfig?: () => void;
 }
 
 type BackendCommandHandler = (
@@ -726,6 +732,8 @@ export class SessionCommandCoordinator {
     ],
 
     ["cycle_thinking_level", (backend) => ({ level: backend.session.cycleThinkingLevel() })],
+
+    ["reload", (backend) => backend.reloadResources()],
 
     [
       "new_session",
@@ -862,6 +870,10 @@ export class SessionCommandCoordinator {
     }
 
     const type = command.type as string;
+    if (type === "reload") {
+      this.deps.reloadRuntimeConfig?.();
+    }
+
     const backendHandler = SessionCommandCoordinator.SERVER_LOGIC_HANDLERS.get(type);
     if (backendHandler) {
       return backendHandler(active.sdkBackend, command);
