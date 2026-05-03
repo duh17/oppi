@@ -861,7 +861,7 @@ struct ToolTimelineRowContentViewTests {
         #expect(rendered.contains(" + "))
         #expect(rendered.contains(" - "))
         #expect(rendered.contains("let value"))
-        #expect(rendered.contains("Change 1 of 1"))
+        #expect(!rendered.contains("Change 1 of 1"))
         #expect(!rendered.contains("@@ -"), "Expanded diff view should hide raw unified-diff hunk headers")
     }
 

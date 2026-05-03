@@ -245,20 +245,19 @@ struct DiffGutterAttributeTests {
         #expect(kind == "removed", "Removed gutter must have diffLineKindAttributeKey='removed'")
     }
 
-    @Test func diffHeadersHideRawPatchMarkers() throws {
+    @Test func diffRenderingOmitsHunkSummaryChrome() throws {
         let result = DiffAttributedStringBuilder.buildResult(
             hunks: makeHunks(),
             filePath: "test.swift",
             options: .init(includeStats: true, includeGapSummary: true)
         )
 
-        #expect(result.attributedText.string.contains("Change 1 of 1"))
-        #expect(result.attributedText.string.contains("Lines 1–3"))
+        #expect(!result.attributedText.string.contains("Change 1 of 1"))
+        #expect(!result.attributedText.string.contains("Lines 1–3"))
         #expect(!result.attributedText.string.contains("@@ -1,3 +1,3 @@"))
-        #expect(result.headerRanges.count == 1)
     }
 
-    @Test func diffHeadersShowCollapsedGapSummary() throws {
+    @Test func diffRenderingKeepsCollapsedGapSummary() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(
                 oldStart: 10,
@@ -289,6 +288,34 @@ struct DiffGutterAttributeTests {
         )
 
         #expect(result.attributedText.string.contains("18 unchanged lines"))
-        #expect(result.headerRanges.count == 2, "Gap summaries should not become navigation anchors")
+        #expect(!result.attributedText.string.contains("Change"))
+        #expect(!result.attributedText.string.contains("Lines 10–11"))
+    }
+
+    @Test func statsSummaryKeepsAddedAndRemovedAccentColors() throws {
+        let result = DiffAttributedStringBuilder.build(
+            hunks: makeHunks(),
+            filePath: "test.swift",
+            includeStats: true
+        )
+        let text = result.string as NSString
+
+        let addedRange = text.range(of: "+1")
+        guard addedRange.location != NSNotFound else {
+            Issue.record("Expected '+1' stats marker")
+            return
+        }
+
+        let removedRange = text.range(of: "-1")
+        guard removedRange.location != NSNotFound else {
+            Issue.record("Expected '-1' stats marker")
+            return
+        }
+
+        let addedColor = result.attribute(.foregroundColor, at: addedRange.location, effectiveRange: nil) as? UIColor
+        let removedColor = result.attribute(.foregroundColor, at: removedRange.location, effectiveRange: nil) as? UIColor
+
+        #expect(addedColor == UIColor(Color.themeDiffAdded))
+        #expect(removedColor == UIColor(Color.themeDiffRemoved))
     }
 }

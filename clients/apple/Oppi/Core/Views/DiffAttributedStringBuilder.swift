@@ -26,8 +26,6 @@ enum DiffAttributedStringBuilder {
         // Segment attribute dictionaries (used during append phase)
         let headerAttrs: [NSAttributedString.Key: Any]
         let sectionHeaderBlockAttrs: [NSAttributedString.Key: Any]
-        let sectionHeaderTitleAttrs: [NSAttributedString.Key: Any]
-        let sectionHeaderSubtitleAttrs: [NSAttributedString.Key: Any]
         let gapSummaryAttrs: [NSAttributedString.Key: Any]
         let gutterAddedAttrs: [NSAttributedString.Key: Any]
         let gutterRemovedAttrs: [NSAttributedString.Key: Any]
@@ -74,8 +72,6 @@ enum DiffAttributedStringBuilder {
             let fgColor = UIColor(Color.themeFg)
             let fgDimColor = UIColor(Color.themeFgDim)
             let headerColor = UIColor(Color.themePurple)
-            let sectionTitleColor = UIColor(Color.themeFg)
-            let sectionSubtitleColor = UIColor(Color.themeFgDim)
             let gapSummaryColor = UIColor(Color.themeFgDim)
 
             let lineAddedBg = UIColor(Color.themeDiffAdded.opacity(0.12))
@@ -94,8 +90,6 @@ enum DiffAttributedStringBuilder {
                 paragraph: paragraph,
                 headerAttrs: [.font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
                 sectionHeaderBlockAttrs: [.paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
-                sectionHeaderTitleAttrs: [.font: AppFont.systemFeedback, .foregroundColor: sectionTitleColor, .paragraphStyle: paragraph],
-                sectionHeaderSubtitleAttrs: [.font: AppFont.systemSmall, .foregroundColor: sectionSubtitleColor, .paragraphStyle: paragraph],
                 gapSummaryAttrs: [.font: AppFont.systemSmall, .foregroundColor: gapSummaryColor, .paragraphStyle: paragraph],
                 gutterAddedAttrs: [.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
                 gutterRemovedAttrs: [.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
@@ -135,12 +129,9 @@ enum DiffAttributedStringBuilder {
         let spans: [WorkspaceReviewDiffSpan]?
     }
 
-    /// Header (hunk separator) position.
+    /// Collapsed unchanged-lines separator position.
     private struct HeaderInfo {
         let fullRange: NSRange
-        let titleRange: NSRange?
-        let subtitleRange: NSRange?
-        let usesSectionStyle: Bool
     }
 
     /// Stats summary line segment positions.
@@ -158,7 +149,6 @@ enum DiffAttributedStringBuilder {
 
     struct BuildResult {
         let attributedText: NSAttributedString
-        let headerRanges: [NSRange]
     }
 
     // MARK: - Build
@@ -262,25 +252,9 @@ enum DiffAttributedStringBuilder {
                     }
                     text.append("\n")
                     let gapRange = NSRange(location: gapStart, length: text.length - gapStart)
-                    headers.append(HeaderInfo(fullRange: gapRange, titleRange: nil, subtitleRange: nil, usesSectionStyle: true))
+                    headers.append(HeaderInfo(fullRange: gapRange))
                 }
             }
-
-            let headerStart = text.length
-            let titleStart = text.length
-            text.append(" Change \(hunkIndex + 1) of \(hunks.count)\n")
-            let titleRange = NSRange(location: titleStart, length: text.length - titleStart)
-            let subtitleStart = text.length
-            text.append(" \(hunk.displayLineRangeText) • \(hunk.changeSummaryText)\n")
-            let subtitleRange = NSRange(location: subtitleStart, length: text.length - subtitleStart)
-            headers.append(
-                HeaderInfo(
-                    fullRange: NSRange(location: headerStart, length: text.length - headerStart),
-                    titleRange: titleRange,
-                    subtitleRange: subtitleRange,
-                    usesSectionStyle: true
-                )
-            )
 
             for line in hunk.lines {
                 let displayLineNumber = displayedLineNumber(for: line)
@@ -338,19 +312,8 @@ enum DiffAttributedStringBuilder {
         result.beginEditing()
 
         for header in headers {
-            if header.usesSectionStyle {
-                result.setAttributes(style.sectionHeaderBlockAttrs, range: header.fullRange)
-                if let titleRange = header.titleRange {
-                    result.addAttributes(style.sectionHeaderTitleAttrs, range: titleRange)
-                } else {
-                    result.addAttributes(style.gapSummaryAttrs, range: header.fullRange)
-                }
-                if let subtitleRange = header.subtitleRange {
-                    result.addAttributes(style.sectionHeaderSubtitleAttrs, range: subtitleRange)
-                }
-            } else {
-                result.setAttributes(style.headerAttrs, range: header.fullRange)
-            }
+            result.setAttributes(style.sectionHeaderBlockAttrs, range: header.fullRange)
+            result.addAttributes(style.gapSummaryAttrs, range: header.fullRange)
         }
 
         if let stats = statsSegs {
@@ -450,10 +413,7 @@ enum DiffAttributedStringBuilder {
         }
 
         result.endEditing()
-        return BuildResult(
-            attributedText: result,
-            headerRanges: headers.compactMap(\.titleRange)
-        )
+        return BuildResult(attributedText: result)
     }
 
     private static func displayedLineNumber(for line: WorkspaceReviewDiffLine) -> Int? {

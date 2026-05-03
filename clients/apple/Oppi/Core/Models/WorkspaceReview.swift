@@ -215,41 +215,6 @@ struct WorkspaceReviewDiffHunk: Codable, Sendable, Equatable, Identifiable {
         "@@ -\(oldStart),\(oldCount) +\(newStart),\(newCount) @@"
     }
 
-    var displayAnchorLine: Int? {
-        if newStart > 0 { return newStart }
-        if oldStart > 0 { return oldStart }
-        return nil
-    }
-
-    var displayLineRangeText: String {
-        let start = displayAnchorLine ?? 0
-        let count = newCount > 0 ? newCount : oldCount
-        guard start > 0 else { return String(localized: "Changed lines") }
-        guard count > 1 else { return String(localized: "Line \(start)") }
-        return String(localized: "Lines \(start)–\(start + count - 1)")
-    }
-
-    var changeSummaryText: String {
-        let added = lines.reduce(into: 0) { total, line in
-            if line.kind == .added { total += 1 }
-        }
-        let removed = lines.reduce(into: 0) { total, line in
-            if line.kind == .removed { total += 1 }
-        }
-
-        switch (added, removed) {
-        case (1, 0):
-            return String(localized: "1 addition")
-        case (0, 1):
-            return String(localized: "1 deletion")
-        case (_, 0):
-            return String(localized: "\(added) additions")
-        case (0, _):
-            return String(localized: "\(removed) deletions")
-        default:
-            return String(localized: "\(added) additions, \(removed) deletions")
-        }
-    }
 }
 
 struct WorkspaceReviewDiffLine: Codable, Sendable, Equatable, Identifiable {

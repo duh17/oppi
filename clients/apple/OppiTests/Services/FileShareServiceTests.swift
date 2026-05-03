@@ -708,7 +708,9 @@ struct FileShareServiceTests {
         // But should still have the hunk content.
         #expect(text.contains("let x = 1"))
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(trimmed.hasPrefix("Change 1 of 1"), "Without stats, content should start with the sectioned change header")
+        #expect(trimmed.hasPrefix("1   let x = 1"), "Without stats, content should start with the first rendered diff line")
+        #expect(!text.contains("Change 1 of 1"))
+        #expect(!text.contains("Lines 1–4"))
         #expect(!text.contains("@@ -"), "Attributed diff rendering should not emit raw unified-diff hunk headers")
     }
 
