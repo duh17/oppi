@@ -47,6 +47,7 @@ After code changes, run the relevant checks and fix all errors before finishing.
 - Before adding code, search for existing implementations, helpers, and type names.
 - Prefer extending an existing file over adding another sibling when a directory already has many similarly named files.
 - Do not add a new abstraction when a small function or local type will do.
+- Do not introduce or adopt new repository convention files or workflow conventions unless the relevant toolchain widely recognizes them or the user explicitly asks; prefer existing sources of truth such as `AGENTS.md`.
 
 ## Protocol Discipline
 
