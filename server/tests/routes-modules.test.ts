@@ -833,6 +833,7 @@ describe("routes modules", () => {
     it("returns 404 for tool output with missing session", async () => {
       const ctx = {
         storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
           getSession: vi.fn(() => undefined),
         },
       } as unknown as RouteContext;
@@ -861,6 +862,7 @@ describe("routes modules", () => {
 
         const ctx = {
           storage: {
+            getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
             getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
           },
           sessions: {
@@ -916,7 +918,8 @@ describe("routes modules", () => {
     it("validates since param on session events", async () => {
       const ctx = {
         storage: {
-          getSession: vi.fn(() => ({ id: "s1" })),
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
       } as unknown as RouteContext;
 

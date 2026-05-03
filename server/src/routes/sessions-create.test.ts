@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { createSessionRoutes } from "./sessions.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
+import { getPiSessionsRoot } from "../local-sessions.js";
 import type { Session, Workspace } from "../types.js";
 
 // ─── Factories ───
@@ -51,6 +52,8 @@ interface MockRouteContext {
     getActiveSession: ReturnType<typeof vi.fn>;
     forwardClientCommand: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
+    getToolFullOutputPath: ReturnType<typeof vi.fn>;
+    getCatchUp: ReturnType<typeof vi.fn>;
     refreshSessionState: ReturnType<typeof vi.fn>;
     runCommand: ReturnType<typeof vi.fn>;
   };
@@ -396,8 +399,9 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.responses).toHaveLength(0);
   });
 
-  it("persists parentSessionId when provided", async () => {
+  it("persists parentSessionId when the parent belongs to the workspace", async () => {
     const mock = createMockContext();
+    mock.storage.getSession.mockReturnValue(makeSession({ id: "parent-abc", workspaceId: "ws-1" }));
 
     await dispatchCreate(mock, { prompt: "child task", parentSessionId: "parent-abc" });
 
@@ -419,8 +423,9 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(firstSave.parentSessionId).toBeUndefined();
   });
 
-  it("persists parentSessionId on session without prompt", async () => {
+  it("persists parentSessionId on session without prompt when the parent belongs to the workspace", async () => {
     const mock = createMockContext();
+    mock.storage.getSession.mockReturnValue(makeSession({ id: "parent-xyz", workspaceId: "ws-1" }));
 
     await dispatchCreate(mock, { name: "child", parentSessionId: "parent-xyz" });
 
@@ -429,6 +434,34 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(savedSession.parentSessionId).toBe("parent-xyz");
 
     // Should NOT start or prompt
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
+    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("rejects parentSessionId from another workspace", async () => {
+    const mock = createMockContext();
+    mock.storage.getSession.mockReturnValue(
+      makeSession({ id: "parent-foreign", workspaceId: "ws-2" }),
+    );
+
+    await dispatchCreate(mock, { name: "child", parentSessionId: "parent-foreign" });
+
+    expect(mock.errors).toEqual([
+      { status: 400, message: "Parent session does not belong to this workspace" },
+    ]);
+    expect(mock.storage.saveSession).not.toHaveBeenCalled();
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
+    expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown parentSessionId", async () => {
+    const mock = createMockContext();
+    mock.storage.getSession.mockReturnValue(undefined);
+
+    await dispatchCreate(mock, { name: "child", parentSessionId: "missing-parent" });
+
+    expect(mock.errors).toEqual([{ status: 404, message: "Parent session not found" }]);
+    expect(mock.storage.saveSession).not.toHaveBeenCalled();
     expect(mock.sessions.startSession).not.toHaveBeenCalled();
     expect(mock.sessions.sendPrompt).not.toHaveBeenCalled();
   });
@@ -524,6 +557,97 @@ describe("POST /workspaces/:id/sessions/:sessionId/resume", () => {
   });
 });
 
+describe("workspace-scoped session route ownership", () => {
+  const wrongWorkspaceRoutes = [
+    {
+      name: "session detail",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session",
+    },
+    {
+      name: "session stop",
+      method: "POST",
+      path: "/workspaces/ws-1/sessions/foreign-session/stop",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/stop",
+    },
+    {
+      name: "session delete",
+      method: "DELETE",
+      path: "/workspaces/ws-1/sessions/foreign-session",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session",
+    },
+    {
+      name: "session events",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session/events",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/events?since=0",
+    },
+    {
+      name: "tool output",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1",
+    },
+    {
+      name: "full tool output",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1/full",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1/full",
+    },
+    {
+      name: "session file",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session/files",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/files?path=file.txt",
+    },
+    {
+      name: "overall diff",
+      method: "GET",
+      path: "/workspaces/ws-1/sessions/foreign-session/overall-diff",
+      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/overall-diff?path=file.txt",
+    },
+  ] as const;
+
+  it.each(wrongWorkspaceRoutes)(
+    "rejects wrong-workspace $name route before side effects",
+    async ({ method, path, url }) => {
+      const mock = createMockContext();
+      mock.storage.getSession.mockReturnValue(
+        makeSession({ id: "foreign-session", workspaceId: "ws-2" }),
+      );
+      mock.storage.deleteSession = vi.fn().mockReturnValue(true);
+      (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
+        deleteSession: vi.fn(),
+      };
+      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+        recordUserStreamEvent: vi.fn(),
+        recordAndFanOutUserStreamEvent: vi.fn(),
+      };
+
+      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+      const handled = await dispatcher({
+        method,
+        path,
+        url: new URL(url),
+        req: new PassThrough() as unknown as IncomingMessage,
+        res: {} as ServerResponse,
+      });
+
+      expect(handled).toBe(true);
+      expect(mock.errors).toEqual([
+        { status: 400, message: "Session does not belong to this workspace" },
+      ]);
+      expect(mock.responses).toHaveLength(0);
+      expect(mock.sessions.stopSession).not.toHaveBeenCalled();
+      expect(mock.sessions.refreshSessionState).not.toHaveBeenCalled();
+      expect(mock.sessions.getToolFullOutputPath).not.toHaveBeenCalled();
+      expect(mock.sessions.getCatchUp).not.toHaveBeenCalled();
+      expect(mock.storage.deleteSession).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
   async function dispatchDelete(mock: MockRouteContext, sessionId = "sess-1"): Promise<boolean> {
     const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
@@ -539,35 +663,85 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
     });
   }
 
-  it("deletes the tracked pi jsonl files along with the Oppi session", async () => {
+  it("deletes referenced local pi JSONL traces so deleted sessions are not rediscovered", async () => {
     const mock = createMockContext();
-    const dir = mkdtempSync(join(tmpdir(), "oppi-session-delete-"));
+    const piSessionsRoot = getPiSessionsRoot();
+    mkdirSync(piSessionsRoot, { recursive: true });
+    const dir = mkdtempSync(join(piSessionsRoot, "oppi-session-delete-"));
     const jsonlA = join(dir, "a.jsonl");
     const jsonlB = join(dir, "b.jsonl");
-    writeFileSync(jsonlA, '{"role":"user","content":"hello"}\n');
-    writeFileSync(jsonlB, '{"role":"assistant","content":"hi"}\n');
-
-    mock.storage.getSession.mockReturnValue(
-      makeSession({
-        id: "sess-1",
-        piSessionFile: jsonlA,
-        piSessionFiles: [jsonlA, jsonlB],
-      }),
+    writeFileSync(
+      jsonlA,
+      `${JSON.stringify({ type: "session", id: "sess-1", cwd: dir, timestamp: "2026-05-03T00:00:00.000Z" })}\n`,
     );
-    mock.storage.deleteSession = vi.fn().mockReturnValue(true);
-    (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
-      deleteSession: vi.fn(),
-    };
-    (mock.ctx as unknown as Record<string, unknown>).streamMux = {
-      recordUserStreamEvent: vi.fn(),
-    };
+    writeFileSync(
+      jsonlB,
+      `${JSON.stringify({ type: "session", id: "sess-1b", cwd: dir, timestamp: "2026-05-03T00:01:00.000Z" })}\n`,
+    );
 
-    await dispatchDelete(mock);
+    try {
+      mock.storage.getSession.mockReturnValue(
+        makeSession({
+          id: "sess-1",
+          workspaceId: "ws-1",
+          piSessionFile: jsonlA,
+          piSessionFiles: [jsonlA, jsonlB],
+        }),
+      );
+      mock.storage.deleteSession = vi.fn().mockReturnValue(true);
+      (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
+        deleteSession: vi.fn(),
+      };
+      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+        recordUserStreamEvent: vi.fn(),
+        recordAndFanOutUserStreamEvent: vi.fn(),
+      };
 
-    expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
-    expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
-    expect(existsSync(jsonlA)).toBe(false);
-    expect(existsSync(jsonlB)).toBe(false);
-    expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);
+      await dispatchDelete(mock);
+
+      expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
+      expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
+      expect(existsSync(jsonlA)).toBe(false);
+      expect(existsSync(jsonlB)).toBe(false);
+      expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not unlink arbitrary non-local JSONL paths from session metadata", async () => {
+    const mock = createMockContext();
+    const dir = mkdtempSync(join(tmpdir(), "oppi-session-delete-non-local-"));
+    const jsonl = join(dir, "outside-root.jsonl");
+    writeFileSync(
+      jsonl,
+      `${JSON.stringify({ type: "session", id: "outside", cwd: dir, timestamp: "2026-05-03T00:00:00.000Z" })}\n`,
+    );
+
+    try {
+      mock.storage.getSession.mockReturnValue(
+        makeSession({
+          id: "sess-1",
+          workspaceId: "ws-1",
+          piSessionFile: jsonl,
+        }),
+      );
+      mock.storage.deleteSession = vi.fn().mockReturnValue(true);
+      (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
+        deleteSession: vi.fn(),
+      };
+      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+        recordUserStreamEvent: vi.fn(),
+        recordAndFanOutUserStreamEvent: vi.fn(),
+      };
+
+      await dispatchDelete(mock);
+
+      expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
+      expect(existsSync(jsonl)).toBe(true);
+      expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

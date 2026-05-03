@@ -27,6 +27,11 @@ export interface UserStreamSubscription {
   subscriptionGeneration?: number;
 }
 
+interface UserStreamLiveConnection {
+  subscriptions: Map<string, UserStreamSubscription>;
+  sendForSession: (sessionId: string, msg: ServerMessage) => void;
+}
+
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
   storage: Storage;
@@ -196,6 +201,7 @@ export class UserStreamMux {
   private readonly ringCapacity: number;
   private dictationManager?: DictationManager;
   private connectionSeq = 0;
+  private readonly liveConnections = new Set<UserStreamLiveConnection>();
 
   constructor(
     private ctx: StreamContext,
@@ -286,7 +292,10 @@ export class UserStreamMux {
     return { length: this.streamRing.length, capacity: this.streamRing.capacity };
   }
 
-  recordUserStreamEvent(sessionId: string, msg: ServerMessage): number {
+  private appendUserStreamEvent(
+    sessionId: string,
+    msg: ServerMessage,
+  ): { streamSeq: number; event: ServerMessage } {
     const streamSeq = this.nextUserStreamSeq();
     const ring = this.getUserStreamRing();
 
@@ -297,7 +306,26 @@ export class UserStreamMux {
     };
 
     ring.push({ seq: streamSeq, event, timestamp: Date.now() });
+    return { streamSeq, event };
+  }
+
+  recordUserStreamEvent(sessionId: string, msg: ServerMessage): number {
+    return this.appendUserStreamEvent(sessionId, msg).streamSeq;
+  }
+
+  recordAndFanOutUserStreamEvent(sessionId: string, msg: ServerMessage): number {
+    const { streamSeq, event } = this.appendUserStreamEvent(sessionId, msg);
+    this.fanOutUserStreamEvent(sessionId, event);
     return streamSeq;
+  }
+
+  private fanOutUserStreamEvent(sessionId: string, event: ServerMessage): void {
+    for (const connection of this.liveConnections) {
+      const sub = connection.subscriptions.get(sessionId);
+      if (!sub) continue;
+      if (sub.level === "notifications" && !this.isNotificationLevelMessage(event)) continue;
+      connection.sendForSession(sessionId, event);
+    }
   }
 
   // ─── WebSocket Handler ───
@@ -345,6 +373,9 @@ export class UserStreamMux {
     const sendForSession = (sessionId: string, msg: ServerMessage): void => {
       send({ ...msg, sessionId });
     };
+
+    const liveConnection: UserStreamLiveConnection = { subscriptions, sendForSession };
+    this.liveConnections.add(liveConnection);
 
     const clearSubscription = (
       sessionId: string,
@@ -910,6 +941,7 @@ export class UserStreamMux {
 
       this.dictationManager?.handleDisconnect();
       clearAllSubscriptions();
+      this.liveConnections.delete(liveConnection);
       this.ctx.untrackConnection(ws);
     });
 
@@ -921,6 +953,7 @@ export class UserStreamMux {
         error: safeErrorMessage(err),
       });
       clearAllSubscriptions();
+      this.liveConnections.delete(liveConnection);
       this.ctx.untrackConnection(ws);
     });
   }

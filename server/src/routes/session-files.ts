@@ -19,7 +19,12 @@ const MAX_TOUCHED_IMAGE_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_TOUCHED_TEXT_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export interface SessionFileHandlers {
-  handleGetSessionFile(sessionId: string, url: URL, res: ServerResponse): Promise<void>;
+  handleGetSessionFile(
+    workspaceId: string,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void>;
   handleGetTouchedFile(
     workspaceId: string,
     sessionId: string,
@@ -33,6 +38,7 @@ export function createSessionFileHandlers(
   helpers: RouteHelpers,
 ): SessionFileHandlers {
   async function handleGetSessionFile(
+    workspaceId: string,
     sessionId: string,
     url: URL,
     res: ServerResponse,
@@ -40,6 +46,10 @@ export function createSessionFileHandlers(
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
       helpers.error(res, 404, "Session not found");
+      return;
+    }
+    if (session.workspaceId !== workspaceId) {
+      helpers.error(res, 400, "Session does not belong to this workspace");
       return;
     }
 

@@ -112,6 +112,8 @@ export interface Session {
   thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
   // Trace metadata (used for trace recovery/replay)
+  // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi
+  // session so deleted sessions are not rediscovered as importable local sessions.
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
   piSessionId?: string; // pi internal session UUID reported by get_state

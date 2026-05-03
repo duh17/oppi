@@ -154,6 +154,31 @@ describe("/stream websocket behavior", () => {
     ).toBeUndefined();
   });
 
+  it("fan-outs route-originated user-stream notifications to live subscribers", async () => {
+    const harness = makeHarness({ sessions: [makeSession("s1")] });
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
+
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "notifications",
+      requestId: "sub-1",
+    });
+    await flushQueue();
+
+    const base = ws.sent.length;
+    const streamSeq = harness.mux.recordAndFanOutUserStreamEvent("s1", {
+      type: "session_deleted",
+      sessionId: "s1",
+    });
+
+    expect(ws.sent.slice(base)).toEqual([
+      { type: "session_deleted", sessionId: "s1", streamSeq },
+    ]);
+  });
+
   it("replays pending extension UI requests when subscribing", async () => {
     const pendingRequest: ServerMessage = {
       type: "extension_ui_request",
