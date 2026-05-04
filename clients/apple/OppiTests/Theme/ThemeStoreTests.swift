@@ -1,5 +1,6 @@
 import SwiftUI
 import Testing
+@testable import Oppi
 
 @MainActor
 @Suite("ThemeStore")
@@ -55,6 +56,22 @@ struct ThemeStoreTests {
             #expect(store.manualThemeID == .light)
             #expect(store.activeThemeID == .light)
             #expect(store.preferredColorScheme == .light)
+        }
+    }
+
+    @Test func switchingToSystemUsesObservedSystemScheme() {
+        withCleanThemeDefaults {
+            UserDefaults.standard.set(ThemeID.oled.rawValue, forKey: ThemeID.storageKey)
+            UserDefaults.standard.set(ThemeID.light.rawValue, forKey: lightThemeKey)
+            UserDefaults.standard.set(ThemeID.night.rawValue, forKey: darkThemeKey)
+
+            let store = ThemeStore()
+            store.updateSystemColorScheme(.light)
+            store.mode = .system
+
+            #expect(store.activeThemeID == .light)
+            #expect(store.preferredColorScheme == nil)
+            #expect(ThemeRuntimeState.currentThemeID() == .light)
         }
     }
 

@@ -29,6 +29,28 @@ struct ForegroundReconnectGate {
     }
 }
 
+private struct ThemeColorSchemeSyncView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let themeStore: ThemeStore
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(false)
+            .onAppear(perform: syncIfSystemMode)
+            .onChange(of: colorScheme) { _, _ in
+                syncIfSystemMode()
+            }
+            .onChange(of: themeStore.mode) { _, _ in
+                syncIfSystemMode()
+            }
+    }
+
+    private func syncIfSystemMode() {
+        guard themeStore.mode == .system else { return }
+        themeStore.updateSystemColorScheme(colorScheme)
+    }
+}
+
 enum PermissionDeepLink {
     static func permissionID(from url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
@@ -86,7 +108,6 @@ struct OppiApp: App {
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some Scene {
         WindowGroup {
@@ -126,13 +147,10 @@ struct OppiApp: App {
             .environment(\.piQuickActionStore, piQuickActionStore)
             .environment(\.theme, themeStore.appTheme)
             .tint(.themeBlue)
+            .background {
+                ThemeColorSchemeSyncView(themeStore: themeStore)
+            }
             .preferredColorScheme(themeStore.preferredColorScheme)
-            .onAppear {
-                themeStore.updateSystemColorScheme(colorScheme)
-            }
-            .onChange(of: colorScheme) { _, scheme in
-                themeStore.updateSystemColorScheme(scheme)
-            }
             .onChange(of: scenePhase) { _, phase in
                 handleScenePhase(phase)
             }
