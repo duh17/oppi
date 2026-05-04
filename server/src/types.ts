@@ -1411,6 +1411,8 @@ export type ServerMessage = // ── Connection ──
         duplicate?: boolean;
       }
     // ── Command responses (keyed by requestId for correlation) ──
+    // Lifecycle commands such as abort/stop report request acceptance here.
+    // Clients must wait for stop_confirmed/stop_failed to observe settled stop state.
     | {
         type: "command_result";
         command: string;

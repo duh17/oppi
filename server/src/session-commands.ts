@@ -686,6 +686,18 @@ type SessionCommandHandler = (
   cmd: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
+const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree"]);
+
+function assertIdleForCommand(active: CommandSessionState, commandType: string): void {
+  if (!IDLE_ONLY_COMMANDS.has(commandType)) {
+    return;
+  }
+
+  if (active.session.status !== "ready") {
+    throw new Error(`${commandType} requires an idle session`);
+  }
+}
+
 export class SessionCommandCoordinator {
   constructor(private readonly deps: SessionCommandCoordinatorDeps) {}
 
@@ -870,6 +882,8 @@ export class SessionCommandCoordinator {
     }
 
     const type = command.type as string;
+    assertIdleForCommand(active, type);
+
     if (type === "reload") {
       this.deps.reloadRuntimeConfig?.();
     }

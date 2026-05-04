@@ -244,6 +244,46 @@ describe("turn delivery idempotency", () => {
     expect(duplicateAck?.duplicate).toBe(true);
   });
 
+  it("rejects busy prompt without mutating local turn state", async () => {
+    const { manager, events, prompt, session } = makeManagerHarness("busy");
+
+    await expect(
+      manager.sendPrompt("s1", "should not append", {
+        clientTurnId: "turn-busy-prompt",
+        requestId: "req-busy-prompt",
+        timestamp: 1,
+      }),
+    ).rejects.toThrow("Prompt requires an idle session");
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(session.messageCount).toBe(0);
+    expect(session.lastMessage).toBeUndefined();
+    expect(asTurnAcks(events)).toHaveLength(0);
+  });
+
+  it("rejects compact and navigate_tree while session is busy", async () => {
+    const { manager, events, sdkBackend } = makeManagerHarness("busy");
+
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-busy");
+    await manager.forwardClientCommand(
+      "s1",
+      { type: "navigate_tree", targetId: "entry-1" },
+      "req-tree-busy",
+    );
+
+    expect(sdkBackend.session.compact).not.toHaveBeenCalled();
+
+    const compactResult = asRpcResults(events).find(
+      (event) => event.requestId === "req-compact-busy",
+    );
+    const treeResult = asRpcResults(events).find((event) => event.requestId === "req-tree-busy");
+
+    expect(compactResult?.success).toBe(false);
+    expect(compactResult?.error).toContain("compact requires an idle session");
+    expect(treeResult?.success).toBe(false);
+    expect(treeResult?.error).toContain("navigate_tree requires an idle session");
+  });
+
   it("refreshes and persists pi state after fork rpc succeeds", async () => {
     const { manager, events, session } = makeManagerHarness("ready");
 

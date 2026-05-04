@@ -1,4 +1,5 @@
 import { appendSessionMessage } from "./session-protocol.js";
+import { computeTurnPayloadHash } from "./turn-cache.js";
 import type { TurnSessionState } from "./session-turns.js";
 import type { ChatAttachmentRef, Session, TurnCommand } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -107,16 +108,31 @@ export class SessionInputCoordinator {
       throw new Error(`Session not active: ${key}`);
     }
 
+    const turnPayload = {
+      message,
+      images: opts?.images ?? [],
+      attachments: opts?.attachments ?? [],
+      streamingBehavior: opts?.streamingBehavior,
+    };
+
+    if (active.session.status === "busy" && !opts?.streamingBehavior) {
+      const existingTurn = opts?.clientTurnId ? active.turnCache.get(opts.clientTurnId) : null;
+      const isDuplicateRetry =
+        existingTurn?.command === "prompt" &&
+        existingTurn.payloadHash === computeTurnPayloadHash("prompt", turnPayload);
+
+      if (!isDuplicateRetry) {
+        throw new Error(
+          "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
+        );
+      }
+    }
+
     const turn = this.deps.beginTurnIntent(
       key,
       active,
       "prompt",
-      {
-        message,
-        images: opts?.images ?? [],
-        attachments: opts?.attachments ?? [],
-        streamingBehavior: opts?.streamingBehavior,
-      },
+      turnPayload,
       opts?.clientTurnId,
       opts?.requestId,
     );
