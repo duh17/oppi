@@ -4,6 +4,8 @@ Oppi TTS is exposed through the **`voice` workspace extension**. It is not wired
 
 The voice extension uses local [Yuwp](https://github.com/duh17/yuwp) TTS to generate WAV audio for agent replies. The iOS app can render those replies as playable voice-message cards or direct playback when allowed.
 
+By default, Oppi should prefer `directSpeak` for voice replies unless the user explicitly wants tap-to-play behavior.
+
 For provider-agnostic extension work, see `server/src/tts-provider.ts`. That file defines the generic live audio stream shape and the generic voice tool details shape that Oppi consumes.
 
 A custom extension does not need to implement a shared provider base class. It only needs to:

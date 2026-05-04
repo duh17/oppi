@@ -164,7 +164,7 @@ enum AppPreferences {
 
         static var replyMode: ReplyMode {
             guard let raw = UserDefaults.standard.string(forKey: replyModeKey) else {
-                return .manual
+                return .autoplay
             }
             switch raw {
             case ReplyMode.manual.rawValue, "voice", "voiceMessage":
@@ -172,7 +172,7 @@ enum AppPreferences {
             case ReplyMode.autoplay.rawValue, "directSpeak":
                 return .autoplay
             default:
-                return .manual
+                return .autoplay
             }
         }
 

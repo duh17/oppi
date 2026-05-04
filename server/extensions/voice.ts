@@ -317,10 +317,10 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
       promptGuidelines: [
         "Use voice_speak when the user asks to hear a saved voice or wants the agent to speak with a named voice.",
         `If the user asks you to speak without naming a voice, default to the saved default voice or ${DEFAULT_VOICE_ID} if none is saved.`,
-        "When the user asks for a voice reply without specifying playback behavior, omit delivery so Oppi can use the current app or session default.",
-        "If the user explicitly wants immediate playback, live interaction, or direct speech, set delivery to directSpeak.",
+        "When the user asks for a voice reply without specifying playback behavior, default delivery to directSpeak.",
+        "If the user explicitly wants a tap-to-play voice card instead, set delivery to voiceMessage.",
         "If the user asks to change how this session handles voice replies going forward, use voice_reply_mode instead of repeating delivery hints manually.",
-        "If the user is choosing an ongoing voice reply style and the preference is genuinely unclear, use ask instead of guessing.",
+        "If the user asks to turn voice replies on for the session without choosing a mode, prefer voice_reply_mode with mode='autoplay'. Ask only when the tradeoff matters and they seem undecided.",
         "Use voice_speak for direct spoken replies, not written mini-essays read aloud.",
         "When already speaking in a voice during the session, keep using that same voice unless the user asks to switch.",
         "For voice_speak, write for the ear: shorter sentences, simpler joins, fewer stacked clauses, and fewer abstractions.",
@@ -468,7 +468,7 @@ export function createVoiceFactory(storage?: Storage): ExtensionFactory {
       promptSnippet: "Set the current session's default voice reply behavior",
       promptGuidelines: [
         "Use voice_reply_mode when the user asks the agent to keep speaking out loud or to stop autoplaying for the rest of this session.",
-        "Use mode='autoplay' to make future voice replies speak out loud by default in this session.",
+        "Use mode='autoplay' to make future voice replies speak out loud by default in this session. This is the preferred default when the user wants voice replies but does not pick a mode.",
         "Use mode='manual' to make future voice replies stay tap-to-play by default in this session.",
         "Use mode='default' to clear the session override and fall back to the global app setting.",
       ],
