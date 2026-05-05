@@ -306,6 +306,7 @@ export class UserStreamMux {
     };
 
     ring.push({ seq: streamSeq, event, timestamp: Date.now() });
+    this.ctx.metrics?.record("server.user_stream_event", 1, { type: msg.type });
     return { streamSeq, event };
   }
 
@@ -320,12 +321,15 @@ export class UserStreamMux {
   }
 
   private fanOutUserStreamEvent(sessionId: string, event: ServerMessage): void {
+    let delivered = 0;
     for (const connection of this.liveConnections) {
       const sub = connection.subscriptions.get(sessionId);
       if (!sub) continue;
       if (sub.level === "notifications" && !this.isNotificationLevelMessage(event)) continue;
       connection.sendForSession(sessionId, event);
+      delivered += 1;
     }
+    this.ctx.metrics?.record("server.user_stream_fanout", delivered, { type: event.type });
   }
 
   // ─── WebSocket Handler ───
@@ -355,7 +359,7 @@ export class UserStreamMux {
     const subscriptions = new Map<string, UserStreamSubscription>();
     let queue: Promise<void> = Promise.resolve();
 
-    const send = (msg: ServerMessage): void => {
+    const send = (msg: ServerMessage): boolean => {
       if (ws.readyState !== WebSocket.OPEN) {
         log.warn("ws.stream_drop_message", {
           connId,
@@ -363,15 +367,19 @@ export class UserStreamMux {
           readyState: ws.readyState,
           owner,
         });
-        return;
+        return false;
       }
 
       msgSent++;
       ws.send(JSON.stringify(msg));
+      return true;
     };
 
     const sendForSession = (sessionId: string, msg: ServerMessage): void => {
-      send({ ...msg, sessionId });
+      const level = subscriptions.get(sessionId)?.level ?? "none";
+      if (send({ ...msg, sessionId })) {
+        metrics?.record("server.ws_message_sent", 1, { type: msg.type, level });
+      }
     };
 
     const liveConnection: UserStreamLiveConnection = { subscriptions, sendForSession };

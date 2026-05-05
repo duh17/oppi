@@ -1560,7 +1560,7 @@
     },
     {
       "title": "Broadcast Fanout",
-      "description": "Number of subscribers receiving each broadcast.",
+      "description": "Number of subscribers receiving each durable broadcast, bucketed by Grafana interval to keep the panel queryable at production volume.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1608,7 +1608,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, MAX(value) AS value FROM server_ops_metric_samples WHERE metric = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
           "timeColumns": [
             "time"

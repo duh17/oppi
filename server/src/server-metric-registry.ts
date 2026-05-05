@@ -38,6 +38,10 @@ export const SERVER_METRIC_REGISTRY = {
     unit: "count",
     description: "Messages sent over a single WebSocket connection lifetime.",
   },
+  "server.ws_message_sent": {
+    unit: "count",
+    description: "Per-message WebSocket sends. Tagged by type and subscription level.",
+  },
   "server.ws_messages_received": {
     unit: "count",
     description: "Messages received over a single WebSocket connection lifetime.",
@@ -49,6 +53,14 @@ export const SERVER_METRIC_REGISTRY = {
   "server.ws_ping_timeout": {
     unit: "count",
     description: "Ping timeout terminations (dead connections detected).",
+  },
+  "server.user_stream_event": {
+    unit: "count",
+    description: "Notification-level event recorded in the user stream ring. Tagged by type.",
+  },
+  "server.user_stream_fanout": {
+    unit: "count",
+    description: "Live notification-level user stream fanout count. Tagged by type.",
   },
 
   // ── P1: Session Lifecycle ──
