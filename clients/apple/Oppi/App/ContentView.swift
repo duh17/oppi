@@ -168,6 +168,22 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
             audioPlaybackRefreshID &+= 1
         }
+        .overlay(alignment: .topLeading) {
+            e2eDiagnosticsOverlay
+        }
+    }
+
+    @ViewBuilder
+    private var e2eDiagnosticsOverlay: some View {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
+            || ProcessInfo.processInfo.environment["OPPI_E2E_DIAGNOSTICS"] == "1" {
+            E2EWebSocketDiagnosticsView(connection: connection)
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+                .allowsHitTesting(false)
+        }
+#endif
     }
 
     @ViewBuilder
@@ -265,6 +281,90 @@ struct ContentView: View {
         return nil
     }
 }
+
+#if DEBUG
+private struct E2EWebSocketDiagnosticsView: View {
+    let connection: ServerConnection
+    @State private var refreshTick = 0
+
+    var body: some View {
+        let _ = refreshTick
+        VStack(spacing: 0) {
+            diagnosticText("e2e.ws.status", value: wsStatusLabel)
+            diagnosticText("e2e.ws.focusedSession", value: connection.focusedSessionId ?? "none")
+            diagnosticText("e2e.ws.desiredSubscriptions", value: desiredSubscriptionsLabel)
+            diagnosticText("e2e.ws.ackedSubscriptions", value: ackedSubscriptionsLabel)
+            diagnosticText("e2e.audio.liveTransportSession", value: connection.audioPlayer.activeLiveTransportSessionID ?? "none")
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    refreshTick &+= 1
+                }
+            }
+        }
+    }
+
+    private func diagnosticText(_ id: String, value: String) -> some View {
+        Text(value)
+            .font(.caption2.monospaced())
+            .lineLimit(1)
+            .accessibilityIdentifier(id)
+            .accessibilityLabel(value)
+    }
+
+    private var wsStatusLabel: String {
+        switch connection.wsClient?.status {
+        case .connected:
+            return "connected"
+        case .connecting:
+            return "connecting"
+        case .disconnected:
+            return "disconnected"
+        case .reconnecting(let attempt):
+            return "reconnecting:\(attempt)"
+        case nil:
+            return "none"
+        }
+    }
+
+    private var desiredSubscriptionsLabel: String {
+        let desired = connection.subscriptionRegistry.desiredSessions()
+        guard !desired.isEmpty else { return "none" }
+        return desired.keys.sorted()
+            .map { sessionId in "\(sessionId):\(label(for: desired[sessionId] ?? .none))" }
+            .joined(separator: ",")
+    }
+
+    private var ackedSubscriptionsLabel: String {
+        let desiredIds = Set(connection.subscriptionRegistry.desiredSessions().keys)
+        let sessionIds = Set(connection.sessionStore.sessions.map(\.id)).union(desiredIds)
+        let entries = sessionIds.sorted().compactMap { sessionId -> String? in
+            switch connection.subscriptionRegistry.ackState(for: sessionId) {
+            case .acked(_, let level):
+                return "\(sessionId):\(label(for: level))"
+            case .inFlight(_, _, let level):
+                return "\(sessionId):inFlight:\(label(for: level))"
+            case .failed(_, let level, _):
+                return "\(sessionId):failed:\(label(for: level))"
+            case .idle:
+                return nil
+            }
+        }
+        return entries.isEmpty ? "none" : entries.joined(separator: ",")
+    }
+
+    private func label(for level: DesiredSubscriptionLevel) -> String {
+        switch level {
+        case .none: "none"
+        case .notifications: "notifications"
+        case .full: "full"
+        }
+    }
+}
+#endif
 
 private struct CrossSessionPermissionBanner: View {
     let request: PermissionRequest

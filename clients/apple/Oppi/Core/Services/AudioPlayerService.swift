@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import SwiftUI
+import UIKit
 import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
@@ -21,10 +23,51 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
     nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
 
+    private static let maxPlayableAudioBytes = 10 * 1024 * 1024
     private static var activePlaybackOwner: AudioPlayerService?
     private static var remoteCommandTargetsInstalled = false
-    private static let nowPlayingTitle = "Voice reply"
-    private static let nowPlayingArtist = "Oppi"
+    struct SessionContext: Equatable {
+        let sessionID: String
+        let sessionTitle: String
+        let modelID: String?
+
+        var provider: String? {
+            Self.provider(from: modelID)
+        }
+
+        var modelTitle: String? {
+            Self.shortModelName(from: modelID)
+        }
+
+        private static func provider(from modelID: String?) -> String? {
+            guard let modelID,
+                  let slashIndex = modelID.firstIndex(of: "/") else {
+                return nil
+            }
+            let provider = String(modelID[..<slashIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return provider.isEmpty ? nil : provider
+        }
+
+        private static func shortModelName(from modelID: String?) -> String? {
+            guard let modelID else { return nil }
+            let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let name = trimmed.split(separator: "/").last.map(String.init) ?? trimmed
+            return name
+                .replacingOccurrences(of: "claude-", with: "")
+                .replacingOccurrences(of: "gemini-", with: "")
+        }
+    }
+
+    struct NowPlayingPresentation: Equatable {
+        let sessionID: String
+        let title: String
+        let subtitle: String
+        let provider: String?
+    }
+
+    private static let nowPlayingFallbackTitle = "Voice reply"
+    private static let nowPlayingFallbackArtist = "Oppi"
 
     /// ID of the ChatItem currently playing (nil when idle).
     private(set) var playingItemID: String?
@@ -36,12 +79,28 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         playingItemID != nil || loadingItemID != nil || streamID != nil
     }
 
+    /// Session whose current PCM stream still depends on live `/stream` delivery.
+    /// Buffered/local playback stays active after this becomes nil.
+    var activeLiveTransportSessionID: String? {
+        guard streamID != nil, !streamReceivedDone else { return nil }
+        return streamSessionID ?? activePlaybackContext?.sessionID
+    }
+
+    var hasActiveLiveTransportPlayback: Bool {
+        activeLiveTransportSessionID != nil
+    }
+
     private var player: AVAudioPlayer?
+    private var sessionContext: SessionContext?
+    private var activePlaybackContext: SessionContext?
+    private var lastNowPlayingDurationSeconds: Double?
+    private var lastNowPlayingIsLiveStream = false
     private var playbackDelegate: PlaybackDelegate?
     private var streamEngine: AVAudioEngine?
     private var streamNode: AVAudioPlayerNode?
     private var streamFormat: AVAudioFormat?
     private var streamID: String?
+    private var streamSessionID: String?
     private var suppressedAudioStreamIDs: Set<String> = []
     private var autoPlayedVoiceReplyItemIDs: Set<String> = []
     private var playbackSuppressedForCapture = false
@@ -52,8 +111,48 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         super.init()
     }
 
+    var nowPlayingPresentation: NowPlayingPresentation? {
+        guard hasActivePlayback else { return nil }
+        let context = activePlaybackContext ?? sessionContext
+        let title = context?.sessionTitle ?? Self.nowPlayingFallbackTitle
+        let subtitle = context?.modelTitle
+            ?? "Session \((context?.sessionID.prefix(8)).map(String.init) ?? "")"
+        return NowPlayingPresentation(
+            sessionID: context?.sessionID ?? "",
+            title: title,
+            subtitle: subtitle.isEmpty ? Self.nowPlayingFallbackArtist : subtitle,
+            provider: context?.provider
+        )
+    }
+
+    func setSessionContext(_ session: Session?) {
+        let updatedContext = session.map {
+            SessionContext(
+                sessionID: $0.id,
+                sessionTitle: $0.displayTitle,
+                modelID: $0.model
+            )
+        }
+        sessionContext = updatedContext
+        if let updatedContext,
+           activePlaybackContext?.sessionID == updatedContext.sessionID {
+            activePlaybackContext = updatedContext
+        }
+        guard hasActivePlayback else { return }
+        updateNowPlayingInfo(
+            durationSeconds: lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream
+        )
+    }
+
     /// Play a pre-generated local audio clip file.
     func toggleFilePlayback(fileURL: URL, itemID: String, mode: String = "manual") {
+        guard isPlayableAudioFile(fileURL) else {
+            recordVoicePlaybackError(source: "file", phase: "validate", errorKind: "invalid_payload")
+            logger.error("Audio file playback rejected before start: invalid or oversized payload")
+            return
+        }
+
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
@@ -71,6 +170,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     /// Play an in-memory base64-decoded audio blob.
     func toggleDataPlayback(data: Data, itemID: String, mode: String = "manual") {
+        guard isPlayableAudioData(data) else {
+            recordVoicePlaybackError(source: "data", phase: "validate", errorKind: "invalid_payload")
+            logger.error("Audio data playback rejected before start: invalid or oversized payload")
+            return
+        }
+
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
@@ -169,11 +274,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         case .metadata:
             startAudioStream(
                 id: stream.id,
+                sessionId: sessionId,
                 sampleRate: Double(stream.sampleRate ?? 24_000),
                 channels: AVAudioChannelCount(stream.channels ?? 1)
             )
         case .chunk:
-            appendAudioStreamChunk(stream)
+            appendAudioStreamChunk(stream, sessionId: sessionId)
         case .done:
             guard stream.id == streamID else { return }
             streamReceivedDone = true
@@ -189,6 +295,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(data: Data, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
+        guard isPlayableAudioData(data) else {
+            recordVoicePlaybackError(source: "data", phase: "validate", errorKind: "invalid_payload")
+            return
+        }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         // Configure audio session for playback
@@ -204,6 +314,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(fileURL: URL, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
+        guard isPlayableAudioFile(fileURL) else {
+            recordVoicePlaybackError(source: "file", phase: "validate", errorKind: "invalid_payload")
+            return
+        }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         let audioSession = AVAudioSession.sharedInstance()
@@ -231,6 +345,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         self.player = audioPlayer
         self.playbackDelegate = delegate
+        activePlaybackContext = sessionContext
         setPlaybackState(playing: itemID, loading: nil)
         updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
 
@@ -257,7 +372,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
-    private func startAudioStream(id: String, sampleRate: Double, channels: AVAudioChannelCount) {
+    private func startAudioStream(id: String, sessionId: String?, sampleRate: Double, channels: AVAudioChannelCount) {
         let startedAtMs = ChatSessionTelemetry.nowMs()
         guard (8_000...48_000).contains(sampleRate), channels == 1 || channels == 2 else {
             recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
@@ -290,9 +405,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamNode = node
             streamFormat = format
             streamID = id
+            streamSessionID = sessionId ?? sessionContext?.sessionID
             streamPendingBuffers = 0
             streamReceivedDone = false
             markVoiceReplyAutoplayed(itemID: id)
+            activePlaybackContext = sessionContext
             setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
             updateNowPlayingInfo(durationSeconds: nil, isLiveStream: true)
             recordVoicePlaybackStart(source: "stream_pcm", mode: "autoplay", durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
@@ -303,13 +420,16 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
-    private func appendAudioStreamChunk(_ stream: AudioStreamMessage) {
+    private func appendAudioStreamChunk(_ stream: AudioStreamMessage, sessionId: String?) {
         if streamID != stream.id {
             startAudioStream(
                 id: stream.id,
+                sessionId: sessionId,
                 sampleRate: Double(stream.sampleRate ?? 24_000),
                 channels: AVAudioChannelCount(stream.channels ?? 1)
             )
+        } else if streamSessionID == nil {
+            streamSessionID = sessionId ?? sessionContext?.sessionID
         }
 
         guard let node = streamNode,
@@ -371,6 +491,22 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         )
     }
 
+    private func isPlayableAudioData(_ data: Data) -> Bool {
+        !data.isEmpty && data.count <= Self.maxPlayableAudioBytes
+    }
+
+    private func isPlayableAudioFile(_ fileURL: URL) -> Bool {
+        guard fileURL.isFileURL,
+              let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize > 0,
+              fileSize <= Self.maxPlayableAudioBytes else {
+            return false
+        }
+        return true
+    }
+
     private func pcm16LEBuffer(data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
         let channels = Int(format.channelCount)
         guard channels > 0, data.count >= channels * 2 else { return nil }
@@ -406,6 +542,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         streamNode = nil
         streamFormat = nil
         streamID = nil
+        streamSessionID = nil
         streamPendingBuffers = 0
         streamReceivedDone = false
         if clearState {
@@ -430,6 +567,38 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     static func ownsPlaybackAudioSession(category: AVAudioSession.Category) -> Bool {
         category == .playback
+    }
+
+    // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests
+    func _setPlaybackStateForTesting(playing: String?, loading: String?) {
+        if (playing != nil || loading != nil), playingItemID == nil, loadingItemID == nil {
+            activePlaybackContext = sessionContext
+        }
+        setPlaybackState(playing: playing, loading: loading)
+        if playing == nil, loading == nil, streamID == nil {
+            activePlaybackContext = nil
+        }
+    }
+
+    // periphery:ignore - test seam used by websocket/audio lifecycle tests
+    func _setLiveTransportPlaybackForTesting(sessionID: String?, streamID: String = "test-stream", receivedDone: Bool = false) {
+        if let sessionID {
+            self.streamID = streamID
+            streamSessionID = sessionID
+            streamReceivedDone = receivedDone
+            activePlaybackContext = SessionContext(
+                sessionID: sessionID,
+                sessionTitle: "Test Session",
+                modelID: nil
+            )
+            setPlaybackState(playing: Self.streamingPlaybackItemID(for: streamID), loading: nil)
+        } else {
+            self.streamID = nil
+            streamSessionID = nil
+            streamReceivedDone = false
+            setPlaybackState(playing: nil, loading: nil)
+            activePlaybackContext = nil
+        }
     }
 
     private func setPlaybackState(playing: String?, loading: String?) {
@@ -467,13 +636,25 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
         Self.activePlaybackOwner = nil
+        activePlaybackContext = nil
+        lastNowPlayingDurationSeconds = nil
+        lastNowPlayingIsLiveStream = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     private func updateNowPlayingInfo(durationSeconds: Double?, isLiveStream: Bool) {
+        lastNowPlayingDurationSeconds = durationSeconds
+        lastNowPlayingIsLiveStream = isLiveStream
+
+        guard player != nil || streamID != nil else {
+            return
+        }
+
+        let presentation = nowPlayingPresentation
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: Self.nowPlayingTitle,
-            MPMediaItemPropertyArtist: Self.nowPlayingArtist,
+            MPMediaItemPropertyTitle: presentation?.title ?? Self.nowPlayingFallbackTitle,
+            MPMediaItemPropertyArtist: presentation?.subtitle ?? Self.nowPlayingFallbackArtist,
+            MPMediaItemPropertyAlbumTitle: "Voice reply",
             MPNowPlayingInfoPropertyPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: player?.currentTime ?? 0,
         ]
@@ -483,7 +664,65 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         if isLiveStream {
             info[MPNowPlayingInfoPropertyIsLiveStream] = true
         }
+        if let artwork = makeNowPlayingArtwork(provider: presentation?.provider) {
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func makeNowPlayingArtwork(provider: String?) -> MPMediaItemArtwork? {
+        let image = makeNowPlayingArtworkImage(provider: provider)
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }
+
+    private func makeNowPlayingArtworkImage(provider: String?) -> UIImage {
+        let size = CGSize(width: 256, height: 256)
+        let palette = ThemeRuntimeState.currentPalette()
+        let backgroundColor = UIColor(palette.bgDark)
+        let accentColor = UIColor(
+            ProviderColor.color(forProvider: provider, palette: palette)
+        )
+
+        if let provider,
+           let assetName = ProviderIcon.logoAssetName(for: provider),
+           let baseImage = UIImage(named: assetName)?.withRenderingMode(.alwaysTemplate) {
+            let renderer = UIGraphicsImageRenderer(size: size)
+            return renderer.image { context in
+                let bounds = CGRect(origin: .zero, size: size)
+                backgroundColor.setFill()
+                context.fill(bounds)
+
+                let insetBounds = bounds.insetBy(dx: 36, dy: 36)
+                accentColor.withAlphaComponent(0.14).setFill()
+                UIBezierPath(roundedRect: insetBounds, cornerRadius: 36).fill()
+
+                let iconRect = insetBounds.insetBy(dx: 42, dy: 42)
+                baseImage.withTintColor(accentColor, renderingMode: .alwaysOriginal)
+                    .draw(in: iconRect)
+            }
+        }
+
+        let mark = ProviderIcon.mark(for: provider ?? "oppi")
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+            backgroundColor.setFill()
+            context.fill(bounds)
+
+            let insetBounds = bounds.insetBy(dx: 28, dy: 28)
+            accentColor.withAlphaComponent(0.18).setFill()
+            UIBezierPath(roundedRect: insetBounds, cornerRadius: 40).fill()
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 132, weight: .heavy),
+                .foregroundColor: accentColor,
+                .paragraphStyle: paragraph,
+            ]
+            let textRect = CGRect(x: 0, y: 52, width: size.width, height: size.height - 104)
+            mark.uppercased().draw(in: textRect, withAttributes: attributes)
+        }
     }
 
     private static func installRemoteCommandTargetsIfNeeded() {

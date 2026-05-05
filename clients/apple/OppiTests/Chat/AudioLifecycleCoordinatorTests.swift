@@ -137,6 +137,27 @@ struct AudioLifecycleCoordinatorTests {
         #expect(!AudioPlayerService.ownsPlaybackAudioSession(category: .playAndRecord))
     }
 
+    @Test func audioPlayerRejectsEmptyManualPlaybackBeforeStarting() {
+        let player = AudioPlayerService()
+
+        player.toggleDataPlayback(data: Data(), itemID: "empty-voice")
+
+        #expect(player.playingItemID == nil)
+        #expect(player.loadingItemID == nil)
+        #expect(!player.hasActivePlayback)
+    }
+
+    @Test func audioPlayerRejectsOversizedManualPlaybackBeforeStarting() {
+        let player = AudioPlayerService()
+        let oversized = Data(repeating: 0, count: 10 * 1024 * 1024 + 1)
+
+        player.toggleDataPlayback(data: oversized, itemID: "oversized-voice")
+
+        #expect(player.playingItemID == nil)
+        #expect(player.loadingItemID == nil)
+        #expect(!player.hasActivePlayback)
+    }
+
     @Test func audioPlayerAutoplayIsSuppressedDuringCapture() {
         let player = AudioPlayerService()
 
@@ -164,6 +185,68 @@ struct AudioLifecycleCoordinatorTests {
 
         #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-session-manual", delivery: .voiceMessage, sessionId: sessionId))
         #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-session-direct", delivery: .directSpeak, sessionId: sessionId))
+    }
+
+    @Test func audioPlayerNowPlayingPresentationUsesSessionTitleAndModel() {
+        let player = AudioPlayerService()
+        player.setSessionContext(
+            makeTestSession(
+                id: "session-12345678",
+                name: "Fix playback bar",
+                model: "openai/o4-mini"
+            )
+        )
+        player._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
+
+        let presentation = player.nowPlayingPresentation
+        #expect(presentation?.sessionID == "session-12345678")
+        #expect(presentation?.title == "Fix playback bar")
+        #expect(presentation?.subtitle == "o4-mini")
+        #expect(presentation?.provider == "openai")
+    }
+
+    @Test func audioPlayerNowPlayingPresentationFallsBackToSessionPrefixWithoutModel() {
+        let player = AudioPlayerService()
+        player.setSessionContext(
+            makeTestSession(
+                id: "abc12345-rest-of-session",
+                name: nil,
+                model: nil,
+                firstMessage: nil
+            )
+        )
+        player._setPlaybackStateForTesting(playing: "voice-2", loading: nil)
+
+        let presentation = player.nowPlayingPresentation
+        #expect(presentation?.title == "Session abc12345")
+        #expect(presentation?.subtitle == "Session abc12345")
+        #expect(presentation?.provider == nil)
+    }
+
+    @Test func audioPlayerNowPlayingPresentationStaysBoundToOriginalSessionDuringPlayback() {
+        let player = AudioPlayerService()
+        player.setSessionContext(
+            makeTestSession(
+                id: "session-a",
+                name: "Session A",
+                model: "openai/o4-mini"
+            )
+        )
+        player._setPlaybackStateForTesting(playing: "voice-3", loading: nil)
+
+        player.setSessionContext(
+            makeTestSession(
+                id: "session-b",
+                name: "Session B",
+                model: "anthropic/claude-sonnet-4"
+            )
+        )
+
+        let presentation = player.nowPlayingPresentation
+        #expect(presentation?.sessionID == "session-a")
+        #expect(presentation?.title == "Session A")
+        #expect(presentation?.subtitle == "o4-mini")
+        #expect(presentation?.provider == "openai")
     }
 
     @Test func validMicrophoneFormatPassesAudioEngineValidation() throws {

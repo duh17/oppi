@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Oppi
 
@@ -60,6 +61,25 @@ struct SessionActivityStoreTests {
 
         #expect(store.lastActivity(for: "s1")?.toolName == "Read")
         #expect(store.lastActivity(for: "s2")?.toolName == "Write")
+    }
+
+    @Test func lastActivityReadInvalidatesWhenActivityChanges() {
+        let store = SessionActivityStore()
+        let recorder = ObservationInvalidationRecorder()
+
+        withObservationTracking {
+            _ = store.lastActivity(for: "s1")
+        } onChange: {
+            recorder.invalidated = true
+        }
+
+        store.recordToolStart(
+            sessionId: "s1",
+            tool: "Read",
+            args: ["path": .string("a.swift")]
+        )
+
+        #expect(recorder.invalidated)
     }
 
     // MARK: - clear
@@ -189,4 +209,8 @@ struct SessionActivityStoreTests {
         )
         #expect(result == "file.txt")
     }
+}
+
+private final class ObservationInvalidationRecorder: @unchecked Sendable {
+    var invalidated = false
 }

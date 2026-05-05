@@ -713,6 +713,7 @@ struct WorkspaceDetailView: View {
             )
             sessionStore.upsert(response.session)
             isCreating = false
+            navigateToSessionId = response.session.id
         } catch {
             self.error = error.localizedDescription
             isCreating = false

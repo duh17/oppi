@@ -50,15 +50,17 @@ class E2ETestCase: XCTestCase {
             springboard.alerts.firstMatch.buttons.element(boundBy: 1).tap()
         }
 
-        // Wait for pairing to complete — Workspaces tab appears
-        let workspacesNav = application.navigationBars["Workspaces"]
+        // Wait for pairing to complete — workspace list appears. Use the
+        // collection identifier instead of the navigation title; chrome changes
+        // can hide or rename the bar without changing readiness.
+        let workspaceList = application.collectionViews["workspace.list"]
         XCTAssertTrue(
-            workspacesNav.waitForExistence(timeout: 30),
-            "Workspaces navigation bar did not appear after pairing"
+            workspaceList.waitForExistence(timeout: 30),
+            "Workspace list did not appear after pairing"
         )
 
         // Find and tap the e2e-workspace
-        let workspaceCell = application.collectionViews["workspace.list"]
+        let workspaceCell = workspaceList
             .cells.containing(.staticText, identifier: "e2e-workspace").firstMatch
         if !workspaceCell.waitForExistence(timeout: 30) {
             // Pull to refresh as fallback — then poll again instead of sleeping
@@ -141,12 +143,8 @@ class E2ETestCase: XCTestCase {
 
     // MARK: - Session Helpers
 
-    /// Creates a new session by tapping the + button and polling for the session cell to appear.
-    /// Does NOT enter the session — call `enterLatestSession()` or `enterSession(at:)` after.
+    /// Creates a new session by tapping the + button and waits for the app to open it.
     func createSession() {
-        let sessionList = app.collectionViews["workspace.sessionList"]
-        let cellCountBefore = sessionList.cells.count
-
         let newSessionButton = app.buttons["workspace.newSession"]
         XCTAssertTrue(
             newSessionButton.waitForExistence(timeout: 10),
@@ -154,14 +152,10 @@ class E2ETestCase: XCTestCase {
         )
         newSessionButton.tap()
 
-        // Poll for the new session cell at the next index.
-        // max(cellCountBefore, 1) handles both empty lists (0 cells → wait for index 1
-        // after the section header) and populated lists (N cells → wait for index N).
-        let targetIndex = max(cellCountBefore, 1)
-        let newCell = sessionList.cells.element(boundBy: targetIndex)
+        let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
-            newCell.waitForExistence(timeout: 15),
-            "Session cell did not appear after creation"
+            chatInput.waitForExistence(timeout: 30),
+            "Chat input did not appear after creating session"
         )
     }
 
@@ -188,11 +182,34 @@ class E2ETestCase: XCTestCase {
         )
     }
 
+    /// Taps a specific session row by stable session id and waits for chat input.
+    func enterSession(id sessionId: String) {
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(
+            sessionList.waitForExistence(timeout: 10),
+            "Session list did not appear before entering session \(sessionId)"
+        )
+
+        let rowTitle = app.staticTexts["Session \(sessionId)"]
+        if !rowTitle.waitForExistence(timeout: 5) {
+            sessionList.swipeUp()
+        }
+        XCTAssertTrue(
+            rowTitle.waitForExistence(timeout: 10),
+            "Session row \(sessionId) did not appear"
+        )
+        rowTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        let chatInput = app.textViews["chat.input"]
+        XCTAssertTrue(
+            chatInput.waitForExistence(timeout: 30),
+            "Chat input did not appear after entering session \(sessionId)"
+        )
+    }
+
     /// Creates a new session and enters it.
-    /// Convenience for `createSession()` followed by `enterLatestSession()`.
     func createAndEnterSession() {
         createSession()
-        enterLatestSession()
     }
 
     /// Navigates back from a chat session to the workspace detail screen.
@@ -234,6 +251,89 @@ class E2ETestCase: XCTestCase {
             }
         }
         return false
+    }
+
+    // MARK: - E2E Diagnostics
+
+    @discardableResult
+    func waitForE2EDiagnostic(
+        _ identifier: String,
+        timeout: TimeInterval = 15,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        matching predicate: (String) -> Bool
+    ) -> String {
+        let element = app.staticTexts[identifier]
+        XCTAssertTrue(
+            element.waitForExistence(timeout: 10),
+            "E2E diagnostic \(identifier) did not appear",
+            file: file,
+            line: line
+        )
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = element.label
+        while Date() < deadline {
+            latest = element.label
+            if predicate(latest) {
+                return latest
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        XCTFail(
+            "Diagnostic \(identifier) never matched. Last value: \(latest)",
+            file: file,
+            line: line
+        )
+        return latest
+    }
+
+    @discardableResult
+    func waitForWebSocketConnected(timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.ws.status", timeout: timeout) { $0 == "connected" }
+    }
+
+    @discardableResult
+    func waitForFocusedSessionId(
+        _ expected: String? = nil,
+        excluding excluded: String? = nil,
+        timeout: TimeInterval = 15
+    ) -> String {
+        waitForE2EDiagnostic("e2e.ws.focusedSession", timeout: timeout) { value in
+            value != "none"
+                && !value.isEmpty
+                && (expected.map { value == $0 } ?? true)
+                && (excluded.map { value != $0 } ?? true)
+        }
+    }
+
+    @discardableResult
+    func waitForDesiredSubscription(
+        sessionId: String,
+        level: String,
+        timeout: TimeInterval = 20
+    ) -> String {
+        waitForE2EDiagnostic("e2e.ws.desiredSubscriptions", timeout: timeout) { value in
+            hasSubscription(value, sessionId: sessionId, level: level)
+        }
+    }
+
+    @discardableResult
+    func waitForAckedSubscription(
+        sessionId: String,
+        level: String,
+        timeout: TimeInterval = 20
+    ) -> String {
+        waitForE2EDiagnostic("e2e.ws.ackedSubscriptions", timeout: timeout) { value in
+            hasSubscription(value, sessionId: sessionId, level: level)
+        }
+    }
+
+    private func hasSubscription(_ value: String, sessionId: String, level: String) -> Bool {
+        value
+            .split(separator: ",")
+            .contains { $0 == "\(sessionId):\(level)" }
     }
 
     /// Types a message, sends it, and waits for the full round-trip to complete

@@ -539,6 +539,24 @@ final class ConnectionCoordinator {
         connections.values.contains { $0.audioPlayer.hasActivePlayback }
     }
 
+    /// Whether any active playback still depends on live `/stream` delivery.
+    var hasActiveAudioTransportPlayback: Bool {
+        connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
+    }
+
+    var activeAudioPlaybackPresentation: AudioPlayerService.NowPlayingPresentation? {
+        if let activePresentation = activeConnection.audioPlayer.nowPlayingPresentation {
+            return activePresentation
+        }
+
+        for (serverId, connection) in connections where serverId != activeServerId {
+            if let presentation = connection.audioPlayer.nowPlayingPresentation {
+                return presentation
+            }
+        }
+        return nil
+    }
+
     /// Stop all audio playback across all servers.
     func stopAllAudioPlayback() {
         for connection in connections.values {

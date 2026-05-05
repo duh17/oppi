@@ -427,11 +427,10 @@ struct OppiApp: App {
             }
             if hasActiveAgent {
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
-            } else if coordinator.hasActiveAudioPlayback {
-                // Let active playback continue under the audio background mode.
-                // Avoid proactively closing the stream while a reply is still
-                // speaking; local clips can finish and live streams get the
-                // best chance to drain naturally.
+            } else if coordinator.hasActiveAudioTransportPlayback {
+                // Let live streamed playback continue under the audio background mode.
+                // Local clips can finish without keeping `/stream` open; only
+                // active audio_stream delivery needs the transport to drain.
                 backgroundKeepAlive.end()
             } else {
                 // No active agents or playback — send graceful close so the

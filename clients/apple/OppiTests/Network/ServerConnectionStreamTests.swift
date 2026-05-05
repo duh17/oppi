@@ -189,6 +189,49 @@ struct ServerConnectionStreamTests {
         #expect(received, "Message should be yielded to session continuation")
     }
 
+    @Test func routeStreamMessageDefersNonFocusedSharedStoreUpdateWhenLiveConsumerExists() {
+        let (conn, _) = makeTestConnection(sessionId: "focused")
+        conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: "background", status: .ready))
+
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["background"] = continuation
+        }
+        _ = stream
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "background",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .agentStart
+        ))
+
+        #expect(
+            conn.sessionStore.session(id: "background")?.status == .ready,
+            "live non-focused consumer owns shared store mutation for its event"
+        )
+
+        conn.sessionEventContinuations["background"]?.finish()
+        conn.sessionEventContinuations.removeValue(forKey: "background")
+    }
+
+    @Test func routeStreamMessageAppliesNonFocusedSharedStoreUpdateWithoutLiveConsumer() {
+        let (conn, _) = makeTestConnection(sessionId: "focused")
+        conn.sessionStore.upsert(makeTestSession(id: "focused", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: "background", status: .ready))
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "background",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .agentStart
+        ))
+
+        #expect(conn.sessionStore.session(id: "background")?.status == .busy)
+    }
+
     @Test func routeStreamMessageYieldsSessionEventWithMetadata() async {
         let (conn, _) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
@@ -475,6 +518,50 @@ struct ServerConnectionStreamTests {
 
         #expect(conn.pendingUnsubscribeTasks["s1"] == nil,
                 "Pending unsubscribe should be cancelled before resubscribe")
+    }
+
+    @Test func deferredLiveAudioDisconnectRestoresNotificationsForHiddenSession() async {
+        let parentId = "parent"
+        let childId = "child"
+        let (conn, _) = makeTestConnection(sessionId: parentId)
+        conn.sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: childId, workspaceId: "w1", status: .ready))
+
+        conn._sendMessageForTesting = { message in
+            if case .subscribe(let sessionId, _, _, let requestId, _) = message {
+                conn.routeStreamMessage(StreamMessage(
+                    sessionId: sessionId,
+                    streamSeq: nil,
+                    seq: nil,
+                    currentSeq: nil,
+                    message: .commandResult(
+                        command: "subscribe",
+                        requestId: requestId,
+                        success: true,
+                        data: nil,
+                        error: nil
+                    )
+                ))
+            }
+        }
+
+        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: parentId)
+        conn.deferDisconnectSessionUntilLiveAudioStreamFinishes(parentId)
+        conn.focusSession(childId)
+
+        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: parentId, receivedDone: true)
+
+        let restored = await waitForTestCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                conn.subscriptionRegistry.desiredLevel(for: parentId) == .notifications
+            }
+        }
+
+        #expect(restored, "A deferred disconnect for a hidden session must downgrade it to notifications, not none")
+        #expect(conn.focusedSessionId == childId)
+
+        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: nil)
+        conn.disconnectStream()
     }
 
     @Test func disconnectStreamCancelsPendingUnsubscribes() {

@@ -315,6 +315,7 @@ struct ChatView: View {
                 Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
             }
             .task(id: connectionTaskKey) {
+                audioPlayer.setSessionContext(session)
                 voiceInputManager.activeSessionId = sessionId
                 voiceInputManager.setServerCredentials(connection.credentials)
                 voiceInputManager.setServerConnection(connection)
@@ -336,6 +337,12 @@ struct ChatView: View {
             }
             .task(id: session?.workspaceId ?? "") {
                 await loadReviewCommentsIfPossible()
+            }
+            .onChange(of: session?.displayTitle) { _, _ in
+                audioPlayer.setSessionContext(session)
+            }
+            .onChange(of: session?.model) { _, _ in
+                audioPlayer.setSessionContext(session)
             }
             .task(id: sessionId) {
                 // Auto-send pending message from QuickSessionSheet.
@@ -406,7 +413,6 @@ struct ChatView: View {
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
-                audioPlayer.stop()
                 if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
@@ -425,7 +431,6 @@ struct ChatView: View {
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
-                audioPlayer.stop()
                 let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
                 chatState.composerDraft = draft.isEmpty ? nil : draft
                 Task {
@@ -982,6 +987,10 @@ struct ChatView: View {
 
     @MainActor
     private func disconnectIfCurrentSession() {
+        if audioPlayer.activeLiveTransportSessionID == sessionId {
+            connection.deferDisconnectSessionUntilLiveAudioStreamFinishes(sessionId)
+            return
+        }
         let focusedSessionId = connection.focusedSessionId
         if focusedSessionId == sessionId || focusedSessionId == nil {
             connection.disconnectSession()

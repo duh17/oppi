@@ -15,19 +15,29 @@ final class SessionActivityStore {
         let keyArg: String?
     }
 
-    private var activities: [String: Activity] = [:]
+    /// Hot tool activity cache.
+    ///
+    /// The dictionary stays ignored so reads can be funneled through
+    /// `activityRevision`, giving list rows one stable observation dependency.
+    @ObservationIgnored private var activities: [String: Activity] = [:]
+    private var activityRevision = 0
 
     func recordToolStart(sessionId: String, tool: String, args: [String: JSONValue]) {
         let keyArg = Self.extractKeyArg(tool: tool, args: args)
-        activities[sessionId] = Activity(toolName: tool, keyArg: keyArg)
+        let activity = Activity(toolName: tool, keyArg: keyArg)
+        guard activities[sessionId] != activity else { return }
+        activities[sessionId] = activity
+        activityRevision &+= 1
     }
 
     func lastActivity(for sessionId: String) -> Activity? {
-        activities[sessionId]
+        _ = activityRevision
+        return activities[sessionId]
     }
 
     func clear(sessionId: String) {
-        activities.removeValue(forKey: sessionId)
+        guard activities.removeValue(forKey: sessionId) != nil else { return }
+        activityRevision &+= 1
     }
 
     // MARK: - Key Arg Extraction

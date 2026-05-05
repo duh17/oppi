@@ -10,8 +10,6 @@ struct ChatViewLifecycleTests {
         let parentId = "parent-\(UUID().uuidString)"
         let childId = "child-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: childId)
-        let appNavigation = AppNavigation()
-        let piQuickActionStore = PiQuickActionStore(actions: [])
 
         connection.sessionStore.upsert(makeTestSession(id: parentId, status: .ready))
 
@@ -27,18 +25,112 @@ struct ChatViewLifecycleTests {
             preparedSessionIds.append(sessionId)
         }
 
-        let root = AnyView(
-            ChatView(sessionId: parentId)
-                .environment(connection)
-                .environment(connection.chatState)
-                .environment(connection.sessionStore)
-                .environment(connection.audioPlayer)
-                .environment(connection.gitStatusStore)
-                .environment(connection.fileIndexStore)
-                .environment(connection.messageQueueStore)
-                .environment(connection.permissionStore)
-                .environment(appNavigation)
-                .environment(piQuickActionStore)
+        let host = makeHost(connection: connection, sessionId: parentId)
+
+        let prepared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { preparedSessionIds == [parentId] }
+        }
+
+        #expect(prepared, "Expected ChatView.onAppear to prepare session re-entry for the parent session")
+        #expect(connection.focusedSessionId == parentId)
+
+        host.teardown()
+        connection.disconnectSession()
+        connection.disconnectStream()
+    }
+
+    @Test func onDisappearWithoutPlaybackDisconnectsFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let host = makeHost(connection: connection, sessionId: sessionId)
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        host.controller.rootView = AnyView(EmptyView())
+        host.controller.view.setNeedsLayout()
+        host.controller.view.layoutIfNeeded()
+
+        let disconnected = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(disconnected)
+
+        host.teardown()
+        connection.disconnectStream()
+    }
+
+    @Test func onDisappearDuringLocalPlaybackDisconnectsFocusedSession() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let host = makeHost(connection: connection, sessionId: sessionId)
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        connection.audioPlayer.setSessionContext(makeTestSession(id: sessionId, status: .ready))
+        connection.audioPlayer._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
+        host.hide()
+
+        let disconnected = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(disconnected, "Local playback should not keep session focus/subscription lifecycle pinned")
+        #expect(connection.audioPlayer.hasActivePlayback, "Expected local playback to survive ChatView disappearance")
+
+        connection.audioPlayer._setPlaybackStateForTesting(playing: nil, loading: nil)
+
+        host.teardown()
+        connection.disconnectStream()
+    }
+
+    @Test func onDisappearDuringLiveAudioStreamDefersDisconnectUntilStreamDone() async {
+        let sessionId = "session-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let host = makeHost(connection: connection, sessionId: sessionId)
+
+        let appeared = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == sessionId }
+        }
+        #expect(appeared)
+
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: sessionId)
+        host.hide()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        #expect(connection.focusedSessionId == sessionId)
+        #expect(connection.audioPlayer.hasActiveLiveTransportPlayback)
+
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: sessionId, receivedDone: true)
+
+        let disconnected = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { connection.focusedSessionId == nil }
+        }
+        #expect(disconnected, "Expected deferred disconnect after live stream no longer needs transport")
+
+        connection.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: nil)
+        host.teardown()
+        connection.disconnectStream()
+    }
+
+    private func makeHost(connection: ServerConnection, sessionId: String) -> HostHarness {
+        let appNavigation = AppNavigation()
+        let piQuickActionStore = PiQuickActionStore(actions: [])
+        let root = makeRootView(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation,
+            piQuickActionStore: piQuickActionStore
         )
 
         let controller = UIHostingController(rootView: root)
@@ -51,18 +143,45 @@ struct ChatViewLifecycleTests {
 
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
+        return HostHarness(controller: controller, window: window)
+    }
 
-        let prepared = await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run { preparedSessionIds == [parentId] }
-        }
+    private func makeRootView(
+        connection: ServerConnection,
+        sessionId: String,
+        appNavigation: AppNavigation,
+        piQuickActionStore: PiQuickActionStore
+    ) -> AnyView {
+        AnyView(
+            ChatView(sessionId: sessionId)
+                .environment(connection)
+                .environment(connection.chatState)
+                .environment(connection.sessionStore)
+                .environment(connection.audioPlayer)
+                .environment(connection.gitStatusStore)
+                .environment(connection.fileIndexStore)
+                .environment(connection.messageQueueStore)
+                .environment(connection.permissionStore)
+                .environment(appNavigation)
+                .environment(piQuickActionStore)
+        )
+    }
+}
 
-        #expect(prepared, "Expected ChatView.onAppear to prepare session re-entry for the parent session")
-        #expect(connection.focusedSessionId == parentId)
+@MainActor
+private struct HostHarness {
+    let controller: UIHostingController<AnyView>
+    let window: UIWindow
 
+    func hide() {
         controller.rootView = AnyView(EmptyView())
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+    }
+
+    func teardown() {
+        hide()
         window.isHidden = true
         window.rootViewController = nil
-        connection.disconnectSession()
-        connection.disconnectStream()
     }
 }

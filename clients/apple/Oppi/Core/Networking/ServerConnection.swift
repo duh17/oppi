@@ -158,6 +158,9 @@ final class ServerConnection {
     /// fire-and-forget unsubscribe from racing past the new subscribe.
     var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
 
+    /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
+    var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
+
     /// Debounce timer for notification subscription sync.
     /// Coalesces rapid-fire calls (every server message triggers
     /// syncLiveActivityPermissions) into a single WS subscribe batch.
@@ -644,6 +647,7 @@ final class ServerConnection {
         if deferSharedStoreToLiveSession,
            shouldDeferSharedStoreUpdateToLiveSessionConsumer(message) {
             handleInactiveSessionUI(message, sessionId: sessionId)
+            recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)
             return
         }
 
@@ -678,7 +682,20 @@ final class ServerConnection {
 
     private func shouldDeferSharedStoreUpdateToLiveSessionConsumer(_ message: ServerMessage) -> Bool {
         switch message {
-        case .permissionRequest, .permissionExpired, .permissionCancelled:
+        case .permissionRequest,
+             .permissionExpired,
+             .permissionCancelled,
+             .agentStart,
+             .agentEnd,
+             .toolStart,
+             .toolUpdate,
+             .state,
+             .sessionSummary,
+             .sessionEnded,
+             .sessionDeleted,
+             .stopRequested,
+             .stopConfirmed,
+             .stopFailed:
             return true
         default:
             return false
@@ -768,12 +785,40 @@ final class ServerConnection {
         }
     }
 
+    private func cancelDeferredPlaybackDisconnect(for sessionId: String) {
+        if let task = deferredPlaybackDisconnectTasks.removeValue(forKey: sessionId) {
+            task.cancel()
+        }
+    }
+
+    func deferDisconnectSessionUntilLiveAudioStreamFinishes(_ sessionId: String) {
+        cancelDeferredPlaybackDisconnect(for: sessionId)
+        deferredPlaybackDisconnectTasks[sessionId] = Task { @MainActor [weak self] in
+            while let self,
+                  !Task.isCancelled,
+                  self.audioPlayer.activeLiveTransportSessionID == sessionId {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.deferredPlaybackDisconnectTasks.removeValue(forKey: sessionId)
+            self.disconnectSession(sessionId: sessionId)
+        }
+    }
+
+    private func disconnectSessionResources(for sessionId: String) {
+        unsubscribeSession(sessionId)
+        messageQueueStore.clear(sessionId: sessionId)
+        sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
+        screenAwakeController.clearSessionActivity(sessionId: sessionId)
+    }
+
     /// Focus the connection on a session for command routing (prompt/stop/etc).
     ///
     /// Unlike `disconnectSession`, this does NOT unsubscribe the previous session
     /// or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
+        cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
             // Hand off session-scoped control-plane state before switching the
@@ -811,17 +856,21 @@ final class ServerConnection {
         connectStream()
     }
 
-    /// Disconnect from the current session stream.
-    func disconnectSession() {
-        cancelDeferredQueueSync()
-        commands.failAllTurnSends(error: WebSocketError.notConnected)
-        commands.failAllCommands(error: WebSocketError.notConnected)
+    func disconnectSession(sessionId: String) {
+        cancelDeferredPlaybackDisconnect(for: sessionId)
+        let isFocusedSession = focusedSessionId == sessionId
 
-        if let focusedSessionId {
-            unsubscribeSession(focusedSessionId)
-            messageQueueStore.clear(sessionId: focusedSessionId)
-            sessionUsageMetricSnapshots.removeValue(forKey: focusedSessionId)
-            screenAwakeController.clearSessionActivity(sessionId: focusedSessionId)
+        if isFocusedSession {
+            cancelDeferredQueueSync()
+            commands.failAllTurnSends(error: WebSocketError.notConnected)
+            commands.failAllCommands(error: WebSocketError.notConnected)
+        }
+
+        disconnectSessionResources(for: sessionId)
+
+        guard isFocusedSession else {
+            syncNotificationSubscriptions()
+            return
         }
 
         // Stash pending user-blocking UI before clearing focus so it can
@@ -847,6 +896,17 @@ final class ServerConnection {
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
         // Don't disconnect /stream WS — it stays open for other subscriptions.
+    }
+
+    /// Disconnect from the current session stream.
+    func disconnectSession() {
+        guard let focusedSessionId else {
+            cancelDeferredQueueSync()
+            commands.failAllTurnSends(error: WebSocketError.notConnected)
+            commands.failAllCommands(error: WebSocketError.notConnected)
+            return
+        }
+        disconnectSession(sessionId: focusedSessionId)
     }
 
     // MARK: - Actions (delegated to MessageSender)
