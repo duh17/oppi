@@ -3,11 +3,11 @@ import Testing
 
 @Suite("Workspace session navigation chrome")
 struct WorkspaceSessionNavigationChromePolicyTests {
-    @Test func hidesBottomBarWhileOpeningSession() {
-        #expect(WorkspaceSessionNavigationChromePolicy.shouldHideBottomBar(isOpeningSession: true))
+    @Test func keepsSessionListBottomBarAutomatic() {
+        #expect(!WorkspaceSessionNavigationChromePolicy.shouldHideBottomBar(on: .sessionList))
     }
 
-    @Test func showsBottomBarWhenSessionListIsActive() {
-        #expect(!WorkspaceSessionNavigationChromePolicy.shouldHideBottomBar(isOpeningSession: false))
+    @Test func hidesBottomBarOnSessionTimeline() {
+        #expect(WorkspaceSessionNavigationChromePolicy.shouldHideBottomBar(on: .sessionTimeline))
     }
 }

@@ -52,7 +52,6 @@ struct WorkspaceDetailView: View {
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
-    @State private var isOpeningSession = false
     @State private var policyFallback: PolicyFallbackDecision = .allow
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -343,8 +342,8 @@ struct WorkspaceDetailView: View {
                         NavigationLink(value: session.id) {
                             sessionRow(for: session, using: data.childIndex)
                         }
+                        .accessibilityIdentifier("session.nav.\(session.id)")
                         .buttonStyle(.plain)
-                        .simultaneousGesture(TapGesture().onEnded { beginOpeningSessionNavigation() })
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
@@ -364,8 +363,8 @@ struct WorkspaceDetailView: View {
                         NavigationLink(value: session.id) {
                             sessionRow(for: session, using: data.childIndex)
                         }
+                        .accessibilityIdentifier("session.nav.\(session.id)")
                         .buttonStyle(.plain)
-                        .simultaneousGesture(TapGesture().onEnded { beginOpeningSessionNavigation() })
                         .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
@@ -402,9 +401,6 @@ struct WorkspaceDetailView: View {
                 },
                 onImportLocal: { local in
                     Task { await importAndResumeLocal(local) }
-                },
-                onOpenSession: {
-                    beginOpeningSessionNavigation()
                 },
                 expandedGroupIDs: $expandedStoppedGroupIDs,
                 collapsedGroupIDs: $collapsedStoppedGroupIDs,
@@ -463,9 +459,9 @@ struct WorkspaceDetailView: View {
         }
         .navigationTitle(currentWorkspace.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
-        .toolbar(
-            WorkspaceSessionNavigationChromePolicy.bottomBarVisibility(isOpeningSession: isOpeningSession),
+        .toolbarVisibility(.hidden, for: .tabBar)
+        .toolbarVisibility(
+            WorkspaceSessionNavigationChromePolicy.bottomBarVisibility(on: .sessionList),
             for: .bottomBar
         )
         .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search sessions")
@@ -536,9 +532,6 @@ struct WorkspaceDetailView: View {
                     gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
                 )
             }
-        }
-        .onAppear {
-            isOpeningSession = false
         }
         .overlay {
             if isCreating || isImportingLocal {
@@ -692,10 +685,6 @@ struct WorkspaceDetailView: View {
 
     // MARK: - Actions
 
-    private func beginOpeningSessionNavigation() {
-        isOpeningSession = true
-    }
-
     /// Create a new session in this workspace.
     ///
     /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
@@ -774,7 +763,6 @@ struct WorkspaceDetailView: View {
             localSessions.removeAll { $0.path == local.path }
 
             isImportingLocal = false
-            beginOpeningSessionNavigation()
             navigateToSessionId = session.id
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"

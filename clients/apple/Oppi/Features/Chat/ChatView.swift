@@ -446,9 +446,12 @@ struct ChatView: View {
 
     private var configuredChatToolbarContent: some View {
         configuredChatNavigationContent
-            .toolbar(.hidden, for: .tabBar)
-            .toolbar(.hidden, for: .bottomBar)
-            .toolbar(.visible, for: .navigationBar)
+            .toolbarVisibility(.hidden, for: .tabBar)
+            .toolbarVisibility(
+                WorkspaceSessionNavigationChromePolicy.bottomBarVisibility(on: .sessionTimeline),
+                for: .bottomBar
+            )
+            .toolbarVisibility(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     chatPrincipalToolbarItem

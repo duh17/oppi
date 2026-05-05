@@ -112,7 +112,9 @@ struct OppiApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if UIHangHarnessConfig.isEnabled {
+            if NavigationChromeProfileConfig.isEnabled {
+                NavigationChromeProfileHarnessView()
+            } else if UIHangHarnessConfig.isEnabled {
                 UIHangHarnessView()
             } else if ScreenshotPreviewConfig.isEnabled {
                 ScreenshotPreviewView()

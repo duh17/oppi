@@ -30,6 +30,27 @@ struct WorkspaceIcon: View {
     }
 }
 
+// MARK: - WorkspaceSelectionButton
+
+struct WorkspaceSelectionButton: View {
+    let isSelected: Bool
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(isSelected ? .themeBlue : .themeComment)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+    }
+}
+
 // MARK: - RuntimeBadge
 
 struct RuntimeBadge: View {

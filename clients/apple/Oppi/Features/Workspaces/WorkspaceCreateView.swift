@@ -275,31 +275,13 @@ struct WorkspaceCreateView: View {
                         .foregroundStyle(.themeComment)
                 } else {
                     ForEach(skills) { skill in
-                        Button {
-                            toggleSkill(skill.name)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(skill.name)
-                                        .font(.body)
-                                    Text(skill.description)
-                                        .font(.caption)
-                                        .foregroundStyle(.themeComment)
-                                        .lineLimit(2)
-                                }
-                                Spacer()
-                                Image(
-                                    systemName: selectedSkills.contains(skill.name)
-                                        ? "checkmark.circle.fill" : "circle"
-                                )
-                                .foregroundStyle(
-                                    selectedSkills.contains(skill.name)
-                                        ? .themeBlue : .themeComment
-                                )
-                                .imageScale(.large)
+                        WorkspaceCreateSkillSelectionRow(
+                            skill: skill,
+                            isSelected: selectedSkills.contains(skill.name),
+                            onToggle: {
+                                toggleSkill(skill.name)
                             }
-                        }
-                        .foregroundStyle(.themeFg)
+                        )
                     }
                 }
             }
@@ -466,6 +448,39 @@ struct WorkspaceCreateView: View {
         } catch {
             self.error = error.localizedDescription
             isCreating = false
+        }
+    }
+}
+
+// MARK: - Skill Selection Row
+
+private struct WorkspaceCreateSkillSelectionRow: View {
+    let skill: SkillInfo
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(skill.name)
+                    .font(.body)
+                    .foregroundStyle(.themeFg)
+
+                Text(skill.description)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 12)
+
+            WorkspaceSelectionButton(
+                isSelected: isSelected,
+                accessibilityLabel: isSelected
+                    ? "Disable \(skill.name) skill"
+                    : "Enable \(skill.name) skill",
+                action: onToggle
+            )
         }
     }
 }

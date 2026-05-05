@@ -73,12 +73,10 @@ final class SessionLifecycleE2ETests: E2ETestCase {
     }
 
     func testSessionSwitching() throws {
-        // Create two sessions (both stay at workspace detail)
+        // Create session A, then go back and create session B.
         createSession()
+        navigateBackToWorkspace()
         createSession()
-
-        // Enter session B (newest, index 1 after header)
-        enterLatestSession()
 
         sendMessageAndWaitForResponse(localEchoPrompt("SESSION_B_MARKER"))
         XCTAssertTrue(

@@ -1,17 +1,26 @@
 import SwiftUI
 
-/// Chrome policy for leaving the workspace session list.
+/// Chrome policy for workspace session navigation.
 ///
-/// The workspace detail screen owns a bottom toolbar with the file browser,
-/// skills, and policy controls. When a session row starts pushing `ChatView`,
-/// hide that toolbar immediately from the source screen instead of waiting for
-/// the destination's `.bottomBar` visibility to resolve after the push.
+/// Toolbar visibility is owned by the active surface. The workspace session
+/// list keeps its bottom toolbar automatic; `ChatView` hides the bottom bar
+/// when it becomes the active destination.
 enum WorkspaceSessionNavigationChromePolicy {
-    static func shouldHideBottomBar(isOpeningSession: Bool) -> Bool {
-        isOpeningSession
+    enum Surface {
+        case sessionList
+        case sessionTimeline
     }
 
-    static func bottomBarVisibility(isOpeningSession: Bool) -> Visibility {
-        shouldHideBottomBar(isOpeningSession: isOpeningSession) ? .hidden : .automatic
+    static func shouldHideBottomBar(on surface: Surface) -> Bool {
+        switch surface {
+        case .sessionList:
+            return false
+        case .sessionTimeline:
+            return true
+        }
+    }
+
+    static func bottomBarVisibility(on surface: Surface) -> Visibility {
+        shouldHideBottomBar(on: surface) ? .hidden : .automatic
     }
 }
