@@ -226,6 +226,7 @@ export class UserStreamMux {
       case "agent_start":
       case "agent_end":
       case "state":
+      case "session_summary":
       case "session_ended":
       case "session_deleted":
       case "stop_requested":

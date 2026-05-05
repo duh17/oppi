@@ -64,7 +64,7 @@ struct QuickSessionSheet: View {
         var seen: Set<String> = []
 
         for (serverId, conn) in coordinator.connections {
-            let sessions = conn.sessionStore.sessions.filter { session in
+            let sessions = conn.sessionStore.listProjectionSessions.filter { session in
                 switch session.status {
                 case .busy, .starting, .stopping, .ready, .error: return true
                 case .stopped: return false

@@ -3,8 +3,7 @@ import path from "node:path";
 
 import ts from "typescript";
 
-export const SERVER_ARCHITECTURE_GUIDE =
-  "ARCHITECTURE.md#dependency-direction-rules-current-code";
+export const SERVER_ARCHITECTURE_GUIDE = "ARCHITECTURE.md#dependency-direction-rules-current-code";
 export const IOS_ARCHITECTURE_GUIDE = "ARCHITECTURE.md#ios-layers";
 
 const SERVER_COMPOSITION_ROOT = "server/src/server.ts";
@@ -26,11 +25,19 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
+const IOS_COLD_LIST_PROJECTION_CONSUMER_PATH_PREFIXES = [
+  "clients/apple/Oppi/Features/Workspaces/",
+  "clients/apple/Oppi/Features/QuickSession/",
+];
+
 const IOS_ISOLATED_STORES = [
   { file: "clients/apple/Oppi/Core/Services/SessionStore.swift", typeName: "SessionStore" },
   { file: "clients/apple/Oppi/Core/Services/WorkspaceStore.swift", typeName: "WorkspaceStore" },
   { file: "clients/apple/Oppi/Core/Services/PermissionStore.swift", typeName: "PermissionStore" },
-  { file: "clients/apple/Oppi/Core/Services/MessageQueueStore.swift", typeName: "MessageQueueStore" },
+  {
+    file: "clients/apple/Oppi/Core/Services/MessageQueueStore.swift",
+    typeName: "MessageQueueStore",
+  },
 ];
 
 export function normalizeRepoPath(filePath) {
@@ -191,15 +198,7 @@ function sortArchitectureViolations(violations) {
   });
 }
 
-function makeServerViolation({
-  rule,
-  importer,
-  target,
-  line,
-  column,
-  reason,
-  remediation,
-}) {
+function makeServerViolation({ rule, importer, target, line, column, reason, remediation }) {
   return {
     rule,
     file: importer,
@@ -214,10 +213,12 @@ function makeServerViolation({
 }
 
 export function findServerLayerViolations(repoRoot, files = undefined) {
-  const candidateFiles = (files ??
+  const candidateFiles = (
+    files ??
     listFilesRecursively(path.join(repoRoot, "server", "src"), ".ts").map((absolutePath) =>
       normalizeRepoPath(path.relative(repoRoot, absolutePath)),
-    ))
+    )
+  )
     .map(normalizeRepoPath)
     .filter(isServerSourceFile)
     .sort();
@@ -512,7 +513,9 @@ function collectIosSwiftFiles(repoRoot, files = undefined) {
   if (files) {
     return files
       .map(normalizeRepoPath)
-      .filter((filePath) => filePath.startsWith("clients/apple/Oppi/") && filePath.endsWith(".swift"))
+      .filter(
+        (filePath) => filePath.startsWith("clients/apple/Oppi/") && filePath.endsWith(".swift"),
+      )
       .sort();
   }
 
@@ -610,6 +613,37 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         }),
       );
     }
+  }
+
+  for (const file of candidateFiles) {
+    if (
+      !IOS_COLD_LIST_PROJECTION_CONSUMER_PATH_PREFIXES.some((prefix) => file.startsWith(prefix))
+    ) {
+      continue;
+    }
+
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+
+    const match = findFirstMatch(parsed.stripped, /\bsessionStore\s*(?:[?!]\s*)?\.\s*sessions\b/);
+    if (!match) {
+      continue;
+    }
+
+    const location = lineAndColumnForIndex(parsed.stripped, match.index);
+    violations.push(
+      makeIosViolation({
+        rule: "list-projection-consumer",
+        file,
+        line: location.line,
+        column: location.column,
+        reason: "Workspace and quick-session list views must not read full SessionStore.sessions.",
+        remediation:
+          "Read SessionStore.listProjectionSessions or listProjectionSessions(workspaceId:) so hot full-session changes do not rebuild list UI.",
+      }),
+    );
   }
 
   const isolatedStoreNames = IOS_ISOLATED_STORES.map((store) => store.typeName);

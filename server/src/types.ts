@@ -50,7 +50,7 @@ export interface Workspace {
 
 // ─── Sessions ───
 
-export interface SessionChangeStats {
+export interface SessionSummaryChangeStats {
   /** Count of mutating file tool calls (edit/write) observed in this session. */
   mutatingToolCalls: number;
   /** Unique file count mutated by edit/write tools. */
@@ -63,6 +63,9 @@ export interface SessionChangeStats {
   addedLines: number;
   /** Best-effort aggregate line removals (from edit/write args). */
   removedLines: number;
+}
+
+export interface SessionChangeStats extends SessionSummaryChangeStats {
   /**
    * @internal Per-file line count tracking for accurate write deltas.
    * Maps file path → last known line count so repeated writes to the same
@@ -123,6 +126,36 @@ export interface Session {
 
   // Parent-child tree (spawn_agent)
   parentSessionId?: string; // set when spawned by another session
+}
+
+/**
+ * Session projection for workspace lists and cross-session status surfaces.
+ *
+ * This is the cold lane for mobile UI. It intentionally excludes trace paths,
+ * warnings, and other non-list metadata so high-frequency live events do not
+ * have to broadcast full `Session` snapshots.
+ */
+export interface SessionSummary {
+  id: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  name?: string;
+  status: Session["status"];
+  createdAt: number;
+  lastActivity: number;
+  currentTurnStartedAt?: number;
+  model?: string;
+  messageCount: number;
+  tokens: Session["tokens"];
+  cost: number;
+  changeStats?: SessionSummaryChangeStats;
+  contextTokens?: number;
+  contextWindow?: number;
+  firstMessage?: string;
+  lastMessage?: string;
+  thinkingLevel?: string;
+  ephemeral?: boolean;
+  parentSessionId?: string;
 }
 
 export interface SessionMessage {
@@ -1328,6 +1361,7 @@ export type ServerMessage = // ── Connection ──
     | { type: "connected"; session: Session; currentSeq?: number }
     | { type: "stream_connected"; userName: string; asrAvailable?: boolean }
     | { type: "state"; session: Session }
+    | { type: "session_summary"; summary: SessionSummary }
     | { type: "session_ended"; reason: string }
     | { type: "session_deleted"; sessionId: string }
     | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }

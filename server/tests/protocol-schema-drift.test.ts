@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import type { ClientMessage, ServerMessage, Session, SessionSummary } from "../src/types.js";
 
 function minimalSession(): Session {
   const now = Date.now();
@@ -15,6 +15,19 @@ function minimalSession(): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
+  };
+}
+
+function minimalSessionSummary(): SessionSummary {
+  const session = minimalSession();
+  return {
+    id: session.id,
+    status: session.status,
+    createdAt: session.createdAt,
+    lastActivity: session.lastActivity,
+    messageCount: session.messageCount,
+    tokens: session.tokens,
+    cost: session.cost,
   };
 }
 
@@ -173,6 +186,7 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         { type: "connected", session: minimalSession() },
         { type: "stream_connected", userName: "test" },
         { type: "state", session: minimalSession() },
+        { type: "session_summary", summary: minimalSessionSummary() },
         { type: "session_ended", reason: "done" },
         { type: "session_deleted", sessionId: "s1" },
         { type: "stop_requested", source: "user" },

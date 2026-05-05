@@ -473,7 +473,7 @@ describe("SessionManager event translation", () => {
     expect(events.some((e) => e.type === "message_end")).toBe(true);
   });
 
-  it("marks assistant/user message_end for search reindex", () => {
+  it("does not reindex search on live message_end", () => {
     const { manager } = makeManagerHarness({ status: "busy" });
     const markForReindex = vi.fn();
     const flushForSession = vi.fn();
@@ -489,11 +489,11 @@ describe("SessionManager event translation", () => {
       },
     });
 
-    expect(markForReindex).toHaveBeenCalledWith("s1");
+    expect(markForReindex).not.toHaveBeenCalled();
     expect(flushForSession).not.toHaveBeenCalled();
   });
 
-  it("flushes pending search reindex on agent_end", () => {
+  it("marks and flushes search reindex on agent_end", () => {
     const { manager } = makeManagerHarness({ status: "busy" });
     const markForReindex = vi.fn();
     const flushForSession = vi.fn();
@@ -503,6 +503,7 @@ describe("SessionManager event translation", () => {
 
     feedEvent(manager, "s1", { type: "agent_end" });
 
+    expect(markForReindex).toHaveBeenCalledWith("s1");
     expect(flushForSession).toHaveBeenCalledWith("s1");
   });
 
@@ -1213,13 +1214,13 @@ describe("handlePiEvent event translation", () => {
     expect(session.status).toBe("ready");
   });
 
-  it("broadcasts state after status-changing events", () => {
+  it("broadcasts session summary after status-changing events", () => {
     const { manager, events } = makeManagerHarness();
 
     feedEvent(manager, "s1", { type: "agent_start" });
 
-    const stateEvents = events.filter((e) => e.type === "state");
-    expect(stateEvents.length).toBeGreaterThanOrEqual(1);
+    const summaryEvents = events.filter((e) => e.type === "session_summary");
+    expect(summaryEvents.length).toBeGreaterThanOrEqual(1);
   });
 
   it("broadcasts text_delta for message_update with text_delta", () => {

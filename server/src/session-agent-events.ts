@@ -15,7 +15,8 @@ import type {
 import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolAudioDetails } from "./session-attachments.js";
-import type { ServerMessage } from "./types.js";
+import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
+import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState
   extends EventProcessorSessionState, TurnSessionState, StopSessionState {
@@ -50,26 +51,29 @@ export interface SessionAgentEventCoordinatorDeps {
 }
 
 export class SessionAgentEventCoordinator {
-  private static readonly LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
+  private static readonly INFO_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
     "turn_start",
     "turn_end",
-    "message_end",
-    "tool_execution_start",
-    "tool_execution_end",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
     "auto_retry_end",
   ]);
 
-  private static readonly STATUS_BROADCAST_TYPES = new Set<AgentSessionEvent["type"]>([
-    "agent_start",
-    "agent_end",
+  private static readonly DEBUG_LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "message_end",
     "tool_execution_start",
+    "tool_execution_end",
   ]);
+
+  private static readonly SUMMARY_BROADCAST_TYPES = new Set<AgentSessionEvent["type"]>([
+    "agent_start",
+    "agent_end",
+  ]);
+
+  private readonly lastSummaryFingerprintBySession = new Map<string, string>();
 
   constructor(private readonly deps: SessionAgentEventCoordinatorDeps) {}
 
@@ -121,15 +125,10 @@ export class SessionAgentEventCoordinator {
 
     const event = data;
 
-    if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(event.type)) {
-      const toolName =
-        "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
-      log.info("session_agent_events.pi_event", {
-        sessionId: active.session.id,
-        eventType: event.type,
-        toolName,
-        subscriberCount: active.subscribers.size,
-      });
+    if (SessionAgentEventCoordinator.INFO_LOGGED_EVENT_TYPES.has(event.type)) {
+      this.logPiEvent("info", active, event);
+    } else if (SessionAgentEventCoordinator.DEBUG_LOGGED_EVENT_TYPES.has(event.type)) {
+      this.logPiEvent("debug", active, event);
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
@@ -214,22 +213,65 @@ export class SessionAgentEventCoordinator {
       }
     }
 
-    if (SessionAgentEventCoordinator.STATUS_BROADCAST_TYPES.has(event.type)) {
-      log.info("session_agent_events.status_update", {
-        sessionId: active.session.id,
-        status: active.session.status,
-      });
-      this.deps.broadcast(key, { type: "state", session: active.session });
-
-      if (active.session.parentSessionId) {
-        this.deps.broadcast(active.session.parentSessionId, {
-          type: "state",
-          session: active.session,
-        });
-      }
+    if (SessionAgentEventCoordinator.SUMMARY_BROADCAST_TYPES.has(event.type)) {
+      this.broadcastSessionSummaryIfChanged(key, active, event.type);
     }
 
     this.deps.resetIdleTimer(key);
+  }
+
+  private logPiEvent(
+    level: "debug" | "info",
+    active: SessionAgentEventState,
+    event: AgentSessionEvent,
+  ): void {
+    const toolName =
+      "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
+    log[level]("session_agent_events.pi_event", {
+      sessionId: active.session.id,
+      eventType: event.type,
+      toolName,
+      subscriberCount: active.subscribers.size,
+    });
+  }
+
+  private broadcastSessionSummaryIfChanged(
+    key: string,
+    active: SessionAgentEventState,
+    reason: AgentSessionEvent["type"],
+  ): void {
+    const summary = buildSessionSummary(active.session);
+    const fingerprint = sessionSummaryFingerprint(summary);
+    if (this.lastSummaryFingerprintBySession.get(active.session.id) === fingerprint) {
+      log.debug("session_agent_events.summary_skipped", {
+        sessionId: active.session.id,
+        reason,
+      });
+      return;
+    }
+
+    this.lastSummaryFingerprintBySession.set(active.session.id, fingerprint);
+    this.broadcastSessionSummary(key, active, summary, reason);
+  }
+
+  private broadcastSessionSummary(
+    key: string,
+    active: SessionAgentEventState,
+    summary: SessionSummary,
+    reason: AgentSessionEvent["type"],
+  ): void {
+    log.info("session_agent_events.summary_update", {
+      sessionId: active.session.id,
+      status: summary.status,
+      reason,
+    });
+
+    const message: ServerMessage = { type: "session_summary", summary };
+    this.deps.broadcast(key, message);
+
+    if (active.session.parentSessionId) {
+      this.deps.broadcast(active.session.parentSessionId, message);
+    }
   }
 
   handleExtensionUIRequest(key: string, req: ExtensionUIRequest): void {

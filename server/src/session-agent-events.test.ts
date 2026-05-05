@@ -7,6 +7,7 @@ import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
 } from "./session-agent-events.js";
+import { buildSessionSummary } from "./session-summary.js";
 import { TurnDedupeCache } from "./turn-cache.js";
 import type { Session } from "./types.js";
 
@@ -98,7 +99,7 @@ describe("SessionAgentEventCoordinator", () => {
     return { broadcast, coordinator, resetIdleTimer, updateSessionFromEvent };
   }
 
-  it("mirrors child ready state updates to the parent session key", () => {
+  it("mirrors child ready summaries to the parent session key", () => {
     const active = makeActiveSession({ parentSessionId: "parent-1", status: "busy" });
     const { broadcast, coordinator } = makeCoordinator(active);
 
@@ -107,12 +108,43 @@ describe("SessionAgentEventCoordinator", () => {
       messages: [],
     } as unknown as SessionBackendEvent);
 
-    const stateBroadcasts = broadcast.mock.calls.filter(([, message]) => message.type === "state");
-    expect(stateBroadcasts).toHaveLength(2);
-    expect(stateBroadcasts).toEqual([
-      ["child-1", { type: "state", session: active.session }],
-      ["parent-1", { type: "state", session: active.session }],
+    const summary = buildSessionSummary(active.session);
+    const summaryBroadcasts = broadcast.mock.calls.filter(
+      ([, message]) => message.type === "session_summary",
+    );
+    expect(summaryBroadcasts).toHaveLength(2);
+    expect(summaryBroadcasts).toEqual([
+      ["child-1", { type: "session_summary", summary }],
+      ["parent-1", { type: "session_summary", summary }],
     ]);
+  });
+
+  it("does not broadcast cold summaries for hot timeline events", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const { broadcast, coordinator } = makeCoordinator(active);
+
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "echo hi" },
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: { content: [{ type: "text", text: "hi" }] },
+      isError: false,
+    } as unknown as SessionBackendEvent);
+    coordinator.handlePiEvent(active.session.id, {
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    } as unknown as SessionBackendEvent);
+
+    const summaryBroadcasts = broadcast.mock.calls.filter(
+      ([, message]) => message.type === "session_summary",
+    );
+    expect(summaryBroadcasts).toHaveLength(0);
   });
 
   it("forwards extension audio stream events without sending them through SDK event translation", () => {

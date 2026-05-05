@@ -30,6 +30,10 @@ extension ServerConnection {
             handleState(session, previousWorkspaceId: storeResult.previousWorkspaceId)
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
+        case .sessionSummary(let summary):
+            handleState(summary.session, previousWorkspaceId: storeResult.previousWorkspaceId)
+            applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
+
         case .queueState, .queueItemStarted:
             applyQueueEffects(ServerMessageEffects.queueEffects(for: message), sessionId: sessionId)
 
@@ -76,7 +80,7 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
 
-        case .state, .sessionEnded, .stopConfirmed, .sessionDeleted:
+        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
 
         default:

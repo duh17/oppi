@@ -517,7 +517,7 @@ final class ConnectionCoordinator {
     /// All sessions across all servers, ordered by last activity.
     var allSessions: [Session] {
         connections.values
-            .flatMap { $0.sessionStore.sessions }
+            .flatMap { $0.sessionStore.listProjectionSessions }
             .sorted { $0.lastActivity > $1.lastActivity }
     }
 
@@ -525,7 +525,7 @@ final class ConnectionCoordinator {
     /// Used by QuickSessionSheet presentation (detent sizing, drag indicator).
     var hasActiveSessions: Bool {
         connections.values.contains { conn in
-            conn.sessionStore.sessions.contains { session in
+            conn.sessionStore.listProjectionSessions.contains { session in
                 switch session.status {
                 case .busy, .starting, .stopping, .ready, .error: return true
                 case .stopped: return false

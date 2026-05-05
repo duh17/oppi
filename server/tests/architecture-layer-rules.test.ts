@@ -63,21 +63,28 @@ describe("architecture layer rule helpers", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-"));
 
     try {
-      write(join(repoRoot, "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift"), "import UIKit\n");
-      write(join(repoRoot, "clients/apple/Oppi/Core/Runtime/DeltaCoalescer.swift"), "import Foundation\n");
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Runtime/TimelineReducer.swift"),
+        "import UIKit\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Runtime/DeltaCoalescer.swift"),
+        "import Foundation\n",
+      );
 
       write(
         join(repoRoot, "clients/apple/Oppi/Core/Views/BadView.swift"),
-        [
-          "import Foundation",
-          "struct BadView {",
-          "  let client = APIClient()",
-          "}",
-        ].join("\n"),
+        ["import Foundation", "struct BadView {", "  let client = APIClient()", "}"].join("\n"),
       );
 
-      write(join(repoRoot, "clients/apple/Oppi/Core/Services/SessionStore.swift"), "import Foundation\n");
-      write(join(repoRoot, "clients/apple/Oppi/Core/Services/WorkspaceStore.swift"), "import Foundation\n");
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Services/SessionStore.swift"),
+        "import Foundation\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Services/WorkspaceStore.swift"),
+        "import Foundation\n",
+      );
       write(
         join(repoRoot, "clients/apple/Oppi/Core/Services/PermissionStore.swift"),
         [
@@ -86,7 +93,10 @@ describe("architecture layer rule helpers", () => {
           "final class PermissionStore {}",
         ].join("\n"),
       );
-      write(join(repoRoot, "clients/apple/Oppi/Core/Services/MessageQueueStore.swift"), "import Foundation\n");
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Services/MessageQueueStore.swift"),
+        "import Foundation\n",
+      );
 
       const violations = findIosLayerViolations(repoRoot);
 
@@ -103,8 +113,55 @@ describe("architecture layer rule helpers", () => {
         ]),
       );
 
-      const storeIsolationViolations = violations.filter((violation) => violation.rule === "store-isolation");
+      const storeIsolationViolations = violations.filter(
+        (violation) => violation.rule === "store-isolation",
+      );
       expect(storeIsolationViolations).toHaveLength(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags workspace and quick-session views that read full session lists", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-ios-list-projection-"));
+
+    try {
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Workspaces/BadWorkspaceView.swift"),
+        [
+          "import SwiftUI",
+          "struct BadWorkspaceView: View {",
+          "  @Environment(SessionStore.self) private var sessionStore",
+          "  var body: some View { Text(String(sessionStore.sessions.count)) }",
+          "}",
+        ].join("\n"),
+      );
+
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/QuickSession/BadQuickSessionView.swift"),
+        [
+          "import SwiftUI",
+          "struct BadQuickSessionView: View {",
+          "  let conn: ServerConnection",
+          "  var body: some View { Text(String(conn.sessionStore.sessions.count)) }",
+          "}",
+        ].join("\n"),
+      );
+
+      const violations = findIosLayerViolations(repoRoot);
+
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: "list-projection-consumer",
+            file: "clients/apple/Oppi/Features/Workspaces/BadWorkspaceView.swift",
+          }),
+          expect.objectContaining({
+            rule: "list-projection-consumer",
+            file: "clients/apple/Oppi/Features/QuickSession/BadQuickSessionView.swift",
+          }),
+        ]),
+      );
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

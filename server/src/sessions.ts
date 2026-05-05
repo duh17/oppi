@@ -246,14 +246,8 @@ export class SessionManager extends EventEmitter {
         this.searchIndex.deleteSession(sessionId);
         return;
       }
-      if (data.type === "message_end") {
-        const msg = (data as Record<string, unknown>).message as
-          | Record<string, unknown>
-          | undefined;
-        if (msg?.role === "assistant" || msg?.role === "user") {
-          this.searchIndex.markForReindex(sessionId);
-        }
-      } else if (data.type === "agent_end") {
+      if (data.type === "agent_end") {
+        this.searchIndex.markForReindex(sessionId);
         this.searchIndex.flushForSession(sessionId);
       }
     }

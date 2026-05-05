@@ -36,6 +36,64 @@ struct SessionStorePartitioningTests {
         #expect(store.sessions(forServer: "nonexistent").isEmpty)
     }
 
+    @Test func listProjectionPartitionedByServerAndWorkspace() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        store.upsert(makeTestSession(id: "s2", workspaceId: "w2"))
+
+        store.switchServer(to: "srv2")
+        store.upsert(makeTestSession(id: "s3", workspaceId: "w1"))
+
+        #expect(store.listProjectionSessions.map(\.id) == ["s3"])
+        #expect(store.listProjectionSessions(workspaceId: "w1").map(\.id) == ["s3"])
+
+        store.switchServer(to: "srv1")
+        #expect(Set(store.listProjectionSessions.map(\.id)) == Set(["s1", "s2"]))
+        #expect(store.listProjectionSessions(workspaceId: "w1").map(\.id) == ["s1"])
+    }
+
+    @Test func listProjectionMirrorsSnapshotAndRemove() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "local", workspaceId: "w1", status: .busy))
+
+        store.applyServerSnapshot([
+            makeTestSession(id: "remote", workspaceId: "w1", status: .ready)
+        ])
+
+        #expect(Set(store.listProjectionSessions.map(\.id)) == Set(["local", "remote"]))
+
+        store.remove(id: "local")
+        #expect(store.listProjectionSessions.map(\.id) == ["remote"])
+    }
+
+    @Test func upsertManyAppliesOneMergedBatch() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "existing", workspaceId: "w1", status: .ready))
+
+        let didMutate = store.upsertMany([
+            makeTestSession(id: "new-a", workspaceId: "w1", status: .busy),
+            makeTestSession(id: "existing", workspaceId: "w1", status: .stopped),
+            makeTestSession(id: "new-b", workspaceId: "w2", status: .ready)
+        ])
+
+        #expect(didMutate)
+        #expect(store.session(id: "existing")?.status == .stopped)
+        #expect(Set(store.listProjectionSessions.map(\.id)) == Set(["existing", "new-a", "new-b"]))
+        #expect(Set(store.listProjectionSessions(workspaceId: "w1").map(\.id)) == Set(["existing", "new-a"]))
+    }
+
+    @Test func upsertManyReturnsFalseForUnchangedBatch() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        let session = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
+        store.upsert(session)
+
+        #expect(!store.upsertMany([session]))
+    }
+
     @Test func allSessionsSpansServers() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
@@ -118,6 +176,23 @@ struct SessionStorePartitioningTests {
         store.upsert(incoming)
 
         #expect(store.session(id: "s1")?.currentTurnStartedAt == turnStart)
+    }
+
+    @Test func applySummaryUsesUpsertMergeSemantics() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var initial = makeTestSession(id: "s1", status: .busy, model: "openai-codex/gpt-5.4")
+        initial.contextTokens = 99
+        store.upsert(initial)
+
+        var projected = makeTestSession(id: "s1", status: .ready, model: "openai-codex/gpt-5.4")
+        projected.contextTokens = nil
+        let changed = store.applySummary(SessionSummary(from: projected))
+
+        #expect(changed)
+        #expect(store.session(id: "s1")?.status == .ready)
+        #expect(store.session(id: "s1")?.contextTokens == 99)
     }
 
     // MARK: - Remove

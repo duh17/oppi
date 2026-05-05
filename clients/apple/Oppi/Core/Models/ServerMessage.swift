@@ -41,6 +41,7 @@ enum ServerMessage: Sendable, Equatable {
     case streamConnected(userName: String, asrAvailable: Bool)
     case connected(session: Session)
     case state(session: Session)
+    case sessionSummary(SessionSummary)
     case sessionEnded(reason: String)
     case sessionDeleted(sessionId: String)
     case stopRequested(source: StopLifecycleSource, reason: String?)
@@ -252,6 +253,10 @@ extension ServerMessage: Decodable {
         case "state":
             let session = try c.decode(Session.self, forKey: .session)
             self = .state(session: session)
+
+        case "session_summary":
+            let summary = try c.decode(SessionSummary.self, forKey: .summary)
+            self = .sessionSummary(summary)
 
         case "session_ended":
             let reason = try c.decode(String.self, forKey: .reason)
@@ -614,6 +619,7 @@ extension ServerMessage {
         case .streamConnected: "streamConnected"
         case .connected: "connected"
         case .state: "state"
+        case .sessionSummary: "sessionSummary"
         case .sessionEnded: "sessionEnded"
         case .sessionDeleted: "sessionDeleted"
         case .stopRequested: "stopRequested"

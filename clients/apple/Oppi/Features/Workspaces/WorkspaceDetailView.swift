@@ -109,7 +109,10 @@ struct WorkspaceDetailView: View {
     }
 
     private var workspaceSessions: [Session] {
-        sessionStore.sessions.filter { $0.workspaceId == workspace.id }
+        // Keep workspace rows on the cold list projection instead of the full
+        // session cache. Timeline-frequency events should not make this view
+        // rebuild its section tree.
+        sessionStore.listProjectionSessions(workspaceId: workspace.id)
     }
 
     private var activeSessions: [Session] {
@@ -786,9 +789,7 @@ struct WorkspaceDetailView: View {
                 workspaceId: workspace.id,
                 recentDays: 3
             )
-            for session in response.sessions {
-                sessionStore.upsert(session)
-            }
+            sessionStore.upsertMany(response.sessions)
             olderSessionCount = max(0, (response.totalCount ?? response.sessions.count) - response.sessions.count)
         } catch {
             // Keep cached data
@@ -801,9 +802,7 @@ struct WorkspaceDetailView: View {
         defer { isLoadingOlder = false }
         do {
             let response = try await api.listWorkspaceSessions(workspaceId: workspace.id)
-            for session in response.sessions {
-                sessionStore.upsert(session)
-            }
+            sessionStore.upsertMany(response.sessions)
             olderSessionCount = 0
         } catch {
             // Keep cached data

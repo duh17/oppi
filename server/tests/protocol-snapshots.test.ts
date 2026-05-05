@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ServerMessage, Session } from "../src/types.js";
+import type { ServerMessage, Session, SessionSummary } from "../src/types.js";
 
 const PROTOCOL_DIR = resolve(__dirname, "../../protocol");
 const SNAPSHOTS_FILE = join(PROTOCOL_DIR, "server-messages.json");
@@ -46,6 +46,29 @@ const TEST_SESSION: Session = {
   piSessionId: "uuid-abc-123",
 };
 
+const TEST_SESSION_SUMMARY: SessionSummary = {
+  id: TEST_SESSION.id,
+  workspaceId: TEST_SESSION.workspaceId,
+  workspaceName: TEST_SESSION.workspaceName,
+  name: TEST_SESSION.name,
+  status: TEST_SESSION.status,
+  createdAt: TEST_SESSION.createdAt,
+  lastActivity: TEST_SESSION.lastActivity,
+  currentTurnStartedAt: TEST_SESSION.currentTurnStartedAt,
+  model: TEST_SESSION.model,
+  messageCount: TEST_SESSION.messageCount,
+  tokens: TEST_SESSION.tokens,
+  cost: TEST_SESSION.cost,
+  changeStats: TEST_SESSION.changeStats,
+  contextTokens: TEST_SESSION.contextTokens,
+  contextWindow: TEST_SESSION.contextWindow,
+  firstMessage: TEST_SESSION.firstMessage,
+  lastMessage: TEST_SESSION.lastMessage,
+  thinkingLevel: TEST_SESSION.thinkingLevel,
+  ephemeral: TEST_SESSION.ephemeral,
+  parentSessionId: TEST_SESSION.parentSessionId,
+};
+
 // ── Every ServerMessage variant ──
 
 function buildCanonicalMessages(): Record<string, ServerMessage> {
@@ -63,6 +86,10 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     state: {
       type: "state",
       session: TEST_SESSION,
+    },
+    session_summary: {
+      type: "session_summary",
+      summary: TEST_SESSION_SUMMARY,
     },
     session_ended: {
       type: "session_ended",
@@ -328,6 +355,7 @@ describe("protocol snapshots", () => {
       "connected",
       "stream_connected",
       "state",
+      "session_summary",
       "session_ended",
       "session_deleted",
       "stop_requested",

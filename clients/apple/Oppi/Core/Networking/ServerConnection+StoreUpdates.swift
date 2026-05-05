@@ -141,23 +141,11 @@ extension ServerConnection {
         // MARK: Session state
 
         case .state(let session):
-            let previousSession = sessionStore.sessions.first(where: { $0.id == session.id })
-            let stateContext = StoreUpdateResult.SessionStateContext(
-                previousSession: previousSession,
-                currentSession: session
-            )
+            return applySessionProjection(session)
 
-            sessionStore.upsert(session)
-            emitSessionUsageMetricsIfNeeded(session)
-
-            if stateContext.didTransitionOutOfRunning {
-                sessionStore.recordTurnEnded(sessionId: session.id)
-                activityStore.clear(sessionId: session.id)
-                screenAwakeController.setSessionActivity(false, sessionId: session.id)
-            }
-
-            syncLiveActivityPermissions()
-            return StoreUpdateResult(stateContext: stateContext, handled: true)
+        case .sessionSummary(let summary):
+            let session = summary.session
+            return applySessionProjection(session, source: .summary)
 
         case .sessionEnded:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
@@ -183,6 +171,43 @@ extension ServerConnection {
         default:
             return .notHandled
         }
+    }
+
+    private enum SessionProjectionSource {
+        case fullState
+        case summary
+    }
+
+    private func applySessionProjection(
+        _ session: Session,
+        source: SessionProjectionSource = .fullState
+    ) -> StoreUpdateResult {
+        let previousSession = sessionStore.sessions.first(where: { $0.id == session.id })
+
+        switch source {
+        case .fullState:
+            sessionStore.upsert(session)
+        case .summary:
+            sessionStore.applySummary(SessionSummary(from: session))
+        }
+
+        let currentSession = sessionStore.sessions.first(where: { $0.id == session.id }) ?? session
+        let stateContext = StoreUpdateResult.SessionStateContext(
+            previousSession: previousSession,
+            currentSession: currentSession
+        )
+        emitSessionUsageMetricsIfNeeded(currentSession)
+
+        if currentSession.status.isRunning {
+            screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
+        } else if stateContext.didTransitionOutOfRunning {
+            sessionStore.recordTurnEnded(sessionId: currentSession.id)
+            activityStore.clear(sessionId: currentSession.id)
+            screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
+        }
+
+        syncLiveActivityPermissions()
+        return StoreUpdateResult(stateContext: stateContext, handled: true)
     }
 
     /// Apply a session snapshot fetched outside the live WS stream.

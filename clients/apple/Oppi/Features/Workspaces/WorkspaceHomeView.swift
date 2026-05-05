@@ -223,10 +223,11 @@ struct WorkspaceHomeView: View {
 
     /// Sessions for a workspace on a specific server.
     ///
-    /// Routes to the server's own SessionStore (per-server connections).
+    /// Routes to the server's own cold list projection (per-server connections).
     private func sessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
-        let conn = coordinator.connection(for: serverId)
-        return (conn?.sessionStore.sessions ?? []).filter { $0.workspaceId == workspaceId }
+        coordinator.connection(for: serverId)?
+            .sessionStore
+            .listProjectionSessions(workspaceId: workspaceId) ?? []
     }
 
     /// Root sessions only (no children whose parent is in the same workspace).

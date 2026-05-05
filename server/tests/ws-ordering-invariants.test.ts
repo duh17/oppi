@@ -164,6 +164,7 @@ describe("RQ-WS-002: notification-level filtering invariants", () => {
       "agent_start",
       "agent_end",
       "state",
+      "session_summary",
       "session_ended",
       "session_deleted",
       "stop_requested",

@@ -107,6 +107,126 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
     var removedLines: Int
 }
 
+/// Cold-lane projection for workspace lists and cross-session status surfaces.
+///
+/// Unlike full `Session` state, summaries are intended to be sparse and
+/// low-frequency. Timeline deltas should not require this model to change.
+struct SessionSummary: Sendable, Equatable {
+    let id: String
+    var workspaceId: String?
+    var workspaceName: String?
+    var name: String?
+    var status: SessionStatus
+    let createdAt: Date
+    var lastActivity: Date
+    var currentTurnStartedAt: Date?
+    var model: String?
+    var messageCount: Int
+    var tokens: TokenUsage
+    var cost: Double
+    var changeStats: SessionChangeStats?
+    var contextTokens: Int?
+    var contextWindow: Int?
+    var firstMessage: String?
+    var lastMessage: String?
+    var thinkingLevel: String?
+    var ephemeral: Bool?
+    var parentSessionId: String?
+
+    var session: Session {
+        Session(
+            id: id,
+            workspaceId: workspaceId,
+            workspaceName: workspaceName,
+            name: name,
+            status: status,
+            createdAt: createdAt,
+            lastActivity: lastActivity,
+            currentTurnStartedAt: currentTurnStartedAt,
+            model: model,
+            messageCount: messageCount,
+            tokens: tokens,
+            cost: cost,
+            changeStats: changeStats,
+            contextTokens: contextTokens,
+            contextWindow: contextWindow,
+            firstMessage: firstMessage,
+            lastMessage: lastMessage,
+            thinkingLevel: thinkingLevel,
+            ephemeral: ephemeral,
+            parentSessionId: parentSessionId
+        )
+    }
+}
+
+extension SessionSummary {
+    init(from session: Session) {
+        self.id = session.id
+        self.workspaceId = session.workspaceId
+        self.workspaceName = session.workspaceName
+        self.name = session.name
+        self.status = session.status
+        self.createdAt = session.createdAt
+        self.lastActivity = session.lastActivity
+        self.currentTurnStartedAt = session.currentTurnStartedAt
+        self.model = session.model
+        self.messageCount = session.messageCount
+        self.tokens = session.tokens
+        self.cost = session.cost
+        self.changeStats = session.changeStats
+        self.contextTokens = session.contextTokens
+        self.contextWindow = session.contextWindow
+        self.firstMessage = session.firstMessage
+        self.lastMessage = session.lastMessage
+        self.thinkingLevel = session.thinkingLevel
+        self.ephemeral = session.ephemeral
+        self.parentSessionId = session.parentSessionId
+    }
+}
+
+extension SessionSummary: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case id, workspaceId, workspaceName
+        case name, status, createdAt, lastActivity, currentTurnStartedAt
+        case model, messageCount, tokens, cost, changeStats
+        case contextTokens, contextWindow, firstMessage, lastMessage
+        case thinkingLevel, ephemeral, parentSessionId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        status = try c.decode(SessionStatus.self, forKey: .status)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        messageCount = try c.decode(Int.self, forKey: .messageCount)
+        tokens = try c.decode(TokenUsage.self, forKey: .tokens)
+        cost = try c.decode(Double.self, forKey: .cost)
+        changeStats = try c.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
+        contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
+        contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
+        firstMessage = try c.decodeIfPresent(String.self, forKey: .firstMessage)
+        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
+        thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        ephemeral = try c.decodeIfPresent(Bool.self, forKey: .ephemeral)
+        parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
+
+        let createdMs = try c.decode(Double.self, forKey: .createdAt)
+        createdAt = Date(timeIntervalSince1970: createdMs / 1000)
+
+        let activityMs = try c.decode(Double.self, forKey: .lastActivity)
+        lastActivity = Date(timeIntervalSince1970: activityMs / 1000)
+
+        if let currentTurnStartedMs = try c.decodeIfPresent(Double.self, forKey: .currentTurnStartedAt) {
+            currentTurnStartedAt = Date(timeIntervalSince1970: currentTurnStartedMs / 1000)
+        } else {
+            currentTurnStartedAt = nil
+        }
+    }
+}
+
 // MARK: - Codable (Unix millisecond timestamps)
 
 extension Session: Codable {

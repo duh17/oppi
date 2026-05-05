@@ -16,6 +16,14 @@ final class SessionStore {
     /// Sessions keyed by server ID. All mutations go through the active partition.
     private var serverSessions: [String: [Session]] = [:]
 
+    /// Cold workspace/session-list projection keyed by server ID.
+    ///
+    /// Views that render session lists should read this projection instead of
+    /// the full session backing store. That keeps list invalidation tied to
+    /// list-relevant session updates, and gives hot timeline state a place to
+    /// evolve without accidentally waking every workspace row.
+    private var serverListProjectionSessions: [String: [Session]] = [:]
+
     /// Which server's sessions are currently active. Set by ConnectionCoordinator
     /// when switching servers.
     private(set) var activeServerId: String?
@@ -40,10 +48,25 @@ final class SessionStore {
 
     // ── Public API: delegates to active server ──
 
+    private var activeServerKey: String { activeServerId ?? "" }
+
     /// Sessions for the currently active server.
     var sessions: [Session] {
-        get { serverSessions[activeServerId ?? ""] ?? [] }
-        set { serverSessions[activeServerId ?? ""] = newValue }
+        get { serverSessions[activeServerKey] ?? [] }
+        set { replaceActiveSessions(newValue) }
+    }
+
+    /// Cold list projection for the currently active server.
+    ///
+    /// Workspace lists, quick-session active rows, and workspace badges should
+    /// consume this instead of `sessions` so future full-session hot fields can
+    /// change without causing list recomputation.
+    var listProjectionSessions: [Session] {
+        serverListProjectionSessions[activeServerKey] ?? []
+    }
+
+    func listProjectionSessions(workspaceId: String) -> [Session] {
+        listProjectionSessions.filter { $0.workspaceId == workspaceId }
     }
 
     /// Current active session (convenience).
@@ -95,12 +118,16 @@ final class SessionStore {
         if serverSessions[serverId] == nil {
             serverSessions[serverId] = []
         }
+        if serverListProjectionSessions[serverId] == nil {
+            serverListProjectionSessions[serverId] = []
+        }
     }
 
     // periphery:ignore - used by SessionStoreTests via @testable import
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         serverSessions.removeValue(forKey: serverId)
+        serverListProjectionSessions.removeValue(forKey: serverId)
         serverTurnEndedDates.removeValue(forKey: serverId)
         serverLastSyncAt.removeValue(forKey: serverId)
         serverIsSyncing.removeValue(forKey: serverId)
@@ -115,7 +142,7 @@ final class SessionStore {
     /// Record that a session completed a turn (agentEnd).
     /// Only this event updates the sort key — agentStart, stop events, etc. do not.
     func recordTurnEnded(sessionId: String, at date: Date = Date()) {
-        let key = activeServerId ?? ""
+        let key = activeServerKey
         var dates = serverTurnEndedDates[key] ?? [:]
         dates[sessionId] = date
         serverTurnEndedDates[key] = dates
@@ -124,13 +151,13 @@ final class SessionStore {
     /// The date the session last completed a turn, or nil if no turn has ended yet.
     /// Views should fall back to `session.createdAt` when nil.
     func turnEndedDate(for sessionId: String) -> Date? {
-        let key = activeServerId ?? ""
+        let key = activeServerKey
         return serverTurnEndedDates[key]?[sessionId]
     }
 
     // ── Freshness (delegates to active server) ──
 
-    private var freshnessKey: String { activeServerId ?? "" }
+    private var freshnessKey: String { activeServerKey }
 
     var lastSuccessfulSyncAt: Date? {
         get { serverLastSyncAt[freshnessKey] }
@@ -185,7 +212,46 @@ final class SessionStore {
     /// Returns true only when the backing array was actually mutated.
     @discardableResult
     func upsert(_ session: Session) -> Bool {
+        upsertMerged(session)
+    }
+
+    /// Insert or update several sessions as a single store mutation.
+    ///
+    /// Use for REST list refreshes so cold list projections are invalidated once
+    /// per response instead of once per returned session.
+    @discardableResult
+    func upsertMany(_ incoming: [Session]) -> Bool {
+        guard !incoming.isEmpty else { return false }
+
         var list = sessions
+        var didMutate = false
+        for session in incoming {
+            didMutate = merge(session, into: &list) || didMutate
+        }
+
+        guard didMutate else { return false }
+        setActiveSessionsPreservingListProjection(list)
+        return true
+    }
+
+    /// Apply the cold-lane session list projection from the stream.
+    ///
+    /// This follows the same merge/no-op semantics as full `Session` upserts,
+    /// but keeps protocol intent explicit: workspace list updates should come
+    /// from summaries, not timeline-frequency live events.
+    @discardableResult
+    func applySummary(_ summary: SessionSummary) -> Bool {
+        upsertMerged(summary.session)
+    }
+
+    private func upsertMerged(_ session: Session) -> Bool {
+        var list = sessions
+        guard merge(session, into: &list) else { return false }
+        setActiveSessionsPreservingListProjection(list)
+        return true
+    }
+
+    private func merge(_ session: Session, into list: inout [Session]) -> Bool {
         if let idx = list.firstIndex(where: { $0.id == session.id }) {
             let merged = mergePreservingContext(existing: list[idx], incoming: session)
             guard list[idx] != merged else { return false }
@@ -193,8 +259,29 @@ final class SessionStore {
         } else {
             list.insert(session, at: 0)
         }
-        sessions = list
         return true
+    }
+
+    private func replaceActiveSessions(_ list: [Session]) {
+        let key = activeServerKey
+        serverSessions[key] = list
+        serverListProjectionSessions[key] = list
+    }
+
+    private func setActiveSessionsPreservingListProjection(_ list: [Session]) {
+        let key = activeServerKey
+        serverSessions[key] = list
+        if listProjectionChanged(key: key, newSessions: list) {
+            serverListProjectionSessions[key] = list
+        }
+    }
+
+    private func listProjectionChanged(key: String, newSessions: [Session]) -> Bool {
+        let current = serverListProjectionSessions[key] ?? []
+        guard current.count == newSessions.count else { return true }
+        let currentSummaries = current.map { SessionSummary(from: $0) }
+        let newSummaries = newSessions.map { SessionSummary(from: $0) }
+        return currentSummaries != newSummaries
     }
 
     private func mergePreservingContext(existing: Session, incoming: Session) -> Session {
@@ -230,14 +317,12 @@ final class SessionStore {
         }
     }
 
-
-
     /// Remove a session.
     func remove(id: String) {
         var list = sessions
         list.removeAll { $0.id == id }
         sessions = list
-        let key = activeServerId ?? ""
+        let key = activeServerKey
         serverTurnEndedDates[key]?.removeValue(forKey: id)
         if activeSessionId == id {
             activeSessionId = nil

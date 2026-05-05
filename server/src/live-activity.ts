@@ -59,6 +59,14 @@ export class LiveActivityBridge {
           priority: 5,
         });
         return;
+      case "session_summary":
+        this.queue({
+          sessionId,
+          status: this.mapStatus(event.summary.status),
+          lastEvent: this.statusLabel(event.summary.status),
+          priority: 5,
+        });
+        return;
       case "agent_start":
         this.queue({ sessionId, status: "busy", lastEvent: "Agent started", priority: 5 });
         return;
