@@ -784,6 +784,98 @@ describe("SessionManager message queue", () => {
     expect(saved.steering[0]?.message).toBe("read this");
   });
 
+  it("keeps materialized image bytes out of public queue state", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-busy-queue-image-"));
+    const imageBytes = Buffer.from("fake image bytes that stand in for a large screenshot");
+    await writeFile(join(workspaceRoot, "screenshot.jpg"), imageBytes);
+    const workspace: Workspace = {
+      id: "w1",
+      name: "test",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: workspaceRoot,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" }, { workspace });
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.sendSteer("s1", "", {
+      clientTurnId: "turn-busy-image",
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-image",
+          source: "workspace",
+          name: "screenshot.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: imageBytes.byteLength,
+          workspacePath: "screenshot.jpg",
+        },
+      ],
+    });
+
+    const queued = manager.getMessageQueue("s1");
+    expect(queued.steering[0]?.attachments?.[0]?.id).toBe("att-image");
+    expect(queued.steering[0]?.images).toBeUndefined();
+
+    await manager.setMessageQueue("s1", {
+      baseVersion: queued.version,
+      steering: queued.steering,
+      followUp: queued.followUp,
+    });
+
+    expect(sdkBackend.session.steer).toHaveBeenCalledWith(
+      expect.stringContaining("Attached files:\n- screenshot.jpg:"),
+      [
+        expect.objectContaining({
+          type: "image",
+          data: imageBytes.toString("base64"),
+          mimeType: "image/jpeg",
+        }),
+      ],
+    );
+  });
+
+  it("keeps large queued image broadcasts below websocket payload limits", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-busy-queue-large-image-"));
+    const imageBytes = Buffer.alloc(1_200_000, 0x5a);
+    await writeFile(join(workspaceRoot, "large-screenshot.jpg"), imageBytes);
+    const workspace: Workspace = {
+      id: "w1",
+      name: "test",
+      skills: [],
+      systemPromptMode: "append",
+      hostMount: workspaceRoot,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const { manager, events } = makeManagerHarness({ status: "busy" }, { workspace });
+
+    await manager.sendSteer("s1", "", {
+      clientTurnId: "turn-large-image",
+      attachments: [
+        {
+          type: "attachment",
+          id: "att-large-image",
+          source: "workspace",
+          name: "large-screenshot.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: imageBytes.byteLength,
+          workspacePath: "large-screenshot.jpg",
+        },
+      ],
+    });
+
+    const queueEvent = events.filter((event) => event.type === "queue_state").at(-1);
+    expect(queueEvent).toBeDefined();
+
+    const serialized = JSON.stringify(queueEvent);
+    const base64Prefix = imageBytes.toString("base64").slice(0, 64);
+    expect(serialized).not.toContain(base64Prefix);
+    expect(serialized.length).toBeLessThan(16 * 1024);
+  });
+
   it("materializes attachments when replacing queue", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-queue-attachments-"));
     await writeFile(join(workspaceRoot, "note.txt"), "hello from queue");
