@@ -1,8 +1,6 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
-import SwiftUI
-import UIKit
 import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
@@ -23,7 +21,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
     nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
 
-    private static let maxPlayableAudioBytes = 10 * 1024 * 1024
     private static var activePlaybackOwner: AudioPlayerService?
     private static var remoteCommandTargetsInstalled = false
     struct SessionContext: Equatable {
@@ -147,12 +144,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     /// Play a pre-generated local audio clip file.
     func toggleFilePlayback(fileURL: URL, itemID: String, mode: String = "manual") {
-        guard isPlayableAudioFile(fileURL) else {
-            recordVoicePlaybackError(source: "file", phase: "validate", errorKind: "invalid_payload")
-            logger.error("Audio file playback rejected before start: invalid or oversized payload")
-            return
-        }
-
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
@@ -170,12 +161,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     /// Play an in-memory base64-decoded audio blob.
     func toggleDataPlayback(data: Data, itemID: String, mode: String = "manual") {
-        guard isPlayableAudioData(data) else {
-            recordVoicePlaybackError(source: "data", phase: "validate", errorKind: "invalid_payload")
-            logger.error("Audio data playback rejected before start: invalid or oversized payload")
-            return
-        }
-
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
@@ -295,10 +280,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(data: Data, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
-        guard isPlayableAudioData(data) else {
-            recordVoicePlaybackError(source: "data", phase: "validate", errorKind: "invalid_payload")
-            return
-        }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         // Configure audio session for playback
@@ -314,10 +295,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func play(fileURL: URL, itemID: String, mode: String, startedAtMs: Int64) throws {
         guard !playbackSuppressedForCapture else { return }
-        guard isPlayableAudioFile(fileURL) else {
-            recordVoicePlaybackError(source: "file", phase: "validate", errorKind: "invalid_payload")
-            return
-        }
         claimGlobalPlaybackOwnership()
         stopAudioStream(clearState: false)
         let audioSession = AVAudioSession.sharedInstance()
@@ -491,22 +468,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         )
     }
 
-    private func isPlayableAudioData(_ data: Data) -> Bool {
-        !data.isEmpty && data.count <= Self.maxPlayableAudioBytes
-    }
-
-    private func isPlayableAudioFile(_ fileURL: URL) -> Bool {
-        guard fileURL.isFileURL,
-              let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize > 0,
-              fileSize <= Self.maxPlayableAudioBytes else {
-            return false
-        }
-        return true
-    }
-
     private func pcm16LEBuffer(data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
         let channels = Int(format.channelCount)
         guard channels > 0, data.count >= channels * 2 else { return nil }
@@ -664,65 +625,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         if isLiveStream {
             info[MPNowPlayingInfoPropertyIsLiveStream] = true
         }
-        if let artwork = makeNowPlayingArtwork(provider: presentation?.provider) {
-            info[MPMediaItemPropertyArtwork] = artwork
-        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
-
-    private func makeNowPlayingArtwork(provider: String?) -> MPMediaItemArtwork? {
-        let image = makeNowPlayingArtworkImage(provider: provider)
-        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-    }
-
-    private func makeNowPlayingArtworkImage(provider: String?) -> UIImage {
-        let size = CGSize(width: 256, height: 256)
-        let palette = ThemeRuntimeState.currentPalette()
-        let backgroundColor = UIColor(palette.bgDark)
-        let accentColor = UIColor(
-            ProviderColor.color(forProvider: provider, palette: palette)
-        )
-
-        if let provider,
-           let assetName = ProviderIcon.logoAssetName(for: provider),
-           let baseImage = UIImage(named: assetName)?.withRenderingMode(.alwaysTemplate) {
-            let renderer = UIGraphicsImageRenderer(size: size)
-            return renderer.image { context in
-                let bounds = CGRect(origin: .zero, size: size)
-                backgroundColor.setFill()
-                context.fill(bounds)
-
-                let insetBounds = bounds.insetBy(dx: 36, dy: 36)
-                accentColor.withAlphaComponent(0.14).setFill()
-                UIBezierPath(roundedRect: insetBounds, cornerRadius: 36).fill()
-
-                let iconRect = insetBounds.insetBy(dx: 42, dy: 42)
-                baseImage.withTintColor(accentColor, renderingMode: .alwaysOriginal)
-                    .draw(in: iconRect)
-            }
-        }
-
-        let mark = ProviderIcon.mark(for: provider ?? "oppi")
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
-            let bounds = CGRect(origin: .zero, size: size)
-            backgroundColor.setFill()
-            context.fill(bounds)
-
-            let insetBounds = bounds.insetBy(dx: 28, dy: 28)
-            accentColor.withAlphaComponent(0.18).setFill()
-            UIBezierPath(roundedRect: insetBounds, cornerRadius: 40).fill()
-
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 132, weight: .heavy),
-                .foregroundColor: accentColor,
-                .paragraphStyle: paragraph,
-            ]
-            let textRect = CGRect(x: 0, y: 52, width: size.width, height: size.height - 104)
-            mark.uppercased().draw(in: textRect, withAttributes: attributes)
-        }
     }
 
     private static func installRemoteCommandTargetsIfNeeded() {

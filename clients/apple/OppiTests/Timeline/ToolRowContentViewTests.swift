@@ -639,6 +639,69 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedReadMediaViewportUsesSVGWidthHeightWhenViewBoxMissing() async throws {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: svg, filePath: "fixtures/chart.svg", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ))
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 370, height: 700))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                container.setNeedsLayout()
+                container.layoutIfNeeded()
+                let renderedHeight = view.systemLayoutSizeFitting(
+                    CGSize(width: 370, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                ).height
+                return renderedHeight > 250
+            }
+        }
+
+        #expect(updated, "Expected expanded SVG read preview to grow beyond the collapsed fallback height when only width/height are present")
+    }
+
+    @MainActor
+    @Test func inlineSVGPreviewAppliesAspectRatioConstraintFromWidthHeightAttributes() async throws {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><rect width=\"320\" height=\"180\" fill=\"red\"/></svg>"
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let view = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        view.apply(base64: Data(svg.utf8).base64EncodedString(), mimeType: "image/svg+xml")
+
+        let updated = await waitForTimelineCondition(timeoutMs: 1_500) {
+            await MainActor.run {
+                container.setNeedsLayout()
+                container.layoutIfNeeded()
+                let fitted = view.systemLayoutSizeFitting(
+                    CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                return abs(fitted.height - 180) < 2
+            }
+        }
+
+        #expect(updated, "Expected SVG preview height to track width/height attributes when viewBox is missing")
+    }
+
+    @MainActor
     @Test func repeatedExpandedExtensionTextReconfigureStaysWithinBudget() {
         let output = """
         EXT-a27df231
@@ -998,71 +1061,134 @@ struct ToolTimelineRowContentViewTests {
         #expect(ToolTimelineRowUIHelpers.languageBadgeImage(for: FileType.image.displayLabel) != nil)
     }
 
-    // Disabled: test seam properties removed — needs update
-    #if false
     @MainActor
-    @Test(.disabled("test seam properties removed")) func collapsedNonImageToolHasNoPreviewContainer() {
-        // A bash tool (no image data) must not show any image preview container.
+    @Test func expandedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let config = makeTimelineToolConfiguration(
-            title: "echo hello",
-            toolNamePrefix: "$",
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Replay this exact session-owned attachment.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
+        let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: view)
+
+        #expect(view.hitTest(point, with: nil) === button)
+    }
+
+    @MainActor
+    @Test func collapsedVoiceMessagePlayButtonIsHitTestTarget() throws {
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Replay this exact session-owned attachment.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                delivery: .voiceMessage
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
             isExpanded: false
         )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
         let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 370)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
 
-        // No visible image preview containers (cornerRadius == 6 with
-        // scaleAspectFit UIImageView) should exist.
-        let visiblePreviewContainers = timelineAllImageViews(in: view)
-            .filter { !$0.isHidden && $0.contentMode == .scaleAspectFit }
-            .filter { $0.superview?.layer.cornerRadius == 6 && !($0.superview?.isHidden ?? true) }
+        let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
+        let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: view)
 
-        #expect(visiblePreviewContainers.isEmpty, "Non-image tools must not show image preview")
-    }
-
-    // MARK: - Full-Screen Gesture Contract
-    //
-    // Every expanded tool type that supports full screen must have:
-    //   1. Double-tap gesture enabled on its active container
-    //   2. Pinch gesture enabled on its active container
-    //   3. "Open Full Screen" in its context menu
-    //   4. canShowFullScreenContent == true
-    //
-    // Tool types that do NOT support full screen (plot, readMedia) must
-    // have canShowFullScreenContent == false.
-
-    // Disabled: tests below reference removed test-seam properties
-    // (outputDoubleTapGestureEnabledForTesting, canShowFullScreenContentForTesting, etc.)
-    // Re-enable once the production code re-exposes these or tests are rewritten.
-
-    @MainActor
-    @Test(.disabled("test seam properties removed — needs update"))
-    func bashExpandedHasFullScreenDoubleTapOnOutputContainer() {
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .bash(command: "ls", output: "/usr\n/bin", unwrapped: true),
-            copyOutputText: "/usr\n/bin",
-            isExpanded: true
-        )
-        let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(view.outputDoubleTapGestureEnabledForTesting)
-        #expect(view.canShowFullScreenContentForTesting)
+        #expect(view.hitTest(point, with: nil) === button)
     }
 
     @MainActor
-    @Test(.disabled("test seam properties removed")) func bashExpandedHasPinchGestureOnOutputContainer() {
+    @Test func expandedVoiceMessageOnlyShowsHeaderPlaybackControl() throws {
         let config = makeTimelineToolConfiguration(
-            expandedContent: .bash(command: "ls", output: "/usr\n/bin", unwrapped: true),
-            copyOutputText: "/usr\n/bin",
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Got it. I will treat both collapsed and expanded playback as broken, not just the expanded card.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                delivery: .voiceMessage
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
             isExpanded: true
         )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentFetcher { _ in Data([0x52, 0x49, 0x46, 0x46]) }
         let view = ToolTimelineRowContentView(configuration: config)
-        _ = fittedTimelineSize(for: view, width: 370)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
 
-        #expect(view.outputPinchGestureEnabledForTesting)
+        let visibleButtons = timelineAllViews(in: view).compactMap { $0 as? UIButton }.filter { !$0.isHidden }
+        #expect(visibleButtons.count == 1)
+
+        let voiceMessageLabels = timelineAllLabels(in: view).filter {
+            timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == "Voice message"
+        }
+        #expect(voiceMessageLabels.count == 1)
     }
 
+    @MainActor
+    @Test func collapsedVoiceMessagePlayButtonFetchesAttachmentOnTap() async throws {
+        actor FetchSpy {
+            private(set) var count = 0
+            func fetch(_ attachmentId: String) -> Data {
+                count += 1
+                return Data([0x52, 0x49, 0x46, 0x46])
+            }
+            func value() -> Int { count }
+        }
+
+        let fetchSpy = FetchSpy()
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .voiceMessage(
+                text: "Replay this exact session-owned attachment.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                delivery: .directSpeak
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: false
+        )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentFetcher { attachmentId in
+                await fetchSpy.fetch(attachmentId)
+            }
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
+        button.sendActions(for: .touchUpInside)
+
+        for _ in 0..<30 where await fetchSpy.value() == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await fetchSpy.value() == 1)
+    }
+
+    // Disabled: test seam properties removed — needs update
+    #if false
     @MainActor
     @Test func bashExpandedContextMenuIncludesOpenFullScreen() throws {
         let config = makeTimelineToolConfiguration(
@@ -1152,6 +1278,7 @@ struct ToolTimelineRowContentViewTests {
         let titleRect = titleLabel.convert(titleLabel.bounds, to: view)
         #expect(buttonRect.minX > titleRect.maxX)
     }
+
 
     @MainActor
     @Test func streamingVoiceSpeakTextDoesNotReserveGiantBodySpace() {

@@ -7,7 +7,6 @@ struct ContentView: View {
     @Environment(AppNavigation.self) private var navigation
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
     @State private var showCrossSessionPermissionSheet = false
-    @State private var audioPlaybackRefreshID = 0
 
     /// Pending permissions from ALL servers, excluding the active session's
     /// (those are shown inline in the chat view's PermissionOverlay).
@@ -37,11 +36,6 @@ struct ContentView: View {
         coordinator.hasActiveSessions
             ? [.medium, .large]
             : [.height(130), .medium]
-    }
-
-    private var hasGlobalAudioPlayback: Bool {
-        _ = audioPlaybackRefreshID
-        return coordinator.hasActiveAudioPlayback
     }
 
     var body: some View {
@@ -165,9 +159,6 @@ struct ContentView: View {
         .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
             handleQuickSessionPresentationRequestChange(newValue)
         }
-        .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
-            audioPlaybackRefreshID &+= 1
-        }
         .overlay(alignment: .topLeading) {
             e2eDiagnosticsOverlay
         }
@@ -189,27 +180,18 @@ struct ContentView: View {
     @ViewBuilder
     private var topInsetBanners: some View {
         if !navigation.showOnboarding,
-           crossSessionPrimary != nil || hasGlobalAudioPlayback {
-            VStack(spacing: 6) {
-                if let request = crossSessionPrimary {
-                    CrossSessionPermissionBanner(
-                        request: request,
-                        totalCount: crossSessionPending.count,
-                        sessionLabel: sessionLabel(for: request.sessionId),
-                        serverLabel: serverLabel(for: request),
-                        onReview: reviewCrossSessionPermissions
-                    )
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                if hasGlobalAudioPlayback {
-                    GlobalAudioPlaybackBanner(onStop: coordinator.stopAllAudioPlayback)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
+           let request = crossSessionPrimary {
+            CrossSessionPermissionBanner(
+                request: request,
+                totalCount: crossSessionPending.count,
+                sessionLabel: sessionLabel(for: request.sessionId),
+                serverLabel: serverLabel(for: request),
+                onReview: reviewCrossSessionPermissions
+            )
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .padding(.bottom, 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -438,82 +420,6 @@ private struct CrossSessionPermissionBanner: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Cross-session permission request")
         .accessibilityHint("Opens approval sheet")
-    }
-}
-
-struct GlobalAudioPlaybackBanner: View {
-    let onStop: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            GlobalAudioWaveformGlyph()
-
-            Text("Voice reply playing")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            Button("Stop", action: onStop)
-                .font(.caption.bold())
-                .foregroundStyle(.themeOnPurple)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color.themePurple, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Color.themePurple.opacity(0.28), lineWidth: 1)
-                )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.themeBgHighlight.opacity(0.94))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.18), lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Voice reply playing")
-        .accessibilityHint("Stops audio playback")
-    }
-}
-
-private struct GlobalAudioWaveformGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.16)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 3) {
-                ForEach(0..<4, id: \.self) { index in
-                    Capsule(style: .continuous)
-                        .fill(Color.themePurple)
-                        .frame(width: 4, height: barHeight(index: index, time: time))
-                }
-            }
-            .frame(width: 26, height: 18)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 6)
-            .background(Color.themePurple.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .frame(width: 40, height: 30)
-        .accessibilityHidden(true)
-    }
-
-    private func barHeight(index: Int, time: TimeInterval) -> CGFloat {
-        let restingHeights: [CGFloat] = [9, 15, 11, 7]
-        guard !reduceMotion else {
-            return restingHeights[index]
-        }
-
-        let phase = time * 7 + Double(index) * 0.8
-        let normalized = (sin(phase) + 1) * 0.5
-        return 6 + normalized * 10
     }
 }
 

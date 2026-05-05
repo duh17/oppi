@@ -2,8 +2,6 @@ import UIKit
 
 @MainActor
 final class NativeVoiceMessageView: UIView {
-    private static let maxDecodedBytes = 10 * 1024 * 1024
-
     private let container = UIView()
     private let stack = UIStackView()
     private let headerRow = UIStackView()
@@ -77,30 +75,25 @@ final class NativeVoiceMessageView: UIView {
         attachmentId = nil
         attachmentFetcher = nil
 
-        guard mimeType?.lowercased() == "audio/wav" else {
+        guard MediaMimeType.normalized(mimeType) == "audio/wav" else {
+            decodedData = nil
             progressView.isHidden = true
             updateButton(palette: palette)
             return
         }
 
         let compactBase64 = base64.filter { !$0.isWhitespace }
-        guard estimatedDecodedByteCount(compactBase64) <= Self.maxDecodedBytes else {
-            progressView.isHidden = true
-            updateButton(palette: palette)
-            return
-        }
 
         progressView.progress = 0
         progressView.isHidden = false
         updateButton(palette: palette)
 
         decodeTask?.cancel()
-        let maxDecodedBytes = Self.maxDecodedBytes
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
             let data = Data(base64Encoded: compactBase64, options: .ignoreUnknownCharacters)
             await MainActor.run { [weak self] in
                 guard let self, self.id == id else { return }
-                if let data, data.count <= maxDecodedBytes {
+                if let data {
                     self.decodedData = data
                     self.progressView.progress = 0
                     self.maybeAutoplayDecodedDataIfNeeded(palette: palette)
@@ -130,7 +123,8 @@ final class NativeVoiceMessageView: UIView {
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
 
-        guard mimeType?.lowercased() == "audio/wav", attachmentFetcher != nil else {
+        guard MediaMimeType.normalized(mimeType) == "audio/wav", attachmentFetcher != nil else {
+            self.attachmentFetcher = nil
             progressView.isHidden = true
             updateButton(palette: palette)
             return
@@ -169,7 +163,7 @@ final class NativeVoiceMessageView: UIView {
         spinner.color = UIColor(palette.purple)
         progressView.progressTintColor = UIColor(palette.purple)
         progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        headerLabel.text = "Voice message"
+        headerLabel.text = nil
         headerRow.isHidden = true
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let paragraphStyle = NSMutableParagraphStyle()
@@ -339,9 +333,5 @@ final class NativeVoiceMessageView: UIView {
         let transcriptHeight = progressHeight + transcriptSpacing + messageHeight
         let totalHeight = outerInsets + transcriptHeight
         return CGSize(width: width, height: ceil(totalHeight))
-    }
-
-    private func estimatedDecodedByteCount(_ base64: String) -> Int {
-        max(0, (base64.count * 3) / 4 - base64.suffix(2).filter { $0 == "=" }.count)
     }
 }

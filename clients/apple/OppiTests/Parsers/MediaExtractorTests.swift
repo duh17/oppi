@@ -101,4 +101,11 @@ struct MediaMimeTypeTests {
         #expect(ratio != nil)
         #expect(abs((ratio ?? 0) - (320.0 / 180.0)) < 0.0001)
     }
+
+    @Test func extractsSVGAspectRatioFromWidthAndHeightWhenViewBoxMissing() {
+        let svg = Data("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"720px\" height=\"420px\"></svg>".utf8)
+        let ratio = MediaMimeType.extractSVGViewBoxAspectRatio(svg)
+        #expect(ratio != nil)
+        #expect(abs((ratio ?? 0) - (720.0 / 420.0)) < 0.0001)
+    }
 }

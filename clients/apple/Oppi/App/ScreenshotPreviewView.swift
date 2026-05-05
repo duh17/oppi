@@ -342,14 +342,6 @@ private struct GlobalAudioBannerPreview: View {
             }
         }
         .toolbarBackground(Color.themeBg, for: .tabBar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 6) {
-                GlobalAudioPlaybackBanner(onStop: {})
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
-        }
         .background(Color.themeBg.ignoresSafeArea())
         .accessibilityIdentifier("screenshot.ready")
     }

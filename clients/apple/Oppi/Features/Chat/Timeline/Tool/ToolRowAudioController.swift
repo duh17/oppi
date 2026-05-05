@@ -84,15 +84,17 @@ final class ToolRowAudioController: NSObject {
     private func collapsedVoiceAudioBase64(in configuration: ToolTimelineRowConfiguration) -> String? {
         guard case .readMedia(let output, let filePath, _) = configuration.expandedContent,
               filePath == "Voice message",
-              let clip = AudioExtractor.extract(from: output).first else {
+              let clip = AudioExtractor.extract(from: output).first,
+              MediaMimeType.normalized(clip.mimeType) == "audio/wav" else {
             return nil
         }
-        return clip.base64
+        return clip.base64.filter { !$0.isWhitespace }
     }
 
     private func collapsedVoiceAudioAttachment(in configuration: ToolTimelineRowConfiguration) -> String? {
-        guard case .voiceMessage(_, let attachmentId, _, _, _) = configuration.expandedContent,
-              !attachmentId.isEmpty else {
+        guard case .voiceMessage(_, let attachmentId, let mimeType, _, _) = configuration.expandedContent,
+              !attachmentId.isEmpty,
+              MediaMimeType.normalized(mimeType) == "audio/wav" else {
             return nil
         }
         return attachmentId
@@ -153,4 +155,5 @@ final class ToolRowAudioController: NSObject {
             }
         }
     }
+
 }

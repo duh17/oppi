@@ -572,9 +572,9 @@ final class NativeExpandedInlineImageView: UIView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         imageView.addGestureRecognizer(tap)
 
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
-        doubleTap.numberOfTapsRequired = 2
-        animatedImageView.addGestureRecognizer(doubleTap)
+        let animatedTap = UITapGestureRecognizer(target: self, action: #selector(handleAnimatedImageTap))
+        animatedTap.numberOfTapsRequired = 1
+        animatedImageView.addGestureRecognizer(animatedTap)
         animatedImageView.isUserInteractionEnabled = true
     }
 
@@ -653,7 +653,7 @@ final class NativeExpandedInlineImageView: UIView {
         FullScreenImageViewController.present(image: image)
     }
 
-    @objc private func handleDoubleTap() {
+    @objc private func handleAnimatedImageTap() {
         guard let data = previewData,
               let mimeType = previewMimeType,
               let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }

@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import Testing
 @testable import Oppi
 
@@ -137,27 +138,6 @@ struct AudioLifecycleCoordinatorTests {
         #expect(!AudioPlayerService.ownsPlaybackAudioSession(category: .playAndRecord))
     }
 
-    @Test func audioPlayerRejectsEmptyManualPlaybackBeforeStarting() {
-        let player = AudioPlayerService()
-
-        player.toggleDataPlayback(data: Data(), itemID: "empty-voice")
-
-        #expect(player.playingItemID == nil)
-        #expect(player.loadingItemID == nil)
-        #expect(!player.hasActivePlayback)
-    }
-
-    @Test func audioPlayerRejectsOversizedManualPlaybackBeforeStarting() {
-        let player = AudioPlayerService()
-        let oversized = Data(repeating: 0, count: 10 * 1024 * 1024 + 1)
-
-        player.toggleDataPlayback(data: oversized, itemID: "oversized-voice")
-
-        #expect(player.playingItemID == nil)
-        #expect(player.loadingItemID == nil)
-        #expect(!player.hasActivePlayback)
-    }
-
     @Test func audioPlayerAutoplayIsSuppressedDuringCapture() {
         let player = AudioPlayerService()
 
@@ -185,6 +165,23 @@ struct AudioLifecycleCoordinatorTests {
 
         #expect(!player.shouldAutoplayVoiceMessage(itemID: "voice-session-manual", delivery: .voiceMessage, sessionId: sessionId))
         #expect(player.shouldAutoplayVoiceMessage(itemID: "voice-session-direct", delivery: .directSpeak, sessionId: sessionId))
+    }
+
+    @Test func audioPlayerNowPlayingInfoDoesNotInstallArtwork() {
+        let player = AudioPlayerService()
+        player.setSessionContext(
+            makeTestSession(
+                id: "session-artwork-crash",
+                name: "Artwork crash guard",
+                model: "openai/o4-mini"
+            )
+        )
+        player.toggleDataPlayback(data: Self.makeSilentWAV(), itemID: "voice-artwork-guard")
+        defer { player.stop() }
+
+        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
+        #expect(info?[MPMediaItemPropertyTitle] as? String == "Artwork crash guard")
+        #expect(info?[MPMediaItemPropertyArtwork] == nil)
     }
 
     @Test func audioPlayerNowPlayingPresentationUsesSessionTitleAndModel() {
@@ -253,6 +250,36 @@ struct AudioLifecycleCoordinatorTests {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
 
         try AudioEngineHelper.validateInputFormat(format)
+    }
+
+    private static func makeSilentWAV(sampleRate: Int = 24_000, frames: Int = 2_400) -> Data {
+        var data = Data()
+        let pcmBytes = frames * 2
+        func appendString(_ value: String) { data.append(contentsOf: value.utf8) }
+        func appendUInt16(_ value: UInt16) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        func appendUInt32(_ value: UInt32) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+
+        appendString("RIFF")
+        appendUInt32(UInt32(36 + pcmBytes))
+        appendString("WAVE")
+        appendString("fmt ")
+        appendUInt32(16)
+        appendUInt16(1)
+        appendUInt16(1)
+        appendUInt32(UInt32(sampleRate))
+        appendUInt32(UInt32(sampleRate * 2))
+        appendUInt16(2)
+        appendUInt16(16)
+        appendString("data")
+        appendUInt32(UInt32(pcmBytes))
+        data.append(Data(repeating: 0, count: pcmBytes))
+        return data
     }
 }
 

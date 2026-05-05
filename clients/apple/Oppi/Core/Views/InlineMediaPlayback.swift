@@ -34,17 +34,61 @@ enum MediaMimeType {
         return false
     }
 
-    /// Extract the `viewBox` from SVG data to compute aspect ratio.
-    /// Returns width/height if viewBox is present and valid, nil otherwise.
+    /// Extract the SVG aspect ratio from the root `viewBox` when present,
+    /// otherwise fall back to root `width` / `height` attributes.
     static func extractSVGViewBoxAspectRatio(_ data: Data) -> CGFloat? {
-        guard let content = String(data: data.prefix(4096), encoding: .utf8) else { return nil }
+        guard let content = String(data: data.prefix(8_192), encoding: .utf8),
+              let start = content.range(of: "<svg", options: .caseInsensitive)?.lowerBound,
+              let end = content[start...].firstIndex(of: ">") else {
+            return nil
+        }
+
+        let openingTag = String(content[start...end])
+        if let ratio = extractSVGViewBoxAspectRatio(fromOpeningTag: openingTag) {
+            return ratio
+        }
+
+        guard let widthValue = svgAttribute("width", in: openingTag),
+              let heightValue = svgAttribute("height", in: openingTag),
+              let width = svgLength(widthValue), width > 0,
+              let height = svgLength(heightValue), height > 0 else {
+            return nil
+        }
+
+        return width / height
+    }
+
+    private static func extractSVGViewBoxAspectRatio(fromOpeningTag openingTag: String) -> CGFloat? {
         let pattern = /viewBox\s*=\s*["']?[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+)/
-        guard let match = content.firstMatch(of: pattern),
+        guard let match = openingTag.firstMatch(of: pattern),
               let width = Double(match.output.1), width > 0,
               let height = Double(match.output.2), height > 0 else {
             return nil
         }
         return CGFloat(width / height)
+    }
+
+    private static func svgAttribute(_ name: String, in openingTag: String) -> String? {
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = "(?i)(?:^|\\s)\(escapedName)\\s*=\\s*(['\"])(.*?)\\1"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let searchRange = NSRange(openingTag.startIndex..., in: openingTag)
+        guard let match = regex.firstMatch(in: openingTag, range: searchRange),
+              let valueRange = Range(match.range(at: 2), in: openingTag) else {
+            return nil
+        }
+        return String(openingTag[valueRange])
+    }
+
+    private static func svgLength(_ rawValue: String) -> CGFloat? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("%") else { return nil }
+
+        let scanner = Scanner(string: trimmed)
+        scanner.locale = Locale(identifier: "en_US_POSIX")
+        var value = 0.0
+        guard scanner.scanDouble(&value), value > 0 else { return nil }
+        return CGFloat(value)
     }
 
     static func imageMimeType(forPathExtension pathExtension: String?) -> String? {
@@ -208,7 +252,9 @@ enum ImageMediaInspector {
 
 final class AnimatedImageWebContainerView: UIView {
     private let webView: PiWKWebView
+    private var currentSignature: Int?
     private var loadedSignature: Int?
+    private var pendingDataURLString: String?
 
     override init(frame: CGRect) {
         let configuration = WKWebViewConfiguration()
@@ -220,20 +266,54 @@ final class AnimatedImageWebContainerView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        loadPendingContentIfReady()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        loadPendingContentIfReady()
+    }
+
     func apply(dataURLString: String) {
         var hasher = Hasher()
         hasher.combine(dataURLString.count)
         hasher.combine(dataURLString.prefix(128))
         hasher.combine(dataURLString.suffix(128))
         let signature = hasher.finalize()
-        guard signature != loadedSignature else { return }
-        loadedSignature = signature
+        guard signature != currentSignature else {
+            loadPendingContentIfReady()
+            return
+        }
+        currentSignature = signature
+        loadedSignature = nil
+        pendingDataURLString = dataURLString
+        loadPendingContentIfReady()
+    }
 
-        let html = """
+    private func loadPendingContentIfReady() {
+        guard window != nil,
+              bounds.width > 0,
+              bounds.height > 0,
+              webView.bounds.width > 0,
+              webView.bounds.height > 0,
+              let dataURLString = pendingDataURLString,
+              let currentSignature,
+              loadedSignature != currentSignature else {
+            return
+        }
+
+        loadedSignature = currentSignature
+        webView.loadHTMLString(Self.makeHTML(dataURLString: dataURLString), baseURL: nil)
+    }
+
+    private static func makeHTML(dataURLString: String) -> String {
+        """
         <!doctype html>
         <html>
         <head>
-          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\">
+          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover\">
           <style>
             html, body {
               margin: 0;
@@ -263,8 +343,6 @@ final class AnimatedImageWebContainerView: UIView {
         </body>
         </html>
         """
-
-        webView.loadHTMLString(html, baseURL: nil)
     }
 
     private func setupViews() {
@@ -279,6 +357,8 @@ final class AnimatedImageWebContainerView: UIView {
         webView.scrollView.alwaysBounceHorizontal = false
         webView.scrollView.bounces = false
         webView.scrollView.backgroundColor = .clear
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.isUserInteractionEnabled = false
         if #available(iOS 16.4, *) {
             webView.isInspectable = false
         }

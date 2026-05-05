@@ -1,5 +1,6 @@
 import Testing
 import UIKit
+import WebKit
 @testable import Oppi
 
 @Suite("Tool expanded surface host")
@@ -100,6 +101,88 @@ struct ToolExpandedSurfaceHostTests {
         #expect(horizontal.imageFrame.width > horizontal.imageFrame.height * 2.0)
         #expect(FileManager.default.fileExists(atPath: vertical.outputURL.path))
         #expect(FileManager.default.fileExists(atPath: horizontal.outputURL.path))
+    }
+
+    @Test func brentSVGPreviewSnapshotFillsWidthAndShowsLowerAxis() async throws {
+        let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/svg-regression", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let outputURL = outputDirectory.appendingPathComponent("brent-svg-preview.png")
+
+        let screenshot = try await renderBrentSVGPreviewSnapshot(outputURL: outputURL)
+        let edgeFillPixels = countBrightBackgroundPixelsNearHorizontalEdges(in: screenshot)
+        let lowerBandPixels = countNonBackgroundPixels(
+            in: screenshot,
+            minYFraction: 0.78,
+            maxYFraction: 0.98
+        )
+
+        #expect(
+            edgeFillPixels > 5_000,
+            "Expected the SVG to fill the preview width after WebKit layout; found only \(edgeFillPixels) bright edge pixels"
+        )
+        #expect(
+            lowerBandPixels > 300,
+            "Expected the scaled SVG screenshot to include the lower chart axis and labels; found only \(lowerBandPixels) non-background pixels in the lower band"
+        )
+        #expect(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    @Test func brentSVGReadMediaRowSnapshotFillsWidthAndShowsLowerAxis() async throws {
+        let outputDirectory = URL(fileURLWithPath: "/Users/chenda/workspace/oppi/.pi/reports/svg-regression", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let outputURL = outputDirectory.appendingPathComponent("brent-svg-read-media-row-preview.png")
+
+        let screenshot = try await renderBrentSVGReadMediaPreviewSnapshot(outputURL: outputURL)
+        let edgeFillPixels = countBrightBackgroundPixelsNearHorizontalEdges(in: screenshot)
+        let lowerBandPixels = countNonBackgroundPixels(
+            in: screenshot,
+            minYFraction: 0.78,
+            maxYFraction: 0.98
+        )
+
+        #expect(
+            edgeFillPixels > 5_000,
+            "Expected the SVG to fill the preview width after WebKit layout; found only \(edgeFillPixels) bright edge pixels"
+        )
+        #expect(
+            lowerBandPixels > 300,
+            "Expected the scaled SVG screenshot to include the lower chart axis and labels; found only \(lowerBandPixels) non-background pixels in the lower band"
+        )
+        #expect(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    @Test func svgReadMediaPreviewUsesSingleTapFullscreenActivation() async throws {
+        let preview = NativeExpandedInlineImageView(maxPixelSize: 1_600)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 360, height: 260))
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(preview)
+        NSLayoutConstraint.activate([
+            preview.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            preview.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        preview.apply(
+            base64: Data(Self.brentCrudeSVGFromTempDirectory.utf8).base64EncodedString(),
+            mimeType: "image/svg+xml"
+        )
+
+        let ready = await waitForTimelineCondition(timeoutMs: 1_500) { @MainActor in
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            return firstToolSubview(ofType: AnimatedImageWebContainerView.self, in: preview) != nil
+                && firstToolSubview(ofType: PiWKWebView.self, in: preview) != nil
+        }
+        #expect(ready)
+
+        let animatedView = try #require(firstToolSubview(ofType: AnimatedImageWebContainerView.self, in: preview))
+        let webView = try #require(firstToolSubview(ofType: PiWKWebView.self, in: preview))
+        let singleTap = animatedView.gestureRecognizers?.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 1
+        } ?? false
+
+        #expect(singleTap, "SVG previews should open full screen with one tap, matching static image previews")
+        #expect(!webView.isUserInteractionEnabled, "The nested WKWebView should not swallow taps meant for the preview card")
     }
 
     @Test func expandedSurfaceHostSwitchesActiveSurfaceOnReuse() {
@@ -221,6 +304,216 @@ struct ToolExpandedSurfaceHostTests {
             }
     }
 
+    private func renderBrentSVGReadMediaPreviewSnapshot(outputURL: URL) async throws -> UIImage {
+        let hostSize = CGSize(width: 360, height: 700)
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            title: "read /tmp/brent.svg",
+            expandedContent: .readMedia(
+                output: Self.brentCrudeSVGFromTempDirectory,
+                filePath: "/tmp/brent.svg",
+                startLine: 1
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        ))
+        view.translatesAutoresizingMaskIntoConstraints = false
+
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: hostSize)
+        hostController.view.backgroundColor = .systemBackground
+        hostController.view.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: hostController.view.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: hostController.view.trailingAnchor),
+            view.topAnchor.constraint(equalTo: hostController.view.topAnchor),
+        ])
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: hostSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let ready = await waitForTimelineCondition(timeoutMs: 3_500) { @MainActor in
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            guard let inlinePreview = firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view),
+                  let webView = firstToolSubview(ofType: PiWKWebView.self, in: inlinePreview),
+                  !inlinePreview.isHidden,
+                  !webView.isHidden else {
+                return false
+            }
+            let imageReady = try? await webView.evaluateJavaScript("document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0") as? Bool
+            return imageReady == true
+                && inlinePreview.bounds.width > 300
+                && inlinePreview.bounds.height > 180
+                && webView.bounds.width >= inlinePreview.bounds.width - 1
+                && webView.bounds.height >= inlinePreview.bounds.height - 1
+        }
+        #expect(ready, "Expected expanded read-media SVG preview to finish loading before snapshot")
+
+        let inlinePreview = try #require(firstToolSubview(ofType: NativeExpandedInlineImageView.self, in: view))
+        let previewFrame = inlinePreview.convert(inlinePreview.bounds, to: hostController.view)
+        try await Task.sleep(for: .milliseconds(250))
+        let screenshot = UIGraphicsImageRenderer(size: previewFrame.size).image { _ in
+            hostController.view.drawHierarchy(
+                in: CGRect(
+                    x: -previewFrame.minX,
+                    y: -previewFrame.minY,
+                    width: hostSize.width,
+                    height: hostSize.height
+                ),
+                afterScreenUpdates: true
+            )
+        }
+        try #require(screenshot.pngData()).write(to: outputURL, options: .atomic)
+        return screenshot
+    }
+
+    private func renderBrentSVGPreviewSnapshot(outputURL: URL) async throws -> UIImage {
+        let previewSize = CGSize(width: 360, height: 210)
+        let preview = AnimatedImageWebContainerView(frame: CGRect(origin: .zero, size: previewSize))
+        preview.translatesAutoresizingMaskIntoConstraints = false
+
+        let hostController = UIViewController()
+        hostController.view.frame = CGRect(origin: .zero, size: previewSize)
+        hostController.view.backgroundColor = .systemBackground
+        hostController.view.addSubview(preview)
+        NSLayoutConstraint.activate([
+            preview.leadingAnchor.constraint(equalTo: hostController.view.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: hostController.view.trailingAnchor),
+            preview.topAnchor.constraint(equalTo: hostController.view.topAnchor),
+            preview.bottomAnchor.constraint(equalTo: hostController.view.bottomAnchor),
+        ])
+
+        let window = UIWindow(frame: CGRect(origin: .zero, size: previewSize))
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let svgData = Data(Self.brentCrudeSVGFromTempDirectory.utf8)
+        let dataURLString = "data:image/svg+xml;base64,\(svgData.base64EncodedString())"
+        preview.apply(dataURLString: dataURLString)
+        hostController.view.setNeedsLayout()
+        hostController.view.layoutIfNeeded()
+
+        let webView = try #require(firstToolSubview(ofType: PiWKWebView.self, in: preview))
+        let ready = await waitForTimelineCondition(timeoutMs: 2_500) { @MainActor in
+            hostController.view.setNeedsLayout()
+            hostController.view.layoutIfNeeded()
+            let imageReady = try? await webView.evaluateJavaScript("document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0") as? Bool
+            return imageReady == true
+                && webView.bounds.width >= previewSize.width - 1
+                && webView.bounds.height >= previewSize.height - 1
+        }
+        #expect(ready, "Expected SVG web view image to finish loading before snapshot")
+
+        try await Task.sleep(for: .milliseconds(250))
+        let screenshot = UIGraphicsImageRenderer(size: previewSize).image { _ in
+            hostController.view.drawHierarchy(
+                in: CGRect(origin: .zero, size: previewSize),
+                afterScreenUpdates: true
+            )
+        }
+        try #require(screenshot.pngData()).write(to: outputURL, options: .atomic)
+        return screenshot
+    }
+
+    private func countNonBackgroundPixels(
+        in image: UIImage,
+        minYFraction: CGFloat,
+        maxYFraction: CGFloat
+    ) -> Int {
+        guard let raster = rasterize(image) else { return 0 }
+        let minY = max(0, min(raster.height - 1, Int(CGFloat(raster.height) * minYFraction)))
+        let maxY = max(minY, min(raster.height, Int(CGFloat(raster.height) * maxYFraction)))
+        var count = 0
+        for y in minY..<maxY {
+            for x in 0..<raster.width {
+                let pixel = raster.pixel(x: x, y: y)
+                if pixel.alpha > 200 && (pixel.red < 235 || pixel.green < 235 || pixel.blue < 235) {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func countBrightBackgroundPixelsNearHorizontalEdges(in image: UIImage) -> Int {
+        guard let raster = rasterize(image) else { return 0 }
+        let edgeWidth = max(1, Int(CGFloat(raster.width) * 0.06))
+        let minY = max(0, Int(CGFloat(raster.height) * 0.25))
+        let maxY = min(raster.height, Int(CGFloat(raster.height) * 0.75))
+        var count = 0
+        for y in minY..<maxY {
+            for x in 0..<edgeWidth {
+                if raster.pixel(x: x, y: y).isBrightSVGBackground {
+                    count += 1
+                }
+            }
+            for x in max(edgeWidth, raster.width - edgeWidth)..<raster.width {
+                if raster.pixel(x: x, y: y).isBrightSVGBackground {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func rasterize(_ image: UIImage) -> RasterImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 0, height > 0 else { return nil }
+
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return RasterImage(width: width, height: height, bytesPerRow: bytesPerRow, pixels: pixels)
+    }
+
+    private struct RasterImage {
+        let width: Int
+        let height: Int
+        let bytesPerRow: Int
+        let pixels: [UInt8]
+
+        func pixel(x: Int, y: Int) -> Pixel {
+            let offset = y * bytesPerRow + x * 4
+            return Pixel(
+                red: pixels[offset],
+                green: pixels[offset + 1],
+                blue: pixels[offset + 2],
+                alpha: pixels[offset + 3]
+            )
+        }
+    }
+
+    private struct Pixel {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+        let alpha: UInt8
+
+        var isBrightSVGBackground: Bool {
+            alpha > 200 && red > 245 && green > 240 && blue > 235
+        }
+    }
+
     private func firstToolSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
         if let match = root as? T { return match }
         for subview in root.subviews {
@@ -228,4 +521,21 @@ struct ToolExpandedSurfaceHostTests {
         }
         return nil
     }
+
+    // Exact regression fixture copied from `/tmp/brent.svg` after the reported SVG preview failure.
+    private static let brentCrudeSVGFromTempDirectory = #"""
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+  <rect width="100%" height="100%" rx="24" fill="#faf9f6"/>
+  <text x="28" y="36" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="22" font-weight="700" fill="#1f2937">Brent Crude (BZ=F)</text>
+  <text x="28" y="64" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#374151">Last 113.95  -4.08 (-3.5%)  Apr28 -&gt; May03</text>
+  <line x1="72" y1="76" x2="72" y2="366" stroke="#d6d3d1"/>
+  <line x1="72" y1="366" x2="692" y2="366" stroke="#d6d3d1"/>
+  <text x="18" y="81" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#6b7280">118.82</text>
+  <text x="18" y="366" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#6b7280">107.38</text>
+  <polyline points="72.0,96.0 278.7,197.9 485.3,346.0 692.0,199.4" fill="none" stroke="#b45309" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="72.0" cy="96.0" r="4" fill="#b45309"><title>Apr28 118.03</title></circle><circle cx="278.7" cy="197.9" r="4" fill="#b45309"><title>Apr29 114.01</title></circle><circle cx="485.3" cy="346.0" r="4" fill="#b45309"><title>Apr30 108.17</title></circle><circle cx="692.0" cy="199.4" r="4" fill="#b45309"><title>May03 113.95</title></circle>
+  <text x="72" y="398" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#6b7280">Apr28</text>
+  <text x="692" y="398" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#6b7280">May03</text>
+</svg>
+"""#
 }

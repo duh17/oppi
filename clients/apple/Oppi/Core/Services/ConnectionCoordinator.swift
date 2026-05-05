@@ -544,26 +544,6 @@ final class ConnectionCoordinator {
         connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
     }
 
-    var activeAudioPlaybackPresentation: AudioPlayerService.NowPlayingPresentation? {
-        if let activePresentation = activeConnection.audioPlayer.nowPlayingPresentation {
-            return activePresentation
-        }
-
-        for (serverId, connection) in connections where serverId != activeServerId {
-            if let presentation = connection.audioPlayer.nowPlayingPresentation {
-                return presentation
-            }
-        }
-        return nil
-    }
-
-    /// Stop all audio playback across all servers.
-    func stopAllAudioPlayback() {
-        for connection in connections.values {
-            connection.audioPlayer.stop()
-        }
-    }
-
     /// All pending permissions across all servers.
     var allPendingPermissions: [PermissionRequest] {
         connections.values.flatMap { $0.permissionStore.pending }
