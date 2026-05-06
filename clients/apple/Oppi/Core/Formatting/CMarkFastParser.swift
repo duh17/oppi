@@ -3,8 +3,7 @@ import cmark_gfm_extensions
 
 /// Fast CommonMark parser using the C cmark-gfm library directly.
 ///
-/// Bypasses the swift-markdown Swift AST layer for faster parsing.
-/// Produces the same `[MarkdownBlock]` output as `parseCommonMark`.
+/// Parses directly through cmark-gfm and converts to `[MarkdownBlock]`.
 ///
 /// Used for the non-streaming full-document parse path where source
 /// positions are not needed.

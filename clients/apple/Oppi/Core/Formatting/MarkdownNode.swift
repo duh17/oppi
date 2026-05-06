@@ -2,7 +2,7 @@ import Foundation
 
 /// Parsed CommonMark block node.
 ///
-/// Produced by `parseCommonMark(_:)` from the swift-markdown AST.
+/// Produced by `parseCommonMark(_:)` from the cmark-gfm AST.
 /// Consumed by the finalized `CommonMarkView` for SwiftUI rendering.
 indirect enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, inlines: [MarkdownInline])

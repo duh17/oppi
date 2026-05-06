@@ -4,7 +4,7 @@ import Foundation
 
 /// Tests CommonMark rendering via `parseCommonMark(_:)`.
 ///
-/// Verifies that the swift-markdown parser produces the correct
+/// Verifies that the cmark-gfm parser produces the correct
 /// intermediate `MarkdownBlock` / `MarkdownInline` AST for all
 /// CommonMark block and inline elements.
 @Suite("CommonMark Parsing")

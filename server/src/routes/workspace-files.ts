@@ -6,8 +6,6 @@ import { join, extname, relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { contentType as formatContentType, lookup as lookupMimeType } from "mime-types";
-
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
   DirectoryListingResponse,
@@ -32,12 +30,20 @@ export const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".we
 const HLS_CONTENT_TYPES = new Set(["application/vnd.apple.mpegurl", "application/x-mpegurl"]);
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
+  ".apng": "image/apng",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
   ".gif": "image/gif",
-  ".webp": "image/webp",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".ico": "image/vnd.microsoft.icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".webp": "image/webp",
 };
 
 const SPECIAL_CONTENT_TYPES: Record<string, string> = {
@@ -48,8 +54,49 @@ const SPECIAL_CONTENT_TYPES: Record<string, string> = {
   ".xml": "text/xml; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
   ".pdf": "application/pdf",
+};
+
+const STREAMING_MEDIA_CONTENT_TYPES: Record<string, string> = {
+  // Audio
+  ".aac": "audio/aac",
+  ".aif": "audio/x-aiff",
+  ".aifc": "audio/x-aiff",
+  ".aiff": "audio/x-aiff",
+  ".amr": "audio/amr",
+  ".caf": "audio/x-caf",
   ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".mid": "audio/midi",
+  ".midi": "audio/midi",
+  ".mp3": "audio/mpeg",
+  ".mpga": "audio/mpeg",
+  ".oga": "audio/ogg",
+  ".ogg": "audio/ogg",
   ".opus": "audio/opus",
+  ".wav": "audio/wav",
+  ".wave": "audio/wav",
+  ".weba": "audio/webm",
+
+  // Video
+  ".3g2": "video/3gpp2",
+  ".3gp": "video/3gpp",
+  ".avi": "video/x-msvideo",
+  ".flv": "video/x-flv",
+  ".m2ts": "video/mp2t",
+  ".m4v": "video/x-m4v",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".mpe": "video/mpeg",
+  ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg",
+  ".ogv": "video/ogg",
+  ".qt": "video/quicktime",
+  ".webm": "video/webm",
+  ".wmv": "video/x-ms-wmv",
+
+  // Playlists / streaming containers
+  ".m3u8": "application/vnd.apple.mpegurl",
 };
 
 export const TEXT_EXTENSIONS = new Set([
@@ -219,20 +266,12 @@ function normalizeContentType(contentType: string): string {
   return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? contentType.trim().toLowerCase();
 }
 
-function inferMimeType(ext: string, filename: string): string | null {
-  const byFilename = lookupMimeType(filename);
-  if (typeof byFilename === "string") {
-    return byFilename;
-  }
+function normalizeExtension(ext: string, filename: string): string {
+  if (ext) return ext.toLowerCase();
 
-  if (ext.length > 0) {
-    const byExtension = lookupMimeType(ext);
-    if (typeof byExtension === "string") {
-      return byExtension;
-    }
-  }
-
-  return null;
+  const dotIndex = filename.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === filename.length - 1) return "";
+  return filename.slice(dotIndex).toLowerCase();
 }
 
 export function isStreamingMediaContentType(contentType: string): boolean {
@@ -254,20 +293,20 @@ export function isBrowseMediaContentType(contentType: string): boolean {
 }
 
 export function getContentType(ext: string, filename: string): string {
-  const imageType = IMAGE_CONTENT_TYPES[ext];
+  const normalizedExt = normalizeExtension(ext, filename);
+
+  const imageType = IMAGE_CONTENT_TYPES[normalizedExt];
   if (imageType) return imageType;
 
-  const special = SPECIAL_CONTENT_TYPES[ext];
+  const special = SPECIAL_CONTENT_TYPES[normalizedExt];
   if (special) return special;
 
-  if (TEXT_EXTENSIONS.has(ext)) return "text/plain; charset=utf-8";
+  if (TEXT_EXTENSIONS.has(normalizedExt)) return "text/plain; charset=utf-8";
 
   if (TEXT_FILENAMES.has(filename.toLowerCase())) return "text/plain; charset=utf-8";
 
-  const inferred = inferMimeType(ext, filename);
-  if (inferred && isBrowseMediaContentType(inferred)) {
-    return formatContentType(inferred) || inferred;
-  }
+  const mediaType = STREAMING_MEDIA_CONTENT_TYPES[normalizedExt];
+  if (mediaType) return mediaType;
 
   return "application/octet-stream";
 }

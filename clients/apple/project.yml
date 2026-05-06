@@ -3,9 +3,6 @@
 # See CONTRIBUTING.md for full setup instructions.
 name: Oppi
 packages:
-  swift-markdown:
-    url: https://github.com/apple/swift-markdown
-    from: "0.7.0"
   swift-cmark:
     url: https://github.com/swiftlang/swift-cmark.git
     from: "0.7.1"
@@ -258,8 +255,6 @@ targets:
         shell: /bin/bash
         showEnvVars: false
     dependencies:
-      - package: swift-markdown
-        product: Markdown
       - package: swift-cmark
         product: cmark-gfm
       - package: swift-cmark
