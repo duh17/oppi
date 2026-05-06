@@ -283,4 +283,46 @@ struct ChatInputBarTests {
         #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q2") == "")
         #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil) == "")
     }
+
+    @Test("Submitted custom ask keeps the composer cleared until the request changes")
+    func submittedCustomAskKeepsComposerCleared() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let draftAnswers: [String: AskAnswer] = ["q1": .custom("because the larger tables should download")]
+        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: "q1",
+            draftAnswers: draftAnswers,
+            keepComposerClearedForSubmittedRequestID: "ask-1"
+        )
+
+        #expect(displayedText == "")
+    }
+
+    @Test("Unsubmitted custom ask restores the stored text for the active page")
+    func unsubmittedCustomAskRestoresStoredText() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+
+        let draftAnswers: [String: AskAnswer] = ["q1": .custom("because the larger tables should download")]
+        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: "q1",
+            draftAnswers: draftAnswers,
+            keepComposerClearedForSubmittedRequestID: nil
+        )
+
+        #expect(displayedText == "because the larger tables should download")
+    }
 }

@@ -57,6 +57,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var inlineVisualLineCount = 1
     @State private var askCurrentPage = 0
     @State private var askDraftAnswers: [String: AskAnswer] = [:]
+    @State private var keepComposerClearedForSubmittedAskRequestID: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Bumped to programmatically focus the text field.
@@ -272,6 +273,7 @@ struct ChatInputBar<ActionRow: View>: View {
         .onChange(of: askRequest?.id) { _, _ in
             askCurrentPage = 0
             askDraftAnswers = [:]
+            keepComposerClearedForSubmittedAskRequestID = nil
         }
         .onChange(of: askCurrentPage) { _, _ in
             syncComposerTextWithActiveAskQuestion()
@@ -808,6 +810,19 @@ struct ChatInputBar<ActionRow: View>: View {
         return text
     }
 
+    static func composerTextForActiveAskQuestion(
+        request: AskRequest?,
+        activeQuestionID: String?,
+        draftAnswers: [String: AskAnswer],
+        keepComposerClearedForSubmittedRequestID: String?
+    ) -> String {
+        guard let request, request.allowCustom else { return "" }
+        if keepComposerClearedForSubmittedRequestID == request.id {
+            return ""
+        }
+        return customAskText(answers: draftAnswers, questionID: activeQuestionID)
+    }
+
     struct AskComposerSendTransition: Equatable {
         let nextPage: Int
         let answers: [String: AskAnswer]
@@ -856,8 +871,12 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func syncComposerTextWithActiveAskQuestion() {
-        guard let askRequest, askRequest.allowCustom else { return }
-        let desiredText = Self.customAskText(answers: askDraftAnswers, questionID: activeAskQuestionID)
+        let desiredText = Self.composerTextForActiveAskQuestion(
+            request: askRequest,
+            activeQuestionID: activeAskQuestionID,
+            draftAnswers: askDraftAnswers,
+            keepComposerClearedForSubmittedRequestID: keepComposerClearedForSubmittedAskRequestID
+        )
         guard text != desiredText || textBeforeRecording != nil else { return }
         text = desiredText
         textBeforeRecording = nil
@@ -908,6 +927,7 @@ struct ChatInputBar<ActionRow: View>: View {
         textBeforeRecording = nil
 
         if transition.shouldSubmit {
+            keepComposerClearedForSubmittedAskRequestID = askRequest?.id
             onAskSubmit?(transition.answers)
         } else {
             withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
