@@ -180,6 +180,63 @@ enum ComposerShared {
         return prefix + liveTranscript
     }
 
+    static func dictationPrefix(for base: String) -> String {
+        if base.isEmpty || base.last?.isWhitespace == true {
+            return base
+        }
+        return base + " "
+    }
+
+    static func startVoiceInput(
+        manager: VoiceInputManager,
+        keyboardLanguage: String?,
+        source: String,
+        baseText: String,
+        textBeforeRecording: Binding<String?>? = nil,
+        suppressKeyboard: Binding<Bool>,
+        focusRequestID: Binding<Int>
+    ) async throws -> String {
+        let prefix = dictationPrefix(for: baseText)
+        textBeforeRecording?.wrappedValue = prefix
+        suppressKeyboard.wrappedValue = true
+        focusRequestID.wrappedValue &+= 1
+
+        do {
+            try await manager.startRecording(
+                keyboardLanguage: keyboardLanguage,
+                source: source
+            )
+            return prefix
+        } catch {
+            textBeforeRecording?.wrappedValue = nil
+            suppressKeyboard.wrappedValue = false
+            throw error
+        }
+    }
+
+    static func stopVoiceInput(
+        manager: VoiceInputManager,
+        text: Binding<String>,
+        textBeforeRecording: Binding<String?>
+    ) async {
+        let prefix = textBeforeRecording.wrappedValue ?? ""
+        let transcript = await manager.stopRecording()
+        textBeforeRecording.wrappedValue = nil
+        if !transcript.isEmpty {
+            text.wrappedValue = prefix + transcript
+        }
+    }
+
+    static func cancelVoiceInput(
+        manager: VoiceInputManager,
+        textBeforeRecording: Binding<String?>,
+        suppressKeyboard: Binding<Bool>
+    ) async {
+        await manager.cancelRecording()
+        textBeforeRecording.wrappedValue = nil
+        suppressKeyboard.wrappedValue = false
+    }
+
     static func handleKeyboardRestore(
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,

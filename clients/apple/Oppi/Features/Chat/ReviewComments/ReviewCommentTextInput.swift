@@ -153,28 +153,29 @@ struct ReviewCommentTextInput: View {
     private func handleMicTap(manager: VoiceInputManager) async {
         switch manager.state {
         case .recording:
-            let prefix = textBeforeRecording ?? ""
-            let transcript = await manager.stopRecording()
-            textBeforeRecording = nil
-            if !transcript.isEmpty {
-                text = prefix + transcript
-            }
+            await ComposerShared.stopVoiceInput(
+                manager: manager,
+                text: $text,
+                textBeforeRecording: $textBeforeRecording
+            )
         case .preparingModel:
-            await manager.cancelRecording()
-            textBeforeRecording = nil
-            suppressKeyboard = false
+            await ComposerShared.cancelVoiceInput(
+                manager: manager,
+                textBeforeRecording: $textBeforeRecording,
+                suppressKeyboard: $suppressKeyboard
+            )
         case .idle:
-            textBeforeRecording = Self.dictationPrefix(for: text)
-            suppressKeyboard = true
-            focusRequestID += 1
             do {
-                try await manager.startRecording(
+                try await ComposerShared.startVoiceInput(
+                    manager: manager,
                     keyboardLanguage: keyboardLanguage,
-                    source: "review_comment_mic_tap"
+                    source: "review_comment_mic_tap",
+                    baseText: text,
+                    textBeforeRecording: $textBeforeRecording,
+                    suppressKeyboard: $suppressKeyboard,
+                    focusRequestID: $focusRequestID
                 )
             } catch {
-                textBeforeRecording = nil
-                suppressKeyboard = false
             }
         case .processing, .error:
             break
@@ -182,9 +183,6 @@ struct ReviewCommentTextInput: View {
     }
 
     static func dictationPrefix(for base: String) -> String {
-        if base.isEmpty || base.last?.isWhitespace == true {
-            return base
-        }
-        return base + " "
+        ComposerShared.dictationPrefix(for: base)
     }
 }

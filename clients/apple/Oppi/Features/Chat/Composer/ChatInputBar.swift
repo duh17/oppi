@@ -617,40 +617,31 @@ struct ChatInputBar<ActionRow: View>: View {
             Task {
                 switch manager.state {
                 case .recording:
-                    let prefix = textBeforeRecording ?? ""
-                    let transcript = await manager.stopRecording()
-                    textBeforeRecording = nil
-                    // Explicitly sync the finalized transcript.
-                    // Cannot rely on onChange — teardown clears
-                    // currentTranscript, so the observation path is dead.
-                    if !transcript.isEmpty {
-                        text = prefix + transcript
-                    }
+                    await ComposerShared.stopVoiceInput(
+                        manager: manager,
+                        text: $text,
+                        textBeforeRecording: $textBeforeRecording
+                    )
                     // Keep keyboard suppressed — user tapping the text field
                     // will restore it via handleKeyboardRestore()
                 case .preparingModel:
-                    await manager.cancelRecording()
-                    textBeforeRecording = nil
-                    suppressKeyboard = false
+                    await ComposerShared.cancelVoiceInput(
+                        manager: manager,
+                        textBeforeRecording: $textBeforeRecording,
+                        suppressKeyboard: $suppressKeyboard
+                    )
                 case .idle:
-                    // Capture text prefix — add space if there's existing content
-                    let current = text
-                    if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
-                        textBeforeRecording = current
-                    } else {
-                        textBeforeRecording = current + " "
-                    }
-                    // Show cursor without keyboard — keyboard appears on text field tap
-                    suppressKeyboard = true
-                    focusRequestID += 1
                     do {
-                        try await manager.startRecording(
+                        try await ComposerShared.startVoiceInput(
+                            manager: manager,
                             keyboardLanguage: keyboardLanguage,
-                            source: "inline_mic_tap"
+                            source: "inline_mic_tap",
+                            baseText: text,
+                            textBeforeRecording: $textBeforeRecording,
+                            suppressKeyboard: $suppressKeyboard,
+                            focusRequestID: $focusRequestID
                         )
                     } catch {
-                        textBeforeRecording = nil
-                        suppressKeyboard = false
                     }
                 case .processing, .error:
                     break

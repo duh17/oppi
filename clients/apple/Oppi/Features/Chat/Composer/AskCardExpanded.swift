@@ -21,8 +21,11 @@ struct AskCardExpanded: View {
     let onIgnoreAll: () -> Void
 
     @State private var customTexts: [String: String] = [:]
-    @FocusState private var focusedQuestionId: String?
+    @State private var focusedQuestionId: String?
     @State private var navigatingForward: Bool = true
+    @State private var suppressKeyboard = false
+    @State private var keyboardLanguage: String?
+    @State private var focusRequestID = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Question currently receiving custom dictation text.
@@ -69,26 +72,40 @@ struct AskCardExpanded: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 24)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .id(currentPage)
                 .transition(ThemeMotion.directionalPage(forward: navigatingForward, reduceMotion: reduceMotion))
             }
             .clipped()
             .frame(maxHeight: .infinity)
-
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             footerBar
         }
         .background(Color.themeBg.ignoresSafeArea())
         .onAppear {
             loadCustomTextsFromAnswers()
         }
-        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
+        .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let questionId = dictationQuestionId else { return }
-            applyDictationTranscript(newTranscript ?? "", for: questionId)
+            applyDictationTranscript(voiceInputManager?.currentTranscript ?? "", for: questionId)
+        }
+        .onChange(of: keyboardLanguage) { _, newLanguage in
+            guard ReleaseFeatures.voiceInputEnabled,
+                  let manager = voiceInputManager,
+                  AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
+            Task {
+                await manager.prewarm(
+                    keyboardLanguage: newLanguage,
+                    source: "ask_card_keyboard_change"
+                )
+            }
         }
         .onDisappear {
+            suppressKeyboard = false
             cancelDictationIfNeeded()
         }
     }
@@ -128,6 +145,7 @@ struct AskCardExpanded: View {
                 Task {
                     await finalizeDictationIfNeeded()
                     commitCustomTextIfNeeded()
+                    suppressKeyboard = false
                     focusedQuestionId = nil
                     isExpanded = false
                 }
@@ -188,6 +206,8 @@ struct AskCardExpanded: View {
 
         return Button {
             cancelDictationIfNeeded(for: question.id)
+            suppressKeyboard = false
+            focusedQuestionId = nil
             customTexts[question.id] = ""
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
@@ -250,27 +270,63 @@ struct AskCardExpanded: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeComment)
 
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 dictationButton(for: question)
                     .fixedSize()
 
-                TextField("Type your answer...", text: customTextBinding(for: question.id), axis: .vertical)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .focused($focusedQuestionId, equals: question.id)
-                    .lineLimit(1...5)
-                    .submitLabel(isSingleQuestionSingleSelect ? .send : .done)
-                    .onSubmit {
-                        Task {
-                            await finalizeDictationIfNeeded()
-                            commitCustomText(for: question)
-                            focusedQuestionId = nil
-                            if isSingleQuestionSingleSelect {
-                                isExpanded = false
-                                onSubmit(answers)
-                            }
-                        }
+                ZStack(alignment: .leading) {
+                    if (customTexts[question.id] ?? "").isEmpty {
+                        Text("Type your answer...")
+                            .font(.body)
+                            .foregroundStyle(.themeComment)
+                            .padding(.vertical, 4)
+                            .allowsHitTesting(false)
                     }
+
+                    PastableTextView(
+                        text: customTextBinding(for: question.id),
+                        placeholder: "",
+                        font: .preferredFont(forTextStyle: .body),
+                        textColor: UIColor(Color.themeFg),
+                        tintColor: UIColor(Color.themeBlue),
+                        volatileSuffixLength: dictationQuestionId == question.id
+                            ? (voiceInputManager?.currentTranscriptVolatileSuffixLength ?? 0)
+                            : 0,
+                        correctionRanges: correctionRangesForDisplay(questionId: question.id),
+                        maxLines: 5,
+                        autocorrectionEnabled: true,
+                        onPasteImages: { _ in },
+                        onCommandEnter: {
+                            Task {
+                                await finalizeDictationIfNeeded()
+                                commitCustomText(for: question)
+                                focusedQuestionId = nil
+                                if isSingleQuestionSingleSelect {
+                                    suppressKeyboard = false
+                                    isExpanded = false
+                                    onSubmit(answers)
+                                }
+                            }
+                        },
+                        onAlternateEnter: nil,
+                        onOverflowChange: nil,
+                        onLineCountChange: nil,
+                        onFocusChange: { isFocused in
+                            focusedQuestionId = isFocused ? question.id : nil
+                        },
+                        onDictationStateChange: nil,
+                        focusRequestID: focusRequestID,
+                        blurRequestID: 0,
+                        dictationRequestID: 0,
+                        suppressKeyboard: suppressKeyboard,
+                        allowKeyboardRestoreOnTap: true,
+                        onKeyboardRestoreRequest: handleKeyboardRestoreRequest,
+                        accessibilityIdentifier: "ask.input",
+                        keyboardLanguage: $keyboardLanguage
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -280,6 +336,7 @@ struct AskCardExpanded: View {
                 RoundedRectangle(cornerRadius: optionCornerRadius)
                     .stroke(Color.themeComment.opacity(0.12), lineWidth: 1)
             )
+            .id("ask-input-\(question.id)")
         }
     }
 
@@ -347,6 +404,7 @@ struct AskCardExpanded: View {
                             Task {
                                 await finalizeDictationIfNeeded()
                                 commitCustomTextIfNeeded()
+                                suppressKeyboard = false
                                 isExpanded = false
                                 onSubmit(answers)
                             }
@@ -365,6 +423,7 @@ struct AskCardExpanded: View {
                         Task {
                             await finalizeDictationIfNeeded()
                             commitCustomTextIfNeeded()
+                            suppressKeyboard = false
                             isExpanded = false
                             onSubmit(answers)
                         }
@@ -423,6 +482,7 @@ struct AskCardExpanded: View {
     }
 
     private func navigateForwardWithoutDictation() {
+        suppressKeyboard = false
         focusedQuestionId = nil
         commitCustomTextIfNeeded()
         navigatingForward = true
@@ -434,6 +494,7 @@ struct AskCardExpanded: View {
     }
 
     private func navigateBackWithoutDictation() {
+        suppressKeyboard = false
         focusedQuestionId = nil
         navigatingForward = false
         withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
@@ -456,17 +517,21 @@ struct AskCardExpanded: View {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         if let question = currentQuestion {
             cancelDictationIfNeeded(for: question.id)
+            suppressKeyboard = false
+            focusedQuestionId = nil
             answers[question.id] = nil
             customTexts[question.id] = ""
         }
 
         if isSingleQuestionSingleSelect {
+            suppressKeyboard = false
             isExpanded = false
             onIgnoreAll()
         } else if isLastQuestionPage {
             Task {
                 await finalizeDictationIfNeeded()
                 commitCustomTextIfNeeded()
+                suppressKeyboard = false
                 isExpanded = false
                 onSubmit(answers)
             }
@@ -510,6 +575,15 @@ struct AskCardExpanded: View {
         }
     }
 
+    private func correctionRangesForDisplay(questionId: String) -> [NSRange] {
+        guard dictationQuestionId == questionId,
+              let manager = voiceInputManager else { return [] }
+        let offset = (dictationPrefixText as NSString).length
+        return manager.currentTranscriptCorrectionRanges.map { range in
+            NSRange(location: range.location + offset, length: range.length)
+        }
+    }
+
     // MARK: - Dictation
 
     private func handleDictationTap(for question: AskQuestion, manager: VoiceInputManager) async {
@@ -531,13 +605,17 @@ struct AskCardExpanded: View {
         let base = customTexts[question.id] ?? ""
         dictationQuestionId = question.id
         dictationBaseText = base
-
-        dictationPrefixText = Self.dictationPrefix(for: base)
-
         focusedQuestionId = question.id
 
         do {
-            try await manager.startRecording(source: "ask_card_mic_tap")
+            dictationPrefixText = try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: keyboardLanguage,
+                source: "ask_card_mic_tap",
+                baseText: base,
+                suppressKeyboard: $suppressKeyboard,
+                focusRequestID: $focusRequestID
+            )
         } catch {
             clearDictationState()
         }
@@ -593,6 +671,14 @@ struct AskCardExpanded: View {
         dictationPrefixText = ""
     }
 
+    private func handleKeyboardRestoreRequest() {
+        suppressKeyboard = false
+        guard dictationQuestionId != nil else { return }
+        Task {
+            await finalizeDictationIfNeeded()
+        }
+    }
+
     private func loadCustomTextsFromAnswers() {
         for (key, answer) in answers {
             if case .custom(let text) = answer {
@@ -605,10 +691,7 @@ struct AskCardExpanded: View {
 
 extension AskCardExpanded {
     static func dictationPrefix(for base: String) -> String {
-        if base.isEmpty || base.last?.isWhitespace == true {
-            return base
-        }
-        return base + " "
+        ComposerShared.dictationPrefix(for: base)
     }
 
     static func combinedDictationText(base: String, prefix: String, transcript: String) -> String {
