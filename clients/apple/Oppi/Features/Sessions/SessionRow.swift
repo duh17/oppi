@@ -169,7 +169,7 @@ struct SessionRow: View {
             // Row 2: model + activity summary
             HStack(spacing: 6) {
                 if let firstModel = visibleModelSummaries.first {
-                    modelSummaryView(firstModel, additionalCount: max(0, visibleModelSummaries.count - 1))
+                    modelSummaryView(firstModel)
                         .layoutPriority(1)
                 }
 
@@ -250,7 +250,7 @@ struct SessionRow: View {
     // MARK: - Child Badge
 
     @ViewBuilder
-    private func modelSummaryView(_ model: SessionModelSummary, additionalCount: Int) -> some View {
+    private func modelSummaryView(_ model: SessionModelSummary) -> some View {
         HStack(spacing: 4) {
             if !model.provider.isEmpty {
                 ProviderIcon(provider: model.provider, size: 11)
@@ -261,15 +261,6 @@ struct SessionRow: View {
                 .foregroundStyle(.themeFgDim)
                 .lineLimit(1)
                 .truncationMode(.middle)
-
-            if additionalCount > 0 {
-                Text("+\(additionalCount)")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.themeComment)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.themeBgHighlight, in: Capsule())
-            }
         }
     }
 
