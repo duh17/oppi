@@ -18,6 +18,24 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("buildSessionSummary", () => {
+  it("filters absolute changed file paths from summaries", () => {
+    const summary = buildSessionSummary(
+      makeSession({
+        changeStats: {
+          mutatingToolCalls: 4,
+          filesChanged: 4,
+          changedFiles: ["src/app.ts", "/tmp/secret.txt", "~/Library/private.txt", "  "],
+          addedLines: 10,
+          removedLines: 1,
+        },
+      }),
+    );
+
+    expect(summary.changeStats?.changedFiles).toEqual(["src/app.ts"]);
+    expect(summary.changeStats?.filesChanged).toBe(4);
+    expect(summary.changeStats?.changedFilesOverflow).toBe(3);
+  });
+
   it("excludes trace and internal change tracking fields", () => {
     const summary = buildSessionSummary(
       makeSession({

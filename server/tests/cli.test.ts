@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, execSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
@@ -456,6 +456,31 @@ describe("oppi serve (first-run tls bootstrap)", () => {
 });
 
 // ── Init ──
+
+describe("oppi doctor", () => {
+  it("reports missing self-signed TLS material without generating it", () => {
+    const doctorDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-"));
+    const certPath = join(doctorDir, "tls", "self-signed", "server.crt");
+    const keyPath = join(doctorDir, "tls", "self-signed", "server.key");
+    const caPath = join(doctorDir, "tls", "self-signed", "ca.crt");
+
+    try {
+      const { exitCode: initExitCode } = run(["init", "--yes", "--data-dir", doctorDir]);
+      expect(initExitCode).toBe(0);
+
+      const { stdout, exitCode } = run(["doctor"], { OPPI_DATA_DIR: doctorDir });
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain("TLS cert missing");
+      expect(stdout).toContain("TLS key missing");
+      expect(stdout).toContain("TLS CA missing");
+      expect(existsSync(certPath)).toBe(false);
+      expect(existsSync(keyPath)).toBe(false);
+      expect(existsSync(caPath)).toBe(false);
+    } finally {
+      rmSync(doctorDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("oppi init (non-interactive)", () => {
   it("writes config with self-signed TLS by default", () => {

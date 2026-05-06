@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import type { Session, SessionSummary, SessionSummaryChangeStats } from "./types.js";
 
 /**
@@ -39,14 +41,26 @@ function buildSessionSummaryChangeStats(
     return undefined;
   }
 
+  const changedFiles = stats.changedFiles.filter(isSummarySafeChangedFile);
+  const changedFilesOverflow = Math.max(
+    stats.changedFilesOverflow ?? 0,
+    stats.filesChanged - changedFiles.length,
+    0,
+  );
+
   return {
     mutatingToolCalls: stats.mutatingToolCalls,
     filesChanged: stats.filesChanged,
-    changedFiles: [...stats.changedFiles],
-    changedFilesOverflow: stats.changedFilesOverflow,
+    changedFiles,
+    ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
     addedLines: stats.addedLines,
     removedLines: stats.removedLines,
   };
+}
+
+function isSummarySafeChangedFile(file: string): boolean {
+  const trimmed = file.trim();
+  return trimmed.length > 0 && !isAbsolute(trimmed) && !trimmed.startsWith("~");
 }
 
 /** Stable digest used to suppress no-op summary fanout. */
