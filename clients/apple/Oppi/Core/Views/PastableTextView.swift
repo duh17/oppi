@@ -14,6 +14,8 @@ private func applyComposerInputTraits(
         textView.smartDashesType = .default
         textView.smartInsertDeleteType = .default
         textView.textContentType = .none
+        textView.writingToolsBehavior = .complete
+        textView.allowedWritingToolsResultOptions = .plainText
         return
     }
 
@@ -24,6 +26,8 @@ private func applyComposerInputTraits(
     textView.smartDashesType = .no
     textView.smartInsertDeleteType = .no
     textView.textContentType = .none
+    textView.writingToolsBehavior = .none
+    textView.allowedWritingToolsResultOptions = .plainText
 
     let assistant = textView.inputAssistantItem
     assistant.leadingBarButtonGroups = []
