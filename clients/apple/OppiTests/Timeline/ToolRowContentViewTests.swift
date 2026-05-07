@@ -298,6 +298,28 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func commandContextMenuIncludesPolicyRuleSubmenuWhenAvailable() throws {
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
+            copyCommandText: "echo hi",
+            copyOutputText: "hi",
+            isExpanded: true
+        )
+        .withBashCommandPolicyRuleAction { _ in }
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .command))
+        #expect(timelineActionTitles(in: menu) == ["Copy", "Copy Output"])
+        let submenu = try #require(menu.children.compactMap { $0 as? UIMenu }.first)
+        #expect(submenu.title == "Add Policy Rule")
+        #expect(timelineActionTitles(in: submenu) == [
+            "Ask Before Running",
+            "Approve Automatically",
+            "Deny Automatically",
+        ])
+    }
+
+    @MainActor
     @Test func outputContextMenuIncludesFullScreenBeforeCopyAndCopyCommand() throws {
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),

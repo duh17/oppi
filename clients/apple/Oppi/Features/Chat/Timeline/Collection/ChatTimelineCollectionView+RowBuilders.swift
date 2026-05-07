@@ -211,6 +211,9 @@ extension ChatTimelineCollectionHost.Controller {
         } else {
             nil
         }
+        let bashPolicyCommand = ToolCallFormatting.normalized(tool) == "bash"
+            ? context.args?["command"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            : ""
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -228,6 +231,160 @@ extension ChatTimelineCollectionHost.Controller {
             .withSelectedTextPi(router: interactionCtx.selectedTextPiRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)
             .withSessionAttachmentFetcher(attachmentFetcher)
+            .withBashCommandPolicyRuleAction(
+                makeBashCommandPolicyRuleAction(command: bashPolicyCommand)
+            )
+    }
+
+    private func makeBashCommandPolicyRuleAction(
+        command: String
+    ) -> (@MainActor (BashCommandPolicyRuleDecision) async throws -> Void)? {
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCommand.isEmpty,
+              let apiClient = connection?.apiClient else {
+            return nil
+        }
+
+        let scope = bashCommandPolicyRuleScope
+        let sessionId = self.sessionId
+        return { decision in
+            try await Self.upsertBashCommandPolicyRule(
+                apiClient: apiClient,
+                command: trimmedCommand,
+                decision: decision,
+                scope: scope,
+                sessionId: sessionId
+            )
+        }
+    }
+
+    private var bashCommandPolicyRuleScope: BashCommandPolicyRuleScope {
+        let trimmedWorkspaceId = self.workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedWorkspaceId, !trimmedWorkspaceId.isEmpty {
+            return .workspace(trimmedWorkspaceId)
+        }
+        return .global
+    }
+
+    @discardableResult
+    private static func upsertBashCommandPolicyRule(
+        apiClient: APIClient,
+        command: String,
+        decision: BashCommandPolicyRuleDecision,
+        scope: BashCommandPolicyRuleScope,
+        sessionId: String
+    ) async throws -> PolicyRuleRecord {
+        let label = decision.ruleLabel(for: command)
+        let visibleRules = try await apiClient.listPolicyRules(workspaceId: scope.workspaceId)
+
+        if let existingTargetRule = preferredExactBashPolicyRule(
+            in: visibleRules,
+            command: command,
+            scope: scope
+        ) {
+            return try await apiClient.patchPolicyRule(
+                ruleId: existingTargetRule.id,
+                request: PolicyRulePatchRequest(
+                    decision: decision.rawValue,
+                    label: label,
+                    tool: "bash",
+                    pattern: command,
+                    executable: existingTargetRule.executable
+                )
+            )
+        }
+
+        let sessionExecutable = preferredExactBashPolicyRule(
+            in: visibleRules,
+            command: command,
+            sessionId: sessionId
+        )?.executable
+
+        return try await apiClient.createPolicyRule(
+            request: PolicyRuleCreateRequest(
+                decision: decision.rawValue,
+                label: label,
+                tool: "bash",
+                pattern: command,
+                executable: sessionExecutable,
+                scope: scope.rawValue,
+                workspaceId: scope.workspaceId,
+                sessionId: nil,
+                expiresAt: nil
+            )
+        )
+    }
+
+    private static func preferredExactBashPolicyRule(
+        in rules: [PolicyRuleRecord],
+        command: String,
+        scope: BashCommandPolicyRuleScope
+    ) -> PolicyRuleRecord? {
+        preferredExactBashPolicyRule(in: rules, command: command) { scope.matches($0) }
+    }
+
+    private static func preferredExactBashPolicyRule(
+        in rules: [PolicyRuleRecord],
+        command: String,
+        sessionId: String
+    ) -> PolicyRuleRecord? {
+        preferredExactBashPolicyRule(in: rules, command: command) {
+            $0.scope == "session" && $0.sessionId == sessionId
+        }
+    }
+
+    private static func preferredExactBashPolicyRule(
+        in rules: [PolicyRuleRecord],
+        command: String,
+        matching matches: (PolicyRuleRecord) -> Bool
+    ) -> PolicyRuleRecord? {
+        rules
+            .filter { rule in
+                rule.tool == "bash"
+                    && rule.pattern == command
+                    && matches(rule)
+            }
+            .sorted { lhs, rhs in
+                let lhsHasExecutable = lhs.executable?.isEmpty == false
+                let rhsHasExecutable = rhs.executable?.isEmpty == false
+                if lhsHasExecutable != rhsHasExecutable {
+                    return lhsHasExecutable && !rhsHasExecutable
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+            .first
+    }
+
+    private enum BashCommandPolicyRuleScope: Sendable {
+        case global
+        case workspace(String)
+
+        var rawValue: String {
+            switch self {
+            case .global:
+                "global"
+            case .workspace:
+                "workspace"
+            }
+        }
+
+        var workspaceId: String? {
+            switch self {
+            case .global:
+                nil
+            case .workspace(let workspaceId):
+                workspaceId
+            }
+        }
+
+        func matches(_ rule: PolicyRuleRecord) -> Bool {
+            switch self {
+            case .global:
+                return rule.scope == "global"
+            case .workspace(let workspaceId):
+                return rule.scope == "workspace" && rule.workspaceId == workspaceId
+            }
+        }
     }
 }
 

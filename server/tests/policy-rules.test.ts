@@ -220,6 +220,38 @@ describe("evaluateWithRules", () => {
     expect(decision.ruleLabel).toBe("config guard");
   });
 
+  it("asks for direct Oppi cli entrypoints inside an oppi-server cwd", () => {
+    const { store } = makeStore();
+    const sessionCwd = makeTempDir();
+    writeFileSync(
+      join(sessionCwd, "package.json"),
+      JSON.stringify({ name: "oppi-server", bin: { oppi: "dist/src/cli.js" } }),
+      "utf-8",
+    );
+
+    const decision = engine.evaluateWithRules(
+      bash("bun src/cli.ts config set port 3000", sessionCwd),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("does not treat unrelated cli.ts config changes as Oppi", () => {
+    const { store } = makeStore();
+    const decision = engine.evaluateWithRules(
+      bash("bun src/cli.ts config set port 3000"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("allow");
+  });
+
   it("respects configured fallback when no rule matches", () => {
     const { store } = makeStore();
     const decision = engine.evaluateWithRules(bash("echo hello"), store.getAll(), "s1", "ws1");

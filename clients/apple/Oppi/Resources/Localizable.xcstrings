@@ -172,6 +172,16 @@
         }
       }
     },
+    "Add Policy Rule": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加策略规则"
+          }
+        }
+      }
+    },
     "Add Remembered Rule": {
       "localizations": {
         "zh-Hans": {
@@ -322,6 +332,16 @@
         }
       }
     },
+    "Approve Automatically": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动批准"
+          }
+        }
+      }
+    },
     "Approve permission request": {
       "localizations": {
         "zh-Hans": {
@@ -338,6 +358,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "询问"
+          }
+        }
+      }
+    },
+    "Ask Before Running": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行前询问"
           }
         }
       }
@@ -868,6 +898,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "全部拒绝 (%lld)"
+          }
+        }
+      }
+    },
+    "Deny Automatically": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动拒绝"
           }
         }
       }
@@ -1569,6 +1609,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "策略错误"
+          }
+        }
+      }
+    },
+    "Policy Rule Not Added": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未添加策略规则"
           }
         }
       }

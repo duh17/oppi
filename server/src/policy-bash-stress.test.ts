@@ -138,6 +138,105 @@ describe("stress: compound git commands with mixed allow/ask rules", () => {
     expect(result.ruleLabel).toBe("Git push");
   });
 
+  it("allows a remembered exact compound command to override broader segment asks", () => {
+    const cmd = "cd /tmp/repo && git push origin main";
+    const rules = [
+      ...userRules(),
+      makeRule({
+        tool: "bash",
+        decision: "allow",
+        pattern: cmd,
+        label: "Allow exact deploy command",
+      }),
+    ];
+
+    const result = engine.evaluateWithRules(bashRequest(cmd), rules, SID, WID);
+    expect(result.action).toBe("allow");
+    expect(result.ruleLabel).toBe("Allow exact deploy command");
+  });
+
+  it("keeps deny rules above remembered exact compound approvals", () => {
+    const cmd = "cd /tmp/repo && git push --force-with-lease origin main";
+    const rules = [
+      ...userRules(),
+      makeRule({
+        tool: "bash",
+        decision: "deny",
+        executable: "git",
+        pattern: "git push *--force-with-lease*",
+        label: "Deny force push",
+      }),
+      makeRule({
+        tool: "bash",
+        decision: "allow",
+        pattern: cmd,
+        label: "Allow exact force push",
+      }),
+    ];
+
+    const result = engine.evaluateWithRules(bashRequest(cmd), rules, SID, WID);
+    expect(result.action).toBe("deny");
+    expect(result.ruleLabel).toBe("Deny force push");
+  });
+
+  it("prefers narrower exact command rules over broader non-deny rules", () => {
+    const cmd = "cd /tmp/repo && git push origin main";
+    const rules = [
+      makeRule({
+        tool: "bash",
+        decision: "ask",
+        pattern: cmd,
+        scope: "global",
+        label: "Global ask exact command",
+      }),
+      makeRule({
+        tool: "bash",
+        decision: "allow",
+        pattern: cmd,
+        scope: "workspace",
+        workspaceId: WID,
+        label: "Workspace allow exact command",
+      }),
+    ];
+
+    const result = engine.evaluateWithRules(bashRequest(cmd), rules, SID, WID);
+    expect(result.action).toBe("allow");
+    expect(result.ruleLabel).toBe("Workspace allow exact command");
+  });
+
+  it("prefers session-scoped exact command rules over workspace and global non-deny matches", () => {
+    const cmd = "cd /tmp/repo && git push origin main";
+    const rules = [
+      makeRule({
+        tool: "bash",
+        decision: "ask",
+        pattern: cmd,
+        scope: "global",
+        label: "Global ask exact command",
+      }),
+      makeRule({
+        tool: "bash",
+        decision: "ask",
+        pattern: cmd,
+        scope: "workspace",
+        workspaceId: WID,
+        label: "Workspace ask exact command",
+      }),
+      makeRule({
+        tool: "bash",
+        decision: "allow",
+        pattern: cmd,
+        scope: "session",
+        sessionId: SID,
+        label: "Session allow exact command",
+      }),
+    ];
+
+    const result = engine.evaluateWithRules(bashRequest(cmd), rules, SID, WID);
+    expect(result.action).toBe("allow");
+    expect(result.ruleLabel).toBe("Session allow exact command");
+  });
+
   // Safe-only commands should still be allowed
   for (const safe of safeSegments) {
     it(`allows safe-only: ${safe}`, () => {

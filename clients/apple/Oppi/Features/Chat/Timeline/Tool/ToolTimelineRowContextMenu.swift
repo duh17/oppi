@@ -1,5 +1,49 @@
 import UIKit
 
+enum BashCommandPolicyRuleDecision: String, CaseIterable, Sendable {
+    case ask
+    case allow
+    case deny
+
+    var menuTitle: String {
+        switch self {
+        case .ask:
+            String(localized: "Ask Before Running")
+        case .allow:
+            String(localized: "Approve Automatically")
+        case .deny:
+            String(localized: "Deny Automatically")
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .ask:
+            "questionmark.circle"
+        case .allow:
+            "checkmark.circle"
+        case .deny:
+            "xmark.circle"
+        }
+    }
+
+    func ruleLabel(for command: String) -> String {
+        let compact = command
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = compact.count > 96 ? String(compact.prefix(95)) + "…" : compact
+
+        switch self {
+        case .ask:
+            return "Ask before bash: \(display)"
+        case .allow:
+            return "Approve bash: \(display)"
+        case .deny:
+            return "Deny bash: \(display)"
+        }
+    }
+}
+
 @MainActor
 enum ToolTimelineRowContextMenuBuilder {
     typealias ContextMenuTarget = ToolTimelineRowContentView.ContextMenuTarget
@@ -12,6 +56,7 @@ enum ToolTimelineRowContextMenuBuilder {
         hasPreviewImage: Bool,
         onCopyCommand: @escaping (ContextMenuTarget) -> Void,
         onCopyOutput: @escaping (ContextMenuTarget) -> Void,
+        onAddBashCommandPolicyRule: ((BashCommandPolicyRuleDecision) -> Void)?,
         onOpenFullScreenContent: @escaping () -> Void,
         onViewFullScreenImage: @escaping () -> Void,
         onCopyImage: @escaping () -> Void,
@@ -35,6 +80,10 @@ enum ToolTimelineRowContextMenuBuilder {
                         onCopyOutput(.command)
                     }
                 )
+            }
+
+            if let onAddBashCommandPolicyRule {
+                actions.append(policyRuleMenu(onAdd: onAddBashCommandPolicyRule))
             }
 
         case .output, .expanded:
@@ -97,6 +146,24 @@ enum ToolTimelineRowContextMenuBuilder {
         }
 
         return UIMenu(title: "", children: actions)
+    }
+
+    private static func policyRuleMenu(
+        onAdd: @escaping (BashCommandPolicyRuleDecision) -> Void
+    ) -> UIMenu {
+        UIMenu(
+            title: String(localized: "Add Policy Rule"),
+            image: UIImage(systemName: "shield"),
+            children: BashCommandPolicyRuleDecision.allCases.map { decision in
+                UIAction(
+                    title: decision.menuTitle,
+                    image: UIImage(systemName: decision.systemImageName),
+                    attributes: decision == .deny ? [.destructive] : []
+                ) { _ in
+                    onAdd(decision)
+                }
+            }
+        )
     }
 }
 

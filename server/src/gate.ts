@@ -10,7 +10,7 @@
 import { EventEmitter } from "node:events";
 import { generateId } from "./id.js";
 import type { PolicyEngine } from "./policy.js";
-import { parseBashCommand, type GateRequest } from "./policy.js";
+import { parseBashCommand, splitBashCommandChain, type GateRequest } from "./policy.js";
 import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
@@ -53,8 +53,24 @@ interface GateResponse {
 const DEFAULT_APPROVAL_TIMEOUT_MS = 0; // never expire — wait indefinitely for phone approval
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
+const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":", "#"]);
 
 const log = createLogger({ base: { component: "gate" } });
+
+function executableName(executable: string): string {
+  return executable.includes("/") ? executable.split("/").pop() || executable : executable;
+}
+
+function primaryBashExecutable(command: string): string | undefined {
+  const parsedSegments = splitBashCommandChain(command)
+    .map((segment) => parseBashCommand(segment))
+    .filter((parsed) => parsed.executable.length > 0);
+  const primary =
+    parsedSegments.find(
+      (parsed) => !CHAIN_HELPER_EXECUTABLES.has(executableName(parsed.executable)),
+    ) || parsedSegments[0];
+  return primary ? executableName(primary.executable) : undefined;
+}
 
 // ─── Gate Server ───
 
@@ -273,10 +289,7 @@ export class GateServer extends EventEmitter {
       const command = (pending.input as { command?: string }).command?.trim() || "";
       if (command.length > 0) {
         input.pattern = command;
-        const parsed = parseBashCommand(command);
-        const executable = parsed.executable.includes("/")
-          ? parsed.executable.split("/").pop() || parsed.executable
-          : parsed.executable;
+        const executable = primaryBashExecutable(command);
         if (executable) input.executable = executable;
       }
       return input;

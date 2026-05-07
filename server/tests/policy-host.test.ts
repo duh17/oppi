@@ -21,8 +21,13 @@ const CHAINED_GIT_PUSH_COMMAND =
 
 // ─── Helpers ───
 
-function bash(command: string): GateRequest {
-  return { tool: "bash", input: { command }, toolCallId: "test" };
+function bash(command: string, sessionCwd?: string): GateRequest {
+  return {
+    tool: "bash",
+    input: { command },
+    toolCallId: "test",
+    ...(sessionCwd ? { sessionCwd } : {}),
+  };
 }
 
 function fileTool(tool: string, path: string): GateRequest {
@@ -197,6 +202,42 @@ describe("host preset: package installs gated", () => {
 });
 
 // ─── Host-control flows → ask ───
+
+describe("host preset: Oppi config changes gated", () => {
+  const oppiServerCwd = process.cwd();
+  const configSetCommands = [
+    { command: "oppi config set asr.sttEndpoint http://127.0.0.1:7936" },
+    { command: "npx oppi config set asr.sttEndpoint http://127.0.0.1:7936" },
+    {
+      command: "node dist/src/cli.js config set asr.sttEndpoint http://127.0.0.1:7936",
+      sessionCwd: oppiServerCwd,
+    },
+    {
+      command: "tsx src/cli.ts config set asr.sttEndpoint http://127.0.0.1:7936",
+      sessionCwd: oppiServerCwd,
+    },
+    {
+      command: "bun src/cli.ts config set asr.sttEndpoint http://127.0.0.1:7936",
+      sessionCwd: oppiServerCwd,
+    },
+    {
+      command: "./dist/src/cli.js config set asr.sttEndpoint http://127.0.0.1:7936",
+      sessionCwd: oppiServerCwd,
+    },
+  ];
+
+  for (const { command, sessionCwd } of configSetCommands) {
+    it(`asks for ${command}`, () => {
+      const result = policy.evaluate(bash(command, sessionCwd));
+      expect(result.action).toBe("ask");
+      expect(result.ruleLabel).toBe("config guard");
+    });
+  }
+
+  it("does not treat unrelated cli.ts config changes as Oppi", () => {
+    expect(policy.evaluate(bash("bun src/cli.ts config set port 3000")).action).toBe("allow");
+  });
+});
 
 describe("host preset: host-control flows gated", () => {
   it("asks for apple install script", () => {

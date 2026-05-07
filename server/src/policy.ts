@@ -8,7 +8,7 @@
  * 4. Default policy fallback
  */
 
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   basename as pathBasename,
@@ -85,29 +85,93 @@ function restrictionRank(decision: string): number {
   return 0;
 }
 const FILE_PATH_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
+const oppiServerSessionCwdCache = new Map<string, boolean>();
 
 function executableName(raw: string): string {
   return raw.includes("/") ? raw.split("/").pop() || raw : raw;
 }
 
-function parsedCommandMatchesOppiConfigSet(parsed: ParsedCommand): boolean {
+function argsContainConfigSet(args: string[], startIndex: number): boolean {
+  return args[startIndex] === "config" && args[startIndex + 1] === "set";
+}
+
+function isOppiCliScriptEntry(raw: string): boolean {
+  const normalized = raw.replace(/\\/g, "/");
+  const executable = executableName(normalized);
+  return (
+    /^(oppi)(\.(js|mjs|cjs|ts))?$/.test(executable) ||
+    /(^|\/)(dist\/src|src)\/cli\.(js|mjs|cjs|ts)$/.test(normalized)
+  );
+}
+
+function parsedCommandMatchesOppiConfigSet(parsed: ParsedCommand, sessionCwd?: string): boolean {
   const executable = executableName(parsed.executable);
   if (executable === "oppi") {
-    return parsed.args[0] === "config" && parsed.args[1] === "set";
+    return argsContainConfigSet(parsed.args, 0);
   }
   if (executable === "npx") {
-    return parsed.args[0] === "oppi" && parsed.args[1] === "config" && parsed.args[2] === "set";
+    return parsed.args[0] === "oppi" && argsContainConfigSet(parsed.args, 1);
+  }
+
+  const isOppiServerSession = looksLikeOppiServerSessionCwd(sessionCwd);
+  if (isOppiCliScriptEntry(parsed.executable)) {
+    return isOppiServerSession && argsContainConfigSet(parsed.args, 0);
+  }
+  if (
+    executable === "node" ||
+    executable === "bun" ||
+    executable === "tsx" ||
+    executable === "ts-node"
+  ) {
+    const scriptIndex = parsed.args.findIndex(isOppiCliScriptEntry);
+    return (
+      isOppiServerSession && scriptIndex >= 0 && argsContainConfigSet(parsed.args, scriptIndex + 1)
+    );
   }
   return false;
 }
 
-function isOppiConfigSetCommand(command: string): boolean {
-  if (!command.includes("oppi") || !command.includes("config") || !command.includes("set")) {
+function isOppiConfigSetCommand(command: string, sessionCwd?: string): boolean {
+  if (!command.includes("config") || !command.includes("set")) {
     return false;
   }
   return splitBashCommandChain(command).some((segment) =>
-    parsedCommandMatchesOppiConfigSet(parseBashCommand(segment)),
+    parsedCommandMatchesOppiConfigSet(parseBashCommand(segment), sessionCwd),
   );
+}
+
+function looksLikeOppiServerSessionCwd(sessionCwd?: string): boolean {
+  if (typeof sessionCwd !== "string" || sessionCwd.trim().length === 0) {
+    return false;
+  }
+
+  const normalized = normalizePathInput(sessionCwd);
+  const cacheKey = normalized.resolvedRealpath ?? normalized.rawNormalized;
+  const cached = oppiServerSessionCwdCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let isOppiServer = false;
+  try {
+    const packageJsonPath = pathResolve(cacheKey, "package.json");
+    if (existsSync(packageJsonPath)) {
+      const parsed = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+        name?: unknown;
+        bin?: unknown;
+      };
+      const bin =
+        typeof parsed.bin === "object" && parsed.bin !== null
+          ? (parsed.bin as Record<string, unknown>)
+          : undefined;
+      isOppiServer = parsed.name === "oppi-server" || bin?.oppi === "dist/src/cli.js";
+    }
+  } catch {
+    isOppiServer = false;
+  }
+
+  oppiServerSessionCwdCache.set(cacheKey, isOppiServer);
+  return isOppiServer;
 }
 
 function collectDefinedStrings(values: Array<string | undefined>): string[] {
@@ -487,7 +551,10 @@ export class PolicyEngine {
       }
     }
 
-    if (tool === "bash" && isOppiConfigSetCommand((input as { command?: string }).command || "")) {
+    if (
+      tool === "bash" &&
+      isOppiConfigSetCommand((input as { command?: string }).command || "", req.sessionCwd)
+    ) {
       return {
         action: "ask",
         reason: "Changing Oppi server config requires approval",
@@ -578,7 +645,7 @@ export class PolicyEngine {
 
     if (
       req.tool === "bash" &&
-      isOppiConfigSetCommand((req.input as { command?: string }).command || "")
+      isOppiConfigSetCommand((req.input as { command?: string }).command || "", req.sessionCwd)
     ) {
       return {
         action: "ask",
@@ -786,16 +853,16 @@ export class PolicyEngine {
    * Evaluate user rules against a bash compound command per-segment.
    *
    * Splits on && / || / ; and evaluates each segment independently.
-   * Returns the most restrictive result across all segments
-   * (deny > ask > allow) so a `git push` ask rule can't be hidden
-   * by a `git commit` allow rule in the same compound command.
+   * Deny still wins across the whole command. A literal full-command rule
+   * can then approve/ask for an exact compound command remembered by the user
+   * without being hidden by a broader segment-level ask rule.
    */
   private evaluateBashRulesPerSegment(
     req: GateRequest,
     applicable: Rule[],
   ): PolicyEvalResult | null {
-    const command = (req.input as { command?: string }).command || "";
-    if (command.trim().length === 0) return null;
+    const command = ((req.input as { command?: string }).command || "").trim();
+    if (command.length === 0) return null;
 
     const segments = splitBashCommandChain(command);
     let mostRestrictive: { rule: Rule; decision: Rule["decision"] } | undefined;
@@ -806,18 +873,8 @@ export class PolicyEngine {
       );
       if (segmentMatching.length === 0) continue;
 
-      // Deny wins within segment — short-circuit
-      const denyRules = segmentMatching.filter((r) => r.decision === "deny");
-      if (denyRules.length > 0) {
-        const best = this.pickMostSpecificRule(denyRules);
-        return {
-          action: "deny",
-          reason: best.label || "Denied by rule",
-          layer: this.layerForScope(best.scope),
-          ruleLabel: best.label,
-          ruleId: best.id,
-        };
-      }
+      const denyResult = this.resultForDenyMatch(segmentMatching);
+      if (denyResult) return denyResult;
 
       const best = this.pickMostSpecificRule(segmentMatching);
       if (
@@ -826,6 +883,23 @@ export class PolicyEngine {
       ) {
         mostRestrictive = { rule: best, decision: best.decision };
       }
+    }
+
+    const exactFullCommandMatches = applicable.filter((rule) =>
+      this.matchesExactFullBashCommandRule(rule, req, command),
+    );
+    if (exactFullCommandMatches.length > 0) {
+      const denyResult = this.resultForDenyMatch(exactFullCommandMatches);
+      if (denyResult) return denyResult;
+
+      const best = this.pickBestScopedRule(exactFullCommandMatches);
+      return {
+        action: best.decision,
+        reason: best.label || `Matched ${best.scope} rule`,
+        layer: this.layerForScope(best.scope),
+        ruleLabel: best.label,
+        ruleId: best.id,
+      };
     }
 
     if (!mostRestrictive) return null;
@@ -837,6 +911,46 @@ export class PolicyEngine {
       ruleLabel: mostRestrictive.rule.label,
       ruleId: mostRestrictive.rule.id,
     };
+  }
+
+  private resultForDenyMatch(rules: Rule[]): PolicyEvalResult | null {
+    const denyRules = rules.filter((r) => r.decision === "deny");
+    if (denyRules.length === 0) return null;
+
+    const best = this.pickMostSpecificRule(denyRules);
+    return {
+      action: "deny",
+      reason: best.label || "Denied by rule",
+      layer: this.layerForScope(best.scope),
+      ruleLabel: best.label,
+      ruleId: best.id,
+    };
+  }
+
+  private matchesExactFullBashCommandRule(rule: Rule, req: GateRequest, command: string): boolean {
+    const pattern = rule.pattern;
+    if (!pattern || pattern.includes("*")) return false;
+    if (!matchBashPattern(command, pattern)) return false;
+
+    if (rule.executable) {
+      const parsed = this.parseRequestContext(req);
+      if (!parsed.executable || parsed.executable !== rule.executable) return false;
+    }
+
+    return true;
+  }
+
+  private pickBestScopedRule(rules: Rule[]): Rule {
+    const bestScopeRank = Math.max(...rules.map((rule) => this.scopeRank(rule.scope)));
+    return this.pickMostSpecificRule(
+      rules.filter((rule) => this.scopeRank(rule.scope) === bestScopeRank),
+    );
+  }
+
+  private scopeRank(scope: Rule["scope"]): number {
+    if (scope === "session") return 3;
+    if (scope === "workspace") return 2;
+    return 1;
   }
 
   private matchesUserRule(rule: Rule, req: GateRequest, parsed: ParsedRequestContext): boolean {

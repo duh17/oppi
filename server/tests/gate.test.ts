@@ -8,7 +8,8 @@ import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
 import type { PolicyConfig } from "../src/types.js";
 
-const CHAINED_GIT_PUSH_COMMAND = 'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
+const CHAINED_GIT_PUSH_COMMAND =
+  'cd /Users/testuser/workspace/oppi && git add -A && git commit -m "fix: copy bun.lock to server seed for frozen-lockfile compat" --no-verify && git push origin main';
 
 const SESSION_ID = "test-session-1";
 
@@ -250,6 +251,42 @@ describe("GateServer", () => {
     const ttlMs = (learned?.expiresAt ?? 0) - approvalAt;
     expect(ttlMs).toBeGreaterThanOrEqual(55_000);
     expect(ttlMs).toBeLessThanOrEqual(65_000);
+  });
+
+  it("learns the primary executable for compound bash approvals", async () => {
+    setupGuardedSession("host");
+    const command = "cd /tmp/repo && git push origin main";
+
+    gate.on("approval_needed", (pending: { id: string }) => {
+      gate.resolveDecision(pending.id, "allow", "session");
+    });
+
+    const result = await gate.checkToolCall(SESSION_ID, {
+      tool: "bash",
+      input: { command },
+      toolCallId: "tc_compound_learned_executable",
+    });
+
+    expect(result.action).toBe("allow");
+
+    const learned = gate.ruleStore
+      .getAll()
+      .find(
+        (rule) =>
+          rule.scope === "session" &&
+          rule.sessionId === SESSION_ID &&
+          rule.tool === "bash" &&
+          rule.pattern === command,
+      );
+
+    expect(learned?.executable).toBe("git");
+
+    const replay = await gate.checkToolCall(SESSION_ID, {
+      tool: "bash",
+      input: { command },
+      toolCallId: "tc_compound_learned_replay",
+    });
+    expect(replay.action).toBe("allow");
   });
 
   it("caps learned session-rule TTL at one year", async () => {
