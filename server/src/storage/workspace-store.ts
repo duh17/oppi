@@ -15,17 +15,20 @@ import type { ConfigStore } from "./config-store.js";
 const log = createLogger({ base: { component: "workspace_store" } });
 const DEPRECATED_EXTENSION_NAMES = new Set(["review"]);
 
-function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
-  if (!extensions) {
+function normalizeNameList(
+  values: string[] | undefined,
+  options: { deprecated?: Set<string> } = {},
+): string[] | undefined {
+  if (!values) {
     return undefined;
   }
 
   const unique = new Set<string>();
   const normalized: string[] = [];
 
-  for (const value of extensions) {
+  for (const value of values) {
     const name = value.trim();
-    if (name.length === 0 || unique.has(name) || DEPRECATED_EXTENSION_NAMES.has(name)) {
+    if (name.length === 0 || unique.has(name) || options.deprecated?.has(name)) {
       continue;
     }
 
@@ -34,6 +37,14 @@ function normalizeExtensions(extensions: string[] | undefined): string[] | undef
   }
 
   return normalized;
+}
+
+function normalizeExtensions(extensions: string[] | undefined): string[] | undefined {
+  return normalizeNameList(extensions, { deprecated: DEPRECATED_EXTENSION_NAMES });
+}
+
+function normalizeTools(tools: string[] | undefined): string[] | undefined {
+  return normalizeNameList(tools);
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -98,6 +109,7 @@ export class WorkspaceStore {
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeOptionalString(req.hostMount),
       defaultModel: normalizeOptionalString(req.defaultModel),
+      tools: normalizeTools(req.tools),
       extensions: normalizeExtensions(req.extensions),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime: req.runtime,
@@ -141,6 +153,7 @@ export class WorkspaceStore {
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeOptionalString(raw.hostMount),
       defaultModel: normalizeOptionalString(raw.defaultModel),
+      tools: normalizeTools(raw.tools as string[] | undefined),
       extensions: normalizeExtensions(raw.extensions as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
@@ -217,6 +230,7 @@ export class WorkspaceStore {
       workspace.hostMount = normalizeOptionalString(updates.hostMount);
     if (updates.defaultModel !== undefined)
       workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
+    if (updates.tools !== undefined) workspace.tools = normalizeTools(updates.tools);
     if (updates.extensions !== undefined)
       workspace.extensions = normalizeExtensions(updates.extensions);
     if (updates.gitStatusEnabled !== undefined)

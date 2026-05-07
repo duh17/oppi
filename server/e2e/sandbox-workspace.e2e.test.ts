@@ -49,8 +49,12 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-sandbox-workspace",
       skills: [],
+      tools: ["read", "bash", "edit", "write", "ask"],
       runtime: "sandbox",
-      sandboxConfig: { allowedHosts: ["api.anthropic.com", "api.openai.com"] },
+      sandboxConfig: {
+        allowedHosts: ["api.anthropic.com", "api.openai.com"],
+        env: { SEARXNG_URL: "http://192.168.127.1:8888" },
+      },
     });
 
     expect(res.status).toBe(201);
@@ -60,8 +64,10 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
     sandboxWorkspaceId = ws.id as string;
     expect(sandboxWorkspaceId).toBeTruthy();
     expect(ws.runtime).toBe("sandbox");
+    expect(ws.tools).toEqual(["read", "bash", "edit", "write", "ask"]);
     expect(ws.sandboxConfig).toEqual({
       allowedHosts: ["api.anthropic.com", "api.openai.com"],
+      env: { SEARXNG_URL: "http://192.168.127.1:8888" },
     });
   });
 
@@ -73,21 +79,31 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
 
     const ws = res.json!.workspace as Record<string, unknown>;
     expect(ws.runtime).toBe("sandbox");
+    expect(ws.tools).toEqual(["read", "bash", "edit", "write", "ask"]);
     expect(ws.sandboxConfig).toEqual({
       allowedHosts: ["api.anthropic.com", "api.openai.com"],
+      env: { SEARXNG_URL: "http://192.168.127.1:8888" },
     });
   });
 
-  it("updates sandbox config (change allowed hosts)", async () => {
+  it("updates sandbox tools and config", async () => {
     if (!lmsReady()) return;
 
     const res = await api("PUT", `/workspaces/${sandboxWorkspaceId}`, deviceToken, {
-      sandboxConfig: { allowedHosts: ["*"] },
+      tools: ["read", "bash", "web_search", "web_fetch"],
+      sandboxConfig: {
+        allowedHosts: ["*"],
+        env: { SEARXNG_URL: "http://192.168.127.1:8888" },
+      },
     });
 
     expect(res.status).toBe(200);
     const ws = res.json!.workspace as Record<string, unknown>;
-    expect(ws.sandboxConfig).toEqual({ allowedHosts: ["*"] });
+    expect(ws.tools).toEqual(["read", "bash", "web_search", "web_fetch"]);
+    expect(ws.sandboxConfig).toEqual({
+      allowedHosts: ["*"],
+      env: { SEARXNG_URL: "http://192.168.127.1:8888" },
+    });
     expect(ws.runtime).toBe("sandbox");
   });
 
@@ -101,6 +117,7 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 120_000 }, () => {
     const sandbox = workspaces.find((w) => w.id === sandboxWorkspaceId);
     expect(sandbox).toBeTruthy();
     expect(sandbox!.runtime).toBe("sandbox");
+    expect(sandbox!.tools).toEqual(["read", "bash", "web_search", "web_fetch"]);
   });
 
   it("creates a host workspace without runtime field", async () => {

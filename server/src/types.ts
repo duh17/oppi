@@ -25,7 +25,9 @@ export interface Workspace {
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
   defaultModel?: string; // Optional default model for new sessions in this workspace
 
-  // Extensions
+  // Tools and extensions
+  // Undefined = pi default tools. Defined = authoritative allowlist.
+  tools?: string[]; // Tool allowlist (e.g. read/bash/edit/write + extension tools)
   // Undefined = discovered pi extensions only. Defined = authoritative allowlist.
   extensions?: string[]; // Extension allowlist (host extensions + Oppi names like ask/subagents/voice)
 
@@ -688,6 +690,7 @@ export interface CreateWorkspaceRequest {
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string;
   defaultModel?: string;
+  tools?: string[];
   extensions?: string[];
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";
@@ -705,6 +708,7 @@ export interface UpdateWorkspaceRequest {
   systemPromptMode?: WorkspaceSystemPromptMode;
   hostMount?: string | null;
   defaultModel?: string | null;
+  tools?: string[];
   extensions?: string[];
   gitStatusEnabled?: boolean;
   runtime?: "host" | "sandbox";
@@ -1362,6 +1366,7 @@ export type ServerMessage = // ── Connection ──
     | { type: "stream_connected"; userName: string; asrAvailable?: boolean }
     | { type: "state"; session: Session }
     | { type: "session_summary"; summary: SessionSummary }
+    | { type: "session_projection"; summary: SessionSummary }
     | { type: "session_ended"; reason: string }
     | { type: "session_deleted"; sessionId: string }
     | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }

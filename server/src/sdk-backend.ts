@@ -375,6 +375,7 @@ export class SdkBackend {
         log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
 
+      const workspaceTools = workspace?.tools?.length ? workspace.tools : undefined;
       const createResult = await createAgentSession({
         cwd,
         agentDir: runtimeAgentDir,
@@ -385,10 +386,12 @@ export class SdkBackend {
         settingsManager,
         resourceLoader: loader,
         sessionStartEvent,
-        // Sandbox: disable all built-in tools (tools: []) and inject VM-backed
-        // implementations as customTools. This ensures bash/read/write/edit execute
-        // inside the Gondolin VM, not on the host.
-        ...(sandboxTools ? { tools: [], customTools: sandboxTools } : {}),
+        // Sandbox: disable host-backed built-in tools and inject VM-backed
+        // implementations as customTools. Do not use `tools: []` here: in pi SDK
+        // that is an authoritative allowlist, so it filters out custom and
+        // extension tools too, leaving the model with no tool-call capability.
+        ...(sandboxTools ? { noTools: "builtin" as const, customTools: sandboxTools } : {}),
+        ...(workspaceTools ? { tools: workspaceTools } : {}),
       });
 
       SdkBackend.applyDefaultQueueModes(createResult.session);

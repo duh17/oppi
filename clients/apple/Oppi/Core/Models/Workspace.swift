@@ -33,7 +33,8 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var systemPromptMode: WorkspaceSystemPromptMode = .append
     var hostMount: String?      // Host directory mounted as /work
 
-    // Extensions
+    // Tools and extensions
+    var tools: [String]?
     var extensions: [String]?
 
     // Git status
@@ -56,7 +57,7 @@ extension Workspace: Codable {
         case id, name, description, icon
         case skills
         case systemPrompt, systemPromptMode, hostMount
-        case extensions
+        case tools, extensions
         case gitStatusEnabled
         case runtime, sandboxConfig
         case createdAt, updatedAt
@@ -72,6 +73,7 @@ extension Workspace: Codable {
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
+        tools = try c.decodeIfPresent([String].self, forKey: .tools)
         extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
         gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
         runtime = try c.decodeIfPresent(WorkspaceRuntime.self, forKey: .runtime)
@@ -94,6 +96,7 @@ extension Workspace: Codable {
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
+        try c.encodeIfPresent(tools, forKey: .tools)
         try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(runtime, forKey: .runtime)

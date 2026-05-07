@@ -119,18 +119,26 @@ describe("Sandbox workspace CRUD", () => {
     expect(ws.sandboxConfig).toBeUndefined();
   });
 
-  it("persists and reloads sandbox config", () => {
+  it("persists and reloads sandbox tools and config", () => {
     const ws = storage.createWorkspace({
       name: "persist-test",
       skills: [],
+      tools: ["read", "bash", "edit", "write", "web_search"],
       runtime: "sandbox",
-      sandboxConfig: { allowedHosts: ["*.example.com"] },
+      sandboxConfig: {
+        allowedHosts: ["*.example.com"],
+        env: { SEARXNG_URL: "http://192.168.127.1:8888" },
+      },
     } as CreateWorkspaceRequest);
 
     const loaded = storage.getWorkspace(ws.id);
     expect(loaded).toBeDefined();
     expect(loaded!.runtime).toBe("sandbox");
-    expect(loaded!.sandboxConfig).toEqual({ allowedHosts: ["*.example.com"] });
+    expect(loaded!.tools).toEqual(["read", "bash", "edit", "write", "web_search"]);
+    expect(loaded!.sandboxConfig).toEqual({
+      allowedHosts: ["*.example.com"],
+      env: { SEARXNG_URL: "http://192.168.127.1:8888" },
+    });
   });
 
   it("updates runtime from host to sandbox", () => {
