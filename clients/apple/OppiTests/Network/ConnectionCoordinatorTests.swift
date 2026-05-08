@@ -250,7 +250,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Connection Pool
 
-    @Test func connectAllStreamsCreatesConnectionsForAllServers() {
+    @Test func prepareAllConnectionsCreatesConnectionsForAllServersWithoutOpeningStreams() {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:pool-a", name: "A")
         let serverB = makeServer(id: "sha256:pool-b", name: "B")
@@ -262,11 +262,13 @@ struct ConnectionCoordinatorTests {
         coordinator.switchToServer(serverA)
         #expect(coordinator.connections.count == 1)
 
-        // Connect all creates connections for remaining servers
-        coordinator.connectAllStreams()
+        // Prepare all creates connections for remaining servers without opening startup sockets.
+        coordinator.prepareAllConnections()
         #expect(coordinator.connections.count == 2)
         #expect(coordinator.connections["sha256:pool-a"] != nil)
         #expect(coordinator.connections["sha256:pool-b"] != nil)
+        #expect(coordinator.connections["sha256:pool-a"]?.wsClient?.status == .disconnected)
+        #expect(coordinator.connections["sha256:pool-b"]?.wsClient?.status == .disconnected)
     }
 
     @Test func ensureConnectionReconfiguresExistingConnectionAfterRepair() async {
@@ -308,7 +310,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverA)
         coordinator.serverStore.addOrUpdate(serverB)
 
-        // No connections exist yet (we skip switchToServer/connectAllStreams)
+        // No connections exist yet (we skip switchToServer/prepareAllConnections)
         #expect(coordinator.connections.isEmpty)
 
         // refreshAllServers should create connections via ensureConnection

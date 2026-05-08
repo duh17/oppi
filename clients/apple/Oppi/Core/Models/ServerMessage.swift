@@ -42,6 +42,7 @@ enum ServerMessage: Sendable, Equatable {
     case connected(session: Session)
     case state(session: Session)
     case sessionSummary(SessionSummary)
+    case sessionProjection(SessionSummary)
     case sessionEnded(reason: String)
     case sessionDeleted(sessionId: String)
     case stopRequested(source: StopLifecycleSource, reason: String?)
@@ -84,6 +85,7 @@ enum ServerMessage: Sendable, Equatable {
     case permissionRequest(PermissionRequest)
     case permissionExpired(id: String, reason: String)
     case permissionCancelled(id: String)
+    case permissionResolved(id: String, action: PermissionAction)
 
     // Extension UI
     case extensionUIRequest(ExtensionUIRequest)
@@ -199,7 +201,7 @@ extension ServerMessage: Decodable {
         case type
         // stream_connected
         case userName, asrAvailable
-        // connected / state
+        // connected / state / session projection
         case session
         // session_ended / stop lifecycle
         case reason, source
@@ -213,8 +215,8 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        // permission_request
-        case id, sessionId, input, displaySummary, timeoutAt, expires
+        // permission_request / permission_resolved
+        case id, sessionId, input, displaySummary, timeoutAt, expires, action
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // ask extension (extension_ui_request with method: "ask")
@@ -257,6 +259,10 @@ extension ServerMessage: Decodable {
         case "session_summary":
             let summary = try c.decode(SessionSummary.self, forKey: .summary)
             self = .sessionSummary(summary)
+
+        case "session_projection":
+            let summary = try c.decode(SessionSummary.self, forKey: .summary)
+            self = .sessionProjection(summary)
 
         case "session_ended":
             let reason = try c.decode(String.self, forKey: .reason)
@@ -431,6 +437,11 @@ extension ServerMessage: Decodable {
             let id = try c.decode(String.self, forKey: .id)
             self = .permissionCancelled(id: id)
 
+        case "permission_resolved":
+            let id = try c.decode(String.self, forKey: .id)
+            let action = try c.decode(PermissionAction.self, forKey: .action)
+            self = .permissionResolved(id: id, action: action)
+
         case "extension_ui_request":
             let askQuestions = try c.decodeIfPresent([AskQuestion].self, forKey: .questions)
             let allowCustom = try c.decodeIfPresent(Bool.self, forKey: .allowCustom)
@@ -543,6 +554,8 @@ struct StreamMessage: Sendable, Equatable {
     let seq: Int?
     let currentSeq: Int?
     let message: ServerMessage
+
+    var effectiveSeq: Int? { seq ?? streamSeq }
 }
 
 /// Transport metadata attached to the same frame as a server message.
@@ -620,6 +633,7 @@ extension ServerMessage {
         case .connected: "connected"
         case .state: "state"
         case .sessionSummary: "sessionSummary"
+        case .sessionProjection: "sessionProjection"
         case .sessionEnded: "sessionEnded"
         case .sessionDeleted: "sessionDeleted"
         case .stopRequested: "stopRequested"
@@ -646,6 +660,7 @@ extension ServerMessage {
         case .permissionRequest: "permissionRequest"
         case .permissionExpired: "permissionExpired"
         case .permissionCancelled: "permissionCancelled"
+        case .permissionResolved: "permissionResolved"
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
         case .gitStatus: "gitStatus"

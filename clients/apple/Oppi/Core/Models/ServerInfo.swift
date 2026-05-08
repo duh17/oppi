@@ -17,6 +17,7 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let identity: IdentityInfo?
     let runtimeUpdate: RuntimeUpdateInfo?
     let uploadProtocol: UploadProtocolInfo?
+    let capabilities: Capabilities?
     let stats: ServerStats
 
     struct IdentityInfo: Codable, Sendable, Equatable {
@@ -47,6 +48,17 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let maxTurnBytes: Int
     }
 
+    struct Capabilities: Codable, Sendable, Equatable {
+        let workspaceStream: CapabilityVersion?
+        let sessionStream: CapabilityVersion?
+        let sessionAudioStream: CapabilityVersion?
+        let sessionProjection: CapabilityVersion?
+    }
+
+    struct CapabilityVersion: Codable, Sendable, Equatable {
+        let version: Int
+    }
+
     struct ServerStats: Codable, Sendable, Equatable {
         let workspaceCount: Int
         let activeSessionCount: Int
@@ -57,6 +69,38 @@ struct ServerInfo: Codable, Sendable, Equatable {
 }
 
 // MARK: - Presentation Helpers
+
+extension ServerInfo.Capabilities {
+    static let requiredSplitStreamCapabilityNames = [
+        "workspaceStream",
+        "sessionStream",
+        "sessionProjection",
+    ]
+
+    static func missingRequiredSplitStreamCapabilities(in capabilities: ServerInfo.Capabilities?) -> [String] {
+        guard let capabilities else { return requiredSplitStreamCapabilityNames }
+
+        var missing: [String] = []
+        if capabilities.workspaceStream?.version ?? 0 < 1 {
+            missing.append("workspaceStream")
+        }
+        if capabilities.sessionStream?.version ?? 0 < 1 {
+            missing.append("sessionStream")
+        }
+        if capabilities.sessionProjection?.version ?? 0 < 1 {
+            missing.append("sessionProjection")
+        }
+        return missing
+    }
+
+    var missingRequiredSplitStreamCapabilities: [String] {
+        Self.missingRequiredSplitStreamCapabilities(in: self)
+    }
+
+    var hasRequiredSplitStreamCapabilities: Bool {
+        missingRequiredSplitStreamCapabilities.isEmpty
+    }
+}
 
 extension ServerInfo {
     /// Human-readable uptime (e.g. "2d 14h", "3h 25m", "45s").

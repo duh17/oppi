@@ -37,11 +37,13 @@ final class PermissionStore {
     var isEmpty: Bool { pending.isEmpty }
 
     /// Add a new permission request.
-    func add(_ request: PermissionRequest) {
-        guard !pending.contains(where: { $0.id == request.id }) else { return }
+    @discardableResult
+    func add(_ request: PermissionRequest) -> Bool {
+        guard !pending.contains(where: { $0.id == request.id }) else { return false }
         var list = pending
         list.append(request)
         pending = list
+        return true
     }
 
     /// Remove and return a permission (caller needs tool/summary for resolved marker).

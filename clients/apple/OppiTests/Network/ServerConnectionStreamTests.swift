@@ -58,7 +58,7 @@ struct ServerConnectionStreamTests {
                 "Should create task when none exists")
     }
 
-    @Test func prepareForSessionReentryRestoresFocusAndStartsStreamImmediately() {
+    @Test func prepareForSessionReentryRestoresFocusWithoutOpeningLegacyStream() {
         let (conn, _) = makeTestConnection(sessionId: "child")
         conn.sessionStore.upsert(makeTestSession(id: "parent", workspaceId: "w1"))
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -71,10 +71,9 @@ struct ServerConnectionStreamTests {
 
         #expect(conn.focusedSessionId == "parent",
                 "Re-entry should restore the parent as the focused command target before async connect runs")
-        #expect(conn.streamConsumptionTask != nil,
-                "Re-entry should kick stream reconnect immediately")
-        #expect(conn.wsClient?.status == .connecting,
-                "Re-entry should reopen /stream instead of waiting for the later connect task")
+        #expect(conn.streamConsumptionTask == nil,
+                "Re-entry should not reopen legacy /stream; the chat connect task owns the bound session stream")
+        #expect(conn.wsClient?.status == .disconnected)
     }
 
     // MARK: - streamConsumptionTask self-cleanup
@@ -271,6 +270,108 @@ struct ServerConnectionStreamTests {
         #expect(receivedEvents.first?.meta?.transportPath == .lan)
     }
 
+    @Test func routeStreamMessageUsesStreamSeqWhenSessionSeqIsAbsent() async {
+        let (conn, _) = makeTestConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        var receivedEvents: [SessionStreamEvent] = []
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
+        }
+
+        let consumeTask = Task {
+            for await event in stream {
+                await MainActor.run { receivedEvents.append(event) }
+            }
+        }
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1",
+            streamSeq: 77,
+            seq: nil,
+            currentSeq: 80,
+            message: .agentStart
+        ))
+
+        let received = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { !receivedEvents.isEmpty }
+        }
+
+        consumeTask.cancel()
+
+        #expect(received, "Message should be yielded to event continuation")
+        #expect(receivedEvents.first?.meta?.seq == 77)
+        #expect(receivedEvents.first?.meta?.currentSeq == 80)
+    }
+
+    @Test func workspaceStreamAdvancesCursorForSessionScopedFrames() {
+        let (conn, _) = makeTestConnection()
+        conn._setWorkspaceStreamWorkspaceIdForTesting("w1")
+
+        let perm = PermissionRequest(
+            id: "p-workspace",
+            sessionId: "s-workspace",
+            tool: "bash",
+            input: [:],
+            displaySummary: "bash: test",
+            reason: "Needs approval",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true
+        )
+
+        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
+            sessionId: "s-workspace",
+            message: .permissionRequest(perm),
+            meta: InboundStreamMeta(seq: 12, currentSeq: 12)
+        ))
+
+        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 12)
+        #expect(conn.permissionStore.pending.first?.id == "p-workspace")
+
+        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
+            sessionId: "s-workspace",
+            message: .permissionRequest(perm),
+            meta: InboundStreamMeta(seq: 8, currentSeq: 12)
+        ))
+
+        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 12)
+        #expect(conn.permissionStore.pending.count == 1)
+    }
+
+    @Test func workspaceStreamDefersPermissionExpiryWhenLiveSessionConsumerExists() {
+        let (conn, _) = makeTestConnection()
+        conn._setWorkspaceStreamWorkspaceIdForTesting("w1")
+
+        let perm = PermissionRequest(
+            id: "p-live",
+            sessionId: "s-live",
+            tool: "bash",
+            input: [:],
+            displaySummary: "bash: test",
+            reason: "Needs approval",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true
+        )
+        conn.permissionStore.add(perm)
+
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s-live"] = continuation
+        }
+        _ = stream
+
+        conn._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
+            sessionId: "s-live",
+            message: .permissionExpired(id: "p-live", reason: "Approval timeout"),
+            meta: InboundStreamMeta(seq: 13, currentSeq: 13)
+        ))
+
+        #expect(conn._workspaceStreamLastSeqForTesting(workspaceId: "w1") == 13)
+        #expect(conn.permissionStore.pending.first?.id == "p-live")
+
+        conn.sessionEventContinuations["s-live"]?.finish()
+        conn.sessionEventContinuations.removeValue(forKey: "s-live")
+    }
+
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadStream() async {
@@ -395,46 +496,18 @@ struct ServerConnectionStreamTests {
     ///
     /// The mock simulates instant server responses — any delay beyond a
     /// few hundred ms means the setup path is blocking on something it shouldn't.
-    @Test func streamSessionCompletesWithinTimeBudget() async {
+    @Test func splitSessionStreamCompletesWithinTimeBudget() async {
         let (conn, _) = makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
-
-        // Keep consumption task alive so connectStream() is a no-op
         conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
-
-        // Mock send: intercept outgoing commands and simulate server responses
-        conn._sendMessageForTesting = { [weak conn] message in
-            guard let conn else { return }
-            let typeLabel = message.typeLabel
-
-            // Extract requestId via JSON round-trip (no pattern matching on associated values)
-            let requestId: String? = {
-                guard let data = try? JSONEncoder().encode(message),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return nil }
-                return dict["requestId"] as? String
-            }()
-
-            guard let requestId else { return }
-
-            let response = StreamMessage(
-                sessionId: "s1",
-                streamSeq: 1,
-                seq: nil,
-                currentSeq: nil,
-                message: .commandResult(
-                    command: typeLabel,
-                    requestId: requestId,
-                    success: true,
-                    data: nil,
-                    error: nil
-                )
-            )
-            conn.routeStreamMessage(response)
-        }
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
         let start = ContinuousClock.now
-        let stream = await conn.streamSession("s1", workspaceId: "w1")
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            workspaceId: "w1"
+        )
         let elapsed = ContinuousClock.now - start
 
         #expect(stream != nil, "streamSession should return a stream")
@@ -444,50 +517,51 @@ struct ServerConnectionStreamTests {
         conn.streamConsumptionTask?.cancel()
     }
 
-    /// Regression gate: if get_queue never returns command_result (older server
-    /// behavior during full-subscription races), streamSession must remain
-    /// non-blocking and return quickly while queue sync retries in background.
-    @Test func streamSessionDoesNotBlockOnMissingGetQueueAck() async {
+    @Test func modelAndThinkingCommandsProceedAfterBoundStreamMarksFull() async throws {
         let (conn, _) = makeTestConnection()
         conn.wsClient?._setStatusForTesting(.connected)
-
-        // Keep consumption task alive so connectStream() is a no-op
         conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn._setActiveSessionIdForTesting("s1")
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
-        conn._sendMessageForTesting = { [weak conn] message in
-            guard let conn else { return }
-            guard message.typeLabel == "subscribe" else {
-                // Simulate missing get_queue command_result (legacy server race)
-                return
-            }
-
-            let requestId: String? = {
-                guard let data = try? JSONEncoder().encode(message),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return nil }
-                return dict["requestId"] as? String
-            }()
-
-            guard let requestId else { return }
-            conn.routeStreamMessage(
-                StreamMessage(
-                    sessionId: "s1",
-                    streamSeq: 1,
-                    seq: nil,
-                    currentSeq: nil,
-                    message: .commandResult(
-                        command: "subscribe",
-                        requestId: requestId,
-                        success: true,
-                        data: nil,
-                        error: nil
-                    )
-                )
-            )
+        var sentTypes: [String] = []
+        conn._sendMessageForTesting = { message in
+            sentTypes.append(message.typeLabel)
         }
 
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            workspaceId: "w1"
+        )
+
+        #expect(stream != nil)
+        #expect(await conn.waitForFocusedFullSubscription(sessionId: "s1", timeout: .milliseconds(100)))
+
+        try await conn.setModel(provider: "openai", modelId: "gpt-5.4")
+        try await conn.setThinkingLevel(.medium)
+
+        #expect(sentTypes.contains("set_model"))
+        #expect(sentTypes.contains("set_thinking_level"))
+        #expect(!sentTypes.contains("subscribe"))
+        conn.streamConsumptionTask?.cancel()
+    }
+
+    /// Regression gate: if get_queue never returns command_result, split stream
+    /// setup must still return quickly while queue sync retries in background.
+    @Test func splitSessionStreamDoesNotBlockOnMissingGetQueueAck() async {
+        let (conn, _) = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn._sendMessageForTesting = { _ in }
+
         let start = ContinuousClock.now
-        let stream = await conn.streamSession("s1", workspaceId: "w1")
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            workspaceId: "w1"
+        )
         let elapsed = ContinuousClock.now - start
 
         #expect(stream != nil, "streamSession should still return a stream")
@@ -500,81 +574,51 @@ struct ServerConnectionStreamTests {
         conn.disconnectSession()
     }
 
-    // MARK: - Pending unsubscribe cancelled on resubscribe
+    @Test func streamSessionRequiresRequiredSplitCapabilities() async {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.setSplitStreamCapabilitiesForTesting(sessionProjection: false)
 
-    @Test func pendingUnsubscribeCancelledWhenReenteringSameSession() {
-        let (conn, _) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }
+        let stream = await conn.streamSession("s1", workspaceId: "w1")
 
-        conn.disconnectSession()
-
-        #expect(conn.pendingUnsubscribeTasks["s1"] != nil,
-                "disconnectSession should track pending unsubscribe")
-
-        if let pendingUnsub = conn.pendingUnsubscribeTasks.removeValue(forKey: "s1") {
-            pendingUnsub.cancel()
-        }
-
-        #expect(conn.pendingUnsubscribeTasks["s1"] == nil,
-                "Pending unsubscribe should be cancelled before resubscribe")
+        #expect(stream == nil)
+        #expect(conn.extensionToast == nil)
+        #expect(conn.focusedSessionStreamEndpointKind == "legacy")
     }
 
-    @Test func deferredLiveAudioDisconnectRestoresNotificationsForHiddenSession() async {
-        let parentId = "parent"
-        let childId = "child"
-        let (conn, _) = makeTestConnection(sessionId: parentId)
-        conn.sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .ready))
-        conn.sessionStore.upsert(makeTestSession(id: childId, workspaceId: "w1", status: .ready))
+    @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
 
+        var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
-            if case .subscribe(let sessionId, _, _, let requestId, _) = message {
-                conn.routeStreamMessage(StreamMessage(
-                    sessionId: sessionId,
-                    streamSeq: nil,
-                    seq: nil,
-                    currentSeq: nil,
-                    message: .commandResult(
-                        command: "subscribe",
-                        requestId: requestId,
-                        success: true,
-                        data: nil,
-                        error: nil
-                    )
-                ))
-            }
+            sentTypes.append(message.typeLabel)
         }
 
-        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: parentId)
-        conn.deferDisconnectSessionUntilLiveAudioStreamFinishes(parentId)
-        conn.focusSession(childId)
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            workspaceId: "w1"
+        )
 
-        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: parentId, receivedDone: true)
+        #expect(stream != nil)
+        #expect(!sentTypes.contains("subscribe"))
+        #expect(conn.subscriptionRegistry.desiredLevel(for: "s1") == .full)
+        #expect(await conn.waitForFocusedFullSubscription(sessionId: "s1", timeout: .milliseconds(100)))
 
-        let restored = await waitForTestCondition(timeoutMs: 1_500) {
-            await MainActor.run {
-                conn.subscriptionRegistry.desiredLevel(for: parentId) == .notifications
-            }
-        }
-
-        #expect(restored, "A deferred disconnect for a hidden session must downgrade it to notifications, not none")
-        #expect(conn.focusedSessionId == childId)
-
-        conn.audioPlayer._setLiveTransportPlaybackForTesting(sessionID: nil)
-        conn.disconnectStream()
+        conn.streamConsumptionTask?.cancel()
     }
 
-    @Test func disconnectStreamCancelsPendingUnsubscribes() {
-        let (conn, _) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }
+    @Test func sessionAudioDictationClientRequiresCapabilityAndFocusedWorkspace() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
 
-        conn.disconnectSession()
-        #expect(!conn.pendingUnsubscribeTasks.isEmpty)
+        #expect(conn.makeDictationStreamClientForFocusedSession() == nil)
 
-        conn.disconnectStream()
-        #expect(conn.pendingUnsubscribeTasks.isEmpty,
-                "disconnectStream should cancel all pending unsubscribes")
+        conn.sessionAudioStreamAvailable = true
+        #expect(conn.makeDictationStreamClientForFocusedSession() != nil)
     }
 
 }

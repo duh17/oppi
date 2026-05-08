@@ -103,17 +103,12 @@ final class ConnectionCoordinator {
         return conn
     }
 
-    // periphery:ignore - intentional API surface; connectAllStreams() is the current call site
-    /// Open `/stream` WebSocket for a server's connection (if not already connected).
-    func connectStream(for serverId: String) {
-        connections[serverId]?.connectStream()
-    }
-
-    /// Open `/stream` WebSocket for ALL paired servers.
-    func connectAllStreams() {
+    /// Ensure every paired server has a configured connection object.
+    ///
+    /// Split-stream mode opens live sockets from workspace/chat screens, not at app startup.
+    func prepareAllConnections() {
         for server in serverStore.servers {
-            let conn = ensureConnection(for: server)
-            conn.connectStream()
+            _ = ensureConnection(for: server)
         }
     }
 
@@ -393,8 +388,7 @@ final class ConnectionCoordinator {
     func addServer(_ server: PairedServer, switchTo: Bool = true) {
         serverStore.addOrUpdate(server)
 
-        let conn = ensureConnection(for: server)
-        conn.connectStream()
+        _ = ensureConnection(for: server)
 
         if switchTo {
             switchToServer(server)
@@ -446,7 +440,7 @@ final class ConnectionCoordinator {
 
     private func _refreshAllServersImpl() async {
         // Ensure connections exist for all paired servers before iterating.
-        // Handles the race where this runs before connectAllStreams() during
+        // Handles the race where this runs before prepareAllConnections() during
         // startup (WorkspaceHomeView .task vs OppiApp .task).
         for server in serverStore.servers {
             ensureConnection(for: server)
@@ -472,12 +466,6 @@ final class ConnectionCoordinator {
     /// The focused server is handled by `ServerConnection.reconnectIfNeeded()`.
     func refreshInactiveServers() async {
         for (serverId, conn) in connections where serverId != activeServerId {
-            // Ensure the /stream WebSocket is alive. If it died during background
-            // (max reconnect attempts exhausted), restart it.
-            if conn.wsClient?.status == .disconnected {
-                conn.connectStream()
-            }
-
             guard let api = conn.apiClient else { continue }
             await conn.workspaceStore.loadServer(serverId: serverId, api: api)
             await refreshServerSessions(serverId: serverId, conn: conn, api: api)

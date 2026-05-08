@@ -214,6 +214,8 @@ final class CommandTracker {
             switch wsError {
             case .notConnected, .sendTimeout:
                 return true
+            case .encodingFailed:
+                return false
             }
         }
 

@@ -228,19 +228,17 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
-        // 0. Ensure /stream WebSocket is alive.
-        //
-        //    If the WS is mid-reconnect, the backoff was accumulated during
-        //    background suspension — those failures are from iOS killing TCP
-        //    before TLS could finish, not real server errors. Cancel the stale
-        //    backoff so connectStream() starts a fresh connection immediately.
-        if case .reconnecting = wsClient?.status {
-            wsClient?.cancelReconnectBackoff()
-            streamConsumptionTask?.cancel()
-            streamConsumptionTask = nil
-        }
-        if wsClient?.status == .disconnected || streamConsumptionTask == nil {
-            connectStream()
+        // 0. If a chat session owns a stream, keep that focused transport alive.
+        // Home and workspace-list refreshes stay HTTP/workspace-stream only.
+        if focusedSessionId != nil {
+            if case .reconnecting = wsClient?.status {
+                wsClient?.cancelReconnectBackoff()
+                streamConsumptionTask?.cancel()
+                streamConsumptionTask = nil
+            }
+            if wsClient?.status == .disconnected || streamConsumptionTask == nil {
+                connectStream()
+            }
         }
 
         // 1. Refresh global lists as needed (single-flight + freshness-gated).

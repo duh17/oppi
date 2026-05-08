@@ -456,10 +456,9 @@ struct ChatActionHandlerReconnectTests {
     }
 
     @Test func sendStopRetriesAfterFullSubscriptionRejection() async throws {
-        // Parent session regained focus, but the full subscribe ack has not landed yet.
-        // The first stop request is rejected because the session is not yet subscribed
-        // at level=full. The stream layer silently resubscribes on the paired error,
-        // so the stop send should retry automatically instead of surfacing a user error.
+        // If a stop request races the bound stream becoming full-ready, the
+        // first request can still be rejected at level=full. Stop remains
+        // idempotent and should retry once instead of surfacing a user error.
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("parent")
@@ -491,7 +490,7 @@ struct ChatActionHandlerReconnectTests {
 
         try await connection.sendStop()
 
-        #expect(attempts == 2, "Stop should retry once resubscribe closes the full-subscription gap")
+        #expect(attempts == 2, "Stop should retry once after a full-subscription gap")
     }
 
     @Test func isSendingGuard_noVisibleError_documentsTheBug() async {

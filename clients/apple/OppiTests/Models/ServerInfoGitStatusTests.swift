@@ -71,7 +71,76 @@ struct ServerInfoTests {
         #expect(decoded.name == "oppi")
         #expect(decoded.identity?.fingerprint == "abc123")
         #expect(decoded.runtimeUpdate?.updateAvailable == true)
+        #expect(decoded.capabilities == nil)
         #expect(decoded.stats.workspaceCount == 3)
+    }
+
+    @Test func decodeServerInfoStreamCapabilities() throws {
+        let json = Data("""
+        {
+          "name": "oppi",
+          "version": "1.2.3",
+          "uptime": 3661,
+          "os": "darwin",
+          "arch": "arm64",
+          "hostname": "mac-studio",
+          "nodeVersion": "v24.1.0",
+          "piVersion": "0.7.1",
+          "configVersion": 5,
+          "capabilities": {
+            "workspaceStream": { "version": 1 },
+            "sessionStream": { "version": 1 },
+            "sessionAudioStream": { "version": 1 },
+            "sessionProjection": { "version": 1 }
+          },
+          "stats": {
+            "workspaceCount": 3,
+            "activeSessionCount": 2,
+            "totalSessionCount": 9,
+            "skillCount": 12,
+            "modelCount": 6
+          }
+        }
+        """.utf8)
+
+        let decoded = try JSONDecoder().decode(ServerInfo.self, from: json)
+        #expect(decoded.capabilities?.workspaceStream?.version == 1)
+        #expect(decoded.capabilities?.sessionStream?.version == 1)
+        #expect(decoded.capabilities?.sessionAudioStream?.version == 1)
+        #expect(decoded.capabilities?.sessionProjection?.version == 1)
+        #expect(decoded.capabilities?.hasRequiredSplitStreamCapabilities == true)
+    }
+
+    @Test func requiredSplitStreamCapabilitiesIgnoreOptionalAudio() {
+        let capabilities = ServerInfo.Capabilities(
+            workspaceStream: .init(version: 1),
+            sessionStream: .init(version: 1),
+            sessionAudioStream: nil,
+            sessionProjection: .init(version: 1)
+        )
+
+        #expect(capabilities.hasRequiredSplitStreamCapabilities)
+        #expect(capabilities.missingRequiredSplitStreamCapabilities.isEmpty)
+    }
+
+    @Test func requiredSplitStreamCapabilitiesReportMissingServerUpdatePieces() {
+        let capabilities = ServerInfo.Capabilities(
+            workspaceStream: .init(version: 1),
+            sessionStream: nil,
+            sessionAudioStream: .init(version: 1),
+            sessionProjection: nil
+        )
+
+        #expect(capabilities.missingRequiredSplitStreamCapabilities == [
+            "sessionStream",
+            "sessionProjection",
+        ])
+        #expect(!capabilities.hasRequiredSplitStreamCapabilities)
+        #expect(ServerInfo.Capabilities.missingRequiredSplitStreamCapabilities(in: nil) == [
+            "workspaceStream",
+            "sessionStream",
+            "sessionProjection",
+        ])
     }
 
     private func makeServerInfo(uptime: Int = 0, os: String = "darwin", arch: String = "arm64") -> ServerInfo {
@@ -88,6 +157,7 @@ struct ServerInfoTests {
             identity: nil,
             runtimeUpdate: nil,
             uploadProtocol: nil,
+            capabilities: nil,
             stats: .init(workspaceCount: 0, activeSessionCount: 0, totalSessionCount: 0, skillCount: 0, modelCount: 0)
         )
     }

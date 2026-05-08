@@ -3,14 +3,12 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebSocket")
 
-/// WebSocket client for the multiplexed `/stream` endpoint.
+/// WebSocket client for the active session stream endpoint.
 ///
 /// Returns an `AsyncStream<StreamFrameEvent>` from `connect()`.
-/// Handles keepalive pings, reconnection, and cleanup.
-///
-/// Each server gets one persistent `/stream` WebSocket. Sessions are
-/// subscribed/unsubscribed via `subscribe`/`unsubscribe` commands
-/// sent over the same connection.
+/// Handles keepalive pings, reconnection, and cleanup. New servers use a
+/// URL-bound session endpoint; old `/stream` subscribe/unsubscribe support is
+/// retained only at the protocol layer.
 @MainActor @Observable
 final class WebSocketClient {
     enum Status: Equatable {
@@ -21,6 +19,7 @@ final class WebSocketClient {
     }
 
     private(set) var status: Status = .disconnected
+    private(set) var lastHTTPStatusCode: Int?
 
     /// Monotonic ID incremented on each `connect()` call.
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
@@ -80,7 +79,7 @@ final class WebSocketClient {
 
     // MARK: - Connect
 
-    /// Connect to the server's multiplexed `/stream` WebSocket.
+    /// Connect to the configured session WebSocket endpoint.
     ///
     /// Disconnects any existing connection first.
     /// Returns an `AsyncStream` that yields `StreamFrameEvent` (message + sessionId + metadata)
@@ -96,9 +95,10 @@ final class WebSocketClient {
 
         connectionID &+= 1
         let thisConnection = connectionID
+        lastHTTPStatusCode = nil
         status = .connecting
         wsLogInfo(
-            "Connect requested to /stream (old=\(oldConn) new=\(thisConnection))",
+            "Connect requested to session stream (old=\(oldConn) new=\(thisConnection))",
             metadata: [
                 "url": (preferredEndpoint?.streamURL ?? credentials.streamURL)?.absoluteString ?? "invalid",
             ]
@@ -130,7 +130,7 @@ final class WebSocketClient {
 
     /// Send a client message over the WebSocket.
     ///
-    /// For session-scoped commands on `/stream`, provide `sessionId` to wrap
+    /// For session-scoped commands on legacy `/stream`, provide `sessionId` to wrap
     /// the message in a `SessionScopedMessage` envelope.
     /// Commands like `subscribe`, `unsubscribe`, and `permission_response` don't
     /// need a sessionId wrapper (they include it in their own encoding).
@@ -322,7 +322,7 @@ final class WebSocketClient {
     /// without waiting for the stale backoff timer.
     ///
     /// Unlike `disconnect()`, this preserves diagnostic subscription state and
-    /// the continuation. Durable resubscribe intent is owned by
+    /// the continuation. Durable reconnect intent is owned by
     /// `StreamSubscriptionRegistry` on `ServerConnection`.
     func cancelReconnectBackoff() {
         guard case .reconnecting(let attempt) = status else { return }
@@ -478,7 +478,7 @@ final class WebSocketClient {
 
                     let transportPath = self?.preferredEndpoint?.transportPath ?? .paired
                     let inboundMeta = InboundMeta(
-                        seq: streamMessage.seq,
+                        seq: streamMessage.effectiveSeq,
                         currentSeq: streamMessage.currentSeq,
                         receivedAtMs: Date.nowMs(),
                         transportPath: transportPath
@@ -506,6 +506,9 @@ final class WebSocketClient {
 
                     continuation.yield(frameEvent)
                 } catch {
+                    if let statusCode = (ws.response as? HTTPURLResponse)?.statusCode {
+                        self?.lastHTTPStatusCode = statusCode
+                    }
                     if Task.isCancelled { break }
                     if let self, self.shouldLogReceiveError(error) {
                         logger.error("WebSocket receive error: \(error)")
@@ -713,11 +716,13 @@ private final class OneShotPingContinuation: @unchecked Sendable {
 enum WebSocketError: LocalizedError {
     case notConnected
     case sendTimeout
+    case encodingFailed
 
     var errorDescription: String? {
         switch self {
         case .notConnected: return "WebSocket not connected"
         case .sendTimeout: return "Send timed out — server may still be starting"
+        case .encodingFailed: return "WebSocket message encoding failed"
         }
     }
 }

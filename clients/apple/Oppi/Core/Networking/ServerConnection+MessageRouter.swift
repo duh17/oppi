@@ -30,7 +30,7 @@ extension ServerConnection {
             handleState(session, previousWorkspaceId: storeResult.previousWorkspaceId)
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
-        case .sessionSummary(let summary):
+        case .sessionSummary(let summary), .sessionProjection(let summary):
             handleState(summary.session, previousWorkspaceId: storeResult.previousWorkspaceId)
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: true)
 
@@ -80,7 +80,7 @@ extension ServerConnection {
         case .extensionUIRequest, .extensionUINotification:
             applyUIEffects(ServerMessageEffects.uiEffects(for: message, isFocusedSession: false), sessionId: sessionId)
 
-        case .state, .sessionSummary, .sessionEnded, .stopConfirmed, .sessionDeleted:
+        case .state, .sessionSummary, .sessionProjection, .sessionEnded, .stopConfirmed, .sessionDeleted:
             applyCleanupEffects(for: message, sessionId: sessionId, isFocusedSession: false)
 
         default:
@@ -516,7 +516,6 @@ extension ServerConnection {
     }
 
     func syncLiveActivityPermissions() {
-        syncNotificationSubscriptions()
         syncLiveActivityState()
     }
 

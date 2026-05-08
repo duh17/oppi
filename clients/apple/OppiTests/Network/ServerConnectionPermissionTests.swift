@@ -150,6 +150,37 @@ struct ServerConnectionPermissionTests {
                 "Permission should be consumed from store after response")
     }
 
+    @Test func respondToPermissionFallsBackToRESTWhenStreamIsDisconnected() async throws {
+        let (conn, _) = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.disconnected)
+
+        let perm = PermissionRequest(
+            id: "rest-p1", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "rest fallback", reason: "",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true
+        )
+        conn.permissionStore.add(perm)
+
+        var captured: CapturedPermissionRESTResponse?
+        conn._respondToPermissionRESTForTesting = { id, action, scope, expiresInMs in
+            captured = CapturedPermissionRESTResponse(
+                id: id,
+                action: action,
+                scope: scope,
+                expiresInMs: expiresInMs
+            )
+        }
+
+        try await conn.respondToPermission(id: "rest-p1", action: .allow, scope: .once)
+
+        #expect(captured?.id == "rest-p1")
+        #expect(captured?.action == .allow)
+        #expect(captured?.scope == .once)
+        #expect(captured?.expiresInMs == nil)
+        #expect(conn.permissionStore.pending.isEmpty)
+    }
+
     @Test func respondToSameSessionPermissionInjectsMarker() async throws {
         let (conn, pipe) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
@@ -178,77 +209,45 @@ struct ServerConnectionPermissionTests {
                 "Same-session permission approval should inject marker into active timeline")
     }
 
-    @Test func nonFocusedFullSessionPermissionCancellationReachesItsTimeline() async {
+    @Test func workspaceStreamPermissionCancellationReachesVisibleInactiveSessionTimeline() async {
         let parentId = "parent-perm"
         let focusedId = "focused-perm"
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
-        connection.wsClient?._setStatusForTesting(.connected)
-
         connection.sessionStore.upsert(makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
+        connection.focusSession(focusedId)
+        connection._setWorkspaceStreamWorkspaceIdForTesting("w1")
 
-        connection._sendMessageForTesting = { message in
-            switch message {
-            case .subscribe(let sessionId, _, _, let requestId, _):
-                connection.routeStreamMessage(StreamMessage(
-                    sessionId: sessionId,
-                    streamSeq: nil, seq: nil, currentSeq: nil,
-                    message: .commandResult(
-                        command: "subscribe", requestId: requestId,
-                        success: true, data: nil, error: nil
-                    )
-                ))
-            case .getQueue(let requestId):
-                connection.routeStreamMessage(StreamMessage(
-                    sessionId: connection.focusedSessionId,
-                    streamSeq: nil, seq: nil, currentSeq: nil,
-                    message: .commandResult(
-                        command: "get_queue", requestId: requestId,
-                        success: true, data: nil, error: nil
-                    )
-                ))
-            default:
-                break
-            }
+        var parentContinuation: AsyncStream<SessionStreamEvent>.Continuation?
+        let parentStream = AsyncStream<SessionStreamEvent> { continuation in
+            parentContinuation = continuation
+            connection.sessionEventContinuations[parentId] = continuation
         }
 
         let parentManager = ChatSessionManager(sessionId: parentId)
-        let focusedManager = ChatSessionManager(sessionId: focusedId)
         parentManager._loadHistoryForTesting = { _, _ in nil }
-        focusedManager._loadHistoryForTesting = { _, _ in nil }
+        parentManager._streamEventsForTesting = { sessionId in
+            sessionId == parentId ? parentStream : nil
+        }
 
         let parentTask = Task { @MainActor in
             await parentManager.connect(connection: connection, sessionStore: connection.sessionStore)
         }
 
         #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { connection.sessionEventContinuations[parentId] != nil }
+            await MainActor.run { parentContinuation != nil }
         })
-        connection.routeStreamMessage(StreamMessage(
+        parentContinuation?.yield(SessionStreamEvent(
             sessionId: parentId,
-            streamSeq: nil, seq: nil, currentSeq: 0,
-            message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1", status: .busy))
+            message: .connected(session: makeTestSession(id: parentId, workspaceId: "w1", status: .busy)),
+            meta: InboundStreamMeta(seq: nil, currentSeq: 0),
+            source: .live
         ))
         #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run { parentManager.entryState == .streaming }
         })
-
-        let focusedTask = Task { @MainActor in
-            await focusedManager.connect(connection: connection, sessionStore: connection.sessionStore)
-        }
-
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { connection.sessionEventContinuations[focusedId] != nil }
-        })
-        connection.routeStreamMessage(StreamMessage(
-            sessionId: focusedId,
-            streamSeq: nil, seq: nil, currentSeq: 0,
-            message: .connected(session: makeTestSession(id: focusedId, workspaceId: "w1", status: .busy))
-        ))
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { focusedManager.entryState == .streaming && connection.focusedSessionId == focusedId }
-        })
+        connection.focusSession(focusedId)
 
         let permission = PermissionRequest(
             id: "parent-perm-1",
@@ -259,10 +258,10 @@ struct ServerConnectionPermissionTests {
             reason: "Test",
             timeoutAt: Date().addingTimeInterval(60)
         )
-        connection.routeStreamMessage(StreamMessage(
+        connection._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
             sessionId: parentId,
-            streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .permissionRequest(permission)
+            message: .permissionRequest(permission),
+            meta: InboundStreamMeta(seq: 1, currentSeq: 2)
         ))
 
         #expect(await waitForTestCondition(timeoutMs: 1_000) {
@@ -271,10 +270,10 @@ struct ServerConnectionPermissionTests {
             }
         })
 
-        connection.routeStreamMessage(StreamMessage(
+        connection._routeWorkspaceStreamMessageForTesting(StreamFrameEvent(
             sessionId: parentId,
-            streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .permissionCancelled(id: permission.id)
+            message: .permissionCancelled(id: permission.id),
+            meta: InboundStreamMeta(seq: 2, currentSeq: 2)
         ))
 
         let resolved = await waitForTestCondition(timeoutMs: 1_000) {
@@ -288,14 +287,19 @@ struct ServerConnectionPermissionTests {
             }
         }
         #expect(resolved,
-                "Non-focused full session must receive its own permission cancellation marker")
+                "Workspace-stream permission cancellation should reach a visible inactive session timeline")
 
         parentTask.cancel()
-        focusedTask.cancel()
-        connection.sessionEventContinuations[parentId]?.finish()
-        connection.sessionEventContinuations[focusedId]?.finish()
+        parentContinuation?.finish()
+        connection.sessionEventContinuations.removeValue(forKey: parentId)
         await parentTask.value
-        await focusedTask.value
         connection.disconnectStream()
     }
+}
+
+private struct CapturedPermissionRESTResponse {
+    let id: String
+    let action: PermissionAction
+    let scope: PermissionScope
+    let expiresInMs: Int?
 }

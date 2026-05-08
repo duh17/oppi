@@ -291,7 +291,10 @@ final class ChatSessionManager {
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
             transitionTo(.disconnected(reason: .fatalError))
-            reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
+            let message = resolveWorkspaceId(from: sessionStore) == nil
+                ? "Missing workspace context"
+                : "Session stream unavailable"
+            reducer.process(.error(sessionId: sessionId, message: message))
             return
         }
 
@@ -852,6 +855,16 @@ final class ChatSessionManager {
                 reducer.resolvePermission(
                     id: id, outcome: .cancelled,
                     tool: request.tool, summary: request.displaySummary
+                )
+            }
+
+        case .permissionResolved(let id, let action):
+            if let request = storeResult.takenPermission {
+                reducer.resolvePermission(
+                    id: id,
+                    outcome: action == .allow ? .allowed : .denied,
+                    tool: request.tool,
+                    summary: request.displaySummary
                 )
             }
 

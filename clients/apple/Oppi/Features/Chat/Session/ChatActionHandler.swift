@@ -948,7 +948,7 @@ final class ChatActionHandler {
             switch wsError {
             case .sendTimeout:
                 return "Couldn't restore live session — the server took too long to respond."
-            case .notConnected:
+            case .notConnected, .encodingFailed:
                 break
             }
         }
@@ -1108,6 +1108,8 @@ final class ChatActionHandler {
             switch wsError {
             case .notConnected, .sendTimeout:
                 return true
+            case .encodingFailed:
+                return false
             }
         }
 

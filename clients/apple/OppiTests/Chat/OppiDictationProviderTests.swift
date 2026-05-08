@@ -508,7 +508,7 @@ struct OppiDictationProviderLifecycleTests {
         #expect(preparation.pathTag == "dictation_ws")
         #expect(preparation.audioFormat == nil)
         #expect(preparation.setupMetricTags["dictation_mode"] == "server")
-        #expect(preparation.setupMetricTags["transport"] == "ws")
+        #expect(preparation.setupMetricTags["transport"] == "legacy_stream")
         #expect(preparation.setupMetricTags["host"] == "localhost")
         #expect(preparation.setupMetricTags["provider_id"] == "oppi_server_dictation")
         #expect(preparation.setupMetricTags["provider_kind"] == "local_server")

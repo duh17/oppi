@@ -295,6 +295,35 @@ class E2ETestCase: XCTestCase {
     }
 
     @discardableResult
+    func waitForRequiredSplitStreamCapabilities(timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.stream.requiredCapabilities", timeout: timeout) { $0 == "ready" }
+    }
+
+    @discardableResult
+    func waitForWorkspaceStreamConnected(timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.stream.workspaceStatus", timeout: timeout) { $0 == "connected" }
+    }
+
+    @discardableResult
+    func waitForSessionStreamEndpoint(_ expected: String = "split_session", timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.stream.sessionEndpoint", timeout: timeout) { $0 == expected }
+    }
+
+    @discardableResult
+    func waitForNoDesiredSubscription(sessionId: String, timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.ws.desiredSubscriptions", timeout: timeout) { value in
+            !hasAnySubscription(value, sessionId: sessionId)
+        }
+    }
+
+    @discardableResult
+    func waitForNoAckedSubscription(sessionId: String, timeout: TimeInterval = 20) -> String {
+        waitForE2EDiagnostic("e2e.ws.ackedSubscriptions", timeout: timeout) { value in
+            !hasAnySubscription(value, sessionId: sessionId)
+        }
+    }
+
+    @discardableResult
     func waitForFocusedSessionId(
         _ expected: String? = nil,
         excluding excluded: String? = nil,
@@ -334,6 +363,12 @@ class E2ETestCase: XCTestCase {
         value
             .split(separator: ",")
             .contains { $0 == "\(sessionId):\(level)" }
+    }
+
+    private func hasAnySubscription(_ value: String, sessionId: String) -> Bool {
+        value
+            .split(separator: ",")
+            .contains { $0.hasPrefix("\(sessionId):") }
     }
 
     /// Types a message, sends it, and waits for the full round-trip to complete

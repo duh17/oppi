@@ -33,10 +33,12 @@ struct WorkspaceDetailView: View {
     let workspace: Workspace
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
     @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(WorkspaceStore.self) private var workspaceStore
+    @Environment(AppNavigation.self) private var navigation
     @Environment(GitStatusStore.self) private var gitStatusStore
     @Environment(SessionActivityStore.self) private var activityStore
 
@@ -60,6 +62,13 @@ struct WorkspaceDetailView: View {
     @State private var isLoadingOlder = false
 
     // MARK: - Computed
+
+    /// Keep the cold workspace stream alive when this view disappears because
+    /// the stack is pushing a chat destination. Do not attach tap gestures to
+    /// `NavigationLink` rows for this; that can consume the row activation.
+    private var isNavigatingDeeperInWorkspaceStack: Bool {
+        navigation.workspacePath.count > 1 || navigateToSessionId != nil
+    }
 
     private var normalizedSessionSearchQuery: String {
         sessionSearchText
@@ -521,7 +530,8 @@ struct WorkspaceDetailView: View {
             await refreshLocalSessions()
             await refreshPolicyFallback()
         }
-        .task {
+        .task(id: workspace.id) {
+            await connectWorkspaceStreamIfSupported()
             await refreshSessions()
             await refreshLocalSessions()
             await refreshPolicyFallback()
@@ -531,6 +541,11 @@ struct WorkspaceDetailView: View {
                     apiClient: api,
                     gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
                 )
+            }
+        }
+        .onDisappear {
+            if !isNavigatingDeeperInWorkspaceStack {
+                connection.disconnectWorkspaceStream()
             }
         }
         .overlay {
@@ -804,6 +819,14 @@ struct WorkspaceDetailView: View {
         } catch {
             // Non-fatal — local sessions are a nice-to-have
         }
+    }
+
+    private func connectWorkspaceStreamIfSupported() async {
+        guard apiClient != nil else { return }
+        await connection.refreshStreamCapabilitiesIfNeeded()
+        guard connection.hasRequiredSplitStreamCapabilities else { return }
+        await connection.catchUpWorkspaceStream(workspaceId: workspace.id)
+        connection.connectWorkspaceStream(workspaceId: workspace.id)
     }
 
     private func refreshPolicyFallback() async {

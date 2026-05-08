@@ -5,7 +5,7 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "DictationSession")
 
-/// Voice transcription session that streams raw PCM audio over the main `/stream` WebSocket
+/// Voice transcription session that streams raw PCM audio over a dictation transport
 /// and receives full transcript replacements from the server.
 ///
 /// Streams raw PCM continuously — no client-side chunk timing.
@@ -23,7 +23,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
     let audioLevels: AsyncStream<Float>
 
-    private let connection: ServerConnection
+    private let transport: any DictationTransport
     /// Resolves once the server sends `dictation_ready`. Audio is buffered until then.
     private let readinessTask: Task<DictationProviderInfo?, Error>
     /// Recording-scoped message stream, routed from the /stream WS.
@@ -54,11 +54,11 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     private var lastTranscriptUpdate: TranscriptUpdate?
 
     init(
-        connection: ServerConnection,
+        transport: any DictationTransport,
         readinessTask: Task<DictationProviderInfo?, Error>,
         messages: AsyncStream<ServerMessage>
     ) {
-        self.connection = connection
+        self.transport = transport
         self.readinessTask = readinessTask
         self.recordingMessages = messages
 
@@ -69,6 +69,18 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: Float.self)
         self.audioLevels = audioLevels
         self.audioLevelContinuation = audioLevelContinuation
+    }
+
+    convenience init(
+        connection: ServerConnection,
+        readinessTask: Task<DictationProviderInfo?, Error>,
+        messages: AsyncStream<ServerMessage>
+    ) {
+        self.init(
+            transport: connection,
+            readinessTask: readinessTask,
+            messages: messages
+        )
     }
 
     func start() async throws -> VoiceSessionStartTimings {
@@ -108,7 +120,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
 
         // Send stop, wait for final transcript
         do {
-            try await connection.sendDictation(.dictationStop)
+            try await transport.sendDictation(.dictationStop)
             logger.info("Sent dictation_stop, waiting for final")
         } catch {
             logger.error("Failed to send dictation_stop: \(error.localizedDescription, privacy: .public)")
@@ -133,7 +145,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         audioDrainTask = nil
 
         do {
-            try await connection.sendDictation(.dictationCancel)
+            try await transport.sendDictation(.dictationCancel)
         } catch {
             logger.debug("Failed to send dictation_cancel: \(error.localizedDescription, privacy: .public)")
         }
@@ -185,7 +197,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         guard let audioStream = pendingAudioStream else { return }
         pendingAudioStream = nil
 
-        let connection = self.connection
+        let transport = self.transport
         let readinessTask = self.readinessTask
         let eventContinuation = self.eventContinuation
 
@@ -216,7 +228,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
             for await chunk in audioStream {
                 guard !Task.isCancelled else { break }
                 do {
-                    try await connection.sendDictationAudio(chunk)
+                    try await transport.sendDictationAudio(chunk)
                 } catch is CancellationError {
                     return
                 } catch {
@@ -366,6 +378,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         lastTranscriptUpdate = nil
         eventContinuation.finish()
         audioLevelContinuation.finish()
+        transport.closeDictationTransport()
     }
 }
 

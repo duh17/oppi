@@ -273,6 +273,9 @@ private struct E2EWebSocketDiagnosticsView: View {
         let _ = refreshTick
         VStack(spacing: 0) {
             diagnosticText("e2e.ws.status", value: wsStatusLabel)
+            diagnosticText("e2e.stream.requiredCapabilities", value: connection.requiredSplitStreamCapabilitiesStatusForDiagnostics)
+            diagnosticText("e2e.stream.workspaceStatus", value: connection.workspaceStreamStatusForDiagnostics)
+            diagnosticText("e2e.stream.sessionEndpoint", value: connection.focusedSessionStreamEndpointKind)
             diagnosticText("e2e.ws.focusedSession", value: connection.focusedSessionId ?? "none")
             diagnosticText("e2e.ws.desiredSubscriptions", value: desiredSubscriptionsLabel)
             diagnosticText("e2e.ws.ackedSubscriptions", value: ackedSubscriptionsLabel)

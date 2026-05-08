@@ -16,7 +16,83 @@ final class ServerConnection {
     // Networking
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
+    private var workspaceStreamClient: WorkspaceStreamClient?
+    private var workspaceStreamTask: Task<Void, Never>?
+    private var workspaceStreamWorkspaceId: String?
+    private var workspaceStreamLastSeqByWorkspace: [String: Int] = [:]
+    private var workspaceStreamShouldReconnect = false
+    var workspaceStreamAvailable = false
+    var splitSessionStreamAvailable = false
+    var sessionAudioStreamAvailable = false
+    var sessionProjectionAvailable = false
+    private(set) var missingRequiredSplitStreamCapabilities: [String] = []
+    private var streamCapabilitiesLoaded = false
+    private var streamCapabilitiesRefreshFailed = false
+    private(set) var focusedSessionStreamEndpointKind = "legacy"
     private(set) var transportPath: ConnectionTransportPath = .paired
+
+    var isWorkspaceStreamActive: Bool {
+        workspaceStreamClient?.status == .connected
+    }
+
+    var workspaceStreamStatusForDiagnostics: String {
+        switch workspaceStreamClient?.status {
+        case .connected:
+            return "connected"
+        case .connecting:
+            return "connecting"
+        case .disconnected:
+            return "disconnected"
+        case nil:
+            return "none"
+        }
+    }
+
+    var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
+        if !streamCapabilitiesLoaded {
+            return "loading"
+        }
+        if streamCapabilitiesRefreshFailed {
+            return "refreshFailed"
+        }
+        if missingRequiredSplitStreamCapabilities.isEmpty {
+            return "ready"
+        }
+        return "missing:\(missingRequiredSplitStreamCapabilities.joined(separator: ","))"
+    }
+
+    var hasRequiredSplitStreamCapabilities: Bool {
+        streamCapabilitiesLoaded
+            && !streamCapabilitiesRefreshFailed
+            && missingRequiredSplitStreamCapabilities.isEmpty
+    }
+
+    private func isUnsupportedSplitStreamStatus(_ statusCode: Int?) -> Bool {
+        guard let statusCode else { return false }
+        return statusCode == 404 || statusCode == 405 || statusCode == 426 || statusCode == 501
+    }
+
+    func disableSplitStreamsForUnsupportedEndpoint() {
+        workspaceStreamAvailable = false
+        splitSessionStreamAvailable = false
+        sessionAudioStreamAvailable = false
+        sessionProjectionAvailable = false
+        missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities.requiredSplitStreamCapabilityNames
+        streamCapabilitiesRefreshFailed = false
+        workspaceStreamShouldReconnect = false
+        workspaceStreamClient?.disconnect()
+        workspaceStreamClient = nil
+        workspaceStreamWorkspaceId = nil
+        focusedSessionStreamEndpointKind = "legacy"
+        if let selection = endpointSelection {
+            wsClient?.setPreferredEndpoint(selection)
+        }
+    }
+
+    func focusedSessionStreamEndpointIsUnsupported() -> Bool {
+        focusedSessionStreamEndpointKind == "split_session"
+            && isUnsupportedSplitStreamStatus(wsClient?.lastHTTPStatusCode)
+    }
 
     private var discoveredLANEndpoint: LANDiscoveredEndpoint?
     private var endpointSelection: EndpointSelection?
@@ -56,7 +132,6 @@ final class ServerConnection {
     var focusedSessionId: String? {
         focusedSessionStore.focused?.sessionId
     }
-
 
     func isFocusedSession(_ sessionId: String) -> Bool {
         focusedSessionStore.isFocused(sessionId)
@@ -116,6 +191,10 @@ final class ServerConnection {
     /// Test seam: override dictation audio sends without a live WebSocket.
     var _sendDictationAudioForTesting: ((Data) async throws -> Void)?
 
+    // periphery:ignore - used by ServerConnectionPermissionTests via @testable import
+    /// Test seam: override REST permission responses without opening a real HTTP server.
+    var _respondToPermissionRESTForTesting: ((String, PermissionAction, PermissionScope, Int?) async throws -> Void)?
+
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
     /// Pending generic extension dialogs for sessions the user is not currently viewing.
@@ -161,11 +240,6 @@ final class ServerConnection {
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
     var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
 
-    /// Debounce timer for notification subscription sync.
-    /// Coalesces rapid-fire calls (every server message triggers
-    /// syncLiveActivityPermissions) into a single WS subscribe batch.
-    var pendingNotificationSyncTask: Task<Void, Never>?
-
     /// Last emitted per-session usage snapshot to avoid duplicate metric spam.
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
 
@@ -176,13 +250,6 @@ final class ServerConnection {
         }
         sender.transportPathProvider = { [weak self] in
             self?.transportPath ?? .paired
-        }
-        sender.recoverNotSubscribedBeforeRetry = { [weak self] sessionId in
-            guard let self, let sessionId else { return false }
-            return await self.sessionStreamCoordinator.recoverNotSubscribedBeforeRetry(
-                connection: self,
-                sessionId: sessionId
-            )
         }
     }
 
@@ -227,6 +294,14 @@ final class ServerConnection {
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
         self.endpointSelection = selection
+        self.workspaceStreamAvailable = false
+        self.splitSessionStreamAvailable = false
+        self.sessionAudioStreamAvailable = false
+        self.sessionProjectionAvailable = false
+        self.missingRequiredSplitStreamCapabilities = []
+        self.streamCapabilitiesLoaded = false
+        self.streamCapabilitiesRefreshFailed = false
+        self.focusedSessionStreamEndpointKind = "legacy"
         self.transportPath = selection.transportPath
 
         self.apiClient = APIClient(
@@ -355,8 +430,7 @@ final class ServerConnection {
         ])
 
         // Tear down old WS + consumption task. Per-session continuations
-        // are preserved — they'll resume receiving events after the new
-        // WS connects and resubscribeTrackedSessions() runs.
+        // are preserved; the active endpoint will be reopened below.
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         wsClient.disconnect()
@@ -367,7 +441,7 @@ final class ServerConnection {
 
     // MARK: - Stream Lifecycle
 
-    /// Background task consuming the multiplexed `/stream` WebSocket.
+    /// Background task consuming the active session WebSocket.
     internal var streamConsumptionTask: Task<Void, Never>?
 
     /// Monotonic generation for consumption task ownership.
@@ -376,18 +450,18 @@ final class ServerConnection {
     /// and recreates the stream in quick succession.
     private var streamConsumptionGeneration: UInt64 = 0
 
-    /// Per-session continuations for routing multiplexed messages with metadata in-band.
+    /// Per-session continuations for routing stream messages with metadata in-band.
     internal var sessionEventContinuations: [String: AsyncStream<SessionStreamEvent>.Continuation] = [:]
 
     /// Legacy test seam for routing bare messages. Production session streams use
     /// `sessionEventContinuations` so metadata cannot drift from its message.
     internal var sessionContinuations: [String: AsyncStream<ServerMessage>.Continuation] = [:]
 
-    /// Continuation for routing dictation messages from the multiplexed /stream.
+    /// Continuation for routing dictation messages from the legacy multiplexed stream.
     /// Set by `subscribeDictation()`, cleared by `unsubscribeDictation()`.
     private var dictationContinuation: AsyncStream<ServerMessage>.Continuation?
 
-    /// Connect the persistent `/stream` WebSocket.
+    /// Connect the active session WebSocket endpoint.
     ///
     /// Opens the WS and starts a consumption task that routes messages
     /// to per-session streams. Safe to call multiple times (idempotent
@@ -436,8 +510,8 @@ final class ServerConnection {
         }
     }
 
-    /// Disconnect the persistent `/stream` WebSocket.
-    func disconnectStream() {
+    /// Disconnect the active session WebSocket endpoint.
+    func disconnectStream(disconnectWorkspace: Bool = true) {
         cancelDeferredQueueSync()
         sessionStreamCoordinator.noteStreamDisconnected()
         streamConsumptionTask?.cancel()
@@ -456,15 +530,193 @@ final class ServerConnection {
             task.cancel()
         }
         pendingUnsubscribeTasks.removeAll()
-        pendingNotificationSyncTask?.cancel()
-        pendingNotificationSyncTask = nil
         subscriptionRegistry.removeAll()
         sessionUsageMetricSnapshots.removeAll()
         asrAvailable = false
+        if disconnectWorkspace {
+            disconnectWorkspaceStream()
+            focusedSessionStreamEndpointKind = "legacy"
+        }
         wsClient?.disconnect()
 
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.removeConnection(liveActivityConnectionId)
+        }
+    }
+
+    func refreshStreamCapabilitiesIfNeeded() async {
+        guard !streamCapabilitiesLoaded else { return }
+        await refreshStreamCapabilities()
+    }
+
+    func refreshStreamCapabilities() async {
+        guard let apiClient else { return }
+        do {
+            let info = try await apiClient.serverInfo()
+            let capabilities = info.capabilities
+            workspaceStreamAvailable = capabilities?.workspaceStream?.version ?? 0 >= 1
+            splitSessionStreamAvailable = capabilities?.sessionStream?.version ?? 0 >= 1
+            sessionAudioStreamAvailable = capabilities?.sessionAudioStream?.version ?? 0 >= 1
+            sessionProjectionAvailable = capabilities?.sessionProjection?.version ?? 0 >= 1
+            missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
+                .missingRequiredSplitStreamCapabilities(in: capabilities)
+            streamCapabilitiesRefreshFailed = false
+            if sessionAudioStreamAvailable {
+                setAsrAvailableFromCapabilities(true)
+            }
+            streamCapabilitiesLoaded = true
+        } catch {
+            workspaceStreamAvailable = false
+            splitSessionStreamAvailable = false
+            sessionAudioStreamAvailable = false
+            sessionProjectionAvailable = false
+            missingRequiredSplitStreamCapabilities = []
+            streamCapabilitiesRefreshFailed = true
+            streamCapabilitiesLoaded = true
+        }
+    }
+
+    func connectWorkspaceStream(workspaceId: String) {
+        guard workspaceStreamWorkspaceId != workspaceId || workspaceStreamClient?.status != .connected else { return }
+        disconnectWorkspaceStream()
+        guard let selection = endpointSelection, let credentials else { return }
+
+        guard let client = WorkspaceStreamClient(
+            baseURL: selection.baseURL,
+            workspaceId: workspaceId,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        ) else {
+            logger.error("Invalid workspace stream URL for workspace \(workspaceId, privacy: .public)")
+            return
+        }
+        workspaceStreamClient = client
+        workspaceStreamWorkspaceId = workspaceId
+        workspaceStreamShouldReconnect = true
+        let stream = client.connect()
+        workspaceStreamTask = Task { [weak self, workspaceId, client] in
+            for await frame in stream {
+                guard let self, !Task.isCancelled else { break }
+                self.routeWorkspaceStreamMessage(frame)
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.workspaceStreamShouldReconnect,
+                  self.workspaceStreamWorkspaceId == workspaceId else { return }
+            if self.isUnsupportedSplitStreamStatus(client.lastHTTPStatusCode) {
+                self.disableSplitStreamsForUnsupportedEndpoint()
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled,
+                  self.workspaceStreamShouldReconnect,
+                  self.workspaceStreamWorkspaceId == workspaceId else { return }
+            await self.catchUpWorkspaceStream(workspaceId: workspaceId)
+            self.connectWorkspaceStream(workspaceId: workspaceId)
+        }
+    }
+
+    func disconnectWorkspaceStream() {
+        workspaceStreamShouldReconnect = false
+        workspaceStreamTask?.cancel()
+        workspaceStreamTask = nil
+        workspaceStreamClient?.disconnect()
+        workspaceStreamClient = nil
+        workspaceStreamWorkspaceId = nil
+    }
+
+    private func routeWorkspaceStreamMessage(_ frameEvent: StreamFrameEvent) {
+        let message = frameEvent.message
+        if case .streamConnected = message { return }
+
+        if let seq = frameEvent.meta?.seq, let workspaceId = workspaceStreamWorkspaceId {
+            workspaceStreamLastSeqByWorkspace[workspaceId] = max(
+                workspaceStreamLastSeqByWorkspace[workspaceId] ?? 0,
+                seq
+            )
+        }
+
+        if let sessionId = frameEvent.sessionId {
+            let hasLiveSessionConsumer = sessionEventContinuations[sessionId] != nil
+                || sessionContinuations[sessionId] != nil
+            let shouldDeferToLiveConsumer = hasLiveSessionConsumer
+                && shouldDeferWorkspaceStreamUpdateToLiveSessionConsumer(message)
+            if shouldDeferToLiveConsumer {
+                sessionEventContinuations[sessionId]?.yield(SessionStreamEvent(
+                    sessionId: sessionId,
+                    message: message,
+                    meta: frameEvent.meta,
+                    source: .live
+                ))
+                sessionContinuations[sessionId]?.yield(message)
+            }
+            handleCrossSessionMessage(
+                message,
+                sessionId: sessionId,
+                deferSharedStoreToLiveSession: shouldDeferToLiveConsumer
+            )
+            return
+        }
+
+        switch message {
+        case .permissionRequest(let request):
+            handleCrossSessionMessage(message, sessionId: request.sessionId)
+        case .permissionExpired, .permissionCancelled, .permissionResolved:
+            _ = applySharedStoreUpdate(for: message, sessionId: "")
+        case .sessionSummary(let summary), .sessionProjection(let summary):
+            handleCrossSessionMessage(message, sessionId: summary.session.id)
+        case .extensionUIRequest(let request):
+            handleCrossSessionMessage(message, sessionId: request.sessionId)
+        case .sessionDeleted(let sessionId):
+            let hasLiveSessionConsumer = sessionEventContinuations[sessionId] != nil
+                || sessionContinuations[sessionId] != nil
+            handleCrossSessionMessage(
+                message,
+                sessionId: sessionId,
+                deferSharedStoreToLiveSession: hasLiveSessionConsumer
+                    && shouldDeferWorkspaceStreamUpdateToLiveSessionConsumer(message)
+            )
+        default:
+            break
+        }
+    }
+
+    private func shouldDeferWorkspaceStreamUpdateToLiveSessionConsumer(_ message: ServerMessage) -> Bool {
+        switch message {
+        case .permissionExpired,
+             .permissionCancelled,
+             .permissionResolved,
+             .sessionDeleted,
+             .sessionEnded,
+             .stopRequested,
+             .stopConfirmed,
+             .stopFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func catchUpWorkspaceStream(workspaceId: String) async {
+        guard let apiClient else { return }
+        let since = workspaceStreamLastSeqByWorkspace[workspaceId] ?? 0
+        do {
+            let response = try await apiClient.getWorkspaceStreamEvents(workspaceId: workspaceId, since: since)
+            if !response.catchUpComplete {
+                await refreshSessionList(force: true)
+                workspaceStreamLastSeqByWorkspace[workspaceId] = response.currentSeq
+                return
+            }
+            for event in response.events {
+                routeWorkspaceStreamMessage(StreamFrameEvent(
+                    sessionId: nil,
+                    message: event.message,
+                    meta: InboundStreamMeta(seq: event.seq, currentSeq: response.currentSeq)
+                ))
+            }
+            workspaceStreamLastSeqByWorkspace[workspaceId] = response.currentSeq
+        } catch {
+            await refreshSessionList(force: true)
         }
     }
 
@@ -474,16 +726,13 @@ final class ServerConnection {
         wsClient?.prepareForBackground()
     }
 
-    /// Route a message from the multiplexed stream to the appropriate session.
-    /// Well-known server error code for "session not subscribed at full level".
-    private static let notSubscribedFullCode = "stream_not_subscribed_full"
-
+    /// Route a message from the active session stream to the appropriate session.
     func routeStreamMessage(_ streamMessage: StreamMessage) {
         routeStreamMessage(StreamFrameEvent(
             sessionId: streamMessage.sessionId,
             message: streamMessage.message,
             meta: InboundStreamMeta(
-                seq: streamMessage.seq,
+                seq: streamMessage.effectiveSeq,
                 currentSeq: streamMessage.currentSeq,
                 receivedAtMs: Date.nowMs(),
                 transportPath: transportPath
@@ -512,19 +761,6 @@ final class ServerConnection {
             break
         }
 
-        // Silently recover from not-subscribed errors instead of surfacing
-        // them to the chat timeline. These are transient — they occur when
-        // messages race against a WebSocket reconnect resubscribe.
-        if case .error(_, let code, _) = message,
-           code == Self.notSubscribedFullCode,
-           let sessionId,
-           sessionStreamCoordinator.handleNotSubscribedError(connection: self, sessionId: sessionId) {
-            // Still resolve paired command_result waiters so callers don't
-            // time out, but don't yield to the per-session stream.
-            resolveBoundaryCommandResult(message, meta: frameEvent.meta)
-            return
-        }
-
         // Resolve pending command waiters directly at the stream boundary,
         // BEFORE yielding to the per-session stream. Semantic effects still
         // flow downstream, but request waiters do not depend on a session
@@ -548,8 +784,7 @@ final class ServerConnection {
             cont.yield(message)
         }
 
-        // Also route notification-level events to the active session handler
-        // (permissions from other sessions still need processing). If a
+        // Also process events from non-focused sessions. If a
         // non-focused full session has its own live consumer, let that
         // per-session pipeline own destructive permission-store updates so
         // its reducer still receives resolution metadata.
@@ -607,7 +842,7 @@ final class ServerConnection {
         }
     }
 
-    /// Handle `/stream` (re)connection — coordinator re-subscribes tracked sessions.
+    /// Handle focused session stream reconnection.
     private func handleStreamReconnected() {
         Task { [weak self] in
             guard let self else { return }
@@ -615,26 +850,7 @@ final class ServerConnection {
         }
     }
 
-    static let resubscribeMaxAttempts = 3
-    static let resubscribeAckTimeout: Duration = .seconds(6)
-    /// Keep non-active sessions subscribed at notification level so cross-session
-    /// state transitions (agent_start/agent_end/permissions) continue flowing.
-    ///
-    /// Debounced: coalesces rapid calls (server messages trigger this on every
-    /// state/permission/lifecycle event) into a single subscribe batch after
-    /// a 400ms quiet period. Eliminates the feedback loop where subscribe
-    /// responses trigger more syncs, which trigger more subscribes.
-    func syncNotificationSubscriptions() {
-        pendingNotificationSyncTask?.cancel()
-        pendingNotificationSyncTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled, let self else { return }
-            await self.sessionStreamCoordinator.syncNotificationSubscriptions(connection: self)
-        }
-    }
-
-    /// Handle notification-level events from non-active sessions
-    /// (e.g., permissions from other sessions on this server).
+    /// Handle events from non-active sessions (e.g., workspace-stream permissions).
     ///
     /// Delegates store mutations to `applySharedStoreUpdate` (same logic
     /// as the active-session path), then records Live Activity events
@@ -685,6 +901,7 @@ final class ServerConnection {
         case .permissionRequest,
              .permissionExpired,
              .permissionCancelled,
+             .permissionResolved,
              .agentStart,
              .agentEnd,
              .toolStart,
@@ -704,26 +921,64 @@ final class ServerConnection {
 
     // MARK: - Session Streaming
 
-    /// Subscribe to a session at full streaming level.
-    ///
-    /// Returns an `AsyncStream<SessionStreamEvent>` that yields events for this session.
-    /// The `/stream` WebSocket is opened if not already connected.
-    /// The caller owns stream consumption and task lifecycle.
-    ///
-    /// Awaits the subscribe `command_result` before returning so that
-    /// subsequent commands (prompt, stop, etc.) never race ahead of the
-    /// subscription on the server side.
+    /// Open the URL-bound focused session stream.
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
-        await sessionStreamCoordinator.streamSession(
+        await refreshStreamCapabilitiesIfNeeded()
+        guard hasRequiredSplitStreamCapabilities else {
+            return nil
+        }
+        prepareFocusedSessionStreamEndpoint(sessionId: sessionId, workspaceId: workspaceId)
+        return await sessionStreamCoordinator.streamSession(
             connection: self,
             sessionId: sessionId,
             workspaceId: workspaceId
         )
     }
 
+    private func prepareFocusedSessionStreamEndpoint(sessionId: String, workspaceId: String) {
+        focusedSessionStreamEndpointKind = "legacy"
+        guard hasRequiredSplitStreamCapabilities, let selection = endpointSelection else { return }
+        guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else { return }
+        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
+        components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
+        guard let sessionStreamURL = components.url else { return }
+        let sessionEndpoint = EndpointSelection(
+            baseURL: selection.baseURL,
+            streamURL: sessionStreamURL,
+            transportPath: selection.transportPath
+        )
+        focusedSessionStreamEndpointKind = "split_session"
+        wsClient?.setPreferredEndpoint(sessionEndpoint)
+        if wsClient?.status == .connected {
+            disconnectStream(disconnectWorkspace: false)
+        }
+    }
+
     func cancelDeferredQueueSync() {
         deferredQueueSyncTask?.cancel()
         deferredQueueSyncTask = nil
+    }
+
+    func waitForFocusedFullSubscription(
+        sessionId: String,
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50)
+    ) async -> Bool {
+        let startedAt = ContinuousClock.now
+
+        while !sessionStreamCoordinator.hasFullSubscription(sessionId: sessionId) {
+            if Task.isCancelled {
+                return false
+            }
+
+            if ContinuousClock.now - startedAt >= timeout {
+                return false
+            }
+
+            try? await Task.sleep(for: pollInterval)
+        }
+
+        return true
     }
 
     func waitForConnectedStream(
@@ -774,6 +1029,10 @@ final class ServerConnection {
         subscriptionRegistry.setDesired(.none, for: sessionId)
 
         pendingUnsubscribeTasks[sessionId]?.cancel()
+        guard focusedSessionStreamEndpointKind != "split_session" else {
+            pendingUnsubscribeTasks.removeValue(forKey: sessionId)
+            return
+        }
         pendingUnsubscribeTasks[sessionId] = Task { [weak self] in
             guard !Task.isCancelled else { return }
             try? await self?.wsClient?.send(.unsubscribe(
@@ -843,17 +1102,12 @@ final class ServerConnection {
         restorePendingExtensionDialogIfNeeded(for: sessionId)
     }
 
-    /// Re-establish command routing and kick `/stream` reconnect immediately
-    /// when a session view re-enters foreground interaction.
-    ///
-    /// This closes the gap where SwiftUI has made the view tappable again but
-    /// the async session connect task has not yet refocused the connection or
-    /// restarted the stream transport.
+    /// Re-establish command routing before a session view re-enters foreground interaction.
+    /// The session view's connect task owns the bound session stream endpoint.
     func prepareForSessionReentry(_ sessionId: String) {
         _onPrepareForSessionReentryForTesting?(sessionId)
         cancelPendingUnsubscribe(for: sessionId)
         focusSession(sessionId)
-        connectStream()
     }
 
     func disconnectSession(sessionId: String) {
@@ -868,10 +1122,7 @@ final class ServerConnection {
 
         disconnectSessionResources(for: sessionId)
 
-        guard isFocusedSession else {
-            syncNotificationSubscriptions()
-            return
-        }
+        guard isFocusedSession else { return }
 
         // Stash pending user-blocking UI before clearing focus so it can
         // be restored on focusSession(). Without this, navigating away loses
@@ -891,11 +1142,10 @@ final class ServerConnection {
         silenceWatchdog.stop()
         chatState.resetSessionState()
 
-        syncNotificationSubscriptions()
+        disconnectStream(disconnectWorkspace: false)
 
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
-        // Don't disconnect /stream WS — it stays open for other subscriptions.
     }
 
     /// Disconnect from the current session stream.
@@ -956,15 +1206,35 @@ final class ServerConnection {
             choice: PermissionResponseChoice(action: action, scope: scope, expiresInMs: expiresInMs)
         )
 
-        try await sender.dispatchSend(
-            .permissionResponse(
-                id: id,
-                action: normalizedChoice.action,
-                scope: normalizedChoice.scope == .once ? nil : normalizedChoice.scope,
-                expiresInMs: normalizedChoice.expiresInMs,
-                requestId: nil
+        do {
+            try await sender.dispatchSend(
+                .permissionResponse(
+                    id: id,
+                    action: normalizedChoice.action,
+                    scope: normalizedChoice.scope == .once ? nil : normalizedChoice.scope,
+                    expiresInMs: normalizedChoice.expiresInMs,
+                    requestId: nil
+                )
             )
-        )
+        } catch {
+            if let respondToPermissionREST = _respondToPermissionRESTForTesting {
+                try await respondToPermissionREST(
+                    id,
+                    normalizedChoice.action,
+                    normalizedChoice.scope,
+                    normalizedChoice.expiresInMs
+                )
+            } else if let apiClient {
+                try await apiClient.respondToPermission(
+                    id: id,
+                    action: normalizedChoice.action,
+                    scope: normalizedChoice.scope,
+                    expiresInMs: normalizedChoice.expiresInMs
+                )
+            } else {
+                throw error
+            }
+        }
 
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
@@ -1009,9 +1279,9 @@ final class ServerConnection {
         MessageSender.telemetryErrorKind(from: error)
     }
 
-    // MARK: - Dictation (multiplexed over /stream)
+    // MARK: - Legacy dictation fallback
 
-    /// Create a stream for dictation messages routed from the /stream WS.
+    /// Create a stream for dictation messages routed from the legacy `/stream` WS.
     /// Only one subscription can be active at a time.
     func subscribeDictation() -> AsyncStream<ServerMessage> {
         // Finish any existing subscription
@@ -1047,6 +1317,29 @@ final class ServerConnection {
         try await wsClient.sendBinary(data)
     }
 
+    func closeDictationTransport() {
+        // Legacy dictation is multiplexed over the main session stream; do not close it here.
+    }
+
+    func setAsrAvailableFromCapabilities(_ available: Bool) {
+        asrAvailable = available
+    }
+
+    func makeDictationStreamClientForFocusedSession() -> DictationStreamClient? {
+        guard sessionAudioStreamAvailable,
+              let context = focusedSessionStore.focused,
+              let workspaceId = context.workspaceId,
+              let selection = endpointSelection,
+              let credentials else { return nil }
+        return DictationStreamClient(
+            baseURL: selection.baseURL,
+            workspaceId: workspaceId,
+            sessionId: context.sessionId,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
+    }
+
     // MARK: - Reconnect State (used by ServerConnection+Refresh)
 
     /// Reentrancy guard — prevents concurrent `reconnectIfNeeded` calls.
@@ -1060,6 +1353,18 @@ final class ServerConnection {
     var workspaceCatalogRefreshTask: Task<Void, Never>?
 
 #if DEBUG
+    func _routeWorkspaceStreamMessageForTesting(_ frameEvent: StreamFrameEvent) {
+        routeWorkspaceStreamMessage(frameEvent)
+    }
+
+    func _workspaceStreamLastSeqForTesting(workspaceId: String) -> Int? {
+        workspaceStreamLastSeqByWorkspace[workspaceId]
+    }
+
+    func _setWorkspaceStreamWorkspaceIdForTesting(_ workspaceId: String?) {
+        workspaceStreamWorkspaceId = workspaceId
+    }
+
     /// Set the server ID for screenshot preview harness (no real credentials needed).
     func setPreviewServerId(_ id: String) {
         currentServerId = id
@@ -1071,5 +1376,30 @@ final class ServerConnection {
     func setAsrAvailableForTesting(_ available: Bool) {
         asrAvailable = available
     }
+
+    // periphery:ignore - used by stream coordinator tests via @testable import
+    func setFocusedSessionStreamEndpointKindForTesting(_ kind: String) {
+        focusedSessionStreamEndpointKind = kind
+    }
+
+    func setSplitStreamCapabilitiesForTesting(
+        workspaceStream: Bool = true,
+        sessionStream: Bool = true,
+        sessionProjection: Bool = true,
+        sessionAudioStream: Bool = false
+    ) {
+        workspaceStreamAvailable = workspaceStream
+        splitSessionStreamAvailable = sessionStream
+        sessionProjectionAvailable = sessionProjection
+        sessionAudioStreamAvailable = sessionAudioStream
+        var missing: [String] = []
+        if !workspaceStream { missing.append("workspaceStream") }
+        if !sessionStream { missing.append("sessionStream") }
+        if !sessionProjection { missing.append("sessionProjection") }
+        missingRequiredSplitStreamCapabilities = missing
+        streamCapabilitiesLoaded = true
+    }
 #endif
 }
+
+extension ServerConnection: DictationTransport {}

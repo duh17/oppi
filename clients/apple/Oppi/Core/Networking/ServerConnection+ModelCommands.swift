@@ -57,6 +57,7 @@ extension ServerConnection {
     // ── Model ──
 
     func setModel(provider: String, modelId: String) async throws {
+        try await waitForFocusedFullSubscriptionIfNeeded()
         try await send(.setModel(provider: provider, modelId: modelId))
     }
 
@@ -68,6 +69,7 @@ extension ServerConnection {
     // ── Thinking ──
 
     func setThinkingLevel(_ level: ThinkingLevel) async throws {
+        try await waitForFocusedFullSubscriptionIfNeeded()
         try await send(.setThinkingLevel(level: level))
     }
 
@@ -82,6 +84,15 @@ extension ServerConnection {
               let level = ThinkingLevel(rawValue: levelStr),
               chatState.thinkingLevel != level else { return }
         chatState.thinkingLevel = level
+    }
+
+    private func waitForFocusedFullSubscriptionIfNeeded() async throws {
+        guard let sessionId = focusedSessionId else {
+            throw WebSocketError.notConnected
+        }
+        guard await waitForFocusedFullSubscription(sessionId: sessionId, timeout: .seconds(3)) else {
+            throw WebSocketError.notConnected
+        }
     }
 
     // ── Slash Commands ──

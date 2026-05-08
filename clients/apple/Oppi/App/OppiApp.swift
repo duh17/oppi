@@ -631,8 +631,8 @@ struct OppiApp: App {
             return
         }
 
-        // Open /stream WebSocket for ALL paired servers (concurrent connections)
-        coordinator.connectAllStreams()
+        // Prepare paired server connections. Live sockets open from workspace/chat screens.
+        coordinator.prepareAllConnections()
 
         guard let api = connection.apiClient else {
             launchOutcome = "no_api_client"

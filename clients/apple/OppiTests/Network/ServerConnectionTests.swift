@@ -1753,38 +1753,29 @@ struct StreamLifecycleTests {
         _ = pipe
     }
 
-    // MARK: - Pending unsubscribe cancelled on resubscribe
+    // MARK: - Split stream disconnect cleanup
 
-    @Test func pendingUnsubscribeCancelledWhenReenteringSameSession() {
-        let (conn, pipe) = makeTestConnection()
+    @Test func splitSessionDisconnectDoesNotSendLegacyUnsubscribe() {
+        let (conn, _) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }
-
-        // Simulate disconnectSession which creates a pending unsubscribe
-        conn.disconnectSession()
-
-        // There should be a pending unsubscribe for s1
-        #expect(conn.pendingUnsubscribeTasks["s1"] != nil,
-                "disconnectSession should track pending unsubscribe")
-
-        // Now cancel it as streamSession would
-        if let pendingUnsub = conn.pendingUnsubscribeTasks.removeValue(forKey: "s1") {
-            pendingUnsub.cancel()
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        var sentTypes: [String] = []
+        conn._sendMessageForTesting = { message in
+            sentTypes.append(message.typeLabel)
         }
 
-        #expect(conn.pendingUnsubscribeTasks["s1"] == nil,
-                "Pending unsubscribe should be cancelled before resubscribe")
+        conn.disconnectSession()
+
+        #expect(conn.pendingUnsubscribeTasks.isEmpty)
+        #expect(!sentTypes.contains("unsubscribe"))
     }
 
     @Test func disconnectStreamCancelsPendingUnsubscribes() {
-        let (conn, pipe) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendMessageForTesting = { _ in }
-
-        conn.disconnectSession()
-        #expect(!conn.pendingUnsubscribeTasks.isEmpty)
+        let (conn, _) = makeTestConnection()
+        conn.pendingUnsubscribeTasks["s1"] = Task { try? await Task.sleep(for: .seconds(60)) }
 
         conn.disconnectStream()
+
         #expect(conn.pendingUnsubscribeTasks.isEmpty,
                 "disconnectStream should cancel all pending unsubscribes")
     }

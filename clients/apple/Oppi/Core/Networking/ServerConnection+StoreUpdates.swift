@@ -65,8 +65,8 @@ extension ServerConnection {
         // MARK: Permission events
 
         case .permissionRequest(let perm):
-            permissionStore.add(perm)
-            if ReleaseFeatures.pushNotificationsEnabled {
+            let inserted = permissionStore.add(perm)
+            if inserted, ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.notifyIfNeeded(
                     perm,
                     activeSessionId: focusedSessionId
@@ -75,7 +75,7 @@ extension ServerConnection {
             syncLiveActivityPermissions()
             return StoreUpdateResult(handled: true)
 
-        case .permissionExpired(let id, _), .permissionCancelled(let id):
+        case .permissionExpired(let id, _), .permissionCancelled(let id), .permissionResolved(let id, _):
             let request = permissionStore.take(id: id)
             if ReleaseFeatures.pushNotificationsEnabled {
                 PermissionNotificationService.shared.cancelNotification(permissionId: id)
@@ -143,7 +143,7 @@ extension ServerConnection {
         case .state(let session):
             return applySessionProjection(session)
 
-        case .sessionSummary(let summary):
+        case .sessionSummary(let summary), .sessionProjection(let summary):
             let session = summary.session
             return applySessionProjection(session, source: .summary)
 

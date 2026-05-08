@@ -209,6 +209,12 @@ actor APIClient {
         let catchUpComplete: Bool
     }
 
+    struct WorkspaceEventsResponse: Sendable, Equatable {
+        let events: [SequencedServerEvent]
+        let currentSeq: Int
+        let catchUpComplete: Bool
+    }
+
     /// Fetch sequenced durable session events after `since` for reconnect catch-up.
     ///
     /// Decodes the response in a single pass using `Decodable` — no intermediate
@@ -230,6 +236,16 @@ actor APIClient {
         )
     }
 
+    func getWorkspaceStreamEvents(workspaceId: String, since: Int) async throws -> WorkspaceEventsResponse {
+        let data = try await get("/workspaces/\(workspaceId)/stream/events?since=\(since)")
+        let payload = try JSONDecoder().decode(WorkspaceEventsPayload.self, from: data)
+        return WorkspaceEventsResponse(
+            events: payload.events.map { SequencedServerEvent(seq: $0.seq, message: $0.message) },
+            currentSeq: payload.currentSeq,
+            catchUpComplete: payload.catchUpComplete
+        )
+    }
+
     /// Wire format for `/workspaces/:workspaceId/sessions/:id/events` response.
     ///
     /// Each event object has `seq` alongside the `ServerMessage` fields:
@@ -242,17 +258,24 @@ actor APIClient {
         let session: Session
     }
 
+    private struct WorkspaceEventsPayload: Decodable {
+        let events: [SequencedEventEntry]
+        let currentSeq: Int
+        let catchUpComplete: Bool
+    }
+
     private struct SequencedEventEntry: Decodable {
         let seq: Int
         let message: ServerMessage
 
         private enum CodingKeys: String, CodingKey {
-            case seq
+            case seq, streamSeq
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            seq = try container.decode(Int.self, forKey: .seq)
+            seq = try container.decodeIfPresent(Int.self, forKey: .seq)
+                ?? container.decode(Int.self, forKey: .streamSeq)
             message = try ServerMessage(from: decoder)
         }
     }
