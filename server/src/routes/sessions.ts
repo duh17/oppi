@@ -209,6 +209,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
       ctx.storage.saveSession(session);
+      ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_imported");
       invalidateLocalSessionsCache();
 
       const hydrated = ctx.ensureSessionContextWindow(session);
@@ -241,6 +242,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       session.ephemeral = true;
     }
     ctx.storage.saveSession(session);
+    ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_created");
 
     // ── Optional prompt: auto-resume + send first message ──
     const prompt = body.prompt?.trim();
@@ -264,6 +266,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         });
         session.firstMessage = prompt.slice(0, 200);
         ctx.storage.saveSession(session);
+        ctx.workspaceProjectionEmitter.emitSessionProjection(session, "session_prompted");
       } catch (_err: unknown) {
         // Session was created but prompt delivery failed — return it
         // with prompted: false so the client knows to retry or send manually.
@@ -377,6 +380,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     try {
       const started = await ctx.sessions.startSession(sessionId, workspace);
       const hydrated = ctx.ensureSessionContextWindow(started);
+      ctx.workspaceProjectionEmitter.emitSessionProjection(hydrated, "session_resumed");
       helpers.json(res, { session: hydrated });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
@@ -454,6 +458,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
 
     ctx.storage.saveSession(forkSession);
+    ctx.workspaceProjectionEmitter.emitSessionProjection(forkSession, "session_fork_created");
 
     try {
       await ctx.sessions.startSession(forkSession.id, workspace);
@@ -475,6 +480,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     const created = ctx.storage.getSession(forkSession.id) || forkSession;
+    ctx.workspaceProjectionEmitter.emitSessionProjection(created, "session_forked");
     helpers.json(res, { session: ctx.ensureSessionContextWindow(created) }, 201);
   }
 
@@ -495,6 +501,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       hydratedSession.currentTurnStartedAt = undefined;
       hydratedSession.lastActivity = Date.now();
       ctx.storage.saveSession(hydratedSession);
+      ctx.workspaceProjectionEmitter.emitSessionProjection(hydratedSession, "session_stopped");
     }
 
     const updatedSession = ctx.storage.getSession(sessionId);
@@ -860,15 +867,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
+    const deletedMessage = {
+      type: "session_deleted" as const,
+      sessionId,
+    };
+
+    // Notify connected clients before deleting from storage so workspace-scoped
+    // streams still have the authoritative workspace id available.
+    ctx.streamMux.recordAndFanOutUserStreamEvent(sessionId, deletedMessage);
+    ctx.workspaceProjectionEmitter.emitSessionDeleted(workspaceId, sessionId);
+
     ctx.storage.deleteSession(sessionId);
     ctx.searchIndex?.deleteSession(sessionId);
     deleteSessionAttachments(ctx.storage.getDataDir(), sessionId);
-
-    // Notify connected clients so they can remove stale session entries.
-    ctx.streamMux.recordAndFanOutUserStreamEvent(sessionId, {
-      type: "session_deleted",
-      sessionId,
-    });
 
     helpers.json(res, { ok: true });
   }

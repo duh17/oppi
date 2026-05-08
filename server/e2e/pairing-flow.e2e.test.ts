@@ -7,7 +7,7 @@
  *   3. Client POST /pair with the pairing token → receives deviceToken
  *   4. Replayed pairing token is rejected (one-time use)
  *   5. Device token authenticates all subsequent API calls
- *   6. Device can list workspaces, create sessions, access /stream
+ *   6. Device can list workspaces, create sessions, and access split streams
  *
  * Requires: Docker, OMLX server on localhost:8400
  */
@@ -16,9 +16,11 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openStream,
+  openWorkspaceStream,
+  openSessionStream,
   closeStream,
-  streamURL,
+  workspaceStreamURL,
+  sessionStreamURL,
   isSecureTransport,
 } from "./harness.js";
 
@@ -49,14 +51,14 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects unauthenticated /stream WebSocket", async () => {
+  it("rejects unauthenticated split stream WebSocket", async () => {
     if (!lmsReady()) return;
 
     const WebSocket = (await import("ws")).default;
 
     const result = await new Promise<{ status: number }>((resolve) => {
       const ws = new WebSocket(
-        streamURL(),
+        workspaceStreamURL("missing-workspace"),
         isSecureTransport() ? { rejectUnauthorized: false } : undefined,
       );
       ws.on("unexpected-response", (_req, res) => {
@@ -92,7 +94,12 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     const inviteParam = url.searchParams.get("invite");
     expect(inviteParam).toBeTruthy();
 
-    const decoded = JSON.parse(Buffer.from(inviteParam!, "base64url").toString("utf-8"));
+    const envelope = JSON.parse(Buffer.from(inviteParam!, "base64url").toString("utf-8"));
+    expect(envelope.v).toBe(3);
+    expect(envelope.publicKey).toBeTruthy();
+    expect(envelope.signature).toBeTruthy();
+
+    const decoded = JSON.parse(Buffer.from(envelope.signedPayload, "base64url").toString("utf-8"));
     expect(decoded.v).toBe(3);
     expect(decoded.pairingToken).toBe(invite.pairingToken);
     expect(decoded.fingerprint).toBe(invite.fingerprint);
@@ -103,6 +110,8 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
 
   describe("pairing exchange", () => {
     let deviceToken = "";
+    let workspaceId = "";
+    let sessionId = "";
     let invite: Awaited<ReturnType<typeof generateTestInvite>>;
 
     beforeAll(async () => {
@@ -165,7 +174,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     // ── 4. Post-pairing: device token works ──
 
     it("authenticates /me with device token", async () => {
-      if (!lmsReady || !deviceToken) return;
+      if (!lmsReady() || !deviceToken) return;
 
       const res = await api("GET", "/me", deviceToken);
       expect(res.status).toBe(200);
@@ -173,7 +182,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     });
 
     it("lists workspaces with device token", async () => {
-      if (!lmsReady || !deviceToken) return;
+      if (!lmsReady() || !deviceToken) return;
 
       const res = await api("GET", "/workspaces", deviceToken);
       expect(res.status).toBe(200);
@@ -181,7 +190,7 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     });
 
     it("creates a workspace with device token", async () => {
-      if (!lmsReady || !deviceToken) return;
+      if (!lmsReady() || !deviceToken) return;
 
       const res = await api("POST", "/workspaces", deviceToken, {
         name: "e2e-pairing-workspace",
@@ -191,31 +200,54 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
 
       expect(res.status).toBe(201);
       expect(res.json?.workspace).toBeTruthy();
+      workspaceId = (res.json!.workspace as Record<string, unknown>).id as string;
+      expect(workspaceId).toBeTruthy();
     });
 
-    it("opens /stream WebSocket with device token", async () => {
-      if (!lmsReady || !deviceToken) return;
+    it("creates a session with device token", async () => {
+      if (!lmsReady() || !deviceToken || !workspaceId) return;
 
-      const stream = await openStream(deviceToken);
+      const res = await api("POST", `/workspaces/${workspaceId}/sessions`, deviceToken, {
+        model: inject("e2eModel"),
+      });
 
-      // stream_connected event should already be received
-      const connected = stream.events.find(
-        (e) => e.direction === "in" && e.type === "stream_connected",
-      );
-      expect(connected).toBeTruthy();
-
-      await closeStream(stream);
+      expect(res.status).toBe(201);
+      expect(res.json?.session).toBeTruthy();
+      sessionId = (res.json!.session as Record<string, unknown>).id as string;
+      expect(sessionId).toBeTruthy();
     });
 
-    it("rejects /stream with invalid device token", async () => {
+    it("opens split workspace and session WebSockets with device token", async () => {
+      if (!lmsReady() || !deviceToken || !workspaceId || !sessionId) return;
+
+      const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
+      const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
+
+      expect(
+        workspaceStream.events.some((e) => e.direction === "in" && e.type === "stream_connected"),
+      ).toBe(true);
+      expect(
+        sessionStream.events.some(
+          (e) => e.direction === "in" && e.type === "connected" && e.sessionId === sessionId,
+        ),
+      ).toBe(true);
+
+      await closeStream(sessionStream);
+      await closeStream(workspaceStream);
+    });
+
+    it("rejects split streams with invalid device token", async () => {
       if (!lmsReady()) return;
 
       const WebSocket = (await import("ws")).default;
       const result = await new Promise<{ status: number }>((resolve) => {
-        const ws = new WebSocket(streamURL(), {
-          headers: { Authorization: `Bearer ${deviceToken}_invalid` },
-          ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
-        });
+        const ws = new WebSocket(
+          sessionStreamURL(workspaceId || "missing", sessionId || "missing"),
+          {
+            headers: { Authorization: `Bearer ${deviceToken}_invalid` },
+            ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+          },
+        );
         ws.on("unexpected-response", (_req, res) => {
           res.resume();
           resolve({ status: res.statusCode || 0 });
@@ -250,6 +282,10 @@ describe("E2E: Pairing Flow", { timeout: 180_000 }, () => {
     expect(info.status).toBe(200);
     expect(info.json?.version).toBeTruthy();
     expect(info.json?.stats).toBeTruthy();
+    const capabilities = info.json?.capabilities as Record<string, { version?: number }>;
+    expect(capabilities.workspaceStream?.version).toBeGreaterThanOrEqual(1);
+    expect(capabilities.sessionStream?.version).toBeGreaterThanOrEqual(1);
+    expect(capabilities.sessionProjection?.version).toBeGreaterThanOrEqual(1);
   });
 
   it("lists models with device token", async () => {

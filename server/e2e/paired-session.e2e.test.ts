@@ -4,12 +4,12 @@
  * Exercises the full session lifecycle for an already-paired device:
  *   1. Pre-paired device creates a workspace
  *   2. Creates a session with a local model
- *   3. Opens /stream WebSocket and subscribes to the session
- *   4. Sends a prompt, auto-approves permissions
+ *   3. Opens split workspace/session WebSockets
+ *   4. Sends a prompt, auto-approves permissions on the session stream
  *   5. Verifies assistant response arrives (text_delta + agent_end)
  *   6. Sends a prompt requiring tool use (bash)
  *   7. Verifies tool_start → tool_output → tool_end lifecycle
- *   8. Reconnects /stream and verifies catch-up replay
+ *   8. Reconnects the split session stream and receives fresh state
  *
  * Requires: Docker, OMLX server on localhost:8400 with a loaded model
  */
@@ -18,13 +18,15 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openStream,
+  openWorkspaceStream,
+  openSessionStream,
   closeStream,
   waitForEvent,
-  subscribeSession,
   sendPromptAndWait,
   autoApprovePermissions,
   restartServerPreservingData,
+  sessionStreamURL,
+  isSecureTransport,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -142,22 +144,46 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const sessionList = sessions.json?.sessions as { id: string }[];
     expect(sessionList.some((session) => session.id === sessionId)).toBe(true);
 
-    const stream = await openStream(deviceToken);
-    closeStream(stream);
+    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
+    await closeStream(workspaceStream);
+
+    const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
+    await closeStream(sessionStream);
   }, 120_000);
 
-  // ── 3. Stream subscribe ──
+  // ── 3. Split stream lanes ──
 
-  it("subscribes to session via /stream", async () => {
+  it("opens workspace and bound session streams", async () => {
     if (!lmsReady()) return;
 
-    const stream = await openStream(deviceToken);
+    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
+    const projectionStartIndex = workspaceStream.events.length;
+    const projected = await api("POST", `/workspaces/${workspaceId}/sessions`, deviceToken, {
+      model: inject("e2eModel"),
+    });
+    expect(projected.status).toBe(201);
+    const projectedSessionId = (projected.json!.session as Record<string, unknown>).id as string;
+
+    const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
 
     try {
-      const { rpcData } = await subscribeSession(stream, sessionId, "req-e2e-subscribe");
-      expect(rpcData.catchUpComplete).toBe(true);
+      expect(workspaceStream.events.some((e) => e.type === "stream_connected")).toBe(true);
+      await waitForEvent(
+        workspaceStream,
+        (e) =>
+          e.direction === "in" &&
+          e.type === "session_projection" &&
+          e.sessionId === projectedSessionId,
+        "workspace session_projection event",
+        { startIndex: projectionStartIndex, timeoutMs: 30_000 },
+      );
+      const connected = sessionStream.events.find(
+        (e) => e.type === "connected" && e.sessionId === sessionId,
+      );
+      expect(connected).toBeTruthy();
     } finally {
-      await closeStream(stream);
+      await closeStream(sessionStream);
+      await closeStream(workspaceStream);
     }
   });
 
@@ -166,12 +192,10 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
   it("sends a prompt and receives assistant response", async () => {
     if (!lmsReady()) return;
 
-    const stream = await openStream(deviceToken);
+    const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
     const approver = autoApprovePermissions(stream, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-e2e-sub-prompt");
-
       const startIndex = stream.events.length;
 
       await sendPromptAndWait(
@@ -220,34 +244,27 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const invalidToken = await api("GET", "/workspaces", "not-a-real-device-token");
     expect(invalidToken.status).toBe(401);
 
-    const stream = await openStream(deviceToken);
-    try {
-      const startIndex = stream.events.length;
-      const requestId = "req-e2e-missing-session";
-
-      stream.send({
-        type: "subscribe",
-        sessionId: "missing-session-id",
-        level: "full",
-        sinceSeq: 0,
-        requestId,
+    const WebSocket = (await import("ws")).default;
+    const result = await new Promise<{ closeCode: number | null }>((resolve) => {
+      const ws = new WebSocket(sessionStreamURL(workspaceId, "missing-session-id"), {
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
       });
+      const timer = setTimeout(() => {
+        ws.close();
+        resolve({ closeCode: null });
+      }, 15_000);
+      ws.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ closeCode: code });
+      });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve({ closeCode: null });
+      });
+    });
 
-      const { event } = await waitForEvent(
-        stream,
-        (e) =>
-          e.direction === "in" &&
-          (e.type === "command_result" || e.type === "rpc_result") &&
-          e.requestId === requestId,
-        `missing-session rpc_result (${requestId})`,
-        { startIndex },
-      );
-
-      expect(event.success).toBe(false);
-      expect(event.error).toContain("Session not found");
-    } finally {
-      await closeStream(stream);
-    }
+    expect(result.closeCode).toBe(1008);
   });
 
   // ── 6. Tool use prompt → bash tool lifecycle (requires real LLM) ──
@@ -255,12 +272,10 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
   it("sends a prompt requiring bash tool and verifies tool lifecycle", async () => {
     if (!lmsReady()) return;
 
-    const stream = await openStream(deviceToken);
+    const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
     const approver = autoApprovePermissions(stream, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-e2e-sub-tool");
-
       const startIndex = stream.events.length;
 
       await sendPromptAndWait(
@@ -306,75 +321,34 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 7. Reconnect and catch-up replay (requires real LLM for events to exist) ──
+  // ── 7. Split session reconnect ──
 
-  it("reconnects to /stream and replays missed events", async () => {
+  it("reconnects to the split session stream and receives fresh state", async () => {
     if (!lmsReady()) return;
 
-    // First connection: subscribe and capture baseline seq
-    const stream1 = await openStream(deviceToken);
+    const stream1 = await openSessionStream(deviceToken, workspaceId, sessionId);
     try {
-      await subscribeSession(stream1, sessionId, "req-e2e-reconnect-sub-1");
-
-      const sessionEvents = stream1.events.filter(
-        (e) =>
-          e.direction === "in" && e.sessionId === sessionId && typeof e.sessionSeq === "number",
+      const connected1 = stream1.events.find(
+        (e) => e.type === "connected" && e.sessionId === sessionId,
       );
+      const baselineSeq = connected1?.currentSeq ?? 0;
 
-      const baselineSeq =
-        sessionEvents.length > 0 ? sessionEvents[sessionEvents.length - 1].sessionSeq! : 0;
-
-      expect(baselineSeq).toBeGreaterThan(0);
-
-      // Disconnect
       await closeStream(stream1);
 
-      // Second connection: subscribe with sinceSeq to get catch-up
-      const stream2 = await openStream(deviceToken);
+      const stream2 = await openSessionStream(deviceToken, workspaceId, sessionId);
       try {
-        const startIndex = stream2.events.length;
-
-        stream2.send({
-          type: "subscribe",
-          sessionId,
-          level: "full",
-          sinceSeq: 0, // Request full replay
-          requestId: "req-e2e-reconnect-sub-2",
-        });
-
-        const { event: rpcEvent } = await waitForEvent(
-          stream2,
-          (e) =>
-            e.direction === "in" &&
-            (e.type === "command_result" || e.type === "rpc_result") &&
-            e.requestId === "req-e2e-reconnect-sub-2",
-          "reconnect subscribe rpc_result",
+        const connected2 = stream2.events.find(
+          (e) => e.type === "connected" && e.sessionId === sessionId,
         );
-
-        expect(rpcEvent.success).toBe(true);
-
-        // Should have received catch-up events
-        const catchupEvents = stream2.events
-          .slice(startIndex)
-          .filter(
-            (e) =>
-              e.direction === "in" &&
-              e.sessionId === sessionId &&
-              typeof e.sessionSeq === "number" &&
-              e.sessionSeq! > 0,
-          );
-
-        expect(catchupEvents.length).toBeGreaterThan(0);
-
-        // Seqs should be strictly increasing
-        for (let i = 1; i < catchupEvents.length; i++) {
-          expect(catchupEvents[i].sessionSeq!).toBeGreaterThan(catchupEvents[i - 1].sessionSeq!);
-        }
+        expect(connected2).toBeTruthy();
+        expect(connected2?.currentSeq ?? 0).toBeGreaterThanOrEqual(baselineSeq);
+        expect(stream2.events.some((e) => e.type === "state" && e.sessionId === sessionId)).toBe(
+          true,
+        );
       } finally {
         await closeStream(stream2);
       }
     } catch (err) {
-      // Ensure stream1 is closed on error
       if (!stream1.closed) await closeStream(stream1);
       throw err;
     }
@@ -382,7 +356,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
   // ── 8. Session isolation ──
 
-  it("cannot subscribe to session from wrong workspace", async () => {
+  it("does not expose a session through the wrong workspace", async () => {
     if (!lmsReady()) return;
 
     // Create a different workspace
@@ -399,6 +373,27 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
     const sessions = sessionsRes.json?.sessions as { id: string }[];
     const leaked = sessions.find((s) => s.id === sessionId);
     expect(leaked).toBeUndefined();
+
+    const WebSocket = (await import("ws")).default;
+    const result = await new Promise<{ closeCode: number | null }>((resolve) => {
+      const ws = new WebSocket(sessionStreamURL(wrongWorkspaceId, sessionId), {
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+      });
+      const timer = setTimeout(() => {
+        ws.close();
+        resolve({ closeCode: null });
+      }, 15_000);
+      ws.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ closeCode: code });
+      });
+      ws.on("error", () => {
+        clearTimeout(timer);
+        resolve({ closeCode: null });
+      });
+    });
+    expect(result.closeCode).toBe(1008);
   });
 
   // ── 9. Workspace cleanup ──

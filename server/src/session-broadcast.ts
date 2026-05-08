@@ -43,6 +43,7 @@ export class SessionBroadcaster {
     "permission_request",
     "permission_expired",
     "permission_cancelled",
+    "permission_resolved",
     "stop_requested",
     "stop_confirmed",
     "stop_failed",
@@ -190,7 +191,11 @@ export class SessionBroadcaster {
     // Only emit low-frequency ephemeral events to global observers.
     // High-frequency updates (text/thinking/tool_output/tool_update) should
     // not fan out through EventEmitter to avoid hot-path overhead.
-    if (message.type === "state" || message.type === "session_summary") {
+    if (
+      message.type === "state" ||
+      message.type === "session_summary" ||
+      message.type === "extension_ui_request"
+    ) {
       this.deps.emitSessionEvent({
         sessionId: active.session.id,
         event: message,

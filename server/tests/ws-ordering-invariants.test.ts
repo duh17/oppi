@@ -161,6 +161,8 @@ describe("RQ-WS-002: notification-level filtering invariants", () => {
       "permission_request",
       "permission_expired",
       "permission_cancelled",
+      "permission_resolved",
+      "extension_ui_request",
       "agent_start",
       "agent_end",
       "state",
@@ -188,7 +190,6 @@ describe("RQ-WS-002: notification-level filtering invariants", () => {
       "command_result",
       "queue_state",
       "queue_item_started",
-      "extension_ui_request",
       "extension_ui_notification",
       "git_status",
     ];

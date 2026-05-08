@@ -162,6 +162,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         maxFileBytes: config.uploadStore?.maxFileBytes ?? 50 * 1024 * 1024,
         maxTurnBytes: config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024,
       },
+      capabilities: {
+        workspaceStream: { version: 1 },
+        sessionStream: { version: 1 },
+        sessionAudioStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
+        sessionProjection: { version: 1 },
+      },
       stats: {
         workspaceCount: workspaces.length,
         activeSessionCount: activeSessions.length,

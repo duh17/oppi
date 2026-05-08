@@ -91,6 +91,10 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "session_summary",
       summary: TEST_SESSION_SUMMARY,
     },
+    session_projection: {
+      type: "session_projection",
+      summary: TEST_SESSION_SUMMARY,
+    },
     session_ended: {
       type: "session_ended",
       reason: "Process exited with code 0",
@@ -264,6 +268,11 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "permission_cancelled",
       id: "perm-003",
     },
+    permission_resolved: {
+      type: "permission_resolved",
+      id: "perm-004",
+      action: "allow",
+    },
 
     // Extension UI
     extension_ui_request: {
@@ -356,6 +365,7 @@ describe("protocol snapshots", () => {
       "stream_connected",
       "state",
       "session_summary",
+      "session_projection",
       "session_ended",
       "session_deleted",
       "stop_requested",
@@ -379,6 +389,7 @@ describe("protocol snapshots", () => {
       "permission_request",
       "permission_expired",
       "permission_cancelled",
+      "permission_resolved",
       "extension_ui_request",
       "extension_ui_notification",
       "git_status",

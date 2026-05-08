@@ -89,7 +89,7 @@ describe("telemetry SQLite importer", () => {
       const meta = db.prepare("SELECT parser_version FROM ingested_files").get() as {
         parser_version: number;
       };
-      expect(meta.parser_version).toBe(4);
+      expect(meta.parser_version).toBe(5);
     } finally {
       db.close();
     }
@@ -128,7 +128,7 @@ describe("telemetry SQLite importer", () => {
             parser_version: number;
           }
         ).parser_version,
-      ).toBe(4);
+      ).toBe(5);
     } finally {
       db.close();
     }
@@ -166,15 +166,15 @@ describe("telemetry SQLite importer", () => {
         (db.prepare("SELECT count(*) AS c FROM chat_metric_samples").get() as { c: number }).c,
       ).toBe(2);
       expect(
-        (
-          db.prepare(
+        db
+          .prepare(
             "SELECT line_count, processed_offset_bytes, source_file FROM ingested_files WHERE source_file = ?",
-          ).get("chat-metrics-2026-04-29.jsonl") as {
-            line_count: number;
-            processed_offset_bytes: number;
-            source_file: string;
-          }
-        ),
+          )
+          .get("chat-metrics-2026-04-29.jsonl") as {
+          line_count: number;
+          processed_offset_bytes: number;
+          source_file: string;
+        },
       ).toMatchObject({
         line_count: 2,
         processed_offset_bytes: Buffer.byteLength(`${line1}\n${line2}\n`),
@@ -224,6 +224,141 @@ describe("telemetry SQLite importer", () => {
           }
         ).source_file,
       ).toBe(fileName);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("migrates older server ops tables before importing flattened tags", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const oldDb = new DatabaseSync(dbPath);
+    oldDb.exec(`
+      CREATE TABLE server_ops_metric_samples (
+        id TEXT PRIMARY KEY,
+        source_file TEXT NOT NULL,
+        line_number INTEGER NOT NULL,
+        sample_index INTEGER NOT NULL,
+        ts_ms INTEGER NOT NULL,
+        metric TEXT NOT NULL,
+        value REAL NOT NULL,
+        tags_json TEXT
+      );
+    `);
+    oldDb.close();
+
+    writeFileSync(
+      join(tempDir, "server-ops-metrics-2026-05-08.jsonl"),
+      JSON.stringify({
+        samples: [
+          {
+            ts: 1,
+            metric: "server.ws_handshake_ms",
+            value: 12,
+            tags: { path: "workspace_stream" },
+          },
+        ],
+      }) + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const row = db.prepare("SELECT tag_path FROM server_ops_metric_samples").get() as {
+        tag_path: string;
+      };
+      expect(row.tag_path).toBe("workspace_stream");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("flattens server ops metric tags used by split-stream dashboards", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    writeFileSync(
+      join(tempDir, "server-ops-metrics-2026-05-08.jsonl"),
+      JSON.stringify({
+        flushedAt: 1_778_254_400_000,
+        samples: [
+          {
+            ts: 1_778_254_400_001,
+            metric: "server.ws_message_sent",
+            value: 1,
+            tags: { path: "bound_session_stream", type: "text_delta", level: "bound_session" },
+          },
+          {
+            ts: 1_778_254_400_002,
+            metric: "server.catchup_events",
+            value: 3,
+            tags: { lane: "workspace", ring: "workspace_stream", outcome: "success" },
+          },
+          {
+            ts: 1_778_254_400_003,
+            metric: "server.ws_close_code",
+            value: 1,
+            tags: { path: "session_audio_stream", code: "1000" },
+          },
+        ],
+      }) + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const rows = db
+        .prepare(
+          `
+        SELECT metric, tag_path, tag_type, tag_level, tag_lane, tag_ring, tag_code, tag_outcome
+        FROM server_ops_metric_samples
+        ORDER BY ts_ms
+      `,
+        )
+        .all() as Array<{
+        metric: string;
+        tag_path: string | null;
+        tag_type: string | null;
+        tag_level: string | null;
+        tag_lane: string | null;
+        tag_ring: string | null;
+        tag_code: string | null;
+        tag_outcome: string | null;
+      }>;
+
+      expect(rows).toEqual([
+        {
+          metric: "server.ws_message_sent",
+          tag_path: "bound_session_stream",
+          tag_type: "text_delta",
+          tag_level: "bound_session",
+          tag_lane: null,
+          tag_ring: null,
+          tag_code: null,
+          tag_outcome: null,
+        },
+        {
+          metric: "server.catchup_events",
+          tag_path: null,
+          tag_type: null,
+          tag_level: null,
+          tag_lane: "workspace",
+          tag_ring: "workspace_stream",
+          tag_code: null,
+          tag_outcome: "success",
+        },
+        {
+          metric: "server.ws_close_code",
+          tag_path: "session_audio_stream",
+          tag_type: null,
+          tag_level: null,
+          tag_lane: null,
+          tag_ring: null,
+          tag_code: "1000",
+          tag_outcome: null,
+        },
+      ]);
     } finally {
       db.close();
     }

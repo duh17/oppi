@@ -185,6 +185,9 @@ describe("GET /server/info", () => {
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeTypeOf("object");
+    expect(body.capabilities?.workspaceStream?.version).toBe(1);
+    expect(body.capabilities?.sessionStream?.version).toBe(1);
+    expect(body.capabilities?.sessionProjection?.version).toBe(1);
   });
 });
 
@@ -1261,11 +1264,11 @@ describe("workspace lifecycle", () => {
   });
 });
 
-// ── Per-session WebSocket (removed — use /stream) ──
+// ── Split session WebSocket ──
 
-describe("per-session WebSocket", () => {
-  it("returns 404 (endpoint removed, use /stream instead)", async () => {
-    const wsRes = await post("/workspaces", { name: "ws-gone", skills: [] });
+describe("split session WebSocket", () => {
+  it("opens the URL-bound session stream", async () => {
+    const wsRes = await post("/workspaces", { name: "session-stream", skills: [] });
     const { workspace } = await wsRes.json();
     const sessRes = await post(`/workspaces/${workspace.id}/sessions`, {
       model: "anthropic/claude-sonnet-4-20250514",
@@ -1277,15 +1280,17 @@ describe("per-session WebSocket", () => {
       { headers: { Authorization: `Bearer ${token}` } },
     );
 
-    const closed = await new Promise<boolean>((resolve) => {
-      ws.on("error", () => resolve(true));
-      ws.on("close", () => resolve(true));
-      ws.on("open", () => {
-        ws.close();
-        resolve(false);
+    const firstMessage = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("session stream did not open")), 5000);
+      ws.on("error", reject);
+      ws.on("message", (data) => {
+        clearTimeout(timeout);
+        resolve(JSON.parse(data.toString()) as Record<string, unknown>);
       });
     });
-    expect(closed).toBe(true);
+    ws.close();
+
+    expect(firstMessage.type).toBe("stream_connected");
   });
 });
 

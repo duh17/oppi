@@ -81,9 +81,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, cpu_user, cpu_system, cpu_total FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -185,9 +183,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, mem_heap_used, mem_heap_total, mem_rss, mem_external FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -298,9 +294,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, sessions_busy, sessions_ready, sessions_starting FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -364,9 +358,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, ws_connections FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -430,9 +422,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_rtt_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -515,9 +505,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.ws_handshake_ms' THEN value END AS handshake, CASE WHEN metric = 'server.ws_first_message_ms' THEN value END AS first_msg FROM server_ops_metric_samples WHERE metric IN ('server.ws_handshake_ms', 'server.ws_first_message_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -621,9 +609,7 @@
         {
           "rawQueryText": "SELECT d.ts_ms / 1000 AS time, ROUND(d.value / 1000.0, 1) AS duration_s, s.value AS sent, r.value AS received, json_extract(c.tags_json, '$.code') AS close_code FROM server_ops_metric_samples d LEFT JOIN server_ops_metric_samples s ON s.metric = 'server.ws_messages_sent' AND ABS(s.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples r ON r.metric = 'server.ws_messages_received' AND ABS(r.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples c ON c.metric = 'server.ws_close_code' AND ABS(c.ts_ms - d.ts_ms) < 100 WHERE d.metric = 'server.ws_session_duration_ms' AND d.ts_ms >= ${__from} AND d.ts_ms <= ${__to} ORDER BY d.ts_ms DESC LIMIT 50",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -687,9 +673,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_duration_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -753,9 +737,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_ttft_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -819,9 +801,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -885,9 +865,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ask_round_trip_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -951,9 +929,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_title_gen_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1043,9 +1019,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_input_tokens' THEN value END AS input, CASE WHEN metric = 'server.turn_output_tokens' THEN value END AS output FROM server_ops_metric_samples WHERE metric IN ('server.turn_input_tokens', 'server.turn_output_tokens') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1135,9 +1109,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_tool_calls' THEN value END AS tool_calls, CASE WHEN metric = 'server.turn_error' THEN value END AS errors FROM server_ops_metric_samples WHERE metric IN ('server.turn_tool_calls', 'server.turn_error') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1226,9 +1198,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.gate_check_ms' THEN value END AS check, CASE WHEN metric = 'server.gate_approval_wait_ms' THEN value END AS approval_wait FROM server_ops_metric_samples WHERE metric IN ('server.gate_check_ms', 'server.gate_approval_wait_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1318,9 +1288,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.gate_decision' THEN value END AS decisions, CASE WHEN metric = 'server.gate_timeout' THEN value END AS timeouts FROM server_ops_metric_samples WHERE metric IN ('server.gate_decision', 'server.gate_timeout') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1384,9 +1352,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_subscribe_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1451,9 +1417,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_timeout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1543,9 +1507,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.catchup_events' THEN value END AS events, CASE WHEN metric = 'server.catchup_miss' THEN value END AS misses FROM server_ops_metric_samples WHERE metric IN ('server.catchup_events', 'server.catchup_miss') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1610,9 +1572,7 @@
         {
           "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, MAX(value) AS value FROM server_ops_metric_samples WHERE metric = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1676,9 +1636,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.http_request_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1743,9 +1701,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.auto_retry' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1809,9 +1765,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1876,9 +1830,7 @@
         {
           "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_result' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "options": {
@@ -1890,13 +1842,284 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "title": "Split WS Handshake by Path",
+      "description": "Server-side WebSocket upgrade duration split by legacy, workspace, session, and audio stream lanes.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 104
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'legacy_stream') = 'legacy_stream' THEN value END), 1) AS legacy_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'workspace_stream' THEN value END), 1) AS workspace_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Split WS Messages by Path",
+      "description": "Per-interval sent and received WebSocket messages by stream lane. Legacy samples use legacy_stream when old rows have no path tag.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 104
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'legacy_stream') = 'legacy_stream' THEN value ELSE 0 END) AS legacy_stream,\n  SUM(CASE WHEN tag_path = 'workspace_stream' THEN value ELSE 0 END) AS workspace_stream,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Session Subscribe by Lane",
+      "description": "Bound session stream setup should show lane=bound_session. Legacy /stream subscribe traffic shows full/notifications.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 112
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT\n  COALESCE(tag_level, 'legacy') AS lane,\n  COALESCE(tag_outcome, 'unknown') AS outcome,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MIN(value), 1) AS min_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_subscribe_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY lane, outcome\nORDER BY samples DESC, lane, outcome",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "title": "Catch-up by Ring",
+      "description": "Catch-up replay and misses split by workspace, session, and legacy user-stream rings.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 112
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'workspace_stream' THEN value ELSE 0 END) AS workspace_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'workspace_stream' THEN value ELSE 0 END) AS workspace_misses,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_misses,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'user_stream' THEN value ELSE 0 END) AS legacy_misses\nFROM server_ops_metric_samples\nWHERE metric IN ('server.catchup_events', 'server.catchup_miss')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "WS Close Codes by Path",
+      "description": "Close-code counts by split stream path. Watch for abnormal 1006 on workspace/session/audio lanes.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 120
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "title": "Audio Stream Inbound",
+      "description": "Session audio stream inbound binary KiB and control-message counts.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 120
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(SUM(CASE WHEN metric = 'server.ws_binary_received_bytes' AND tag_path = 'session_audio_stream' THEN value ELSE 0 END) / 1024.0, 1) AS audio_kib,\n  SUM(CASE WHEN metric = 'server.ws_message_received' AND tag_path = 'session_audio_stream' AND tag_type != 'binary_audio' THEN value ELSE 0 END) AS control_messages\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_binary_received_bytes', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,
-  "tags": [
-    "oppi",
-    "server"
-  ],
+  "tags": ["oppi", "server"],
   "templating": {
     "list": []
   },
@@ -1905,22 +2128,8 @@
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": [
-      "30s",
-      "1m",
-      "5m"
-    ],
-    "time_options": [
-      "5m",
-      "15m",
-      "1h",
-      "6h",
-      "12h",
-      "24h",
-      "2d",
-      "7d",
-      "30d"
-    ]
+    "refresh_intervals": ["30s", "1m", "5m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
   },
   "timezone": "browser",
   "title": "Oppi Server Health",

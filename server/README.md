@@ -277,6 +277,7 @@ Importer behavior:
 - continues in watch mode (poll interval: `OPPI_TELEMETRY_IMPORT_INTERVAL_MS`, default `15000`)
 - ingests incrementally for append-only daily JSONL files instead of reimporting the whole hot file each cycle
 - normalizes source file keys so Docker and host imports target the same rows
+- flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels
 - keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups (default `1`)
 - uses a short-lived lock file so overlapping importer runs skip instead of clobbering each other
 
@@ -288,7 +289,7 @@ Open:
 The datasource and dashboard are provisioned automatically:
 
 - datasource: `Oppi Telemetry SQLite`
-- dashboard: `Oppi Release Preflight` (folder: `Oppi`)
+- dashboards: `Oppi Release Preflight` and `Oppi Server Health` (folder: `Oppi`)
 
 ### 2) Stop telemetry stack
 

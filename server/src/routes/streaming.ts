@@ -9,15 +9,44 @@ type PermissionRespondBody = {
 };
 
 export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  function handleGetUserStreamEvents(url: URL, res: ServerResponse): void {
+  function parseSinceSeq(url: URL, res: ServerResponse): number | null {
     const sinceParam = url.searchParams.get("since");
     const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
     if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
       helpers.error(res, 400, "since must be a non-negative integer");
+      return null;
+    }
+    return sinceSeq;
+  }
+
+  function handleGetUserStreamEvents(url: URL, res: ServerResponse): void {
+    const sinceSeq = parseSinceSeq(url, res);
+    if (sinceSeq === null) return;
+
+    const catchUp = ctx.streamMux.getUserStreamCatchUp(sinceSeq);
+
+    helpers.json(res, {
+      events: catchUp.events,
+      currentSeq: catchUp.currentSeq,
+      catchUpComplete: catchUp.catchUpComplete,
+    });
+  }
+
+  function handleGetWorkspaceStreamEvents(
+    workspaceId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
       return;
     }
 
-    const catchUp = ctx.streamMux.getUserStreamCatchUp(sinceSeq);
+    const sinceSeq = parseSinceSeq(url, res);
+    if (sinceSeq === null) return;
+
+    const catchUp = ctx.workspaceStreamMux.getWorkspaceStreamCatchUp(workspaceId, sinceSeq);
 
     helpers.json(res, {
       events: catchUp.events,
@@ -125,6 +154,12 @@ export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers):
   return async ({ method, path, url, req, res }) => {
     if (path === "/stream/events" && method === "GET") {
       handleGetUserStreamEvents(url, res);
+      return true;
+    }
+
+    const workspaceEventsMatch = path.match(/^\/workspaces\/([^/]+)\/stream\/events$/);
+    if (workspaceEventsMatch && method === "GET") {
+      handleGetWorkspaceStreamEvents(decodeURIComponent(workspaceEventsMatch[1]), url, res);
       return true;
     }
 

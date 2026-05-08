@@ -112,7 +112,16 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     gate: {} as RouteContext["gate"],
     skillRegistry: {} as RouteContext["skillRegistry"],
     userSkillStore: {} as RouteContext["userSkillStore"],
-    streamMux: {} as RouteContext["streamMux"],
+    streamMux: {
+      recordAndFanOutUserStreamEvent: vi.fn(),
+    } as unknown as RouteContext["streamMux"],
+    workspaceStreamMux: {
+      recordAndFanOutWorkspaceEvent: vi.fn(),
+    } as unknown as RouteContext["workspaceStreamMux"],
+    workspaceProjectionEmitter: {
+      emitSessionProjection: vi.fn(),
+      emitSessionDeleted: vi.fn(),
+    } as unknown as RouteContext["workspaceProjectionEmitter"],
     ensureSessionContextWindow: (session: Session) => session,
     resolveWorkspaceForSession: () => ws,
     refreshModelCatalog: vi.fn().mockResolvedValue(undefined),
@@ -700,7 +709,15 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       await dispatchDelete(mock);
 
       expect(mock.sessions.stopSession).toHaveBeenCalledWith("sess-1");
+      expect(mock.ctx.workspaceProjectionEmitter.emitSessionDeleted).toHaveBeenCalledWith(
+        "ws-1",
+        "sess-1",
+      );
       expect(mock.storage.deleteSession).toHaveBeenCalledWith("sess-1");
+      expect(
+        vi.mocked(mock.ctx.workspaceProjectionEmitter.emitSessionDeleted).mock
+          .invocationCallOrder[0],
+      ).toBeLessThan(vi.mocked(mock.storage.deleteSession).mock.invocationCallOrder[0]!);
       expect(existsSync(jsonlA)).toBe(false);
       expect(existsSync(jsonlB)).toBe(false);
       expect(mock.responses).toEqual([{ data: { ok: true }, status: 200 }]);

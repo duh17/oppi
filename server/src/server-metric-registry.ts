@@ -40,7 +40,16 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.ws_message_sent": {
     unit: "count",
-    description: "Per-message WebSocket sends. Tagged by type and subscription level.",
+    description:
+      "Per-message WebSocket sends. Tagged by type, subscription level, and stream path.",
+  },
+  "server.ws_message_received": {
+    unit: "count",
+    description: "Per-message WebSocket receives. Tagged by type and stream path.",
+  },
+  "server.ws_binary_received_bytes": {
+    unit: "bytes",
+    description: "Binary WebSocket payload bytes received. Tagged by stream path.",
   },
   "server.ws_messages_received": {
     unit: "count",
@@ -48,7 +57,8 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.ws_close_code": {
     unit: "count",
-    description: "WebSocket close code (1000=normal, 1006=abnormal, etc). Tagged by code.",
+    description:
+      "WebSocket close code (1000=normal, 1006=abnormal, etc). Tagged by code and stream path.",
   },
   "server.ws_ping_timeout": {
     unit: "count",
@@ -148,7 +158,8 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.catchup_events": {
     unit: "count",
-    description: "Events replayed during catch-up. Tagged by ring (session, user_stream).",
+    description:
+      "Events replayed during catch-up. Tagged by ring (session, user_stream, workspace_stream).",
   },
   "server.catchup_miss": {
     unit: "count",

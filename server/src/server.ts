@@ -22,7 +22,12 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
-import { UserStreamMux } from "./stream.js";
+import {
+  BoundSessionStreamMux,
+  SessionAudioStreamMux,
+  UserStreamMux,
+  WorkspaceStreamMux,
+} from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
@@ -46,7 +51,14 @@ import { SkillRegistry, UserSkillStore } from "./skills.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
-import type { Session, Workspace, ServerMessage, ApiError, ServerConfig } from "./types.js";
+import type {
+  Session,
+  Workspace,
+  ServerMessage,
+  ClientMessage,
+  ApiError,
+  ServerConfig,
+} from "./types.js";
 import { ts, safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
@@ -67,6 +79,7 @@ import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-type
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { isQueryTokenAllowed } from "./http-auth.js";
+import { WorkspaceProjectionEmitter } from "./workspace-projection-emitter.js";
 import {
   garbageCollectUploadStore,
   resolveUploadStoreConfig,
@@ -335,8 +348,11 @@ export class Server {
   private runtimeUpdates: RuntimeUpdateManager;
   private titleGenerator: SessionTitleGenerator;
 
-  // Track WebSocket connections per user for permission/UI forwarding
+  // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
+  // Subset of connections that should receive user-wide control-plane broadcasts.
+  // Workspace/audio streams have their own scoped fanout and must not receive raw /stream messages.
+  private userBroadcastConnections: Set<WebSocket> = new Set();
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
@@ -351,12 +367,17 @@ export class Server {
   private searchIndex: SearchIndex | null = null;
   // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
   private streamMux!: UserStreamMux;
+  private workspaceStreamMux!: WorkspaceStreamMux;
+  private boundSessionStreamMux!: BoundSessionStreamMux;
+  private sessionAudioStreamMux!: SessionAudioStreamMux;
+  private workspaceProjectionEmitter!: WorkspaceProjectionEmitter;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
   // WebSocket message command dispatcher (/stream full-session commands)
   private wsMessageHandler!: WsMessageHandler;
-  // Dictation pipeline (multiplexed over /stream WS)
+  // Dictation pipeline (legacy /stream WS during migration)
   private dictationManager: DictationManager | undefined;
+  private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
@@ -460,32 +481,41 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
 
-    // Dictation pipeline (remote streaming STT over the shared /stream socket)
-    // Must be created BEFORE the stream mux so it's available for /stream routing.
+    // Dictation pipeline. Legacy /stream uses a singleton during migration;
+    // session audio streams create one DictationManager per WebSocket.
     const asrEnabled = !!config.asr?.sttEndpoint;
     if (asrEnabled) {
-      const asrConfig = { ...DEFAULT_DICTATION_CONFIG, ...config.asr } as DictationConfig;
-      const sttProvider = new StreamingSttProvider(
-        { endpoint: asrConfig.sttEndpoint, model: asrConfig.sttModel },
-        globalThis.fetch,
-      );
-      this.dictationManager = new DictationManager(sttProvider, this.opsMetrics);
+      this.dictationConfig = { ...DEFAULT_DICTATION_CONFIG, ...config.asr } as DictationConfig;
+      this.dictationManager = this.createDictationManager();
     }
 
-    // Create the user stream mux (handles /stream WS, event rings, replay)
-    this.streamMux = new UserStreamMux({
+    const streamContext = {
       storage: this.storage,
       sessions: this.sessions,
       gate: this.gate,
       metrics: this.opsMetrics,
-      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
-      handleClientMessage: (session, msg, send, meta) =>
-        this.wsMessageHandler.handleClientMessage(session, msg, send, meta),
-      trackConnection: (ws) => this.trackConnection(ws),
-      untrackConnection: (ws) => this.untrackConnection(ws),
+      ensureSessionContextWindow: (session: Session) =>
+        this.models.ensureSessionContextWindow(session),
+      resolveWorkspaceForSession: (session: Session) => this.resolveWorkspaceForSession(session),
+      handleClientMessage: (
+        session: Session,
+        msg: ClientMessage,
+        send: (msg: ServerMessage) => void,
+        meta?: { connId?: string },
+      ) => this.wsMessageHandler.handleClientMessage(session, msg, send, meta),
+      trackConnection: (ws: WebSocket, options?: { userBroadcast?: boolean }) =>
+        this.trackConnection(ws, options),
+      untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       dictationManager: this.dictationManager,
-    });
+      createDictationManager: () => this.createDictationManager(),
+    };
+
+    // Create stream muxes (legacy /stream plus split workspace/session/audio streams).
+    this.streamMux = new UserStreamMux(streamContext);
+    this.workspaceStreamMux = new WorkspaceStreamMux(streamContext);
+    this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
+    this.sessionAudioStreamMux = new SessionAudioStreamMux(streamContext);
+    this.workspaceProjectionEmitter = new WorkspaceProjectionEmitter(this.workspaceStreamMux);
 
     // Server resource utilization sampler
     this.resourceSampler = new ServerResourceSampler({
@@ -542,11 +572,13 @@ export class Server {
         if (active) {
           active.name = name;
           this.storage.saveSession(active);
+          this.workspaceProjectionEmitter.emitSessionProjection(active, "session_title_updated");
         } else {
           const session = this.storage.getSession(sessionId);
           if (session) {
             session.name = name;
             this.storage.saveSession(session);
+            this.workspaceProjectionEmitter.emitSessionProjection(session, "session_title_updated");
           }
         }
       },
@@ -555,6 +587,7 @@ export class Server {
         const session = active ?? this.storage.getSession(sessionId);
         if (session) {
           this.broadcastToUser({ type: "state", session, sessionId });
+          this.workspaceProjectionEmitter.emitSessionProjection(session, "session_title_broadcast");
         }
       },
       onMetrics: (metrics) => {
@@ -579,6 +612,29 @@ export class Server {
       // the per-session EventRing. The streamSeq is only relevant for the
       // user-level stream ring, not per-session catch-up.
       this.streamMux.recordUserStreamEvent(payload.sessionId, payload.event);
+
+      const session = this.storage.getSession(payload.sessionId);
+      if (!session?.workspaceId) {
+        return;
+      }
+
+      if (payload.event.type === "extension_ui_request") {
+        this.workspaceStreamMux.recordAndFanOutWorkspaceEvent(session.workspaceId, payload.event);
+        return;
+      }
+
+      if (
+        payload.event.type === "state" ||
+        payload.event.type === "session_summary" ||
+        payload.event.type === "agent_start" ||
+        payload.event.type === "agent_end" ||
+        payload.event.type === "session_ended" ||
+        payload.event.type === "stop_requested" ||
+        payload.event.type === "stop_confirmed" ||
+        payload.event.type === "stop_failed"
+      ) {
+        this.workspaceProjectionEmitter.emitSessionProjection(session, payload.event.type);
+      }
     });
 
     // Initialize search index (SQLite FTS5)
@@ -599,6 +655,8 @@ export class Server {
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
       streamMux: this.streamMux,
+      workspaceStreamMux: this.workspaceStreamMux,
+      workspaceProjectionEmitter: this.workspaceProjectionEmitter,
       providerAuth: this.providerAuth,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
@@ -643,12 +701,20 @@ export class Server {
       ({ requestId, sessionId }: { requestId: string; sessionId: string }) => {
         const session = this.findSessionById(sessionId);
         if (session) {
-          this.broadcastToUser({
+          const message: ServerMessage = {
             type: "permission_expired",
             id: requestId,
             reason: "Approval timeout",
             sessionId,
+          };
+          const hasWorkspaceDelivery = session.workspaceId
+            ? this.workspaceStreamMux.hasOpenConnections(session.workspaceId)
+            : false;
+          const boundDeliveries = this.boundSessionStreamMux.sendToSession(sessionId, message);
+          this.broadcastToUser(message, {
+            forcePushFallback: !hasWorkspaceDelivery && boundDeliveries === 0,
           });
+          this.broadcastWorkspaceAttentionEvent(session, message);
           this.liveActivity.queueUpdate({
             sessionId,
             lastEvent: "Permission expired",
@@ -660,7 +726,27 @@ export class Server {
 
     this.gate.on(
       "approval_resolved",
-      ({ sessionId, action }: { sessionId: string; action: "allow" | "deny" }) => {
+      ({
+        requestId,
+        sessionId,
+        action,
+      }: {
+        requestId: string;
+        sessionId: string;
+        action: "allow" | "deny";
+      }) => {
+        const message: ServerMessage = {
+          type: "permission_resolved",
+          id: requestId,
+          action,
+          sessionId,
+        };
+        this.boundSessionStreamMux.sendToSession(sessionId, message);
+        this.broadcastToUser(message);
+        const session = this.findSessionById(sessionId);
+        if (session) {
+          this.broadcastWorkspaceAttentionEvent(session, message);
+        }
         this.liveActivity.queueUpdate({
           sessionId,
           lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
@@ -680,11 +766,22 @@ export class Server {
         sessionId: string;
         reason: string;
       }) => {
-        this.broadcastToUser({
+        const message: ServerMessage = {
           type: "permission_cancelled",
           id: requestId,
           sessionId,
+        };
+        const session = this.findSessionById(sessionId);
+        const hasWorkspaceDelivery = session?.workspaceId
+          ? this.workspaceStreamMux.hasOpenConnections(session.workspaceId)
+          : false;
+        const boundDeliveries = this.boundSessionStreamMux.sendToSession(sessionId, message);
+        this.broadcastToUser(message, {
+          forcePushFallback: !hasWorkspaceDelivery && boundDeliveries === 0,
         });
+        if (session) {
+          this.broadcastWorkspaceAttentionEvent(session, message);
+        }
         this.liveActivity.queueUpdate({
           sessionId,
           lastEvent: reason,
@@ -973,7 +1070,13 @@ export class Server {
   // ─── Permission Forwarding ───
 
   private forwardPermissionRequest(pending: PendingDecision): void {
-    this.broadcastToUser(buildPermissionMessage(pending));
+    const message = buildPermissionMessage(pending);
+    const hasWorkspaceDelivery = this.workspaceStreamMux.hasOpenConnections(pending.workspaceId);
+    const boundDeliveries = this.boundSessionStreamMux.sendToSession(pending.sessionId, message);
+    this.broadcastToUser(message, {
+      forcePushFallback: !hasWorkspaceDelivery && boundDeliveries === 0,
+    });
+    this.workspaceStreamMux.recordAndFanOutWorkspaceEvent(pending.workspaceId, message);
     this.liveActivity.queueUpdate({
       sessionId: pending.sessionId,
       lastEvent: "Permission required",
@@ -987,9 +1090,14 @@ export class Server {
     });
   }
 
+  private broadcastWorkspaceAttentionEvent(session: Session, msg: ServerMessage): void {
+    if (!session.workspaceId) return;
+    this.workspaceStreamMux.recordAndFanOutWorkspaceEvent(session.workspaceId, msg);
+  }
+
   // ─── User Connection Tracking ───
 
-  private broadcastToUser(msg: ServerMessage): void {
+  private broadcastToUser(msg: ServerMessage, options?: { forcePushFallback?: boolean }): void {
     let outbound = msg;
     if (
       msg.sessionId &&
@@ -1003,20 +1111,28 @@ export class Server {
       };
     }
 
-    const conns = this.connections;
-    if (!conns || conns.size === 0) {
+    const broadcastConns = this.userBroadcastConnections;
+    const hasOpenBroadcastConnection = Array.from(broadcastConns).some(
+      (ws) => ws.readyState === WebSocket.OPEN,
+    );
+    if (hasOpenBroadcastConnection) {
+      const json = JSON.stringify(outbound);
+      for (const ws of broadcastConns) {
+        if (ws.readyState === WebSocket.OPEN) ws.send(json);
+      }
+      return;
+    }
+
+    if (options?.forcePushFallback) {
       this.pushFallback(outbound);
       return;
     }
 
-    const hasOpen = Array.from(conns).some((ws) => ws.readyState === WebSocket.OPEN);
-    if (hasOpen) {
-      const json = JSON.stringify(outbound);
-      for (const ws of conns) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(json);
-      }
-    } else {
-      // No WebSocket connected — fall back to push notification
+    const hasAnyOpenConnection = Array.from(this.connections).some(
+      (ws) => ws.readyState === WebSocket.OPEN,
+    );
+    if (!hasAnyOpenConnection) {
+      // No WebSocket connected — fall back to push notification.
       this.pushFallback(outbound);
     }
   }
@@ -1025,6 +1141,18 @@ export class Server {
    * Send a push notification when no WebSocket client is connected.
    * Only fires for permission requests and session lifecycle events.
    */
+  private createDictationManager(): DictationManager | undefined {
+    if (!this.dictationConfig?.sttEndpoint) return undefined;
+    const sttProvider = new StreamingSttProvider(
+      {
+        endpoint: this.dictationConfig.sttEndpoint,
+        model: this.dictationConfig.sttModel,
+      },
+      globalThis.fetch,
+    );
+    return new DictationManager(sttProvider, this.opsMetrics);
+  }
+
   private pushFallback(msg: ServerMessage): void {
     const tokens = this.storage.getPushDeviceTokens();
     if (tokens.length === 0) return;
@@ -1083,13 +1211,16 @@ export class Server {
     return sessions.find((s) => s.status === "stopped") || sessions[0];
   }
 
-  private trackConnection(ws: WebSocket): void {
-    const conns = this.connections;
-    conns.add(ws);
+  private trackConnection(ws: WebSocket, options?: { userBroadcast?: boolean }): void {
+    this.connections.add(ws);
+    if (options?.userBroadcast !== false) {
+      this.userBroadcastConnections.add(ws);
+    }
   }
 
   private untrackConnection(ws: WebSocket): void {
     this.connections.delete(ws);
+    this.userBroadcastConnections.delete(ws);
   }
 
   private closeActiveConnections(code: number, reason: string): void {
@@ -1282,8 +1413,21 @@ export class Server {
       return;
     }
 
-    if (url.pathname !== "/stream") {
-      // Per-session WS endpoint removed — use /stream with subscribe instead.
+    const workspaceStreamMatch = url.pathname.match(/^\/workspaces\/([^/]+)\/stream$/);
+    const sessionStreamMatch = url.pathname.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
+    );
+    const sessionAudioStreamMatch = url.pathname.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
+    );
+    const isLegacyStream = url.pathname === "/stream";
+    if (
+      !isLegacyStream &&
+      !workspaceStreamMatch &&
+      !sessionStreamMatch &&
+      !sessionAudioStreamMatch
+    ) {
+      // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -1305,6 +1449,34 @@ export class Server {
 
     const upgradeReceivedAt = Date.now();
     this.wss.handleUpgrade(req, socket, head, (ws) => {
+      if (workspaceStreamMatch) {
+        this.workspaceStreamMux.handleWebSocket(
+          decodeURIComponent(workspaceStreamMatch[1]),
+          ws,
+          upgradeReceivedAt,
+        );
+        return;
+      }
+      if (sessionStreamMatch) {
+        const workspaceId = decodeURIComponent(sessionStreamMatch[1]);
+        const sessionId = decodeURIComponent(sessionStreamMatch[2]);
+        const session = this.storage.getSession(sessionId);
+        if (!session || session.workspaceId !== workspaceId) {
+          ws.close(1008, "Session not found");
+          return;
+        }
+        this.boundSessionStreamMux.handleWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
+        return;
+      }
+      if (sessionAudioStreamMatch) {
+        this.sessionAudioStreamMux.handleWebSocket(
+          decodeURIComponent(sessionAudioStreamMatch[1]),
+          decodeURIComponent(sessionAudioStreamMatch[2]),
+          ws,
+          upgradeReceivedAt,
+        );
+        return;
+      }
       this.streamMux.handleWebSocket(ws, upgradeReceivedAt);
     });
   }

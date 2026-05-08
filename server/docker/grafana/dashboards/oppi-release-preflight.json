@@ -82,9 +82,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "textMode": "value",
         "colorMode": "background",
@@ -129,9 +127,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -189,9 +185,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -249,9 +243,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -309,9 +301,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -369,9 +359,7 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -422,10 +410,7 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -443,9 +428,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ttft_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ttft_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -481,10 +464,7 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -502,9 +482,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.ws_connect_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -579,10 +557,7 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -600,9 +575,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ms'\n  AND COALESCE(json_extract(tags_json, '$.result'), '') = 'cache_seeded'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ms'\n  AND COALESCE(json_extract(tags_json, '$.result'), '') = 'cache_seeded'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -613,9 +586,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ms'\n  AND COALESCE(json_extract(tags_json, '$.result'), '') NOT IN ('cache_seeded', 'no_gap', '')\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ms'\n  AND COALESCE(json_extract(tags_json, '$.result'), '') NOT IN ('cache_seeded', 'no_gap', '')\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -651,10 +622,7 @@
       "id": 4,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -672,9 +640,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.fresh_content_lag_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.fresh_content_lag_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -710,10 +676,7 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -731,9 +694,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST((ts_ms / 1000 / 3600) * 3600 AS INTEGER) AS time, SUM(value) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ring_miss'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY 1\nORDER BY 1",
           "queryText": "SELECT CAST((ts_ms / 1000 / 3600) * 3600 AS INTEGER) AS time, SUM(value) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.catchup_ring_miss'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY 1\nORDER BY 1",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -808,10 +769,7 @@
       "id": 28,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -829,9 +787,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_apply_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_apply_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -842,9 +798,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_layout_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_layout_ms'\n  AND build_number >= '21'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -936,11 +890,7 @@
       "id": 30,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
-          ],
+          "calcs": ["lastNotNull", "max", "mean"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -958,9 +908,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n  value,\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS metric\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n  value,\n  COALESCE(json_extract(tags_json, '$.phase'), 'unknown') AS metric\nFROM chat_metric_samples\nWHERE metric = 'chat.jank_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1060,10 +1008,7 @@
       "id": 8,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1081,9 +1026,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_prewarm_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_prewarm_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1119,10 +1062,7 @@
       "id": 9,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1140,9 +1080,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND COALESCE(json_extract(tags_json, '$.phase'), '') = 'total'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND COALESCE(json_extract(tags_json, '$.phase'), '') = 'total'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1178,10 +1116,7 @@
       "id": 10,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1199,9 +1134,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1293,10 +1226,7 @@
       "id": 74,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1314,9 +1244,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_setup_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_setup_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1352,10 +1280,7 @@
       "id": 75,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1373,9 +1298,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1411,10 +1334,7 @@
       "id": 76,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1432,9 +1352,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_finalize_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_finalize_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1470,10 +1388,7 @@
       "id": 77,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1491,9 +1406,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_session_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_session_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1529,10 +1442,7 @@
       "id": 78,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1550,9 +1460,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_audio_duration_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_audio_duration_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1588,10 +1496,7 @@
       "id": 79,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1609,9 +1514,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_result_updates'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_result_updates'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1647,10 +1550,7 @@
       "id": 80,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1668,9 +1568,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_preview_final_delta'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_preview_final_delta'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -1706,10 +1604,7 @@
       "id": 81,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1727,9 +1622,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS errors\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS errors\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -1740,9 +1633,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS cancels\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_cancel'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS cancels\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_cancel'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -1911,10 +1802,7 @@
       "id": 29,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -1932,9 +1820,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -1945,9 +1831,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.full_reload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         },
         {
@@ -1958,9 +1842,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.cache_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.cache_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "C"
         },
         {
@@ -1971,9 +1853,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.reducer_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.reducer_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "D"
         }
       ],
@@ -2121,10 +2001,7 @@
       "id": 18,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2142,9 +2019,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.cell_configure_ms'\n  AND COALESCE(json_extract(tags_json, '$.expanded'), '0') = '1'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.cell_configure_ms'\n  AND COALESCE(json_extract(tags_json, '$.expanded'), '0') = '1'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2236,10 +2111,7 @@
       "id": 20,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2257,9 +2129,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.render_strategy_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.render_strategy_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2368,11 +2238,7 @@
       "id": 32,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2390,9 +2256,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_hitch'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.timeline_hitch'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2467,10 +2331,7 @@
       "id": 33,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2488,9 +2349,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_launch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.app_launch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -2501,9 +2360,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_switch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_switch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -2539,10 +2396,7 @@
       "id": 34,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2560,9 +2414,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_compute_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_compute_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2598,10 +2450,7 @@
       "id": 35,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2619,9 +2468,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.markdown_streaming_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.markdown_streaming_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2657,10 +2504,7 @@
       "id": 36,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2678,9 +2522,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.permission_overlay_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.permission_overlay_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2717,11 +2559,7 @@
       "id": 37,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2739,9 +2577,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.share_export_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.share_export_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2778,11 +2614,7 @@
       "id": 38,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2800,9 +2632,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_body_rate'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_body_rate'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2839,11 +2669,7 @@
       "id": 39,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2861,9 +2687,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_row_compute_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_list_row_compute_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2900,11 +2724,7 @@
       "id": 40,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2922,9 +2742,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_ack_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_ack_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ],
@@ -2999,11 +2817,7 @@
       "id": 41,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3021,9 +2835,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_stale_drop'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_stale_drop'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -3034,9 +2846,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_start_miss'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.message_queue_start_miss'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -3111,11 +2921,7 @@
       "id": 42,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3133,9 +2939,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_upload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_upload_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -3146,9 +2950,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_probe_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_probe_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ],
@@ -3261,11 +3063,7 @@
       "id": 43,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3283,9 +3081,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_audio_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_audio_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -3296,9 +3092,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_bytes'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_bytes'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         },
         {
@@ -3309,9 +3103,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_chars'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_chars'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "C"
         },
         {
@@ -3322,9 +3114,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_remote_chunk_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "D"
         }
       ],
@@ -3418,11 +3208,7 @@
       "id": 44,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "count"
-          ],
+          "calcs": ["lastNotNull", "max", "count"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3440,9 +3226,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.connected_dispatch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.connected_dispatch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -3453,9 +3237,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.subscribe_ack_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.subscribe_ack_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         },
         {
@@ -3466,9 +3248,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.queue_sync_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.queue_sync_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "C"
         }
       ],
@@ -3566,11 +3346,7 @@
       "id": 45,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "mean", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3588,9 +3364,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n       ROUND(value / MAX(1, CAST(COALESCE(json_extract(tags_json, '$.flushes'), 1) AS REAL)), 2) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.coalescer_flush_events'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n       ROUND(value / MAX(1, CAST(COALESCE(json_extract(tags_json, '$.flushes'), 1) AS REAL)), 2) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.coalescer_flush_events'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -3601,9 +3375,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n       ROUND((value / MAX(1, CAST(COALESCE(json_extract(tags_json, '$.flushes'), 1) AS REAL))) / 1024.0, 2) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.coalescer_flush_bytes'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time,\n       ROUND((value / MAX(1, CAST(COALESCE(json_extract(tags_json, '$.flushes'), 1) AS REAL))) / 1024.0, 2) AS value\nFROM chat_metric_samples\nWHERE metric = 'chat.coalescer_flush_bytes'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         },
         {
@@ -3614,9 +3386,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.inbound_queue_depth'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.inbound_queue_depth'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "C"
         }
       ],
@@ -3925,10 +3695,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "sum",
-            "max"
-          ],
+          "calcs": ["sum", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -3945,9 +3712,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  COUNT(*) as value\nFROM metrickit_payloads\nWHERE kind = 'diagnostic'\n  AND window_start_ms BETWEEN $__from AND $__to\nGROUP BY date(window_start_ms/1000, 'unixepoch', 'localtime')\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
@@ -4024,10 +3789,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4044,9 +3806,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(summary_json, '$.cpuMetrics'), '$.cumulativeCPUTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND summary_json LIKE '%cpuMetrics%'\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -4056,9 +3816,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(summary_json, '$.gpuMetrics'), '$.cumulativeGPUTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND summary_json LIKE '%gpuMetrics%'\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ]
@@ -4097,10 +3855,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4117,9 +3872,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.memoryMetrics.peakMemoryUsage'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric'\n  AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.memoryMetrics.peakMemoryUsage') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
@@ -4234,10 +3987,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4254,9 +4004,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiDownload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiDownload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -4266,9 +4014,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiUpload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeWifiUpload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         },
         {
@@ -4278,9 +4024,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularDownload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularDownload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "C"
         },
         {
@@ -4290,9 +4034,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularUpload'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.networkTransferMetrics.cumulativeCellularUpload') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "D"
         }
       ]
@@ -4369,10 +4111,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4389,9 +4128,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.diskIOMetrics.cumulativeLogicalWrites'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.diskIOMetrics.cumulativeLogicalWrites') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -4401,9 +4138,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.diskSpaceUsageMetrics.totalDataFileSize'), ' kB', '') AS REAL) / 1024.0 as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.diskSpaceUsageMetrics.totalDataFileSize') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ]
@@ -4480,10 +4215,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4500,9 +4232,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeForegroundTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeForegroundTime') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         },
         {
@@ -4512,9 +4242,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT\n  CAST(window_end_ms / 1000 AS INTEGER) AS time,\n  CAST(REPLACE(json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeBackgroundTime'), ' sec', '') AS REAL) as value\nFROM metrickit_payloads\nWHERE kind = 'metric' AND raw_json != '{}'\n  AND json_extract(json_extract(raw_json, '$.payload'), '$.applicationTimeMetrics.cumulativeBackgroundTime') IS NOT NULL\n  AND window_start_ms BETWEEN $__from AND $__to\nORDER BY time",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "B"
         }
       ]
@@ -4619,10 +4347,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4639,9 +4364,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'device.cpu_pct'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
@@ -4679,10 +4402,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4699,9 +4419,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'device.memory_mb'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
@@ -4739,10 +4457,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4759,9 +4474,7 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'device.memory_available_mb'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
@@ -4799,10 +4512,7 @@
       },
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -4819,22 +4529,90 @@
           },
           "queryType": "time series",
           "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'device.thermal_state'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
-          "timeColumns": [
-            "time"
-          ],
+          "timeColumns": ["time"],
           "refId": "A"
         }
       ]
+    },
+    {
+      "title": "Split Stream Server Lanes",
+      "description": "Release preflight: confirm split lanes have traffic and legacy /stream is not carrying the new client flow.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 263
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  metric,\n  COALESCE(tag_type, '-') AS message_type,\n  COUNT(*) AS samples,\n  ROUND(SUM(value), 1) AS total\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_handshake_ms', 'server.ws_message_sent', 'server.ws_message_received', 'server.ws_binary_received_bytes')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, metric, message_type\nORDER BY path, metric, samples DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "title": "Split Stream Close Codes",
+      "description": "Release preflight: close-code distribution by stream lane.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 263
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": [
-    "oppi",
-    "telemetry",
-    "release"
-  ],
+  "tags": ["oppi", "telemetry", "release"],
   "templating": {
     "list": []
   },

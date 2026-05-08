@@ -6,14 +6,21 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
-import { UserStreamMux, type StreamContext } from "./stream.js";
+import {
+  BoundSessionStreamMux,
+  SessionAudioStreamMux,
+  UserStreamMux,
+  WorkspaceStreamMux,
+  type StreamContext,
+} from "./stream.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 
 // ─── Helpers ───
 
-function makeSession(id: string): Session {
+function makeSession(id: string, workspaceId?: string): Session {
   return {
     id,
+    workspaceId,
     status: "ready",
     createdAt: Date.now(),
     lastActivity: Date.now(),
@@ -47,7 +54,11 @@ class FakeWebSocket extends EventEmitter {
 
   /** Simulate receiving a client message. */
   receive(msg: ClientMessage): void {
-    this.emit("message", Buffer.from(JSON.stringify(msg)));
+    this.emit("message", Buffer.from(JSON.stringify(msg)), false);
+  }
+
+  receiveBinary(data: Buffer): void {
+    this.emit("message", data, true);
   }
 
   /** Get sent messages of a specific type, optionally filtered by sessionId. */
@@ -112,6 +123,7 @@ function createMockContext(sessions: Session[]): {
     handleClientMessage: vi.fn(async () => {}),
     trackConnection: vi.fn(),
     untrackConnection: vi.fn(),
+    createDictationManager: undefined,
   };
 
   return { ctx, sessionMap, subscribers, broadcastTo };
@@ -134,6 +146,8 @@ describe("UserStreamMux — multiple full subscriptions", () => {
     const ws = new FakeWebSocket();
     mux.handleWebSocket(ws as unknown as WebSocket);
     await drain();
+
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: true });
 
     ws.receive({ type: "subscribe", sessionId: session.id, level: "full", requestId: "sub-1" });
     await drain();
@@ -378,5 +392,362 @@ describe("UserStreamMux — multiple full subscriptions", () => {
       (m) => m.type === "error" && m.code === "stream_not_subscribed_full",
     );
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe("BoundSessionStreamMux", () => {
+  it("starts the bound session and accepts commands without subscribe", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ws.sentOfType("stream_connected")).toHaveLength(1);
+    expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(1);
+    expect(ws.sentOfType("state", "sess-bound")).toHaveLength(1);
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: false });
+    expect(ctx.sessions.startSession).toHaveBeenCalledWith("sess-bound", undefined);
+
+    ws.sent.length = 0;
+    expect(
+      mux.sendToSession("sess-bound", {
+        type: "permission_request",
+        id: "p-bound",
+        sessionId: "sess-bound",
+        tool: "bash",
+        input: {},
+        displaySummary: "approval",
+        reason: "test",
+        timeoutAt: Date.now() + 1000,
+      }),
+    ).toBe(1);
+    expect(ws.sentOfType("permission_request", "sess-bound")).toHaveLength(1);
+
+    ws.receive({ type: "reload", sessionId: "sess-bound", requestId: "reload-1" } as ClientMessage);
+    await drain();
+
+    expect(ctx.handleClientMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sess-bound" }),
+      expect.objectContaining({ type: "reload", sessionId: "sess-bound", requestId: "reload-1" }),
+      expect.any(Function),
+      expect.any(Object),
+    );
+    expect(ws.sentOfType("command_result").filter((m) => m.command === "subscribe")).toHaveLength(
+      0,
+    );
+  });
+
+  it("includes ASR availability in the split session bootstrap", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+    ctx.dictationManager = {} as NonNullable<StreamContext["dictationManager"]>;
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ asrAvailable: true });
+  });
+
+  it("accepts permission responses while session startup is waiting", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+    let resolveStart: ((session: Session) => void) | undefined;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(
+      () =>
+        new Promise<Session>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const resolveDecision = vi.fn(() => true);
+    ctx.gate = {
+      getPendingForUser: () => [],
+      resolveDecision,
+    } as unknown as StreamContext["gate"];
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    const connect = mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.receive({
+      type: "permission_response",
+      id: "perm-startup",
+      action: "allow",
+      requestId: "perm-1",
+    });
+    await drain();
+
+    expect(resolveDecision).toHaveBeenCalledWith("perm-startup", "allow", "once", undefined);
+    const result = ws
+      .sentOfType("command_result", "sess-bound")
+      .find((m) => (m as Record<string, unknown>).requestId === "perm-1");
+    expect(result?.success).toBe(true);
+
+    expect(resolveStart).toBeDefined();
+    resolveStart?.(session);
+    await connect;
+
+    expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(1);
+  });
+
+  it("cleans up when the bound session socket closes during startup", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+    let resolveStart: ((session: Session) => void) | undefined;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(
+      () =>
+        new Promise<Session>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    const connect = mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.close(1000);
+    await drain();
+
+    expect(ctx.untrackConnection).toHaveBeenCalledWith(ws);
+    expect(resolveStart).toBeDefined();
+    resolveStart?.(session);
+    await connect;
+
+    expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(0);
+  });
+
+  it("rejects subscribe messages because the URL is the subscription", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx } = createMockContext([session]);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.receive({ type: "subscribe", sessionId: "sess-bound", level: "full", requestId: "sub-1" });
+    await drain();
+
+    const result = ws
+      .sentOfType("command_result")
+      .find((m) => (m as Record<string, unknown>).requestId === "sub-1");
+    expect(result?.success).toBe(false);
+    expect((result as { error?: string } | undefined)?.error).toContain("not supported");
+  });
+
+  it("rejects commands targeting a different session", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const other = makeSession("sess-other", "w1");
+    const { ctx } = createMockContext([session, other]);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.receive({
+      type: "reload",
+      sessionId: "sess-other",
+      requestId: "reload-other",
+    } as ClientMessage);
+    await drain();
+
+    expect(ctx.handleClientMessage).not.toHaveBeenCalled();
+    const result = ws
+      .sentOfType("command_result", "sess-other")
+      .find((m) => (m as Record<string, unknown>).requestId === "reload-other");
+    expect(result?.success).toBe(false);
+  });
+
+  it("unsubscribes from session manager when the socket closes", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx, broadcastTo } = createMockContext([session]);
+
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
+    await drain();
+
+    ws.sent.length = 0;
+    ws.close(1000);
+    broadcastTo("sess-bound", { type: "text_delta", delta: "after close" } as ServerMessage);
+
+    expect(ws.sentOfType("text_delta", "sess-bound")).toHaveLength(0);
+    expect(ctx.untrackConnection).toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceStreamMux", () => {
+  function createWorkspaceContext(): Pick<
+    StreamContext,
+    "storage" | "metrics" | "trackConnection" | "untrackConnection"
+  > {
+    const workspaces = new Map<string, Workspace>([
+      ["w1", { id: "w1", name: "One", path: "/tmp/one" } as Workspace],
+      ["w2", { id: "w2", name: "Two", path: "/tmp/two" } as Workspace],
+    ]);
+
+    return {
+      storage: {
+        getOwnerName: () => "test-user",
+        getWorkspace: (id: string) => workspaces.get(id) ?? null,
+      } as StreamContext["storage"],
+      metrics: { record: vi.fn() } as unknown as StreamContext["metrics"],
+      trackConnection: vi.fn(),
+      untrackConnection: vi.fn(),
+    };
+  }
+
+  it("includes ASR availability in the workspace stream bootstrap", () => {
+    const ctx = createWorkspaceContext() as ReturnType<typeof createWorkspaceContext> & {
+      dictationManager: NonNullable<StreamContext["dictationManager"]>;
+    };
+    ctx.dictationManager = {} as NonNullable<StreamContext["dictationManager"]>;
+    const mux = new WorkspaceStreamMux(ctx);
+    const ws = new FakeWebSocket();
+
+    mux.handleWebSocket("w1", ws as unknown as WebSocket);
+
+    expect(ws.sentOfType("stream_connected")[0]).toMatchObject({ asrAvailable: true });
+  });
+
+  it("fans out workspace events only to matching workspace sockets", () => {
+    const ctx = createWorkspaceContext();
+    const mux = new WorkspaceStreamMux(ctx);
+    const ws1 = new FakeWebSocket();
+    const ws2 = new FakeWebSocket();
+
+    mux.handleWebSocket("w1", ws1 as unknown as WebSocket);
+    mux.handleWebSocket("w2", ws2 as unknown as WebSocket);
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws1, { userBroadcast: false });
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws2, { userBroadcast: false });
+    ws1.sent.length = 0;
+    ws2.sent.length = 0;
+
+    mux.recordAndFanOutWorkspaceEvent("w1", {
+      type: "session_projection",
+      summary: makeSession("s1", "w1"),
+      sessionId: "s1",
+    } as ServerMessage);
+
+    expect(ws1.sentOfType("session_projection")).toHaveLength(1);
+    expect(ws2.sentOfType("session_projection")).toHaveLength(0);
+    expect(ws1.sent[0]?.workspaceId).toBe("w1");
+    expect(ws1.sent[0]?.streamSeq).toBe(1);
+  });
+
+  it("serves workspace catch-up from the workspace-specific ring", () => {
+    const ctx = createWorkspaceContext();
+    const mux = new WorkspaceStreamMux(ctx);
+
+    mux.recordAndFanOutWorkspaceEvent("w1", {
+      type: "session_projection",
+      summary: makeSession("s1", "w1"),
+      sessionId: "s1",
+    } as ServerMessage);
+    mux.recordAndFanOutWorkspaceEvent("w2", {
+      type: "session_projection",
+      summary: makeSession("s2", "w2"),
+      sessionId: "s2",
+    } as ServerMessage);
+    mux.recordAndFanOutWorkspaceEvent("w1", {
+      type: "session_deleted",
+      sessionId: "s1",
+    } as ServerMessage);
+
+    const catchUp = mux.getWorkspaceStreamCatchUp("w1", 0);
+    expect(catchUp.catchUpComplete).toBe(true);
+    expect(catchUp.currentSeq).toBe(2);
+    expect(catchUp.events.map((event) => event.type)).toEqual([
+      "session_projection",
+      "session_deleted",
+    ]);
+    expect(catchUp.events.every((event) => event.workspaceId === "w1")).toBe(true);
+  });
+
+  it("closes unknown workspace sockets without tracking them", () => {
+    const ctx = createWorkspaceContext();
+    const mux = new WorkspaceStreamMux(ctx);
+    const ws = new FakeWebSocket();
+
+    mux.handleWebSocket("missing", ws as unknown as WebSocket);
+
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ctx.trackConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe("SessionAudioStreamMux", () => {
+  it("routes dictation controls and binary audio to a per-connection manager", () => {
+    const session = makeSession("s-audio", "w1");
+    const { ctx } = createMockContext([session]);
+    const manager = {
+      handleControlMessage: vi.fn((msg, send) => {
+        if (msg.type === "dictation_start") {
+          send({ type: "dictation_ready", sttProvider: "test", sttModel: "mock" });
+        }
+      }),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new SessionAudioStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket("w1", "s-audio", ws as unknown as WebSocket);
+    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: false });
+
+    ws.receive({ type: "dictation_start" } as ClientMessage);
+    ws.receiveBinary(Buffer.from([1, 2, 3]));
+    ws.close(1000);
+
+    expect(manager.handleControlMessage).toHaveBeenCalledWith(
+      { type: "dictation_start" },
+      expect.any(Function),
+    );
+    expect(manager.handleAudioData).toHaveBeenCalledWith(Buffer.from([1, 2, 3]));
+    expect(manager.handleDisconnect).toHaveBeenCalled();
+    expect(ws.sentOfType("dictation_ready")).toHaveLength(1);
+  });
+
+  it("rejects unsupported chat messages on the audio stream", () => {
+    const session = makeSession("s-audio", "w1");
+    const { ctx } = createMockContext([session]);
+    const manager = {
+      handleControlMessage: vi.fn(),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new SessionAudioStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket("w1", "s-audio", ws as unknown as WebSocket);
+
+    ws.receive({ type: "prompt", message: "hello" } as ClientMessage);
+
+    const errors = ws.sentOfType("dictation_error");
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as { error?: string }).error).toContain("Unsupported audio stream message");
+    expect(manager.handleControlMessage).not.toHaveBeenCalled();
+  });
+
+  it("closes missing session sockets without tracking them", () => {
+    const { ctx } = createMockContext([]);
+    const mux = new SessionAudioStreamMux(ctx);
+    const ws = new FakeWebSocket();
+
+    mux.handleWebSocket("w1", "missing", ws as unknown as WebSocket);
+
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ctx.trackConnection).not.toHaveBeenCalled();
   });
 });

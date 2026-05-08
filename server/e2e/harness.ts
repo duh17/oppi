@@ -1,6 +1,6 @@
 /**
  * E2E test harness — manages Docker server lifecycle and provides
- * API/WebSocket helpers for pairing and session tests.
+ * API/WebSocket helpers for pairing and split-stream session tests.
  *
  * Two modes:
  * - Docker mode (default): spins up oppi-e2e container
@@ -30,6 +30,7 @@ export const ADMIN_TOKEN = "e2e-admin-token";
 
 // Resolved after local model server probe
 export let E2E_MODEL = "";
+export let E2E_MODEL_ID = "";
 
 const PREFERRED_MODEL_REGEX = /qwen3\.?6/i;
 
@@ -38,6 +39,37 @@ function chooseModelId(modelIds: string[]): string | null {
 
   const preferred = modelIds.find((id) => PREFERRED_MODEL_REGEX.test(id));
   return preferred ?? modelIds[0] ?? null;
+}
+
+async function discoverLocalModelId(): Promise<string | null> {
+  const res = await fetch(`${OMLX_HOST_URL}/v1/models`);
+  if (!res.ok) return null;
+  const data = (await res.json()) as { data?: { id: string }[] };
+  return chooseModelId((data.data || []).map((model) => model.id));
+}
+
+function makeModelsConfig(baseUrl: string, modelId: string): Record<string, unknown> {
+  return {
+    providers: {
+      omlx: {
+        baseUrl: `${baseUrl}/v1`,
+        apiKey: "DUMMY",
+        api: "openai-completions",
+        models: [
+          {
+            id: modelId,
+            name: "E2E OMLX Model",
+            contextWindow: 32768,
+            maxTokens: 8192,
+            input: ["text"],
+            reasoning: true,
+            compat: { thinkingFormat: "qwen" },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          },
+        ],
+      },
+    },
+  };
 }
 
 const BOOT_TIMEOUT_MS = 120_000;
@@ -65,10 +97,22 @@ export function baseURL(): string {
   return `${scheme}://127.0.0.1:${E2E_PORT}`;
 }
 
-export function streamURL(): string {
+function wsBaseURL(): string {
   const scheme = activeTransportScheme();
   const wsScheme = scheme === "https" ? "wss" : "ws";
-  return `${wsScheme}://127.0.0.1:${E2E_PORT}/stream`;
+  return `${wsScheme}://127.0.0.1:${E2E_PORT}`;
+}
+
+export function workspaceStreamURL(workspaceId: string): string {
+  return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/stream`;
+}
+
+export function sessionStreamURL(workspaceId: string, sessionId: string): string {
+  return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/stream`;
+}
+
+export function sessionAudioStreamURL(workspaceId: string, sessionId: string): string {
+  return `${wsBaseURL()}/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/audio/stream`;
 }
 
 export function isSecureTransport(): boolean {
@@ -85,17 +129,13 @@ function applySelfSignedTlsBypass(): void {
 
 export async function ensureMLXServerReady(): Promise<boolean> {
   try {
-    const res = await fetch(`${OMLX_HOST_URL}/v1/models`);
-    if (!res.ok) return false;
-    const data = (await res.json()) as { data?: { id: string }[] };
-    const modelIds = (data.data || []).map((model) => model.id);
-
-    const modelId = chooseModelId(modelIds);
+    const modelId = await discoverLocalModelId();
     if (!modelId) {
       console.warn("[e2e] OMLX server is running but no models loaded");
       return false;
     }
 
+    E2E_MODEL_ID = modelId;
     E2E_MODEL = `omlx/${modelId}`;
 
     if (PREFERRED_MODEL_REGEX.test(modelId)) {
@@ -116,7 +156,20 @@ export async function ensureMLXServerReady(): Promise<boolean> {
 let serverProcess: ChildProcess | null = null;
 let nativeDataDir: string | null = null;
 
+function cleanStaleE2EListeners(): void {
+  try {
+    execSync("node scripts/e2e-clean.mjs", {
+      cwd: SERVER_DIR,
+      stdio: "inherit",
+      env: { ...process.env, E2E_PORT: String(E2E_PORT) },
+    });
+  } catch {
+    console.warn("[e2e] Stale E2E listener cleanup failed; continuing with normal startup");
+  }
+}
+
 export async function startServer(): Promise<void> {
+  cleanStaleE2EListeners();
   if (process.env.E2E_NATIVE === "1") {
     await startNativeServer();
   } else {
@@ -186,37 +239,13 @@ async function startDockerServer(): Promise<void> {
 
   const composeFile = join(__dirname, "docker-compose.e2e.yml");
 
-  // Probe the OMLX server for its loaded model and generate a container-compatible
-  // models.json that routes omlx/* to host.docker.internal:<port>.
-  const res = await fetch(`${OMLX_HOST_URL}/v1/models`);
-  const data = (await res.json()) as { data?: { id: string }[] };
-  const modelId = chooseModelId((data.data || []).map((model) => model.id));
+  // Generate a container-compatible models.json that routes omlx/* to
+  // host.docker.internal:<port>.
+  const modelId = E2E_MODEL_ID || (await discoverLocalModelId());
   if (!modelId) throw new Error("[e2e] OMLX server has no models loaded");
 
-  const modelsConfig = {
-    providers: {
-      omlx: {
-        baseUrl: `${OMLX_DOCKER_URL}/v1`,
-        apiKey: "DUMMY",
-        api: "openai-completions",
-        models: [
-          {
-            id: modelId,
-            name: "E2E OMLX Model",
-            contextWindow: 32768,
-            maxTokens: 8192,
-            input: ["text"],
-            reasoning: true,
-            compat: { thinkingFormat: "qwen" },
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          },
-        ],
-      },
-    },
-  };
-
   const tmpModels = join(tmpdir(), `oppi-e2e-models-${Date.now()}.json`);
-  writeFileSync(tmpModels, JSON.stringify(modelsConfig, null, 2));
+  writeFileSync(tmpModels, JSON.stringify(makeModelsConfig(OMLX_DOCKER_URL, modelId), null, 2));
   dockerModelsJson = tmpModels;
 
   execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 120`, {
@@ -283,14 +312,17 @@ async function startNativeServer(): Promise<void> {
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
-  // Copy host models.json so pi can resolve the omlx provider
-  const hostModels = join(process.env.HOME || "", ".pi/agent/models.json");
+  // Generate a self-contained models.json so the native server always uses
+  // the probed local model instead of relying on the developer's global config.
+  const modelId = E2E_MODEL_ID || (await discoverLocalModelId());
+  if (!modelId) throw new Error("[e2e] OMLX server has no models loaded");
   const piDir = join(nativeDataDir, "pi-agent");
-  const { existsSync: exists, mkdirSync: mkdir, copyFileSync: cpFile } = await import("node:fs");
-  if (exists(hostModels)) {
-    mkdir(piDir, { recursive: true });
-    cpFile(hostModels, join(piDir, "models.json"));
-  }
+  const { mkdirSync: mkdir } = await import("node:fs");
+  mkdir(piDir, { recursive: true });
+  writeFileSync(
+    join(piDir, "models.json"),
+    JSON.stringify(makeModelsConfig(OMLX_HOST_URL, modelId), null, 2),
+  );
 
   await launchNativeServerProcess();
   console.log("[e2e] Native server healthy");
@@ -311,6 +343,8 @@ async function launchNativeServerProcess(): Promise<void> {
     env: {
       ...process.env,
       OPPI_DATA_DIR: dataDir,
+      PI_CODING_AGENT_DIR: join(dataDir, "pi-agent"),
+      PI_AGENT_SYNC_MODE: "skip",
     },
     stdio: ["ignore", logFd, logFd],
   });
@@ -493,6 +527,7 @@ export interface StreamEvent {
   direction: "in" | "out";
   type: string;
   sessionId?: string;
+  workspaceId?: string;
   requestId?: string;
   command?: string;
   id?: string;
@@ -504,15 +539,18 @@ export interface StreamEvent {
   success?: boolean;
   error?: string;
   data?: unknown;
+  summary?: unknown;
   sessionStatus?: string;
   sessionSeq?: number;
+  currentSeq?: number;
+  streamSeq?: number;
   content?: string;
   delta?: string;
   seq: number;
 }
 
-export async function openStream(deviceToken: string): Promise<StreamConnection> {
-  const ws = new WebSocket(streamURL(), {
+async function openStreamAt(url: string, deviceToken: string): Promise<StreamConnection> {
+  const ws = new WebSocket(url, {
     headers: { Authorization: `Bearer ${deviceToken}` },
     ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
   });
@@ -547,7 +585,6 @@ export async function openStream(deviceToken: string): Promise<StreamConnection>
     connection.events.push(event);
   });
 
-  // Wait for open
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("WS open timeout")), 15_000);
     ws.once("open", () => {
@@ -560,9 +597,29 @@ export async function openStream(deviceToken: string): Promise<StreamConnection>
     });
   });
 
-  // Wait for stream_connected
   await waitForEvent(connection, (e) => e.type === "stream_connected", "stream_connected");
 
+  return connection;
+}
+
+export async function openWorkspaceStream(
+  deviceToken: string,
+  workspaceId: string,
+): Promise<StreamConnection> {
+  return openStreamAt(workspaceStreamURL(workspaceId), deviceToken);
+}
+
+export async function openSessionStream(
+  deviceToken: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<StreamConnection> {
+  const connection = await openStreamAt(sessionStreamURL(workspaceId, sessionId), deviceToken);
+  await waitForEvent(
+    connection,
+    (e) => e.direction === "in" && e.type === "connected" && e.sessionId === sessionId,
+    `session connected (${sessionId})`,
+  );
   return connection;
 }
 
@@ -605,41 +662,6 @@ export async function waitForEvent(
   }
 
   throw new Error(`Timeout waiting for ${label} (${timeoutMs}ms)`);
-}
-
-/**
- * Subscribe to a session on a /stream connection.
- */
-export async function subscribeSession(
-  conn: StreamConnection,
-  sessionId: string,
-  requestId: string,
-): Promise<{ rpcData: Record<string, unknown> }> {
-  const startIndex = conn.events.length;
-
-  conn.send({
-    type: "subscribe",
-    sessionId,
-    level: "full",
-    sinceSeq: 0,
-    requestId,
-  });
-
-  const { event } = await waitForEvent(
-    conn,
-    (e) =>
-      e.direction === "in" &&
-      (e.type === "command_result" || e.type === "rpc_result") &&
-      e.requestId === requestId,
-    `subscribe rpc_result (${requestId})`,
-    { startIndex },
-  );
-
-  if (event.success !== true) {
-    throw new Error(`Subscribe failed: ${event.error || "unknown"}`);
-  }
-
-  return { rpcData: (event.data as Record<string, unknown>) || {} };
 }
 
 /**
@@ -738,6 +760,7 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
     type: (msg.type as string) || "unknown",
   };
   if (msg.sessionId) event.sessionId = msg.sessionId as string;
+  if (msg.workspaceId) event.workspaceId = msg.workspaceId as string;
   if (msg.requestId) event.requestId = msg.requestId as string;
   if (msg.command) event.command = msg.command as string;
   if (msg.id) event.id = msg.id as string;
@@ -749,10 +772,13 @@ function toEvent(direction: "in" | "out", msg: Record<string, unknown>, seq: num
   if (typeof msg.success === "boolean") event.success = msg.success;
   if (msg.error) event.error = msg.error as string;
   if ("data" in msg) event.data = msg.data;
+  if ("summary" in msg) event.summary = msg.summary;
   if (msg.session && typeof (msg.session as Record<string, unknown>).status === "string") {
     event.sessionStatus = (msg.session as Record<string, unknown>).status as string;
   }
   if (typeof msg.seq === "number") event.sessionSeq = msg.seq;
+  if (typeof msg.currentSeq === "number") event.currentSeq = msg.currentSeq;
+  if (typeof msg.streamSeq === "number") event.streamSeq = msg.streamSeq;
   if (typeof msg.content === "string") event.content = msg.content;
   if (typeof msg.delta === "string") event.delta = msg.delta;
   return event;

@@ -1492,6 +1492,7 @@ export type ServerMessage = // ── Connection ──
       }
     | { type: "permission_expired"; id: string; reason: string }
     | { type: "permission_cancelled"; id: string }
+    | { type: "permission_resolved"; id: string; action: "allow" | "deny" }
     // ── Extension UI forwarding ──
     | {
         type: "extension_ui_request";

@@ -18,7 +18,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const INGEST_PARSER_VERSION = 4;
+const INGEST_PARSER_VERSION = 5;
 const DEFAULT_BROKEN_BACKUP_KEEP_COUNT = 1;
 const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -127,7 +127,14 @@ function ensureSchema(db) {
       ts_ms INTEGER NOT NULL,
       metric TEXT NOT NULL,
       value REAL NOT NULL,
-      tags_json TEXT
+      tags_json TEXT,
+      tag_path TEXT,
+      tag_type TEXT,
+      tag_level TEXT,
+      tag_lane TEXT,
+      tag_ring TEXT,
+      tag_code TEXT,
+      tag_outcome TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_server_ops_metric_ts ON server_ops_metric_samples(metric, ts_ms);
     CREATE INDEX IF NOT EXISTS idx_server_ops_ts ON server_ops_metric_samples(ts_ms);
@@ -166,6 +173,29 @@ function ensureSchema(db) {
       "ALTER TABLE ingested_files ADD COLUMN processed_offset_bytes INTEGER NOT NULL DEFAULT 0",
     );
   }
+
+  const serverOpsColumns = db.prepare("PRAGMA table_info(server_ops_metric_samples)").all();
+  const serverOpsColumnNames = new Set(serverOpsColumns.map((column) => column.name));
+  const serverOpsTagColumns = [
+    "tag_path",
+    "tag_type",
+    "tag_level",
+    "tag_lane",
+    "tag_ring",
+    "tag_code",
+    "tag_outcome",
+  ];
+  for (const column of serverOpsTagColumns) {
+    if (!serverOpsColumnNames.has(column)) {
+      db.exec(`ALTER TABLE server_ops_metric_samples ADD COLUMN ${column} TEXT`);
+    }
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_path_ts ON server_ops_metric_samples(metric, tag_path, ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_level_ts ON server_ops_metric_samples(metric, tag_level, ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_lane_ts ON server_ops_metric_samples(metric, tag_lane, ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_ring_ts ON server_ops_metric_samples(metric, tag_ring, ts_ms);
+  `);
 }
 
 function brokenBackupKeepCountFromEnv() {
@@ -189,7 +219,8 @@ function normalizedSourceFile(fileName) {
 function detectKind(fileName) {
   if (fileName.startsWith("chat-metrics-") && fileName.endsWith(".jsonl")) return "chat";
   if (fileName.startsWith("server-metrics-") && fileName.endsWith(".jsonl")) return "server";
-  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl")) return "server_ops";
+  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl"))
+    return "server_ops";
   if (fileName.startsWith("metrickit-") && fileName.endsWith(".jsonl")) return "metrickit";
   return null;
 }
@@ -200,6 +231,12 @@ function fileId(parts) {
 
 function toJson(value) {
   return value && typeof value === "object" ? JSON.stringify(value) : null;
+}
+
+function tagValue(tags, key) {
+  if (!tags || typeof tags !== "object") return null;
+  const value = tags[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function safeNumber(value) {
@@ -306,7 +343,11 @@ function planIngest(state, meta) {
   const fullyProcessed = state.processed_offset_bytes === meta.sizeBytes;
   const unchanged = fullyProcessed && meta.mtimeMs === state.mtime_ms;
   if (unchanged) {
-    return { action: "skip", startOffset: state.processed_offset_bytes, lineNumberStart: state.line_count };
+    return {
+      action: "skip",
+      startOffset: state.processed_offset_bytes,
+      lineNumberStart: state.line_count,
+    };
   }
 
   if (meta.sizeBytes === state.size_bytes && fullyProcessed && meta.mtimeMs !== state.mtime_ms) {
@@ -430,8 +471,9 @@ function ingestServerOpsFile(db, sourceFile, lines, options) {
 
   const ins = db.prepare(`
     INSERT OR REPLACE INTO server_ops_metric_samples (
-      id, source_file, line_number, sample_index, ts_ms, metric, value, tags_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      id, source_file, line_number, sample_index, ts_ms, metric, value, tags_json,
+      tag_path, tag_type, tag_level, tag_lane, tag_ring, tag_code, tag_outcome
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -449,6 +491,7 @@ function ingestServerOpsFile(db, sourceFile, lines, options) {
         continue;
       }
 
+      const tags = sample.tags && typeof sample.tags === "object" ? sample.tags : null;
       ins.run(
         fileId([sourceFile, lineNumber, sampleIndex]),
         sourceFile,
@@ -457,7 +500,14 @@ function ingestServerOpsFile(db, sourceFile, lines, options) {
         ts,
         sample.metric,
         value,
-        toJson(sample.tags),
+        toJson(tags),
+        tagValue(tags, "path"),
+        tagValue(tags, "type"),
+        tagValue(tags, "level"),
+        tagValue(tags, "lane"),
+        tagValue(tags, "ring"),
+        tagValue(tags, "code"),
+        tagValue(tags, "outcome"),
       );
       count += 1;
     }

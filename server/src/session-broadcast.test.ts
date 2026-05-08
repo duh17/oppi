@@ -91,7 +91,7 @@ describe("SessionBroadcaster", () => {
       expect(received[0]!.seq).toBeUndefined(); // no seq assigned
     });
 
-    it("only emits 'state' ephemeral events to global observers", () => {
+    it("emits low-frequency ephemeral events to global observers", () => {
       const { broadcaster, activeSessions, emitted } = createHarness();
       const active = makeActive();
       activeSessions.set("k1", active);
@@ -107,6 +107,16 @@ describe("SessionBroadcaster", () => {
       } as ServerMessage);
       expect(emitted).toHaveLength(1);
       expect(emitted[0]!.durable).toBe(false);
+
+      broadcaster.broadcast("k1", {
+        type: "extension_ui_request",
+        id: "ask-1",
+        sessionId: "s1",
+        method: "ask",
+      } as ServerMessage);
+      expect(emitted).toHaveLength(2);
+      expect(emitted[1]!.event.type).toBe("extension_ui_request");
+      expect(emitted[1]!.durable).toBe(false);
     });
 
     // Verify every durable type is actually in the set
@@ -119,6 +129,7 @@ describe("SessionBroadcaster", () => {
       "permission_request",
       "permission_expired",
       "permission_cancelled",
+      "permission_resolved",
       "stop_requested",
       "stop_confirmed",
       "stop_failed",

@@ -523,7 +523,7 @@ describe("malformed message handling", () => {
 });
 
 describe("per-session WebSocket lifecycle", () => {
-  it("per-session stream endpoint returns 404 (removed, use /stream)", async () => {
+  it("opens the bound session stream endpoint", async () => {
     const { workspaceId, sessionId } = await createWorkspaceAndSession();
 
     const ws = new WebSocket(
@@ -531,15 +531,19 @@ describe("per-session WebSocket lifecycle", () => {
       { headers: { Authorization: `Bearer ${token}` } },
     );
 
-    const closed = await new Promise<boolean>((resolve) => {
-      ws.on("error", () => resolve(true));
-      ws.on("close", () => resolve(true));
-      ws.on("open", () => {
+    try {
+      const first = await waitForMessage(ws);
+      expect(first.type).toBe("stream_connected");
+
+      const msg = await waitForMessage(ws);
+      expect(msg.type).toBe("connected");
+      expect(msg.sessionId).toBe(sessionId);
+      expect(msg.currentSeq).toBeGreaterThanOrEqual(0);
+    } finally {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CLOSING) {
         ws.close();
-        resolve(false);
-      });
-    });
-    expect(closed).toBe(true);
+      }
+    }
   });
 });
 

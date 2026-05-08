@@ -2,10 +2,10 @@
  * E2E: Advanced session lifecycle tests
  *
  * Exercises advanced session behaviors beyond basic prompt/response:
- *   1. Concurrent prompts across sessions (event isolation)
+ *   1. Concurrent prompts across split session streams (event isolation)
  *   2. Model switching mid-session via set_model
  *   3. Thinking level toggle via set_thinking_level
- *   4. Session deletion while stream is subscribed
+ *   4. Session deletion while workspace/session streams are open
  *   5. Follow-up queue execution during an active turn
  *
  * Requires: Docker, OMLX server on localhost:8400 with a loaded model
@@ -15,10 +15,10 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
-  openStream,
+  openWorkspaceStream,
+  openSessionStream,
   closeStream,
   waitForEvent,
-  subscribeSession,
   autoApprovePermissions,
 } from "./harness.js";
 
@@ -109,63 +109,60 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
     });
     const session2Id = (sess2Res.json!.session as Record<string, unknown>).id as string;
 
-    const stream = await openStream(deviceToken);
-    const approver1 = autoApprovePermissions(stream, session1Id);
-    const approver2 = autoApprovePermissions(stream, session2Id);
+    const stream1 = await openSessionStream(deviceToken, workspaceId, session1Id);
+    const stream2 = await openSessionStream(deviceToken, workspaceId, session2Id);
+    const approver1 = autoApprovePermissions(stream1, session1Id);
+    const approver2 = autoApprovePermissions(stream2, session2Id);
 
     try {
-      await subscribeSession(stream, session1Id, "req-sub-concurrent-1");
-      await subscribeSession(stream, session2Id, "req-sub-concurrent-2");
+      const startIndex1 = stream1.events.length;
+      const startIndex2 = stream2.events.length;
 
-      const startIndex = stream.events.length;
-
-      // Send prompts to both simultaneously — no await between sends
-      stream.send({
+      // Send prompts to both bound streams simultaneously — no await between sends.
+      stream1.send({
         type: "prompt",
         sessionId: session1Id,
         message: "Reply with exactly: SESSION_ONE_OK. Do not use any tools.",
         requestId: "req-concurrent-prompt-1",
       });
-      stream.send({
+      stream2.send({
         type: "prompt",
         sessionId: session2Id,
         message: "Reply with exactly: SESSION_TWO_OK. Do not use any tools.",
         requestId: "req-concurrent-prompt-2",
       });
 
-      // Wait for both agent_end events
       await waitForEvent(
-        stream,
+        stream1,
         (e) => e.direction === "in" && e.type === "agent_end" && e.sessionId === session1Id,
         "agent_end session 1",
-        { startIndex, timeoutMs: 300_000 },
+        { startIndex: startIndex1, timeoutMs: 300_000 },
       );
       await waitForEvent(
-        stream,
+        stream2,
         (e) => e.direction === "in" && e.type === "agent_end" && e.sessionId === session2Id,
         "agent_end session 2",
-        { startIndex, timeoutMs: 300_000 },
+        { startIndex: startIndex2, timeoutMs: 300_000 },
       );
 
-      // Collect text_delta events per session
-      const allTextDeltas = stream.events
-        .slice(startIndex)
+      const s1Deltas = stream1.events
+        .slice(startIndex1)
         .filter((e) => e.direction === "in" && e.type === "text_delta");
-
-      const s1Deltas = allTextDeltas.filter((e) => e.sessionId === session1Id);
-      const s2Deltas = allTextDeltas.filter((e) => e.sessionId === session2Id);
+      const s2Deltas = stream2.events
+        .slice(startIndex2)
+        .filter((e) => e.direction === "in" && e.type === "text_delta");
 
       expect(s1Deltas.length).toBeGreaterThan(0);
       expect(s2Deltas.length).toBeGreaterThan(0);
-
-      // Every text_delta must belong to exactly one of the two sessions
-      for (const e of allTextDeltas) {
-        expect([session1Id, session2Id]).toContain(e.sessionId);
-      }
+      expect(s1Deltas.every((e) => e.sessionId === session1Id)).toBe(true);
+      expect(s2Deltas.every((e) => e.sessionId === session2Id)).toBe(true);
+      expect(stream1.events.some((e) => e.sessionId === session2Id)).toBe(false);
+      expect(stream2.events.some((e) => e.sessionId === session1Id)).toBe(false);
     } finally {
       approver1.stop();
       approver2.stop();
-      await closeStream(stream);
+      await closeStream(stream1);
+      await closeStream(stream2);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }
   });
@@ -176,12 +173,10 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
     if (!lmsReady()) return;
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-model-switch");
-    const stream = await openStream(deviceToken);
+    const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
     const approver = autoApprovePermissions(stream, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-sub-model-switch");
-
       const { provider, modelId } = parseModelId(inject("e2eModel"));
 
       // Send set_model command (same model — verifying the command round-trips)
@@ -232,12 +227,10 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
     if (!lmsReady()) return;
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-thinking-level");
-    const stream = await openStream(deviceToken);
+    const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
     const approver = autoApprovePermissions(stream, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-sub-thinking");
-
       // Set thinking level to "low"
       stream.send({
         type: "set_thinking_level",
@@ -277,12 +270,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       // we only assert the command didn't cause errors (no fatal error events).
       const fatalErrors = stream.events
         .slice(startIndex)
-        .filter(
-          (e) =>
-            e.direction === "in" &&
-            e.type === "error" &&
-            e.sessionId === sessionId,
-        );
+        .filter((e) => e.direction === "in" && e.type === "error" && e.sessionId === sessionId);
       expect(fatalErrors).toHaveLength(0);
     } finally {
       approver.stop();
@@ -291,19 +279,18 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
     }
   });
 
-  // ── 4. Session deletion while subscribed ──
+  // ── 4. Session deletion across split lanes ──
 
-  it("receives deletion event when session is deleted via REST", async () => {
+  it("receives workspace deletion projection when a session is deleted via REST", async () => {
     if (!lmsReady()) return;
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-session-delete");
-    const stream = await openStream(deviceToken);
+    const workspaceStream = await openWorkspaceStream(deviceToken, workspaceId);
+    const sessionStream = await openSessionStream(deviceToken, workspaceId, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-sub-delete");
-      const startIndex = stream.events.length;
+      const workspaceStartIndex = workspaceStream.events.length;
 
-      // Delete the session via REST API
       const delRes = await api(
         "DELETE",
         `/workspaces/${workspaceId}/sessions/${sessionId}`,
@@ -311,30 +298,22 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       );
       expect(delRes.status).toBe(200);
 
-      // Verify a session_deleted or session_ended event arrives on the stream
       await waitForEvent(
-        stream,
-        (e) =>
-          e.direction === "in" &&
-          e.sessionId === sessionId &&
-          (e.type === "session_deleted" || e.type === "session_ended"),
-        "session deletion event",
-        { startIndex, timeoutMs: 30_000 },
+        workspaceStream,
+        (e) => e.direction === "in" && e.type === "session_deleted" && e.sessionId === sessionId,
+        "workspace session_deleted event",
+        { startIndex: workspaceStartIndex, timeoutMs: 30_000 },
       );
 
-      // Verify the session no longer appears in the sessions list
-      const listRes = await api(
-        "GET",
-        `/workspaces/${workspaceId}/sessions`,
-        deviceToken,
-      );
+      const listRes = await api("GET", `/workspaces/${workspaceId}/sessions`, deviceToken);
       expect(listRes.status).toBe(200);
 
       const sessions = (listRes.json?.sessions ?? []) as { id: string }[];
       const found = sessions.find((s) => s.id === sessionId);
       expect(found).toBeUndefined();
     } finally {
-      await closeStream(stream);
+      await closeStream(sessionStream);
+      await closeStream(workspaceStream);
       await api("DELETE", `/workspaces/${workspaceId}`, deviceToken);
     }
   });
@@ -345,11 +324,10 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
     if (!lmsReady()) return;
 
     const { workspaceId, sessionId } = await createWorkspaceAndSession("e2e-follow-up-queue");
-    const stream = await openStream(deviceToken);
+    const stream = await openSessionStream(deviceToken, workspaceId, sessionId);
     const approver = autoApprovePermissions(stream, sessionId);
 
     try {
-      await subscribeSession(stream, sessionId, "req-sub-queue");
       const startIndex = stream.events.length;
 
       // Send initial prompt
@@ -394,10 +372,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
       // a single final agent_end after all queued work is complete.
       const { index: queueItemStartIdx } = await waitForEvent(
         stream,
-        (e) =>
-          e.direction === "in" &&
-          e.type === "queue_item_started" &&
-          e.sessionId === sessionId,
+        (e) => e.direction === "in" && e.type === "queue_item_started" && e.sessionId === sessionId,
         "queue_item_started (follow-up)",
         { startIndex, timeoutMs: 300_000 },
       );
