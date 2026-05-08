@@ -249,7 +249,9 @@ extension ChatTimelineCollectionHost.Controller {
         let sessionId = self.sessionId
         return { decision in
             try await Self.upsertBashCommandPolicyRule(
-                apiClient: apiClient,
+                listPolicyRules: apiClient.listPolicyRules(workspaceId:),
+                createPolicyRule: apiClient.createPolicyRule(request:),
+                patchPolicyRule: apiClient.patchPolicyRule(ruleId:request:),
                 command: trimmedCommand,
                 decision: decision,
                 scope: scope,
@@ -268,23 +270,25 @@ extension ChatTimelineCollectionHost.Controller {
 
     @discardableResult
     private static func upsertBashCommandPolicyRule(
-        apiClient: APIClient,
+        listPolicyRules: (String?) async throws -> [PolicyRuleRecord],
+        createPolicyRule: (PolicyRuleCreateRequest) async throws -> PolicyRuleRecord,
+        patchPolicyRule: (String, PolicyRulePatchRequest) async throws -> PolicyRuleRecord,
         command: String,
         decision: BashCommandPolicyRuleDecision,
         scope: BashCommandPolicyRuleScope,
         sessionId: String
     ) async throws -> PolicyRuleRecord {
         let label = decision.ruleLabel(for: command)
-        let visibleRules = try await apiClient.listPolicyRules(workspaceId: scope.workspaceId)
+        let visibleRules = try await listPolicyRules(scope.workspaceId)
 
         if let existingTargetRule = preferredExactBashPolicyRule(
             in: visibleRules,
             command: command,
             scope: scope
         ) {
-            return try await apiClient.patchPolicyRule(
-                ruleId: existingTargetRule.id,
-                request: PolicyRulePatchRequest(
+            return try await patchPolicyRule(
+                existingTargetRule.id,
+                PolicyRulePatchRequest(
                     decision: decision.rawValue,
                     label: label,
                     tool: "bash",
@@ -300,8 +304,8 @@ extension ChatTimelineCollectionHost.Controller {
             sessionId: sessionId
         )?.executable
 
-        return try await apiClient.createPolicyRule(
-            request: PolicyRuleCreateRequest(
+        return try await createPolicyRule(
+            PolicyRuleCreateRequest(
                 decision: decision.rawValue,
                 label: label,
                 tool: "bash",
