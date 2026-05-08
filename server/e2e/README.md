@@ -13,24 +13,27 @@ End-to-end tests that exercise the full Oppi stack: Docker server + local OMLX m
 ### Pairing Flow (`pairing-flow.e2e.test.ts`)
 
 Exercises the first-time device pairing lifecycle:
+
 1. Unauthenticated access rejected (401)
 2. Server generates invite with one-time pairing token
 3. Client decodes invite payload (simulates QR scan)
 4. POST /pair exchanges pairing token for device token
 5. Replayed pairing token rejected (one-time use)
 6. Device token authenticates all subsequent API calls
-7. /stream WebSocket accessible with device token
+7. Split workspace/session WebSockets accessible with device token
 
 ### Paired Session Flow (`paired-session.e2e.test.ts`)
 
 Exercises the full session lifecycle for an already-paired device:
+
 1. Create workspace and session
-2. Subscribe to session via /stream WebSocket
-3. Send prompt, receive assistant response (text_delta + agent_end)
-4. Send prompt requiring tool use, verify tool_start → tool_end lifecycle
-5. Reconnect /stream, verify catch-up event replay
-6. Session isolation between workspaces
-7. Workspace cleanup
+2. Open `WS /workspaces/:workspaceId/stream`
+3. Open `WS /workspaces/:workspaceId/sessions/:sessionId/stream`
+4. Send prompt, receive assistant response (text_delta + agent_end)
+5. Send prompt requiring tool use, verify tool_start → tool_end lifecycle
+6. Reconnect the split session stream and verify fresh state
+7. Session isolation between workspaces
+8. Workspace cleanup
 
 ## Running
 
@@ -50,13 +53,13 @@ E2E_NATIVE=1 npm run test:e2e
 
 ## Configuration
 
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `E2E_PORT` | `17760` | Server port |
-| `E2E_MODEL` | auto-discovered | Model ID for sessions (resolved from `/v1/models`) |
-| `E2E_OMLX_PORT` | `8400` | Local OMLX server port |
-| `E2E_MLX_PORT` | unset | Legacy alias for `E2E_OMLX_PORT` |
-| `E2E_NATIVE` | `0` | `1` to skip Docker, run server natively |
+| Env var         | Default         | Description                                        |
+| --------------- | --------------- | -------------------------------------------------- |
+| `E2E_PORT`      | `17760`         | Server port                                        |
+| `E2E_MODEL`     | auto-discovered | Model ID for sessions (resolved from `/v1/models`) |
+| `E2E_OMLX_PORT` | `8400`          | Local OMLX server port                             |
+| `E2E_MLX_PORT`  | unset           | Legacy alias for `E2E_OMLX_PORT`                   |
+| `E2E_NATIVE`    | `0`             | `1` to skip Docker, run server natively            |
 
 ## Architecture
 
@@ -70,7 +73,8 @@ e2e/
 ```
 
 The harness supports two modes:
+
 - **Docker mode** (default): builds and starts `oppi-e2e` container, OMLX reached via `host.docker.internal`
 - **Native mode** (`E2E_NATIVE=1`): builds server locally, starts as child process in a temp directory
 
-Both modes share the same test code — only server lifecycle differs.
+Both modes generate a temporary `models.json` from the probed local OMLX model, preferring `Qwen3.6*` when available. Both modes share the same test code — only server lifecycle differs.

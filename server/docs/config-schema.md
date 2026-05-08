@@ -184,17 +184,17 @@ Configures server-side dictation routing to an external STT backend.
 
 ### Policy
 
-Declarative policy rules for tool call authorization. Evaluated before user-learned rules. Full evaluation order and pattern matching documented in [policy-engine.md](policy-engine.md).
+`policy` config controls the permission gate defaults. The runtime source of truth for allow/ask/deny tool rules is `~/.config/oppi/rules.json`; `policy.guardrails` and `policy.permissions` are seed inputs copied into `rules.json` when missing and then evaluated with learned/manual rules. Full evaluation order and pattern matching are documented in [policy-engine.md](policy-engine.md).
 
-| Setting                | Type   | Default     | Description                                                                                     |
-| ---------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------- |
-| `policy.schemaVersion` | number | `1`         | Policy schema version. Must be `1`.                                                             |
-| `policy.mode`          | string | -           | Optional label for the policy preset (e.g. `"default"`, `"strict"`). Informational only.        |
-| `policy.description`   | string | -           | Human-readable description of the policy. Informational only.                                   |
-| `policy.fallback`      | string | `"allow"`   | Decision when no guardrail, permission, or learned rule matches: `"allow"`, `"ask"`, `"block"`. |
-| `policy.guardrails`    | array  | default set | Hard guardrails. Evaluated first. Cannot be overridden by user-learned rules.                   |
-| `policy.permissions`   | array  | default set | Soft permissions. Can be overridden by user-learned rules.                                      |
-| `policy.heuristics`    | object | see below   | Structural pattern detection. Catches dangerous patterns that simple matching misses.           |
+| Setting                | Type   | Default     | Description                                                                                                       |
+| ---------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `policy.schemaVersion` | number | `1`         | Policy schema version. Must be `1`.                                                                               |
+| `policy.mode`          | string | -           | Optional label for the policy preset (e.g. `"default"`, `"strict"`). Informational only.                          |
+| `policy.description`   | string | -           | Human-readable description of the policy. Informational only.                                                     |
+| `policy.fallback`      | string | `"allow"`   | Decision when no protected-path guard, heuristic, or `rules.json` rule matches: `"allow"`, `"ask"`, or `"block"`. |
+| `policy.guardrails`    | array  | default set | Seed rules intended for hard safety defaults. Existing conflicting manual/user rules win during seeding.          |
+| `policy.permissions`   | array  | default set | Seed rules intended for soft permissions/prompts. Existing conflicting manual/user rules win during seeding.      |
+| `policy.heuristics`    | object | see below   | Runtime structural pattern detection. Catches dangerous patterns that simple matching misses.                     |
 
 #### Guardrail / Permission Entry
 
@@ -226,7 +226,7 @@ At least one `match.*` field is required per entry.
 
 Each heuristic accepts `"allow"`, `"ask"`, `"block"`, or `false` (disabled).
 
-User-learned rules live separately in `~/.config/oppi/rules.json`.
+Manual and user-learned rules live in `~/.config/oppi/rules.json`. After a rule exists there, editing `policy.guardrails` or `policy.permissions` does not rewrite or override it; use the policy UI/API or edit `rules.json` deliberately.
 
 ---
 
