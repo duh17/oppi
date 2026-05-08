@@ -229,7 +229,7 @@ function sanitizeFtsQuery(raw: string): string {
     }
 
     for (const part of value.split(/\s+/).filter(Boolean)) {
-      if (part === "OR") {
+      if (part.toUpperCase() === "OR") {
         if (tokens.length > 0 && tokens[tokens.length - 1] !== "OR") {
           tokens.push("OR");
         }

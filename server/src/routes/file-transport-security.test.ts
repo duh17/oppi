@@ -208,4 +208,39 @@ describe("file transport security parity", () => {
     expect(touchedRes.statusCode).toBe(200);
     expect(touchedRes.body.toString("utf8")).toBe("hi from oppi\n");
   });
+
+  it("blocks touched-file reads outside the workspace even when changeStats contains an absolute path", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-file-security-root-"));
+    const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-file-security-outside-"));
+    const outsideFile = join(outsideRoot, "outside.txt");
+    writeFileSync(outsideFile, "outside workspace\n", "utf8");
+
+    try {
+      const workspace = makeWorkspace(root);
+      const session = makeSession({
+        changeStats: {
+          changedFiles: [outsideFile],
+          filesChanged: 1,
+        } as Session["changeStats"],
+      });
+      const errors: Array<{ status: number; message: string }> = [];
+      const handlers = createSessionFileHandlers(
+        makeContext(workspace, session),
+        makeHelpers(errors),
+      );
+
+      await handlers.handleGetTouchedFile(
+        "ws-1",
+        "sess-1",
+        new URL(
+          `https://localhost/workspaces/ws-1/sessions/sess-1/touched-file?path=${encodeURIComponent(outsideFile)}`,
+        ),
+        new MockWritableResponse() as unknown as ServerResponse,
+      );
+
+      expect(errors).toEqual([{ status: 403, message: "Path outside workspace" }]);
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
 });

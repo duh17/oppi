@@ -327,6 +327,12 @@ describe("SearchIndex indexes transcript content only", () => {
       index.sync([bugSession, architectureSession]);
       const results = index.search('"bug hunt" OR "architecture doc"', "ws-1", 10);
       expect(results.map((result) => result.sessionId).sort()).toEqual(["sess-arch", "sess-bug"]);
+
+      const lowercaseResults = index.search('"bug hunt" or "architecture doc"', "ws-1", 10);
+      expect(lowercaseResults.map((result) => result.sessionId).sort()).toEqual([
+        "sess-arch",
+        "sess-bug",
+      ]);
     } finally {
       index.close();
     }

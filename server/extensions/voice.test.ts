@@ -39,13 +39,12 @@ function createMockAPI(): {
   };
 }
 
-function makeNDJSONResponse(events: unknown[]): Response {
+function makeNDJSONResponse(events: unknown[], trailingNewline = true): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      for (const event of events) {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-      }
+      const lines = events.map((event) => JSON.stringify(event)).join("\n");
+      controller.enqueue(encoder.encode(lines + (trailingNewline ? "\n" : "")));
       controller.close();
     },
   });
@@ -124,6 +123,51 @@ describe("createVoiceFactory", () => {
       event: "metadata",
       delivery: "directSpeak",
     });
+  });
+
+  it("processes a final NDJSON stream line without trailing newline", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = input instanceof URL ? input : new URL(input);
+      if (url.pathname === "/v1/info") {
+        return new Response("{}", { status: 200 });
+      }
+      if (url.pathname === "/v1/audio/speech/stream") {
+        const pcmChunk = Buffer.from([0, 0, 1, 0]).toString("base64");
+        return makeNDJSONResponse(
+          [
+            { event: "metadata", sample_rate: 24_000, channels: 1 },
+            { event: "audio", chunk: 0, seconds: 0.1, audio: pcmChunk },
+            { event: "done", audio_duration_seconds: 0.1 },
+          ],
+          false,
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = createMockAPI();
+    createVoiceFactory()(api as never);
+    const tool = api.tools.get("voice_speak");
+    const audioStream = vi.fn();
+
+    const result = await tool!.execute(
+      "tc-no-newline",
+      {
+        text: "This stream ends without a newline.",
+        delivery: "voiceMessage",
+        stream: true,
+        play: false,
+        out: join(tempDir, "no-newline.wav"),
+      },
+      undefined,
+      undefined,
+      { ui: { audioStream } },
+    );
+
+    const details = result.details as { audio?: { durationSeconds?: number } };
+    expect(details.audio?.durationSeconds).toBe(0.1);
+    expect(audioStream).toHaveBeenCalledWith(expect.objectContaining({ event: "done" }));
   });
 
   it("keeps embedded WAV data for streamed voiceMessage replies", async () => {

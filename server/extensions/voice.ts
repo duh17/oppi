@@ -879,63 +879,68 @@ async function streamSpeechToWav(
   let channels = 1;
   const chunks: Buffer[] = [];
   let done: Record<string, unknown> = {};
+  const processLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const event = JSON.parse(trimmed) as YuwpStreamEvent;
+    if (event.event === "metadata") {
+      sampleRate = event.sample_rate ?? sampleRate;
+      channels = event.channels ?? channels;
+      onAudioStream?.({
+        kind: "audio-stream",
+        event: "metadata",
+        mimeType: "audio/pcm; codecs=s16le",
+        sampleRate,
+        channels,
+      });
+    } else if (event.event === "audio") {
+      if (!event.audio) return;
+      chunks.push(Buffer.from(event.audio, "base64"));
+      onAudioStream?.({
+        kind: "audio-stream",
+        event: "chunk",
+        mimeType: "audio/pcm; codecs=s16le",
+        sampleRate,
+        channels,
+        chunkIndex: event.chunk,
+        audioBase64: event.audio,
+        durationSeconds: event.seconds,
+      });
+    } else if (event.event === "done") {
+      done = event;
+      onAudioStream?.({
+        kind: "audio-stream",
+        event: "done",
+        mimeType: "audio/pcm; codecs=s16le",
+        sampleRate,
+        channels,
+        durationSeconds: event.audio_duration_seconds,
+        metrics: event,
+      });
+    } else if (event.event === "error") {
+      onAudioStream?.({
+        kind: "audio-stream",
+        event: "error",
+        mimeType: "audio/pcm; codecs=s16le",
+        sampleRate,
+        channels,
+        text: event.error ?? "TTS stream error",
+      });
+      throw new Error(event.error ?? "TTS stream error");
+    }
+  };
   while (true) {
     const { done: complete, value } = await reader.read();
     if (complete) break;
     pending += decoder.decode(value, { stream: true });
     let newline: number;
     while ((newline = pending.indexOf("\n")) >= 0) {
-      const line = pending.slice(0, newline).trim();
+      processLine(pending.slice(0, newline));
       pending = pending.slice(newline + 1);
-      if (!line) continue;
-      const event = JSON.parse(line) as YuwpStreamEvent;
-      if (event.event === "metadata") {
-        sampleRate = event.sample_rate ?? sampleRate;
-        channels = event.channels ?? channels;
-        onAudioStream?.({
-          kind: "audio-stream",
-          event: "metadata",
-          mimeType: "audio/pcm; codecs=s16le",
-          sampleRate,
-          channels,
-        });
-      } else if (event.event === "audio") {
-        if (!event.audio) continue;
-        chunks.push(Buffer.from(event.audio, "base64"));
-        onAudioStream?.({
-          kind: "audio-stream",
-          event: "chunk",
-          mimeType: "audio/pcm; codecs=s16le",
-          sampleRate,
-          channels,
-          chunkIndex: event.chunk,
-          audioBase64: event.audio,
-          durationSeconds: event.seconds,
-        });
-      } else if (event.event === "done") {
-        done = event;
-        onAudioStream?.({
-          kind: "audio-stream",
-          event: "done",
-          mimeType: "audio/pcm; codecs=s16le",
-          sampleRate,
-          channels,
-          durationSeconds: event.audio_duration_seconds,
-          metrics: event,
-        });
-      } else if (event.event === "error") {
-        onAudioStream?.({
-          kind: "audio-stream",
-          event: "error",
-          mimeType: "audio/pcm; codecs=s16le",
-          sampleRate,
-          channels,
-          text: event.error ?? "TTS stream error",
-        });
-        throw new Error(event.error ?? "TTS stream error");
-      }
     }
   }
+  pending += decoder.decode();
+  processLine(pending);
   const pcm = Buffer.concat(chunks);
   mkdirSync(path.dirname(outPath), { recursive: true });
   writeFileSync(outPath, wavFromPCM16(pcm, sampleRate, channels));

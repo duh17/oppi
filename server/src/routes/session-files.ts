@@ -170,6 +170,19 @@ export function createSessionFileHandlers(
       return;
     }
 
+    let realWorkspaceRoot: string;
+    try {
+      realWorkspaceRoot = await realpath(resolveSdkSessionCwd(workspace));
+    } catch {
+      helpers.error(res, 404, "Workspace root not found");
+      return;
+    }
+
+    if (!isPathWithinRoot(resolvedPath, realWorkspaceRoot)) {
+      helpers.error(res, 403, "Path outside workspace");
+      return;
+    }
+
     let fileStat: Awaited<ReturnType<typeof stat>>;
     try {
       fileStat = await stat(resolvedPath);
