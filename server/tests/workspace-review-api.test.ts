@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
@@ -252,6 +252,127 @@ describe("POST /workspaces/:wid/review/session", () => {
       );
       expect(body.visiblePrompt).toContain("## Human Reviewer Callouts (Non-Blocking)");
       expect(body.filePaths).toEqual(["review.swift"]);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses REVIEW.md in the workspace root as the review prompt override", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+
+    try {
+      gitIn(repoDir, "init -b main");
+      gitIn(repoDir, 'config user.email "test@test.com"');
+      gitIn(repoDir, 'config user.name "Test"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      writeFileSync(
+        join(repoDir, "REVIEW.md"),
+        "Custom review prompt from workspace root. Focus on data loss and auth edges.\n",
+        "utf8",
+      );
+      gitIn(repoDir, "add review.swift REVIEW.md");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
+
+      const createdSession = makeSession("new-session", "w1");
+      const ctx = {
+        storage: {
+          getWorkspace: (workspaceId: string) =>
+            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+          getSession: () => undefined,
+          createSession: () => createdSession,
+          saveSession: vi.fn(),
+          deleteSession: vi.fn(),
+        },
+        sessions: {
+          setPendingExtensionFactories: vi.fn(),
+          startSession: vi.fn(async () => createdSession),
+          getActiveSession: vi.fn(() => createdSession),
+          stopSession: vi.fn(async () => undefined),
+        },
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext;
+
+      const routes = new RouteHandler(ctx);
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/review/session",
+        new URL("http://localhost/workspaces/w1/review/session"),
+        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as WorkspaceReviewSessionResponse;
+
+      expect(body.visiblePrompt).toBe(
+        "Custom review prompt from workspace root. Focus on data loss and auth edges.",
+      );
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses .pi/REVIEW.md as a fallback review prompt override", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
+
+    try {
+      gitIn(repoDir, "init -b main");
+      gitIn(repoDir, 'config user.email "test@test.com"');
+      gitIn(repoDir, 'config user.name "Test"');
+
+      mkdirSync(join(repoDir, ".pi"), { recursive: true });
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      writeFileSync(
+        join(repoDir, ".pi", "REVIEW.md"),
+        "Project-local review prompt from .pi. Focus on rollback safety and alerts.\n",
+        "utf8",
+      );
+      gitIn(repoDir, "add review.swift .pi/REVIEW.md");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
+
+      const createdSession = makeSession("new-session", "w1");
+      const ctx = {
+        storage: {
+          getWorkspace: (workspaceId: string) =>
+            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+          getSession: () => undefined,
+          createSession: () => createdSession,
+          saveSession: vi.fn(),
+          deleteSession: vi.fn(),
+        },
+        sessions: {
+          setPendingExtensionFactories: vi.fn(),
+          startSession: vi.fn(async () => createdSession),
+          getActiveSession: vi.fn(() => createdSession),
+          stopSession: vi.fn(async () => undefined),
+        },
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext;
+
+      const routes = new RouteHandler(ctx);
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/review/session",
+        new URL("http://localhost/workspaces/w1/review/session"),
+        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as WorkspaceReviewSessionResponse;
+
+      expect(body.visiblePrompt).toBe(
+        "Project-local review prompt from .pi. Focus on rollback safety and alerts.",
+      );
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

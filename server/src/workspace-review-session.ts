@@ -132,6 +132,33 @@ Provide your findings in a clear, structured format:
 
 Output all findings the author would fix if they knew about them. If there are no qualifying findings, explicitly state the code looks good. Don't stop at the first finding - list every qualifying issue. Then append the required non-blocking callouts section.`;
 
+async function readOptionalTrimmedFile(path: string): Promise<string | null> {
+  const fileStats = await stat(path).catch(() => null);
+  if (!fileStats?.isFile()) {
+    return null;
+  }
+
+  const content = await readFile(path, "utf8").catch(() => null);
+  const trimmed = content?.trim();
+  return trimmed ? trimmed : null;
+}
+
+async function loadProjectReviewPromptOverride(workspaceRoot: string): Promise<string | null> {
+  const resolvedRoot = resolve(workspaceRoot);
+
+  for (const candidate of [
+    join(resolvedRoot, "REVIEW.md"),
+    join(resolvedRoot, ".pi", "REVIEW.md"),
+  ]) {
+    const prompt = await readOptionalTrimmedFile(candidate);
+    if (prompt) {
+      return prompt;
+    }
+  }
+
+  return null;
+}
+
 async function loadProjectReviewGuidelines(workspaceRoot: string): Promise<string | null> {
   let currentDir = resolve(workspaceRoot);
 
@@ -141,14 +168,7 @@ async function loadProjectReviewGuidelines(workspaceRoot: string): Promise<strin
 
     const piStats = await stat(piDir).catch(() => null);
     if (piStats?.isDirectory()) {
-      const guidelineStats = await stat(guidelinesPath).catch(() => null);
-      if (!guidelineStats?.isFile()) {
-        return null;
-      }
-
-      const content = await readFile(guidelinesPath, "utf8").catch(() => null);
-      const trimmed = content?.trim();
-      return trimmed ? trimmed : null;
+      return readOptionalTrimmedFile(guidelinesPath);
     }
 
     const parent = dirname(currentDir);
@@ -161,10 +181,15 @@ async function loadProjectReviewGuidelines(workspaceRoot: string): Promise<strin
 
 function visiblePrompt(
   action: WorkspaceReviewSessionAction,
+  reviewPromptOverride?: string | null,
   projectGuidelines?: string | null,
 ): string {
   switch (action) {
     case "review": {
+      if (reviewPromptOverride) {
+        return reviewPromptOverride;
+      }
+
       let prompt = `${REVIEW_RUBRIC}\n\n---\n\nPlease perform a code review with the following focus:\n\nReview the selected files for bugs, regressions, and risky patterns. Cite file and line number for each finding.`;
       if (projectGuidelines) {
         prompt += `\n\nThis project has additional instructions for code reviews:\n\n${projectGuidelines}`;
@@ -213,7 +238,12 @@ export async function prepareWorkspaceReviewSession(args: {
     selectedSession,
     workspaceRoot: workspace.hostMount,
   });
-  const projectGuidelines = await loadProjectReviewGuidelines(workspace.hostMount);
+  const reviewPromptOverride =
+    action === "review" ? await loadProjectReviewPromptOverride(workspace.hostMount) : null;
+  const projectGuidelines =
+    action === "review" && !reviewPromptOverride
+      ? await loadProjectReviewGuidelines(workspace.hostMount)
+      : null;
 
   const uniquePaths = Array.from(
     new Set(paths.map((p) => normalizePath(p)).filter((value) => value.length > 0)),
@@ -253,7 +283,7 @@ export async function prepareWorkspaceReviewSession(args: {
 
   return {
     files: requestedFiles,
-    visiblePrompt: visiblePrompt(action, projectGuidelines),
+    visiblePrompt: visiblePrompt(action, reviewPromptOverride, projectGuidelines),
     sessionName,
   };
 }
