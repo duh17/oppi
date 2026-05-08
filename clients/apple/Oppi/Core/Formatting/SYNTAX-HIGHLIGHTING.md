@@ -13,10 +13,11 @@ SyntaxHighlighter           Unified entry point for all highlighting
   |     +-- highlights.scm    Loaded from each grammar's SPM resource bundle
   |     +-- captureKindMap    Shared @capture-name -> TokenKind table
   |
-  +-- scanTokenRangesInternal Hand-written fallback scanner (line-by-line)
+  +-- scanFallbackTokenRanges Hand-written fallback scanner, normalized to UTF-16 offsets
+  |     +-- scanTokenRangesByCharacter Private line-by-line scanner
   |     +-- scanLineRangesSlice       Generic keyword/comment/string scanner
   |     +-- scanShellLineRangesSlice  Shell-specific heuristic scanner (legacy)
-  |     +-- scanLineRangesUTF8Slice   ASCII fast-path for non-shell languages
+  |     +-- scanLineRangesUTF8Slice   ASCII fast-path for generic fallback languages
   |     +-- scanJSONRanges            Dedicated JSON scanner
   |     +-- scanXMLRanges             Dedicated XML scanner
   |     +-- scanDiffRanges            Dedicated diff scanner
@@ -35,7 +36,7 @@ All highlighting goes through `SyntaxHighlighter`. Three public methods share a 
 | `scanTokenRanges(code, language)` | Code block gutter builder | Returns [TokenRange] |
 | `scanTokenRangesUTF8(text, language)` | DiffAttributedStringBuilder | ASCII fast-path |
 
-All three call `resolveTokenRanges()` which tries tree-sitter first, then falls back to the hand-written scanner.
+All three call `resolveTokenRanges()` which tries tree-sitter first, then falls back to the hand-written scanner. Public `TokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures.
 
 ## Token Kinds
 

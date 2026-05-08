@@ -196,14 +196,14 @@ enum DiffAttributedStringBuilder {
         let text = NSMutableString()
         var batchCode = ""
         var allTokens: [SyntaxHighlighter.TokenRange] = []
-        var batchOffsets: [Int] = []
+        var batchUTF16Offsets: [Int] = []
         var lineInfos: [LineInfo] = []
         lineInfos.reserveCapacity(totalLines)
         var headers: [HeaderInfo] = []
 
         if language != .unknown {
             batchCode.reserveCapacity(totalLines * 60)
-            batchOffsets.reserveCapacity(totalLines)
+            batchUTF16Offsets.reserveCapacity(totalLines)
         }
 
         var statsSegs: StatsSegments?
@@ -237,7 +237,7 @@ enum DiffAttributedStringBuilder {
             )
         }
 
-        var batchByteOffset = 0
+        var batchUTF16Offset = 0
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
                 text.append("\n")
@@ -278,13 +278,13 @@ enum DiffAttributedStringBuilder {
                 let codeLen = text.length - codeStart
 
                 if language != .unknown {
-                    if batchByteOffset > 0 {
+                    if batchUTF16Offset > 0 {
                         batchCode.append("\n")
-                        batchByteOffset += 1
+                        batchUTF16Offset += 1
                     }
-                    batchOffsets.append(batchByteOffset)
+                    batchUTF16Offsets.append(batchUTF16Offset)
                     batchCode.append(codeText)
-                    batchByteOffset += codeText.utf8.count
+                    batchUTF16Offset += codeText.utf16.count
                 }
 
                 text.append("\n")
@@ -374,7 +374,7 @@ enum DiffAttributedStringBuilder {
                 let length = span.end - span.start
                 guard span.start >= 0, length > 0 else { continue }
                 let spanStart = info.codeStart + span.start
-                guard spanStart + length <= info.rowEnd else { continue }
+                guard spanStart + length <= info.codeStart + info.codeLen else { continue }
                 result.addAttribute(.backgroundColor, value: wordBg, range: NSRange(location: spanStart, length: length))
             }
         }
@@ -385,18 +385,44 @@ enum DiffAttributedStringBuilder {
             let lineCount = lineInfos.count
             for token in allTokens {
                 guard let color = colorArray[Int(token.kind.rawValue)] else { continue }
+                let tokenEnd = token.location + token.length
+                guard tokenEnd > token.location else { continue }
 
                 while lineIdx + 1 < lineCount,
-                      batchOffsets[lineIdx + 1] <= token.location {
+                      batchUTF16Offsets[lineIdx + 1] <= token.location {
                     lineIdx += 1
                 }
 
-                let offsetInLine = token.location - batchOffsets[lineIdx]
-                result.addAttribute(
-                    .foregroundColor,
-                    value: color,
-                    range: NSRange(location: lineInfos[lineIdx].codeStart + offsetInLine, length: token.length)
-                )
+                // Batch syntax tokens may span newlines (XML comments, heredocs).
+                // Split them back across diff rows so syntax color never paints gutters.
+                var segmentLineIdx = lineIdx
+                var segmentStart = token.location
+                while segmentLineIdx < lineCount, segmentStart < tokenEnd {
+                    let lineStart = batchUTF16Offsets[segmentLineIdx]
+                    let lineEnd = lineStart + lineInfos[segmentLineIdx].codeLen
+                    if segmentStart < lineStart {
+                        segmentStart = lineStart
+                    }
+
+                    if segmentStart < lineEnd {
+                        let segmentEnd = min(tokenEnd, lineEnd)
+                        result.addAttribute(
+                            .foregroundColor,
+                            value: color,
+                            range: NSRange(
+                                location: lineInfos[segmentLineIdx].codeStart + segmentStart - lineStart,
+                                length: segmentEnd - segmentStart
+                            )
+                        )
+                        segmentStart = segmentEnd
+                    }
+
+                    if segmentStart >= tokenEnd { break }
+                    segmentLineIdx += 1
+                    if segmentLineIdx < lineCount {
+                        segmentStart = max(segmentStart, batchUTF16Offsets[segmentLineIdx])
+                    }
+                }
             }
         }
 
@@ -407,7 +433,7 @@ enum DiffAttributedStringBuilder {
                 let length = span.end - span.start
                 guard span.start >= 0, length > 0 else { continue }
                 let spanStart = info.codeStart + span.start
-                guard spanStart + length <= info.rowEnd else { continue }
+                guard spanStart + length <= info.codeStart + info.codeLen else { continue }
                 result.addAttribute(.foregroundColor, value: fgColor, range: NSRange(location: spanStart, length: length))
             }
         }

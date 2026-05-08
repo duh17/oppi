@@ -244,6 +244,8 @@ struct WorkspaceReviewDiffLine: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Intra-line diff span. `start`/`end` are UTF-16 code-unit offsets,
+/// matching the server contract and `NSRange` used by renderers.
 struct WorkspaceReviewDiffSpan: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         case changed
@@ -410,6 +412,8 @@ enum WorkspaceReviewDiffHunkBuilder {
     }
 
     /// Tokenize text into words, whitespace runs, and punctuation groups.
+    /// Token offsets are UTF-16 code units so spans can be applied directly as
+    /// `NSRange` and match the server's JavaScript string offsets.
     private static func tokenize(_ text: String) -> [Token] {
         guard !text.isEmpty else { return [] }
 
@@ -418,7 +422,7 @@ enum WorkspaceReviewDiffHunkBuilder {
         var index = scalars.startIndex
 
         while index < scalars.endIndex {
-            let start = scalars.distance(from: scalars.startIndex, to: index)
+            let start = utf16Offset(of: index, in: text)
             let startScalar = scalars[index]
 
             if startScalar.properties.isWhitespace {
@@ -427,7 +431,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                 while end < scalars.endIndex, scalars[end].properties.isWhitespace {
                     end = scalars.index(after: end)
                 }
-                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let endOffset = utf16Offset(of: end, in: text)
                 let value = String(scalars[index..<end])
                 tokens.append(Token(value: value, start: start, end: endOffset))
                 index = end
@@ -444,7 +448,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                         break
                     }
                 }
-                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let endOffset = utf16Offset(of: end, in: text)
                 let value = String(scalars[index..<end])
                 tokens.append(Token(value: value, start: start, end: endOffset))
                 index = end
@@ -462,7 +466,7 @@ enum WorkspaceReviewDiffHunkBuilder {
                         break
                     }
                 }
-                let endOffset = scalars.distance(from: scalars.startIndex, to: end)
+                let endOffset = utf16Offset(of: end, in: text)
                 let value = String(scalars[index..<end])
                 tokens.append(Token(value: value, start: start, end: endOffset))
                 index = end
@@ -470,6 +474,16 @@ enum WorkspaceReviewDiffHunkBuilder {
         }
 
         return tokens
+    }
+
+    private static func utf16Offset(
+        of index: String.UnicodeScalarView.Index,
+        in text: String
+    ) -> Int {
+        guard let utf16Index = index.samePosition(in: text.utf16) else {
+            return text.utf16.count
+        }
+        return text.utf16.distance(from: text.utf16.startIndex, to: utf16Index)
     }
 
     /// Compute word-level change spans between two lines using token LCS.
@@ -537,7 +551,7 @@ enum WorkspaceReviewDiffHunkBuilder {
     }
 
     private static func fullLineSpan(_ text: String) -> [WorkspaceReviewDiffSpan] {
-        text.isEmpty ? [] : [WorkspaceReviewDiffSpan(start: 0, end: text.count, kind: .changed)]
+        text.isEmpty ? [] : [WorkspaceReviewDiffSpan(start: 0, end: text.utf16.count, kind: .changed)]
     }
 
     private static func mergeSpans(_ spans: [WorkspaceReviewDiffSpan]) -> [WorkspaceReviewDiffSpan] {

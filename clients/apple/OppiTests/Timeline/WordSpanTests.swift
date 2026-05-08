@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -135,5 +136,21 @@ struct WordSpanTests {
             #expect(span.start == 4)
             #expect(span.end == 7)
         }
+    }
+
+    @Test func spanOffsetsRemainUTF16AfterEmoji() throws {
+        let family = "👨‍👩‍👧‍👦"
+        let oldText = "let family = \"\(family)\"; oldName"
+        let newText = "let family = \"\(family)\"; newName"
+        let lines = DiffEngine.compute(old: oldText, new: newText)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let added = try #require(hunks.flatMap(\.lines).first { $0.kind == .added })
+        let span = try #require(added.spans?.first)
+        let expectedRange = (newText as NSString).range(of: "newName")
+
+        #expect(span.start == expectedRange.location)
+        #expect(span.end == expectedRange.location + expectedRange.length)
+        let spanRange = NSRange(location: span.start, length: span.end - span.start)
+        #expect((newText as NSString).substring(with: spanRange) == "newName")
     }
 }

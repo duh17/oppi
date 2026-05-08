@@ -33,6 +33,30 @@ struct FullScreenCodeHighlighterTests {
         assertAttributeRangesValid(result)
     }
 
+    @Test func tokenRangesUseUTF16OffsetsAcrossFallbackScanners() throws {
+        let family = "👨‍👩‍👧‍👦"
+        let cases: [TokenOffsetCase] = [
+            .init(language: .swift, code: "let family = \"\(family)\"\nreturn true", needle: "return", kind: .keyword),
+            .init(language: .typescript, code: "const family = \"\(family)\";\ndescribe(\"name\", () => {})", needle: "\"name\"", kind: .string),
+            .init(language: .json, code: "{\"emoji\":\"\(family)\",\"count\":42}", needle: "42", kind: .number),
+            .init(language: .xml, code: "<root emoji=\"\(family)\"><child attr=\"ok\" /></root>", needle: "child", kind: .keyword),
+            .init(language: .diff, code: "+\(family)\n@@ -1 +1 @@", needle: "@@ -1 +1 @@", kind: .type),
+        ]
+
+        for testCase in cases {
+            let expectedRange = (testCase.code as NSString).range(of: testCase.needle)
+            let tokenRanges = SyntaxHighlighter.scanTokenRanges(testCase.code, language: testCase.language)
+            #expect(
+                tokenRanges.contains { token in
+                    token.location == expectedRange.location
+                        && token.length == expectedRange.length
+                        && token.kind == testCase.kind
+                },
+                "Expected \(testCase.kind) token for \(testCase.language.displayName) at UTF-16 range \(expectedRange), got \(tokenRanges)"
+            )
+        }
+    }
+
     @Test func highlightedTextForUnknownLanguage() {
         let code = "just plain text\n"
         let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .unknown)
@@ -116,6 +140,13 @@ struct FullScreenCodeHighlighterTests {
 
         let value = received.attribute(customKey, at: 0, effectiveRange: nil) as? String
         #expect(value == "preserved", "Custom attributes must survive Sendable transport")
+    }
+
+    private struct TokenOffsetCase {
+        let language: SyntaxLanguage
+        let code: String
+        let needle: String
+        let kind: SyntaxHighlighter.TokenKind
     }
 
     // MARK: - Helpers

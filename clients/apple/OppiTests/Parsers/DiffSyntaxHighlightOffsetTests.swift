@@ -92,6 +92,98 @@ struct DiffSyntaxHighlightOffsetTests {
         #expect(rColor == keywordColor, "'r' of 'var' must be keyword color")
     }
 
+    @Test func syntaxTokenRangesStayAlignedAfterUnicodeDiffLines() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 204,
+                oldCount: 2,
+                newStart: 204,
+                newCount: 3,
+                lines: [
+                    WorkspaceReviewDiffLine(
+                        kind: .context,
+                        text: "// — Host-control flows → ask",
+                        oldLine: 204,
+                        newLine: 204,
+                        spans: nil
+                    ),
+                    WorkspaceReviewDiffLine(
+                        kind: .added,
+                        text: #"describe("host preset: Oppi config changes gated", () => {"#,
+                        oldLine: nil,
+                        newLine: 205,
+                        spans: nil
+                    ),
+                    WorkspaceReviewDiffLine(
+                        kind: .added,
+                        text: "    const oppiServerCwd = process.cwd();",
+                        oldLine: nil,
+                        newLine: 206,
+                        spans: nil
+                    ),
+                ]
+            )
+        ]
+
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "policy-host.test.ts")
+        let text = result.string as NSString
+        let stringColor = try #require(SyntaxHighlighter.color(for: .string))
+
+        let stringRange = text.range(of: #""host preset: Oppi config changes gated""#)
+        guard stringRange.location != NSNotFound else {
+            Issue.record("Expected string literal in diff output")
+            return
+        }
+
+        let parenIndex = stringRange.location - 1
+        let openingQuoteIndex = stringRange.location
+        let closingQuoteIndex = stringRange.location + stringRange.length - 1
+        let commaIndex = stringRange.location + stringRange.length
+
+        let parenColor = result.attribute(.foregroundColor, at: parenIndex, effectiveRange: nil) as? UIColor
+        let openingQuoteColor = result.attribute(.foregroundColor, at: openingQuoteIndex, effectiveRange: nil) as? UIColor
+        let closingQuoteColor = result.attribute(.foregroundColor, at: closingQuoteIndex, effectiveRange: nil) as? UIColor
+        let commaColor = result.attribute(.foregroundColor, at: commaIndex, effectiveRange: nil) as? UIColor
+
+        #expect(parenColor != stringColor, "Syntax string color must not leak left onto describe( after a Unicode context line")
+        #expect(openingQuoteColor == stringColor, "Opening quote must keep string color after a Unicode context line")
+        #expect(closingQuoteColor == stringColor, "Closing quote must keep string color after a Unicode context line")
+        #expect(commaColor != stringColor, "Syntax string color must stop at the closing quote")
+    }
+
+    @Test func multilineSyntaxTokensDoNotBleedIntoDiffGutters() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 1,
+                oldCount: 0,
+                newStart: 1,
+                newCount: 2,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .added, text: "<!-- first", oldLine: nil, newLine: 1, spans: nil),
+                    WorkspaceReviewDiffLine(kind: .added, text: "second -->", oldLine: nil, newLine: 2, spans: nil),
+                ]
+            )
+        ]
+
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.xml")
+        let text = result.string as NSString
+        let commentColor = try #require(SyntaxHighlighter.color(for: .comment))
+        let secondRange = text.range(of: "second -->")
+        guard secondRange.location != NSNotFound else {
+            Issue.record("Expected second XML comment line in diff output")
+            return
+        }
+
+        let lineRange = text.lineRange(for: secondRange)
+        let gutterColor = result.attribute(.foregroundColor, at: lineRange.location, effectiveRange: nil) as? UIColor
+        let firstCodeColor = result.attribute(.foregroundColor, at: secondRange.location, effectiveRange: nil) as? UIColor
+        let lastCodeColor = result.attribute(.foregroundColor, at: secondRange.location + secondRange.length - 1, effectiveRange: nil) as? UIColor
+
+        #expect(gutterColor != commentColor, "A multiline syntax token must not color the next diff gutter")
+        #expect(firstCodeColor == commentColor, "Continuation line code should keep the multiline comment color")
+        #expect(lastCodeColor == commentColor, "The full continuation line should keep the multiline comment color")
+    }
+
     @Test func decoratorFirstCharOnNonFirstLine() throws {
         let hunks = [
             WorkspaceReviewDiffHunk(

@@ -267,9 +267,12 @@ enum SyntaxHighlighter {
     }
 
     /// A token range recorded during scanning.
+    ///
+    /// Offsets are UTF-16 code units, matching `NSRange`, `NSString`,
+    /// `NSAttributedString`, and tree-sitter capture ranges.
     struct TokenRange {
-        let location: Int  // character offset in the scanned text
-        let length: Int    // character length
+        let location: Int
+        let length: Int
         let kind: TokenKind
     }
 
@@ -310,12 +313,12 @@ enum SyntaxHighlighter {
             return tsRanges
         }
         // Fallback: hand-written scanner
-        return scanTokenRangesInternal(Array(truncatedCode(code)), language: language)
+        return scanFallbackTokenRanges(truncatedCode(code), language: language)
     }
 
     /// Scan source code and return token ranges for non-default tokens.
     ///
-    /// Each range's `location` is the character offset within `code`.
+    /// Each range's `location` is the UTF-16 offset within `code`.
     /// Used by `makeCodeAttributedText` to apply syntax colors with gutter
     /// offset mapping in a single-pass build.
     static func scanTokenRanges(
@@ -328,7 +331,7 @@ enum SyntaxHighlighter {
     /// ASCII-optimized scanner using raw UTF-8 bytes.
     ///
     /// For text where tree-sitter handles the language, this delegates
-    /// to the unified dispatch. For other languages, uses the UTF-8
+    /// to the unified dispatch. For generic fallback languages, uses the UTF-8
     /// fast path when the input is all-ASCII.
     ///
     /// Used by `DiffAttributedStringBuilder` for batch syntax scanning.
@@ -343,17 +346,18 @@ enum SyntaxHighlighter {
             return resolveTokenRanges(text, language: language)
         }
 
-        // JSON is already fast with the hand-written scanner.
-        if language == .json {
-            return scanTokenRangesInternal(Array(text), language: language)
+        // Dedicated scanners have language-specific structure that the generic
+        // ASCII fast path cannot preserve.
+        if language == .json || language == .xml || language == .diff {
+            return scanFallbackTokenRanges(text, language: language)
         }
 
         let utf8 = Array(text.utf8)
 
         // Verify all-ASCII. Any non-ASCII byte → fall back to [Character] scanner
-        // where byte offsets ≠ character offsets.
+        // and convert its offsets to UTF-16 before returning.
         for b in utf8 where b >= 0x80 {
-            return scanTokenRangesInternal(Array(text), language: language)
+            return scanFallbackTokenRanges(text, language: language)
         }
 
         return scanTokenRangesFromUTF8(utf8, language: language)
@@ -410,9 +414,52 @@ enum SyntaxHighlighter {
         return result
     }
 
-    /// Internal scanner shared by `highlight()` and `scanTokenRanges()`.
+    /// Run the hand-written fallback scanner and return public UTF-16 ranges.
+    private static func scanFallbackTokenRanges(
+        _ text: String,
+        language: SyntaxLanguage
+    ) -> [TokenRange] {
+        let allChars = Array(text)
+        let characterRanges = scanTokenRangesByCharacter(allChars, language: language)
+        guard !characterRanges.isEmpty, text.utf16.count != allChars.count else {
+            return characterRanges
+        }
+        return convertCharacterRangesToUTF16(characterRanges, in: text, characterCount: allChars.count)
+    }
+
+    /// Convert private fallback scanner ranges from `Array<Character>` offsets
+    /// into public UTF-16 offsets. This is only needed for grapheme clusters
+    /// that occupy multiple UTF-16 code units, such as emoji or combining marks.
+    private static func convertCharacterRangesToUTF16(
+        _ ranges: [TokenRange],
+        in text: String,
+        characterCount: Int
+    ) -> [TokenRange] {
+        var utf16Offsets: [Int] = []
+        utf16Offsets.reserveCapacity(characterCount + 1)
+        var offset = 0
+        utf16Offsets.append(offset)
+        for character in text {
+            offset += character.utf16.count
+            utf16Offsets.append(offset)
+        }
+
+        return ranges.compactMap { range in
+            let end = range.location + range.length
+            guard range.location >= 0, end <= characterCount else { return nil }
+            return TokenRange(
+                location: utf16Offsets[range.location],
+                length: utf16Offsets[end] - utf16Offsets[range.location],
+                kind: range.kind
+            )
+        }
+    }
+
+    /// Private scanner shared by fallback paths.
     /// Scans line-by-line using newline detection (no per-line `Array(line)` allocation).
-    private static func scanTokenRangesInternal(
+    /// Returned ranges are `Array<Character>` offsets; callers must convert them
+    /// before applying attributes to `NSAttributedString`.
+    private static func scanTokenRangesByCharacter(
         _ allChars: [Character],
         language: SyntaxLanguage
     ) -> [TokenRange] {
@@ -511,7 +558,7 @@ enum SyntaxHighlighter {
     // MARK: Intentionally parallel to scanLineRangesSlice for ASCII fast-path performance — do not merge.
 
     /// Scan a single line within bytes[start..<end] for token ranges.
-    /// All offsets are byte positions (== character positions for ASCII input).
+    /// All offsets are byte positions (== UTF-16 offsets for ASCII input).
     private static func scanLineRangesUTF8Slice(
         _ bytes: [UInt8],
         start: Int,
