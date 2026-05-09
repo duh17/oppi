@@ -174,7 +174,7 @@ Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/the
 
 ## Relationship to pi TUI themes
 
-Oppi's theme tokens are a subset of the [pi TUI theme system](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49 — the shared tokens (markdown, syntax, diffs, tool state, thinking) are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
+Oppi's theme tokens are a subset of the [pi TUI theme system](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49 — the shared tokens (markdown, syntax, diffs, tool state, thinking) are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
 
 You can ask pi to create a theme for you — point it at this doc and describe what you want. If you already have a pi TUI theme, reuse the same color palette — map the overlapping tokens and fill in the Oppi-specific ones.
 

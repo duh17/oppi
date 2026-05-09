@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { ExtensionUIDialogOptions, ExtensionUIContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionUIDialogOptions, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "./log-utils.js";
 import type {

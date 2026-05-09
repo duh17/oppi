@@ -29,7 +29,7 @@ function makeFakeRuntimeDir(opts?: {
   seedVersion?: string;
 }): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "oppi-rt-test-"));
-  const deps = opts?.deps ?? { "@mariozechner/pi-coding-agent": "^0.62.0" };
+  const deps = opts?.deps ?? { "@earendil-works/pi-coding-agent": "^0.62.0" };
   const optDeps = opts?.optionalDeps ?? {};
   const pkgJson: Record<string, unknown> = {
     name: "oppi-server-runtime",
@@ -132,7 +132,7 @@ describe("RuntimeUpdateManager", () => {
       const status = await manager.getStatus();
 
       expect(status.currentVersion).toBe("0.62.0");
-      expect(status.packageName).toBe("@mariozechner/pi-coding-agent");
+      expect(status.packageName).toBe("@earendil-works/pi-coding-agent");
       expect(status.latestVersion).toBe("0.62.0");
       expect(status.updateAvailable).toBe(false);
       expect(status.checking).toBe(false);
@@ -344,8 +344,8 @@ describe("RuntimeUpdateManager", () => {
 
     it("pins pi runtime to the latest published version before install", async () => {
       const { dir, cleanup } = makeFakeRuntimeDir({
-        deps: { "@mariozechner/pi-coding-agent": "0.62.0" },
-        installedVersions: { "@mariozechner/pi-coding-agent": "0.62.0" },
+        deps: { "@earendil-works/pi-coding-agent": "0.62.0" },
+        installedVersions: { "@earendil-works/pi-coding-agent": "0.62.0" },
       });
 
       try {
@@ -356,8 +356,8 @@ describe("RuntimeUpdateManager", () => {
         })) as typeof global.fetch;
         mockInstallSuccess(() => {
           writeFileSync(
-            join(dir, "node_modules", "@mariozechner", "pi-coding-agent", "package.json"),
-            JSON.stringify({ name: "@mariozechner/pi-coding-agent", version: "0.63.0" }),
+            join(dir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+            JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.63.0" }),
           );
         });
 
@@ -367,14 +367,53 @@ describe("RuntimeUpdateManager", () => {
           dependencies: Record<string, string>;
         };
 
-        expect(pkgJson.dependencies["@mariozechner/pi-coding-agent"]).toBe("0.63.0");
+        expect(pkgJson.dependencies["@earendil-works/pi-coding-agent"]).toBe("0.63.0");
         expect(result.ok).toBe(true);
         expect(result.pendingVersion).toBe("0.63.0");
         expect(result.updatedPackages).toContainEqual({
-          name: "@mariozechner/pi-coding-agent",
+          name: "@earendil-works/pi-coding-agent",
           from: "0.62.0",
           to: "0.63.0",
         });
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("migrates the runtime manifest from the legacy pi package name", async () => {
+      const { dir, cleanup } = makeFakeRuntimeDir({
+        deps: { "@mariozechner/pi-coding-agent": "0.62.0" },
+        installedVersions: { "@mariozechner/pi-coding-agent": "0.62.0" },
+      });
+
+      try {
+        pointResolverAt(dir);
+        global.fetch = vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ version: "0.62.0" }),
+        })) as typeof global.fetch;
+        mockInstallSuccess(() => {
+          mkdirSync(join(dir, "node_modules", "@earendil-works", "pi-coding-agent"), {
+            recursive: true,
+          });
+          writeFileSync(
+            join(dir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+            JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.62.0" }),
+          );
+        });
+
+        const manager = new RuntimeUpdateManager({ currentVersion: "0.62.0" });
+        const result = await manager.updateRuntime();
+        const pkgJson = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
+          dependencies: Record<string, string>;
+        };
+
+        expect(pkgJson.dependencies["@earendil-works/pi-coding-agent"]).toBe("0.62.0");
+        expect(pkgJson.dependencies["@mariozechner/pi-coding-agent"]).toBeUndefined();
+        expect(result.ok).toBe(true);
+        expect(result.restartRequired).toBe(true);
+        expect(result.pendingVersion).toBe("0.62.0");
+        expect(result.message).toContain("Migrated runtime dependency");
       } finally {
         cleanup();
       }
@@ -712,16 +751,16 @@ describe("RuntimeUpdateManager", () => {
 
     it("handles scoped package names correctly", async () => {
       const { dir, cleanup } = makeFakeRuntimeDir({
-        deps: { "@mariozechner/pi-coding-agent": "^0.62.0" },
-        installedVersions: { "@mariozechner/pi-coding-agent": "0.62.0" },
+        deps: { "@earendil-works/pi-coding-agent": "^0.62.0" },
+        installedVersions: { "@earendil-works/pi-coding-agent": "0.62.0" },
       });
 
       try {
         pointResolverAt(dir);
         mockInstallSuccess(() => {
           writeFileSync(
-            join(dir, "node_modules", "@mariozechner", "pi-coding-agent", "package.json"),
-            JSON.stringify({ name: "@mariozechner/pi-coding-agent", version: "0.63.0" }),
+            join(dir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+            JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.63.0" }),
           );
         });
 
@@ -731,7 +770,7 @@ describe("RuntimeUpdateManager", () => {
         expect(result.ok).toBe(true);
         expect(result.updatedPackages).toHaveLength(1);
         expect(result.updatedPackages![0]).toEqual({
-          name: "@mariozechner/pi-coding-agent",
+          name: "@earendil-works/pi-coding-agent",
           from: "0.62.0",
           to: "0.63.0",
         });

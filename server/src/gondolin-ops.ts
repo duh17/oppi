@@ -14,7 +14,7 @@ import type {
   ReadOperations,
   WriteOperations,
   EditOperations,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 /**
  * Minimal VM interface consumed by the operations layer.

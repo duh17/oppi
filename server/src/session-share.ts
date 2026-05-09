@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
 const SHARE_ERROR_PREFIX = "[share:";

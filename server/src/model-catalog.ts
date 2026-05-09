@@ -7,7 +7,7 @@
  * - REST-friendly model list for iOS picker
  */
 
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";

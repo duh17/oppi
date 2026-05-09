@@ -4,7 +4,7 @@ import type {
   OAuthCredentials,
   OAuthLoginCallbacks,
   OAuthProviderInterface,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import {
   ProviderAuthManager,
   type ProviderAuthStorage,

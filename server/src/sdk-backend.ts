@@ -29,8 +29,8 @@ import {
   ModelRegistry,
   SettingsManager,
   getAgentDir,
-} from "@mariozechner/pi-coding-agent";
-import type { ImageContent } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { GateServer } from "./gate.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";

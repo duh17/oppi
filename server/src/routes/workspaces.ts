@@ -1,8 +1,13 @@
+import { existsSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DefaultResourceLoader, SettingsManager, getAgentDir } from "@mariozechner/pi-coding-agent";
+import {
+  DefaultResourceLoader,
+  SettingsManager,
+  getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 
 import { isValidExtensionName } from "../extension-loader.js";
 import {
@@ -129,10 +134,20 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     // buildSystemPrompt isn't in the package's exports map, so import via
     // file URL to bypass Node's package-exports resolution.
     const thisDir = dirname(fileURLToPath(import.meta.url));
-    const modFile = resolve(
-      thisDir,
-      "../../node_modules/@mariozechner/pi-coding-agent/dist/core/system-prompt.js",
-    );
+    const moduleCandidates = [
+      resolve(
+        thisDir,
+        "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js",
+      ),
+      resolve(
+        thisDir,
+        "../../node_modules/@mariozechner/pi-coding-agent/dist/core/system-prompt.js",
+      ),
+    ];
+    const modFile = moduleCandidates.find((candidate) => existsSync(candidate));
+    if (!modFile) {
+      throw new Error("Unable to locate pi system prompt module in node_modules");
+    }
     const { buildSystemPrompt } = (await import(`file://${modFile}`)) as {
       buildSystemPrompt: (opts?: { cwd?: string }) => string;
     };

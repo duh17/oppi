@@ -14,8 +14,8 @@
     "typeRoots": ["../server/node_modules/@types"],
     "baseUrl": ".",
     "paths": {
-      "@mariozechner/pi-coding-agent": [
-        "../server/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts"
+      "@earendil-works/pi-coding-agent": [
+        "../server/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
       ],
       "typebox": ["../server/node_modules/typebox/build/index.d.mts"]
     }

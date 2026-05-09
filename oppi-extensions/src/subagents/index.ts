@@ -11,7 +11,7 @@
  * Uses direct SessionManager methods — no HTTP round-trip needed.
  */
 
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type {
   ServerMessage,

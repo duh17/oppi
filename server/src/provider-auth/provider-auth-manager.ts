@@ -1,4 +1,4 @@
-import type { OAuthLoginCallbacks, OAuthProviderInterface } from "@mariozechner/pi-ai";
+import type { OAuthLoginCallbacks, OAuthProviderInterface } from "@earendil-works/pi-ai";
 
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";

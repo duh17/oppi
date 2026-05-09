@@ -12,7 +12,7 @@ import {
   DefaultPackageManager,
   SettingsManager,
   type ResolvedResource,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 import { isManagedExtensionName } from "../extensions/first-party.js";
 import { createLogger } from "./logger.js";

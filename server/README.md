@@ -1,6 +1,6 @@
 # oppi-server
 
-Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/badlogic/pi-mono) to run agent sessions in-process.
+Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/earendil-works/pi) to run agent sessions in-process.
 
 ## Quickstart
 
@@ -63,7 +63,7 @@ Create a workspace in the app and start a session.
 ## Requirements
 
 - Node.js 23.6+
-- [pi](https://github.com/badlogic/pi-mono) runtime dependency (installed automatically with npm package)
+- [pi](https://github.com/earendil-works/pi) runtime dependency (installed automatically with npm package)
 - macOS or Linux
 - OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 

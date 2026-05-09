@@ -1,4 +1,4 @@
-import { Editor, Key, matchesKey, truncateToWidth, type EditorTheme } from "@mariozechner/pi-tui";
+import { Editor, Key, matchesKey, truncateToWidth, type EditorTheme } from "@earendil-works/pi-tui";
 
 import {
   singleLine,

@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";

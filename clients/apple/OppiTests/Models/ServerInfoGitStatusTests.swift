@@ -43,7 +43,7 @@ struct ServerInfoTests {
             "algorithm": "ed25519"
           },
           "runtimeUpdate": {
-            "packageName": "@mariozechner/pi-coding-agent",
+            "packageName": "@earendil-works/pi-coding-agent",
             "currentVersion": "1.0.0",
             "latestVersion": "1.1.0",
             "pendingVersion": null,

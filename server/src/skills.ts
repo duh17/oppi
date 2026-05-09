@@ -34,7 +34,7 @@ import {
   loadSkills,
   SettingsManager,
   type Skill,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { createLogger } from "./logger.js";
 
 // ─── Types ───

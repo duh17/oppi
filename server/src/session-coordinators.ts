@@ -37,7 +37,7 @@ import type { Storage } from "./storage.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
 
 export type { SessionCatchUpResponse };

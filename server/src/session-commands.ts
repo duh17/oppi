@@ -1,4 +1,4 @@
-import { formatSkillsForPrompt, type AgentSession } from "@mariozechner/pi-coding-agent";
+import { formatSkillsForPrompt, type AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { createLogger } from "./logger.js";

@@ -64,6 +64,16 @@ interface PackageManagerCommand {
   name: string;
 }
 
+const DEFAULT_PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const LEGACY_PI_CODING_AGENT_PACKAGE = "@mariozechner/pi-coding-agent";
+
+function packageNameCandidates(packageName: string): string[] {
+  if (packageName === DEFAULT_PI_CODING_AGENT_PACKAGE) {
+    return [DEFAULT_PI_CODING_AGENT_PACKAGE, LEGACY_PI_CODING_AGENT_PACKAGE];
+  }
+  return [packageName];
+}
+
 /**
  * Resolves the mutable runtime directory.
  *
@@ -174,6 +184,23 @@ function readManifestDependencyVersion(
   }
 }
 
+function findManifestDependencyName(
+  runtimeDir: string,
+  packageNames: string[],
+): string | undefined {
+  try {
+    const pkgJson = JSON.parse(readFileSync(join(runtimeDir, "package.json"), "utf-8"));
+    for (const packageName of packageNames) {
+      if (pkgJson.dependencies?.[packageName] || pkgJson.optionalDependencies?.[packageName]) {
+        return packageName;
+      }
+    }
+  } catch {
+    // Ignore and fall back to the default package name.
+  }
+  return undefined;
+}
+
 function pinManifestDependencyVersion(
   runtimeDir: string,
   packageName: string,
@@ -191,6 +218,30 @@ function pinManifestDependencyVersion(
   }
 
   writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + "\n");
+}
+
+function replaceManifestDependencyName(
+  runtimeDir: string,
+  fromPackageName: string,
+  toPackageName: string,
+  version: string,
+): void {
+  const pkgPath = join(runtimeDir, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgPath, "utf-8"));
+
+  for (const field of ["dependencies", "optionalDependencies"] as const) {
+    const deps = pkgJson[field];
+    if (!deps || typeof deps !== "object" || !(fromPackageName in deps)) {
+      continue;
+    }
+
+    delete deps[fromPackageName];
+    deps[toPackageName] = version;
+    writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + "\n");
+    return;
+  }
+
+  pinManifestDependencyVersion(runtimeDir, toPackageName, version);
 }
 
 /**
@@ -248,7 +299,7 @@ export class RuntimeUpdateManager {
   private restartRequired = false;
 
   constructor(options: RuntimeUpdateManagerOptions) {
-    this.packageName = options.packageName || "@mariozechner/pi-coding-agent";
+    this.packageName = options.packageName || DEFAULT_PI_CODING_AGENT_PACKAGE;
     this.currentVersion = options.currentVersion;
   }
 
@@ -329,12 +380,33 @@ export class RuntimeUpdateManager {
     try {
       const status = await this.getStatus({ force: true });
       const before = snapshotVersions(runtimeDir);
+      const manifestPackageName =
+        findManifestDependencyName(runtimeDir, packageNameCandidates(this.packageName)) ??
+        this.packageName;
+      const migrationRequired = manifestPackageName !== this.packageName;
+      const migrationVersion =
+        status.latestVersion ??
+        readManifestDependencyVersion(runtimeDir, manifestPackageName) ??
+        (parseSemver(this.currentVersion) ? this.currentVersion : undefined);
+      const targetVersion = status.updateAvailable
+        ? status.latestVersion
+        : migrationRequired
+          ? migrationVersion
+          : undefined;
 
-      const targetVersion = status.updateAvailable ? status.latestVersion : undefined;
       if (targetVersion) {
-        const pinned = readManifestDependencyVersion(runtimeDir, this.packageName);
-        if (pinned !== targetVersion) {
-          pinManifestDependencyVersion(runtimeDir, this.packageName, targetVersion);
+        if (migrationRequired) {
+          replaceManifestDependencyName(
+            runtimeDir,
+            manifestPackageName,
+            this.packageName,
+            targetVersion,
+          );
+        } else {
+          const pinned = readManifestDependencyVersion(runtimeDir, this.packageName);
+          if (pinned !== targetVersion) {
+            pinManifestDependencyVersion(runtimeDir, this.packageName, targetVersion);
+          }
         }
       }
 
@@ -353,14 +425,18 @@ export class RuntimeUpdateManager {
       }
 
       this.lastUpdatedAt = Date.now();
-      this.restartRequired = updatedPackages.length > 0;
+      this.restartRequired = updatedPackages.length > 0 || migrationRequired;
 
       const message =
         updatedPackages.length > 0
           ? `Updated ${updatedPackages.length} package(s). Restart required to apply changes.`
-          : targetVersion
-            ? `Pinned ${this.packageName} to ${targetVersion}. Restart may still be required after install.`
-            : "All dependencies are up to date.";
+          : migrationRequired
+            ? targetVersion
+              ? `Migrated runtime dependency to ${this.packageName}@${targetVersion}. Restart required to apply changes.`
+              : `Migrated runtime dependency to ${this.packageName}. Restart required to apply changes.`
+            : targetVersion
+              ? `Pinned ${this.packageName} to ${targetVersion}. Restart may still be required after install.`
+              : "All dependencies are up to date.";
 
       return {
         ok: true,

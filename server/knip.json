@@ -2,6 +2,6 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "project": ["src/**/*.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@mariozechner/pi-ai", "typebox"],
+  "ignoreDependencies": ["@earendil-works/pi-tui", "typebox"],
   "ignoreBinaries": ["scripts/testing-gates.ts"]
 }

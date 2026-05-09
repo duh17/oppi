@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import * as PiSdk from "@mariozechner/pi-coding-agent";
+import * as PiSdk from "@earendil-works/pi-coding-agent";
 
 import { resolveSdkSessionCwd, SdkBackend } from "../src/sdk-backend.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { createAskFactory } from "../extensions/ask.js";
 import { createOppiAdminFactory } from "../extensions/oppi-admin.js";

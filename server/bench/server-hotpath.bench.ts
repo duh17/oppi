@@ -22,7 +22,7 @@ import { sanitizeToolResultDetails } from "../src/visual-schema.js";
 import { EventRing } from "../src/event-ring.js";
 import { SessionBroadcaster, type BroadcastSessionState } from "../src/session-broadcast.js";
 import { stripAnsiEscapes } from "../src/ansi.js";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ServerMessage, Session } from "../src/types.js";
 
 // ─── Config ───

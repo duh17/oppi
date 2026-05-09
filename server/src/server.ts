@@ -32,7 +32,7 @@ import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
-import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
+import { ModelRegistry, AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   PolicyEngine,
   defaultPolicy,
@@ -300,17 +300,19 @@ export class Server {
     }
   }
 
-  /** Read installed @mariozechner/pi-coding-agent version from its package.json. */
+  /** Read installed pi-coding-agent version from its package.json. */
   static detectPiAgentVersion(): string {
     // import.meta.url points to dist/src/server.js
     // node_modules is at the project root (two levels up from dist/src/)
     const srcDir = dirname(fileURLToPath(import.meta.url));
-    const candidates = [
-      // Normal layout: <root>/node_modules/ (src at <root>/dist/src/server.js)
-      join(srcDir, "..", "..", "node_modules", "@mariozechner", "pi-coding-agent", "package.json"),
-      // Flat layout: <root>/node_modules/ (src at <root>/src/server.ts, dev mode)
-      join(srcDir, "..", "node_modules", "@mariozechner", "pi-coding-agent", "package.json"),
+    const packageScopes = ["@earendil-works", "@mariozechner"];
+    const candidateRoots = [
+      join(srcDir, "..", "..", "node_modules"),
+      join(srcDir, "..", "node_modules"),
     ];
+    const candidates = candidateRoots.flatMap((root) =>
+      packageScopes.map((scope) => join(root, scope, "pi-coding-agent", "package.json")),
+    );
     for (const pkgPath of candidates) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };

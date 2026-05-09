@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ModelCatalog } from "../src/model-catalog.js";
-import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
 

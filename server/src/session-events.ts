@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";

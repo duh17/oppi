@@ -1,4 +1,4 @@
-import { calculateCost, getModel, type KnownProvider, type Usage } from "@mariozechner/pi-ai";
+import { calculateCost, getModel, type KnownProvider, type Usage } from "@earendil-works/pi-ai";
 import type { PiMessageUsage } from "./pi-events.js";
 
 export interface NormalizedUsage {
