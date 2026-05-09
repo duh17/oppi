@@ -80,7 +80,7 @@ struct SessionStreamCoordinatorCatchUpTests {
         #expect(coordinator.lastSeenSeq(sessionId: "s1") == 0)
     }
 
-    /// Integration: subscribe -> receive messages -> reconnect -> catch-up.
+    /// Integration: connect bound stream -> receive messages -> reconnect -> catch-up.
     /// After consuming messages up to seq 8, reconnect sees currentSeq 12.
     @Test func catchUpAfterConsumedMessages() async {
         let coordinator = SessionStreamCoordinator()

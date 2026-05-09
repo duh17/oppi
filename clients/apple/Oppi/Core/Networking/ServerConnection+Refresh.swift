@@ -228,9 +228,9 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
-        // 0. If a chat session owns a stream, keep that focused transport alive.
-        // Home and workspace-list refreshes stay HTTP/workspace-stream only.
-        if focusedSessionId != nil {
+        // 0. If a chat session owns a prepared bound stream, keep that focused transport alive.
+        // Home/workspace-list refreshes and pre-stream session focus stay HTTP/workspace-stream only.
+        if focusedSessionId != nil, focusedSessionStreamEndpointKind == "split_session" {
             if case .reconnecting = wsClient?.status {
                 wsClient?.cancelReconnectBackoff()
                 streamConsumptionTask?.cancel()
@@ -283,7 +283,7 @@ extension ServerConnection {
 
         if !streamAlive {
             // Stash pending user-blocking UI so focusSession() can restore it
-            // locally and stream subscribe replay can restore it from the server.
+            // locally and stream reconnect replay can restore it from the server.
             stashActiveAskIfNeeded()
             stashActiveExtensionDialogIfNeeded()
 

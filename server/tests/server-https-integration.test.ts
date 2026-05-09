@@ -40,7 +40,7 @@ function httpsGet(url: string): Promise<{ status: number; body: string }> {
 }
 
 describe.skipIf(!hasOpenSSL)("HTTPS/WSS integration", () => {
-  it("serves /health over HTTPS and /stream over WSS", async () => {
+  it("serves /health over HTTPS and workspace stream over WSS", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-https-integration-"));
     const storage = new Storage(dataDir);
     storage.updateConfig({
@@ -61,11 +61,16 @@ describe.skipIf(!hasOpenSSL)("HTTPS/WSS integration", () => {
       const body = JSON.parse(health.body) as { ok?: boolean };
       expect(body.ok).toBe(true);
 
+      const workspace = storage.createWorkspace({ name: "https-ws", skills: [] });
+
       const streamMessage = await new Promise<Record<string, unknown> | null>((resolve) => {
-        const ws = new WebSocket(`${baseURL.replace("https", "wss")}/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
-          rejectUnauthorized: false,
-        });
+        const ws = new WebSocket(
+          `${baseURL.replace("https", "wss")}/workspaces/${workspace.id}/stream`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            rejectUnauthorized: false,
+          },
+        );
 
         const timeout = setTimeout(() => {
           ws.terminate();

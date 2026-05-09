@@ -4536,7 +4536,7 @@
     },
     {
       "title": "Split Stream Server Lanes",
-      "description": "Release preflight: confirm split lanes have traffic and legacy /stream is not carrying the new client flow.",
+      "description": "Release preflight: confirm split workspace/session/audio lanes have traffic and no untagged WebSocket lane is carrying the client flow.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -4561,7 +4561,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  metric,\n  COALESCE(tag_type, '-') AS message_type,\n  COUNT(*) AS samples,\n  ROUND(SUM(value), 1) AS total\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_handshake_ms', 'server.ws_message_sent', 'server.ws_message_received', 'server.ws_binary_received_bytes')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, metric, message_type\nORDER BY path, metric, samples DESC",
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  metric,\n  COALESCE(tag_type, '-') AS message_type,\n  COUNT(*) AS samples,\n  ROUND(SUM(value), 1) AS total\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_handshake_ms', 'server.ws_message_sent', 'server.ws_message_received', 'server.ws_binary_received_bytes')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, metric, message_type\nORDER BY path, metric, samples DESC",
           "queryType": "table",
           "timeColumns": []
         }
@@ -4598,7 +4598,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
           "queryType": "table",
           "timeColumns": []
         }

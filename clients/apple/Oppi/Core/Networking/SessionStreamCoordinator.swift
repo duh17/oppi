@@ -11,7 +11,6 @@ final class SessionStreamCoordinator {
     enum StreamState: Equatable {
         case idle
         case connectingTransport(sessionId: String)
-        case awaitingSubscribeAck(sessionId: String)
         case queueSync(sessionId: String, phase: QueueSyncPhase)
         case streaming(sessionId: String)
         case resubscribing(sessionId: String)
@@ -31,7 +30,6 @@ final class SessionStreamCoordinator {
     private enum StateKind: String {
         case idle
         case connectingTransport
-        case awaitingSubscribeAck
         case queueSync
         case streaming
         case resubscribing
@@ -40,7 +38,6 @@ final class SessionStreamCoordinator {
     private enum Event: String {
         case beginSession
         case transportReady
-        case subscribeAck
         case queueSyncStarted
         case queueSyncFinished
         case streamConnected
@@ -49,8 +46,7 @@ final class SessionStreamCoordinator {
 
     private static let transitionTable: [StateKind: Set<Event>] = [
         .idle: [.beginSession, .disconnected],
-        .connectingTransport: [.transportReady, .disconnected],
-        .awaitingSubscribeAck: [.subscribeAck, .disconnected],
+        .connectingTransport: [.transportReady, .streamConnected, .disconnected],
         .queueSync: [.queueSyncStarted, .queueSyncFinished, .disconnected],
         .streaming: [.beginSession, .streamConnected, .disconnected],
         .resubscribing: [.queueSyncFinished, .streamConnected, .disconnected],
@@ -63,7 +59,7 @@ final class SessionStreamCoordinator {
         switch state {
         case .queueSync(let activeSessionId, _), .streaming(let activeSessionId), .resubscribing(let activeSessionId):
             return activeSessionId == sessionId
-        case .idle, .connectingTransport, .awaitingSubscribeAck:
+        case .idle, .connectingTransport:
             return false
         }
     }
@@ -85,7 +81,6 @@ final class SessionStreamCoordinator {
         let streamStart = ContinuousClock.now
 
         connection.focusSession(sessionId)
-        connection.subscriptionRegistry.setDesired(.full, for: sessionId)
         connection.chatState.thinkingLevel = .medium
         Task {
             await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
@@ -133,18 +128,14 @@ final class SessionStreamCoordinator {
             ]
         )
 
-        transition(to: .awaitingSubscribeAck(sessionId: sessionId), event: .transportReady)
-        let syntheticRequestId = "bound-session-stream-\(UUID().uuidString)"
-        connection.subscriptionRegistry.markSubscribeSent(
-            sessionId: sessionId,
-            requestId: syntheticRequestId,
-            level: .full
-        )
-        connection.subscriptionRegistry.markSubscribeAck(
-            sessionId: sessionId,
-            requestId: syntheticRequestId
-        )
-        transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .subscribeAck)
+        guard waitOutcome != "timeout", !Task.isCancelled else {
+            streamCoordinatorLogger.warning(
+                "streamSession(\(sessionId, privacy: .public)): transport not connected; deferring queue sync until stream_connected"
+            )
+            return perSessionStream
+        }
+
+        transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .transportReady)
 
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
@@ -196,18 +187,6 @@ final class SessionStreamCoordinator {
               let focusedSessionId = connection.focusedSessionId else { return }
 
         transition(to: .resubscribing(sessionId: focusedSessionId), event: .streamConnected)
-        let syntheticRequestId = "bound-session-reconnect-\(UUID().uuidString)"
-        connection.subscriptionRegistry.setDesired(.full, for: focusedSessionId)
-        connection.subscriptionRegistry.markSubscribeSent(
-            sessionId: focusedSessionId,
-            requestId: syntheticRequestId,
-            level: .full
-        )
-        connection.subscriptionRegistry.markSubscribeAck(
-            sessionId: focusedSessionId,
-            requestId: syntheticRequestId
-        )
-        transition(to: .streaming(sessionId: focusedSessionId), event: .queueSyncFinished)
         scheduleQueueSync(
             connection: connection,
             sessionId: focusedSessionId,
@@ -401,7 +380,6 @@ final class SessionStreamCoordinator {
         switch state {
         case .idle: .idle
         case .connectingTransport: .connectingTransport
-        case .awaitingSubscribeAck: .awaitingSubscribeAck
         case .queueSync: .queueSync
         case .streaming: .streaming
         case .resubscribing: .resubscribing

@@ -9,7 +9,7 @@ import Testing
 /// source, compressible, and doesn't require the session to be started.
 ///
 /// Strategy:
-///   1. Subscribe WSS (get currentSeq from ack)
+///   1. Open WSS (get currentSeq from stream metadata)
 ///   2. Fetch JSONL trace via REST → manager.reducer.loadSession(trace) [full rebuild]
 ///   3. Seed lastSeenSeq = currentSeq → skip ring catch-up
 ///   4. Live WSS events with seq > currentSeq append normally
@@ -29,12 +29,12 @@ import Testing
 @MainActor
 struct ChatSessionReentryTests {
 
-    // MARK: - Edge 1: Re-entry with cache seeds seq from subscribe, skips ring
+    // MARK: - Edge 1: Re-entry with cache seeds seq from stream baseline, skips ring
 
     /// When re-entering a chat with cached history, the trace fetch should
-    /// rebuild the timeline and the seq should be seeded from the subscribe
-    /// ack's currentSeq — bypassing the ring catch-up entirely.
-    @Test func reentryWithCacheSeedsSeqFromSubscribeSkipsRing() async {
+    /// rebuild the timeline and the seq should be seeded from the stream
+    /// baseline currentSeq — bypassing the ring catch-up entirely.
+    @Test func reentryWithCacheSeedsSeqFromStreamBaselineSkipsRing() async {
         let sessionId = "reentry-cache-\(UUID().uuidString)"
         let workspaceId = "w1"
         let manager = ChatSessionManager(sessionId: sessionId)
@@ -70,7 +70,7 @@ struct ChatSessionReentryTests {
             )
         }
 
-        // Subscribe ack provides currentSeq = 42
+        // Stream baseline provides currentSeq = 42
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 42),
         ]
@@ -98,9 +98,9 @@ struct ChatSessionReentryTests {
         // Ring catch-up should NOT have been called (cache present = use trace path)
         #expect(!ringCatchUpCalled, "Re-entry with cache should skip ring catch-up")
 
-        // Seq should be seeded from subscribe ack
+        // Seq should be seeded from stream baseline
         let seededSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
-        #expect(seededSeq == 42, "Seq should be seeded from subscribe ack currentSeq")
+        #expect(seededSeq == 42, "Seq should be seeded from stream baseline currentSeq")
 
         streams.finish(index: 0)
         await connectTask.value
@@ -110,7 +110,7 @@ struct ChatSessionReentryTests {
     // MARK: - Edge 2: Live events during trace fetch are not lost
 
     /// When the session is actively streaming during re-entry, events that
-    /// arrive via WSS after the subscribe (seq > currentSeq) should be
+    /// arrive via WSS after stream connection (seq > currentSeq) should be
     /// applied after the trace rebuild — not dropped.
     @Test func liveEventsDuringTraceFetchAreApplied() async {
         let sessionId = "reentry-live-\(UUID().uuidString)"
@@ -137,7 +137,7 @@ struct ChatSessionReentryTests {
             )
         }
 
-        // Subscribe ack: currentSeq = 10
+        // Stream baseline: currentSeq = 10
         // Live events: agentStart is durable (has seq), textDelta is ephemeral (no seq)
         var inboundMetaConsumed = false
         var liveEventCount = 0
@@ -213,7 +213,7 @@ struct ChatSessionReentryTests {
             return (eventCount: 20, lastEventId: "evt-20")
         }
 
-        // Subscribe ack: currentSeq = 0 (server restarted)
+        // Stream baseline: currentSeq = 0 (server restarted)
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 0),
         ]
@@ -317,7 +317,7 @@ struct ChatSessionReentryTests {
 
     // MARK: - Edge 5: Duplicate seq events dropped after trace seed
 
-    /// After seeding lastSeenSeq from the subscribe ack, any live events
+    /// After seeding lastSeenSeq from the stream baseline, any live events
     /// with seq <= seeded value should be silently dropped (they're already
     /// in the trace).
     @Test func duplicateSeqEventsDroppedAfterTraceSeed() async {
@@ -331,11 +331,11 @@ struct ChatSessionReentryTests {
 
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
-        // Subscribe ack: currentSeq = 10
+        // Stream baseline: currentSeq = 10
         // Then deliver events with seq 8, 9, 10 (all <= seeded) and seq 11 (new)
         var inboundMetaIndex = 0
         let inboundMetaSequence: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 10),    // subscribe ack
+            .init(seq: nil, currentSeq: 10),    // stream baseline
             .init(seq: 8, currentSeq: nil),     // stale
             .init(seq: 9, currentSeq: nil),     // stale
             .init(seq: 10, currentSeq: nil),    // stale (equal to seeded)
@@ -388,7 +388,7 @@ struct ChatSessionReentryTests {
     // MARK: - Edge 6: No cache, no prior seq — fresh install re-entry
 
     /// Fresh install with no cache and no persisted seq. The trace fetch
-    /// populates the timeline. currentSeq from subscribe seeds the baseline.
+    /// populates the timeline. currentSeq from stream baseline seeds the baseline.
     @Test func freshInstallReentryPopulatesFromTrace() async {
         let sessionId = "reentry-fresh-\(UUID().uuidString)"
         let workspaceId = "w1"
@@ -408,7 +408,7 @@ struct ChatSessionReentryTests {
             )
         }
 
-        // Subscribe ack: currentSeq = 15 (session had 15 durable events)
+        // Stream baseline: currentSeq = 15 (session had 15 durable events)
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 15),
         ]
@@ -574,7 +574,7 @@ struct ChatSessionReentryTests {
     // MARK: - Edge 9: Stopped session re-entry loads trace without WSS
 
     /// Stopped sessions should load the trace via REST without opening
-    /// a WebSocket — the WSS subscribe would auto-resume the pi process.
+    /// a WebSocket — the session stream would auto-resume the pi process.
     @Test func stoppedSessionReentryLoadsTraceWithoutWSS() async {
         let sessionId = "reentry-stopped-\(UUID().uuidString)"
         let workspaceId = "w1"
@@ -653,7 +653,7 @@ struct ChatSessionReentryTests {
             )
         }
 
-        // Subscribe ack: currentSeq = 50 (lots of events happened since cache)
+        // Stream baseline: currentSeq = 50 (lots of events happened since cache)
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
             .init(seq: nil, currentSeq: 50),
         ]

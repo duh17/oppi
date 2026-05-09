@@ -26,7 +26,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     private let transport: any DictationTransport
     /// Resolves once the server sends `dictation_ready`. Audio is buffered until then.
     private let readinessTask: Task<DictationProviderInfo?, Error>
-    /// Recording-scoped message stream, routed from the /stream WS.
+    /// Recording-scoped message stream, routed from the active dictation transport.
     private let recordingMessages: AsyncStream<ServerMessage>
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     private let audioLevelContinuation: AsyncStream<Float>.Continuation
@@ -69,18 +69,6 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: Float.self)
         self.audioLevels = audioLevels
         self.audioLevelContinuation = audioLevelContinuation
-    }
-
-    convenience init(
-        connection: ServerConnection,
-        readinessTask: Task<DictationProviderInfo?, Error>,
-        messages: AsyncStream<ServerMessage>
-    ) {
-        self.init(
-            transport: connection,
-            readinessTask: readinessTask,
-            messages: messages
-        )
     }
 
     func start() async throws -> VoiceSessionStartTimings {
@@ -270,9 +258,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     // MARK: - Server Message Handling
 
     private func startMessageListener() {
-        // Use the recording-scoped stream from OppiDictationProvider,
-        // routed from the /stream WS. Ends when the provider finishes it
-        // (on dictation_final or WS disconnect).
+        // Use the recording-scoped stream from OppiDictationProvider.
+        // It ends when the provider finishes it (on dictation_final or transport disconnect).
         let stream = recordingMessages
         messageListenTask = Task { [weak self] in
             for await message in stream {

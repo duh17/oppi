@@ -180,7 +180,7 @@ Configures server-side dictation routing to an external STT backend.
 
 | Setting           | Type   | Default | Description                                                                                                                                                                 |
 | ----------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on `/stream` and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. |
+| `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on the session audio stream and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. |
 
 ### Policy
 

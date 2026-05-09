@@ -28,7 +28,9 @@ final class ServerConnection {
     private(set) var missingRequiredSplitStreamCapabilities: [String] = []
     private var streamCapabilitiesLoaded = false
     private var streamCapabilitiesRefreshFailed = false
-    private(set) var focusedSessionStreamEndpointKind = "legacy"
+    private(set) var focusedSessionStreamEndpointKind = "none"
+    private var focusedSessionStreamSessionId: String?
+    private var focusedSessionStreamWorkspaceId: String?
     private(set) var transportPath: ConnectionTransportPath = .paired
 
     var isWorkspaceStreamActive: Bool {
@@ -83,10 +85,11 @@ final class ServerConnection {
         workspaceStreamClient?.disconnect()
         workspaceStreamClient = nil
         workspaceStreamWorkspaceId = nil
-        focusedSessionStreamEndpointKind = "legacy"
+        clearFocusedSessionStreamEndpoint()
         if let selection = endpointSelection {
             wsClient?.setPreferredEndpoint(selection)
         }
+        wsClient?.setStreamURL(nil)
     }
 
     func focusedSessionStreamEndpointIsUnsupported() -> Bool {
@@ -104,7 +107,7 @@ final class ServerConnection {
     }
 
     /// Whether the server has ASR configured (remote dictation server or another STT backend).
-    /// Updated on each `/stream` connection from the `stream_connected` message.
+    /// Updated from server capabilities and `stream_connected` messages.
     private(set) var asrAvailable = false
 
     // Stores
@@ -137,8 +140,6 @@ final class ServerConnection {
         focusedSessionStore.isFocused(sessionId)
     }
     let sessionStreamCoordinator = SessionStreamCoordinator()
-    let subscriptionRegistry = StreamSubscriptionRegistry()
-
     /// Send protocol — turn ack, command correlation, retry.
     let sender = MessageSender()
 
@@ -183,14 +184,6 @@ final class ServerConnection {
     /// Test seam: observe view-driven session re-entry preparation.
     var _onPrepareForSessionReentryForTesting: ((String) -> Void)?
 
-    // periphery:ignore - used by OppiDictationProviderTests via @testable import
-    /// Test seam: override dictation control sends without a live WebSocket.
-    var _sendDictationForTesting: ((ClientMessage) async throws -> Void)?
-
-    // periphery:ignore - used by OppiDictationProviderTests via @testable import
-    /// Test seam: override dictation audio sends without a live WebSocket.
-    var _sendDictationAudioForTesting: ((Data) async throws -> Void)?
-
     // periphery:ignore - used by ServerConnectionPermissionTests via @testable import
     /// Test seam: override REST permission responses without opening a real HTTP server.
     var _respondToPermissionRESTForTesting: ((String, PermissionAction, PermissionScope, Int?) async throws -> Void)?
@@ -231,11 +224,6 @@ final class ServerConnection {
     /// update the per-session reducer immediately (before the server echoes
     /// the event back over WS).
     var onPermissionResolved: ((_ id: String, _ outcome: PermissionOutcome, _ tool: String, _ summary: String) -> Void)?
-
-    /// Tracked unsubscribe tasks — keyed by sessionId.
-    /// Cancelled before resubscribing the same session to prevent the
-    /// fire-and-forget unsubscribe from racing past the new subscribe.
-    var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
 
     /// Deferred disconnects for hidden sessions that still need live audio-stream delivery.
     var deferredPlaybackDisconnectTasks: [String: Task<Void, Never>] = [:]
@@ -301,7 +289,7 @@ final class ServerConnection {
         self.missingRequiredSplitStreamCapabilities = []
         self.streamCapabilitiesLoaded = false
         self.streamCapabilitiesRefreshFailed = false
-        self.focusedSessionStreamEndpointKind = "legacy"
+        self.clearFocusedSessionStreamEndpoint()
         self.transportPath = selection.transportPath
 
         self.apiClient = APIClient(
@@ -313,6 +301,7 @@ final class ServerConnection {
             credentials: credentials,
             preferredEndpoint: selection
         )
+        self.wsClient?.setStreamURL(nil)
         sender.wsClient = self.wsClient
         sender.focusedSessionProvider = { [weak self] in
             self?.focusedSessionStore.focused
@@ -457,10 +446,6 @@ final class ServerConnection {
     /// `sessionEventContinuations` so metadata cannot drift from its message.
     internal var sessionContinuations: [String: AsyncStream<ServerMessage>.Continuation] = [:]
 
-    /// Continuation for routing dictation messages from the legacy multiplexed stream.
-    /// Set by `subscribeDictation()`, cleared by `unsubscribeDictation()`.
-    private var dictationContinuation: AsyncStream<ServerMessage>.Continuation?
-
     /// Connect the active session WebSocket endpoint.
     ///
     /// Opens the WS and starts a consumption task that routes messages
@@ -484,7 +469,7 @@ final class ServerConnection {
         // Don't tear down a healthy connection. wsClient.connect() calls
         // disconnect() internally, which would drop a working socket just
         // to re-establish it — causing an 8s+ re-entry delay while
-        // waitForConnection() blocks subscribe/get_queue sends.
+        // waitForConnection() blocks command sends such as get_queue.
         if wsClient.status == .connected {
             return
         }
@@ -524,18 +509,11 @@ final class ServerConnection {
             cont.finish()
         }
         sessionContinuations.removeAll()
-        dictationContinuation?.finish()
-        dictationContinuation = nil
-        for (_, task) in pendingUnsubscribeTasks {
-            task.cancel()
-        }
-        pendingUnsubscribeTasks.removeAll()
-        subscriptionRegistry.removeAll()
         sessionUsageMetricSnapshots.removeAll()
         asrAvailable = false
+        clearFocusedSessionStreamEndpoint()
         if disconnectWorkspace {
             disconnectWorkspaceStream()
-            focusedSessionStreamEndpointKind = "legacy"
         }
         wsClient?.disconnect()
 
@@ -751,16 +729,6 @@ final class ServerConnection {
             return
         }
 
-        // Route dictation messages to the dictation subscriber (no sessionId).
-        // These are user-level, not session-scoped.
-        switch message {
-        case .dictationReady, .dictationResult, .dictationFinal, .dictationError:
-            dictationContinuation?.yield(message)
-            return
-        default:
-            break
-        }
-
         // Resolve pending command waiters directly at the stream boundary,
         // BEFORE yielding to the per-session stream. Semantic effects still
         // flow downstream, but request waiters do not depend on a session
@@ -921,6 +889,29 @@ final class ServerConnection {
 
     // MARK: - Session Streaming
 
+    private func clearFocusedSessionStreamEndpoint() {
+        focusedSessionStreamEndpointKind = "none"
+        focusedSessionStreamSessionId = nil
+        focusedSessionStreamWorkspaceId = nil
+        wsClient?.setStreamURL(nil)
+    }
+
+    private func hasActiveFocusedSessionStreamTransport() -> Bool {
+        if streamConsumptionTask != nil { return true }
+        switch wsClient?.status {
+        case .connected, .connecting, .reconnecting:
+            return true
+        case .disconnected, nil:
+            return false
+        }
+    }
+
+    private func focusedSessionStreamTargetMatches(sessionId: String, workspaceId: String) -> Bool {
+        focusedSessionStreamEndpointKind == "split_session"
+            && focusedSessionStreamSessionId == sessionId
+            && focusedSessionStreamWorkspaceId == workspaceId
+    }
+
     /// Open the URL-bound focused session stream.
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<SessionStreamEvent>? {
         await refreshStreamCapabilitiesIfNeeded()
@@ -936,22 +927,25 @@ final class ServerConnection {
     }
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, workspaceId: String) {
-        focusedSessionStreamEndpointKind = "legacy"
+        if focusedSessionStreamTargetMatches(sessionId: sessionId, workspaceId: workspaceId) {
+            // Keep a live/reconnecting transport for the same bound endpoint.
+        } else if focusedSessionStreamEndpointKind == "split_session",
+                  hasActiveFocusedSessionStreamTransport() {
+            disconnectStream(disconnectWorkspace: false)
+        } else {
+            clearFocusedSessionStreamEndpoint()
+        }
+
         guard hasRequiredSplitStreamCapabilities, let selection = endpointSelection else { return }
         guard var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else { return }
         components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
         components.path = "/workspaces/\(workspaceId)/sessions/\(sessionId)/stream"
         guard let sessionStreamURL = components.url else { return }
-        let sessionEndpoint = EndpointSelection(
-            baseURL: selection.baseURL,
-            streamURL: sessionStreamURL,
-            transportPath: selection.transportPath
-        )
         focusedSessionStreamEndpointKind = "split_session"
-        wsClient?.setPreferredEndpoint(sessionEndpoint)
-        if wsClient?.status == .connected {
-            disconnectStream(disconnectWorkspace: false)
-        }
+        focusedSessionStreamSessionId = sessionId
+        focusedSessionStreamWorkspaceId = workspaceId
+        wsClient?.setPreferredEndpoint(selection)
+        wsClient?.setStreamURL(sessionStreamURL)
     }
 
     func cancelDeferredQueueSync() {
@@ -1006,42 +1000,12 @@ final class ServerConnection {
         endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
     }
 
-    /// Cancel a deferred unsubscribe that would otherwise be able to arrive
-    /// after a newer subscribe for the same session.
-    func cancelPendingUnsubscribe(for sessionId: String) {
-        if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
-            pendingUnsub.cancel()
-        }
-    }
-
-    /// Unsubscribe from a specific session.
-    ///
-    /// The send is tracked so `streamSession()` can cancel it before
-    /// resubscribing the same session — preventing the fire-and-forget
-    /// unsubscribe from arriving after a newer subscribe.
-    func unsubscribeSession(_ sessionId: String) {
+    /// Close local continuations for a specific session stream.
+    func closeSessionStreamContinuations(_ sessionId: String) {
         sessionEventContinuations[sessionId]?.finish()
         sessionEventContinuations.removeValue(forKey: sessionId)
         sessionContinuations[sessionId]?.finish()
         sessionContinuations.removeValue(forKey: sessionId)
-
-        let subscriptionGeneration = subscriptionRegistry.generation(for: sessionId)
-        subscriptionRegistry.setDesired(.none, for: sessionId)
-
-        pendingUnsubscribeTasks[sessionId]?.cancel()
-        guard focusedSessionStreamEndpointKind != "split_session" else {
-            pendingUnsubscribeTasks.removeValue(forKey: sessionId)
-            return
-        }
-        pendingUnsubscribeTasks[sessionId] = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            try? await self?.wsClient?.send(.unsubscribe(
-                sessionId: sessionId,
-                requestId: UUID().uuidString,
-                subscriptionGeneration: subscriptionGeneration
-            ))
-            self?.pendingUnsubscribeTasks.removeValue(forKey: sessionId)
-        }
     }
 
     private func cancelDeferredPlaybackDisconnect(for sessionId: String) {
@@ -1065,7 +1029,7 @@ final class ServerConnection {
     }
 
     private func disconnectSessionResources(for sessionId: String) {
-        unsubscribeSession(sessionId)
+        closeSessionStreamContinuations(sessionId)
         messageQueueStore.clear(sessionId: sessionId)
         sessionUsageMetricSnapshots.removeValue(forKey: sessionId)
         screenAwakeController.clearSessionActivity(sessionId: sessionId)
@@ -1073,8 +1037,8 @@ final class ServerConnection {
 
     /// Focus the connection on a session for command routing (prompt/stop/etc).
     ///
-    /// Unlike `disconnectSession`, this does NOT unsubscribe the previous session
-    /// or tear down streams. The previous session's ChatSessionManager keeps
+    /// Unlike `disconnectSession`, this does NOT close the previous session stream
+    /// continuations or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
         cancelDeferredPlaybackDisconnect(for: sessionId)
@@ -1106,7 +1070,6 @@ final class ServerConnection {
     /// The session view's connect task owns the bound session stream endpoint.
     func prepareForSessionReentry(_ sessionId: String) {
         _onPrepareForSessionReentryForTesting?(sessionId)
-        cancelPendingUnsubscribe(for: sessionId)
         focusSession(sessionId)
     }
 
@@ -1279,48 +1242,6 @@ final class ServerConnection {
         MessageSender.telemetryErrorKind(from: error)
     }
 
-    // MARK: - Legacy dictation fallback
-
-    /// Create a stream for dictation messages routed from the legacy `/stream` WS.
-    /// Only one subscription can be active at a time.
-    func subscribeDictation() -> AsyncStream<ServerMessage> {
-        // Finish any existing subscription
-        dictationContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: ServerMessage.self)
-        dictationContinuation = continuation
-        return stream
-    }
-
-    /// Stop receiving dictation messages.
-    func unsubscribeDictation() {
-        dictationContinuation?.finish()
-        dictationContinuation = nil
-    }
-
-    /// Send a dictation control message (text frame).
-    func sendDictation(_ message: ClientMessage) async throws {
-        if let _sendDictationForTesting {
-            try await _sendDictationForTesting(message)
-            return
-        }
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(message)
-    }
-
-    /// Send raw PCM audio as a binary WebSocket frame.
-    func sendDictationAudio(_ data: Data) async throws {
-        if let _sendDictationAudioForTesting {
-            try await _sendDictationAudioForTesting(data)
-            return
-        }
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.sendBinary(data)
-    }
-
-    func closeDictationTransport() {
-        // Legacy dictation is multiplexed over the main session stream; do not close it here.
-    }
-
     func setAsrAvailableFromCapabilities(_ available: Bool) {
         asrAvailable = available
     }
@@ -1401,5 +1322,3 @@ final class ServerConnection {
     }
 #endif
 }
-
-extension ServerConnection: DictationTransport {}

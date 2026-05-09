@@ -224,6 +224,5 @@ struct PairedServerTests {
         )
         let server = PairedServer(from: creds)!
         #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
-        #expect(server.credentials.streamURL?.absoluteString == "wss://192.168.1.50:7749/stream")
     }
 }

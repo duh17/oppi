@@ -107,11 +107,14 @@ describe("routes modules", () => {
   });
 
   describe("streaming module", () => {
-    it("handles GET /stream/events in isolation", async () => {
+    it("handles GET /workspaces/:id/stream/events in isolation", async () => {
       const ctx = {
-        streamMux: {
-          getUserStreamCatchUp: vi.fn(() => ({
-            events: [{ type: "state", sessionId: "s1" }],
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "w1" })),
+        },
+        workspaceStreamMux: {
+          getWorkspaceStreamCatchUp: vi.fn(() => ({
+            events: [{ type: "session_projection", sessionId: "s1", workspaceId: "w1" }],
             currentSeq: 12,
             catchUpComplete: true,
           })),
@@ -123,8 +126,8 @@ describe("routes modules", () => {
 
       const handled = await dispatch({
         method: "GET",
-        path: "/stream/events",
-        url: new URL("http://localhost/stream/events?since=4"),
+        path: "/workspaces/w1/stream/events",
+        url: new URL("http://localhost/workspaces/w1/stream/events?since=4"),
         req: {} as never,
         res: res as never,
       });

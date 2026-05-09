@@ -117,9 +117,9 @@ struct ServerConnectionStreamTests {
                 "Should clear all session continuations")
     }
 
-    // MARK: - handleStreamReconnected re-subscribes
+    // MARK: - stream_connected refresh handling
 
-    @Test func streamConnectedMessageTriggersResubscribe() {
+    @Test func streamConnectedMessageTriggersRefresh() {
         let (conn, _) = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -374,9 +374,16 @@ struct ServerConnectionStreamTests {
 
     // MARK: - reconnectIfNeeded restarts dead stream
 
-    @Test func reconnectIfNeededRestartsDeadStream() async {
+    @Test func reconnectIfNeededRestartsDeadBoundSessionStream() async {
         let (conn, _) = makeTestConnection()
-
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
+        conn.sessionStore.markSyncSucceeded(at: now)
+        conn.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.wsClient?.setStreamURL(URL(string: "ws://192.0.2.1:7749/workspaces/w1/sessions/s1/stream"))
         conn.wsClient?._setStatusForTesting(.disconnected)
         conn.streamConsumptionTask = nil
 
@@ -385,7 +392,28 @@ struct ServerConnectionStreamTests {
         await conn.reconnectIfNeeded()
 
         #expect(conn.streamConsumptionTask != nil,
-                "reconnectIfNeeded should restart a dead stream")
+                "reconnectIfNeeded should restart a prepared bound session stream")
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectStream(disconnectWorkspace: false)
+    }
+
+    @Test func reconnectIfNeededSkipsFocusedSessionWithoutBoundStreamEndpoint() async {
+        let (conn, _) = makeTestConnection()
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeTestSession(id: "s1")])
+        conn.sessionStore.markSyncSucceeded(at: now)
+        conn.workspaceStore.workspaces = [makeTestWorkspace(id: "w1")]
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        await conn.reconnectIfNeeded()
+
+        #expect(conn.streamConsumptionTask == nil,
+                "Foreground recovery should not open a focused-session WebSocket before a bound stream endpoint is prepared")
+        #expect(conn.wsClient?.status == .disconnected)
     }
 
     @Test func reconnectIfNeededSkipsAliveStream() async {
@@ -402,33 +430,6 @@ struct ServerConnectionStreamTests {
     }
 
     // MARK: - routeStreamMessage resolves command waiters at stream boundary
-
-    @Test func routeStreamMessageResolvesSubscribeWaiterBeforePerSessionRouting() async {
-        let (conn, _) = makeTestConnection()
-        conn._setActiveSessionIdForTesting("s1")
-
-        let pending = PendingCommand(command: "subscribe", requestId: "req-1")
-        conn.commands.registerCommand(pending)
-
-        _ = AsyncStream<ServerMessage> { continuation in
-            conn.sessionContinuations["s1"] = continuation
-        }
-
-        let streamMsg = StreamMessage(
-            sessionId: "s1",
-            streamSeq: 1,
-            seq: nil,
-            currentSeq: nil,
-            message: .commandResult(
-                command: "subscribe", requestId: "req-1",
-                success: true, data: nil, error: nil
-            )
-        )
-        conn.routeStreamMessage(streamMsg)
-
-        let result = try? await pending.waiter.wait()
-        #expect(result != nil, "Subscribe waiter should be resolved eagerly by routeStreamMessage")
-    }
 
     @Test func routeStreamMessageResolvesGetQueueWaiterEagerly() async {
         let (conn, _) = makeTestConnection()
@@ -574,6 +575,78 @@ struct ServerConnectionStreamTests {
         conn.disconnectSession()
     }
 
+    @Test func streamSessionReplacesInFlightBoundStreamForNewSession() async {
+        for status in [WebSocketClient.Status.connecting, .reconnecting(attempt: 1)] {
+            let (conn, _) = makeTestConnection(sessionId: "old")
+            conn.setSplitStreamCapabilitiesForTesting()
+            conn.sessionStore.applyServerSnapshot([
+                makeTestSession(id: "old", workspaceId: "w1"),
+                makeTestSession(id: "new", workspaceId: "w1"),
+            ])
+            conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+            conn.wsClient?.setStreamURL(URL(string: "ws://127.0.0.1:9/workspaces/w1/sessions/old/stream"))
+            conn.wsClient?._setStatusForTesting(status)
+            let staleTask = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+            conn.streamConsumptionTask = staleTask
+            conn._sendMessageForTesting = { _ in }
+
+            let streamTask = Task { @MainActor in
+                await conn.streamSession("new", workspaceId: "w1")
+            }
+
+            try? await Task.sleep(for: .milliseconds(30))
+            streamTask.cancel()
+            _ = await streamTask.value
+
+            #expect(staleTask.isCancelled,
+                    "Switching bound session streams must tear down stale \(status) transport")
+            #expect(conn.focusedSessionId == "new")
+            #expect(conn.focusedSessionStreamEndpointKind == "split_session")
+
+            conn.deferredQueueSyncTask?.cancel()
+            conn.streamConsumptionTask?.cancel()
+            conn.disconnectSession()
+        }
+    }
+
+    @Test func cancelledSplitSessionConnectDoesNotStartQueueSync() async {
+        let (conn, _) = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+
+        var sentTypes: [String] = []
+        conn._sendMessageForTesting = { message in
+            sentTypes.append(message.typeLabel)
+        }
+
+        let streamTask = Task { @MainActor in
+            await conn.sessionStreamCoordinator.streamSession(
+                connection: conn,
+                sessionId: "s1",
+                workspaceId: "w1"
+            )
+        }
+
+        try? await Task.sleep(for: .milliseconds(20))
+        streamTask.cancel()
+        _ = await streamTask.value
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(!sentTypes.contains("get_queue"),
+                "Cancelled connection setup must not start queue sync against a dead WebSocket")
+        switch conn.sessionStreamCoordinator.state {
+        case .queueSync, .streaming:
+            Issue.record("Cancelled connection setup should stay out of queueSync/streaming; got \(conn.sessionStreamCoordinator.state)")
+        case .idle, .connectingTransport, .resubscribing:
+            break
+        }
+
+        conn.deferredQueueSyncTask?.cancel()
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectSession()
+    }
+
     @Test func streamSessionRequiresRequiredSplitCapabilities() async {
         let (conn, _) = makeTestConnection(sessionId: "s1")
         conn.wsClient?._setStatusForTesting(.connected)
@@ -583,7 +656,7 @@ struct ServerConnectionStreamTests {
 
         #expect(stream == nil)
         #expect(conn.extensionToast == nil)
-        #expect(conn.focusedSessionStreamEndpointKind == "legacy")
+        #expect(conn.focusedSessionStreamEndpointKind == "none")
     }
 
     @Test func splitSessionStreamSkipsExplicitSubscribe() async throws {
@@ -605,7 +678,6 @@ struct ServerConnectionStreamTests {
 
         #expect(stream != nil)
         #expect(!sentTypes.contains("subscribe"))
-        #expect(conn.subscriptionRegistry.desiredLevel(for: "s1") == .full)
         #expect(await conn.waitForFocusedFullSubscription(sessionId: "s1", timeout: .milliseconds(100)))
 
         conn.streamConsumptionTask?.cancel()

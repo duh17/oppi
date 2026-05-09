@@ -843,7 +843,7 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.ws_wait_for_connected_ms": {
     unit: "ms",
-    description: "Client wait for /stream to reach connected before session subscribe.",
+    description: "Client wait for the active session WebSocket to reach connected.",
   },
   "chat.command_send_ms": {
     unit: "ms",
@@ -1201,26 +1201,8 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
  * All messages may include an optional `requestId` for response correlation.
  * Commands return a `command_result` with the same requestId.
  */
-export type ClientMessage = // ── Stream subscriptions (multiplexed user stream) ──
+export type ClientMessage = // ── Prompting ──
   (
-    | {
-        type: "subscribe";
-        sessionId: string;
-        level?: "full" | "notifications";
-        /** Optional per-session durable sequence cursor for catch-up replay. */
-        sinceSeq?: number;
-        /** Monotonic client subscription generation used to ignore stale lifecycle messages. */
-        subscriptionGeneration?: number;
-        requestId?: string;
-      }
-    | {
-        type: "unsubscribe";
-        sessionId: string;
-        /** Must match the active subscription generation when provided. */
-        subscriptionGeneration?: number;
-        requestId?: string;
-      }
-    // ── Prompting ──
     | {
         type: "prompt";
         message: string;
@@ -1333,13 +1315,14 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
         cancelled?: boolean;
         requestId?: string;
       }
-    // ── Dictation (multiplexed over /stream) ──
+    // ── Dictation (session audio stream) ──
     | { type: "dictation_start" }
     | { type: "dictation_stop" }
     | { type: "dictation_cancel" }
   ) & {
     /**
-     * Optional target session for multiplexed user streams.
+     * Optional target session for split stream routing.
+     * Focused session streams bind this in the URL.
      */
     sessionId?: string;
   };
@@ -1552,12 +1535,12 @@ export type ServerMessage = // ── Connection ──
   ) & {
     seq?: number;
     /**
-     * Session scope for multiplexed user streams.
-     * Per-session streams may omit this field.
+     * Session scope for split stream routing.
+     * Bound session streams bind this in the URL but may still echo it on frames.
      */
     sessionId?: string;
     /**
-     * User-wide multiplexed stream sequence cursor.
+     * User-wide notification event cursor.
      */
     streamSeq?: number;
   };

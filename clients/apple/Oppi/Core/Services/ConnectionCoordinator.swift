@@ -7,7 +7,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coor
 /// Orchestrates concurrent multi-server connections.
 ///
 /// Each paired server gets its own `ServerConnection` with a persistent
-/// `/stream` WebSocket, its own stores, reducer, and coalescer. The
+/// focused session stream, its own stores, reducer, and coalescer. The
 /// coordinator manages the pool and tracks which server is "focused"
 /// (shown in the UI).
 ///
@@ -527,7 +527,7 @@ final class ConnectionCoordinator {
         connections.values.contains { $0.audioPlayer.hasActivePlayback }
     }
 
-    /// Whether any active playback still depends on live `/stream` delivery.
+    /// Whether any active playback still depends on live focused-session delivery.
     var hasActiveAudioTransportPlayback: Bool {
         connections.values.contains { $0.audioPlayer.hasActiveLiveTransportPlayback }
     }

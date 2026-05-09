@@ -24,7 +24,6 @@ struct LANDiscoveredEndpoint: Sendable, Equatable {
 /// Concrete endpoint selection used by networking clients.
 struct EndpointSelection: Sendable, Equatable {
     let baseURL: URL
-    let streamURL: URL
     let transportPath: ConnectionTransportPath
 }
 
@@ -90,8 +89,7 @@ enum LANEndpointSelection {
             lanHost = discoveredEndpoint.host
         }
 
-        guard let lanBaseURL = URL(string: "\(scheme.rawValue)://\(lanHost):\(discoveredEndpoint.port)"),
-              let lanStreamURL = URL(string: "\(scheme.websocketScheme)://\(lanHost):\(discoveredEndpoint.port)/stream") else {
+        guard let lanBaseURL = URL(string: "\(scheme.rawValue)://\(lanHost):\(discoveredEndpoint.port)") else {
             return paired
         }
 
@@ -99,20 +97,17 @@ enum LANEndpointSelection {
 
         return EndpointSelection(
             baseURL: lanBaseURL,
-            streamURL: lanStreamURL,
             transportPath: .lan
         )
     }
 
     private static func pairedSelection(from credentials: ServerCredentials) -> EndpointSelection? {
-        guard let baseURL = credentials.baseURL,
-              let streamURL = credentials.streamURL else {
+        guard let baseURL = credentials.baseURL else {
             return nil
         }
 
         return EndpointSelection(
             baseURL: baseURL,
-            streamURL: streamURL,
             transportPath: .paired
         )
     }

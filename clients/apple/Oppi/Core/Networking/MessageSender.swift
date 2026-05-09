@@ -95,11 +95,10 @@ final class MessageSender {
         try await wsClient.send(message, sessionId: resolvedSessionId)
     }
 
-    /// Returns true for messages that don't require a session envelope
-    /// (subscribe, unsubscribe, permission responses).
+    /// Returns true for messages that don't require a focused session envelope.
     private static func isSessionLevelCommand(_ message: ClientMessage) -> Bool {
         switch message {
-        case .subscribe, .unsubscribe, .permissionResponse:
+        case .permissionResponse:
             return true
         default:
             return false
@@ -879,7 +878,7 @@ final class MessageSender {
                 return command == "stop"
             case .rejected(let command, let reason):
                 guard command == "stop" else { return false }
-                return reason?.contains("not subscribed at level=full") == true
+                return false
             }
         }
 

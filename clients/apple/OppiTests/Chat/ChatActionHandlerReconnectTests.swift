@@ -455,10 +455,10 @@ struct ChatActionHandlerReconnectTests {
         #expect(!errors.isEmpty, "Fast-fail should still surface an error")
     }
 
-    @Test func sendStopRetriesAfterFullSubscriptionRejection() async throws {
-        // If a stop request races the bound stream becoming full-ready, the
-        // first request can still be rejected at level=full. Stop remains
-        // idempotent and should retry once instead of surfacing a user error.
+    @Test func sendStopSurfacesServerRejectionWithoutRetry() async throws {
+        // Bound session streams route commands by URL, not by a legacy
+        // subscription level. Server-side command rejections should surface
+        // directly instead of being hidden behind a stale subscription retry.
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials())
         connection._setActiveSessionIdForTesting("parent")
@@ -469,28 +469,20 @@ struct ChatActionHandlerReconnectTests {
             let requestId = try #require(maybeRequestId)
             attempts += 1
 
-            if attempts == 1 {
-                _ = connection.commands.resolveCommandResult(
-                    command: "stop",
-                    requestId: requestId,
-                    success: false,
-                    data: nil,
-                    error: "Session parent is not subscribed at level=full"
-                )
-            } else {
-                _ = connection.commands.resolveCommandResult(
-                    command: "stop",
-                    requestId: requestId,
-                    success: true,
-                    data: nil,
-                    error: nil
-                )
-            }
+            _ = connection.commands.resolveCommandResult(
+                command: "stop",
+                requestId: requestId,
+                success: false,
+                data: nil,
+                error: "Server refused stop"
+            )
         }
 
-        try await connection.sendStop()
+        await #expect(throws: CommandRequestError.self) {
+            try await connection.sendStop()
+        }
 
-        #expect(attempts == 2, "Stop should retry once after a full-subscription gap")
+        #expect(attempts == 1, "Stop should not retry non-transient server rejections")
     }
 
     @Test func isSendingGuard_noVisibleError_documentsTheBug() async {

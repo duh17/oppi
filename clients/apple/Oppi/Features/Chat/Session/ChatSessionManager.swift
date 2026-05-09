@@ -39,7 +39,7 @@ final class ChatSessionManager {
 
     private enum SessionStreamInput {
         case events(AsyncStream<SessionStreamEvent>)
-        case legacyMessages(AsyncStream<ServerMessage>)
+        case bareMessages(AsyncStream<ServerMessage>)
     }
 
     let sessionId: String
@@ -81,7 +81,7 @@ final class ChatSessionManager {
     private(set) var isSyncing = false
     private(set) var lastSyncFailed = false
 
-    /// Test seam: inject a scripted legacy message stream to exercise lifecycle
+    /// Test seam: inject a scripted bare message stream to exercise lifecycle
     /// races without opening a real WebSocket. Production streams use
     /// `SessionStreamEvent` so metadata travels in-band.
     var _streamSessionForTesting: ((String) -> AsyncStream<ServerMessage>?)?
@@ -180,7 +180,7 @@ final class ChatSessionManager {
 
         if let streamForTesting = _streamSessionForTesting?(sessionId) {
             connection._setActiveSessionIdForTesting(sessionId)
-            return .legacyMessages(streamForTesting)
+            return .bareMessages(streamForTesting)
         }
 
         guard let workspaceId = resolveWorkspaceId(from: sessionStore),
@@ -338,7 +338,7 @@ final class ChatSessionManager {
                 if case .disconnected = entryState { break }
             }
 
-        case .legacyMessages(let messageStream):
+        case .bareMessages(let messageStream):
             for await message in messageStream {
                 await handleStreamEvent(
                     SessionStreamEvent(

@@ -78,7 +78,7 @@ enum ChatTimelinePerf {
 
     /// Legacy fallback for metric attribution when a call site hasn't been
     /// updated to pass an explicit `sessionId`. New instrumentation should
-    /// prefer explicit session IDs so multiplexed/offscreen work is attributed
+    /// prefer explicit session IDs so offscreen work is attributed
     /// correctly.
     static var activeSessionId: String?
 

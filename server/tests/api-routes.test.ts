@@ -22,8 +22,8 @@ const ROUTES = {
   wsReviewDiff: /^\/workspaces\/([^/]+)\/review\/diff$/,
   wsReviewSession: /^\/workspaces\/([^/]+)\/review\/session$/,
   wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
-  userStream: /^\/stream$/,
-  userStreamEvents: /^\/stream\/events$/,
+  wsWorkspaceStream: /^\/workspaces\/([^/]+)\/stream$/,
+  wsWorkspaceStreamEvents: /^\/workspaces\/([^/]+)\/stream\/events$/,
   permissionsPending: /^\/permissions\/pending$/,
   policyRules: /^\/policy\/rules$/,
   policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
@@ -140,12 +140,16 @@ describe("Workspace-scoped API routes", () => {
     expect(m![1]).toBe("ws-1");
   });
 
-  it("matches multiplexed WS /stream", () => {
-    expect("/stream".match(ROUTES.userStream)).toBeTruthy();
+  it("matches workspace WS stream route", () => {
+    const m = "/workspaces/ws-1/stream".match(ROUTES.wsWorkspaceStream);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
   });
 
-  it("matches user stream events catch-up route", () => {
-    expect("/stream/events".match(ROUTES.userStreamEvents)).toBeTruthy();
+  it("matches workspace stream events catch-up route", () => {
+    const m = "/workspaces/ws-1/stream/events".match(ROUTES.wsWorkspaceStreamEvents);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
   });
 
   it("matches pending permissions snapshot route", () => {

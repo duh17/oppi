@@ -71,13 +71,6 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
     }
 
-    /// WebSocket URL for the multiplexed `/stream` endpoint.
-    ///
-    /// Supports subscribing to multiple sessions over a single connection.
-    /// Each server gets one persistent `/stream` WebSocket.
-    var streamURL: URL? {
-        URL(string: "\(resolvedScheme.websocketScheme)://\(host):\(port)/stream")
-    }
 
     /// Decode invite payload JSON.
     ///

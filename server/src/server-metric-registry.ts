@@ -66,11 +66,11 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.user_stream_event": {
     unit: "count",
-    description: "Notification-level event recorded in the user stream ring. Tagged by type.",
+    description: "Notification-level event recorded in the user event ring. Tagged by type.",
   },
   "server.user_stream_fanout": {
     unit: "count",
-    description: "Live notification-level user stream fanout count. Tagged by type.",
+    description: "Live notification/workspace-stream fanout count. Tagged by type.",
   },
 
   // ── P1: Session Lifecycle ──

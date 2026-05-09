@@ -4,7 +4,8 @@ import type { Storage } from "../storage.js";
 import type { SessionManager } from "../sessions.js";
 import type { GateServer } from "../gate.js";
 import type { SkillRegistry, UserSkillStore } from "../skills.js";
-import type { UserStreamMux, WorkspaceStreamMux } from "../stream.js";
+import type { WorkspaceStreamMux } from "../stream.js";
+import type { UserEventStore } from "../user-event-store.js";
 import type { Session, Workspace } from "../types.js";
 import type { ModelInfo } from "../model-catalog.js";
 import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update.js";
@@ -19,7 +20,7 @@ export interface RouteContext {
   gate: GateServer;
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
-  streamMux: UserStreamMux;
+  userEventStore: UserEventStore;
   workspaceStreamMux: WorkspaceStreamMux;
   workspaceProjectionEmitter: WorkspaceProjectionEmitter;
   providerAuth: ProviderAuthManager;

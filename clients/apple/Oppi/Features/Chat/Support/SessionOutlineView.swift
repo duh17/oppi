@@ -415,14 +415,12 @@ struct SessionOutlineView: View {
                 return true
             case .rejected(_, let reason):
                 guard let reason else { return false }
-                return reason.contains("not subscribed at level=full")
-                    || reason.contains("Session not active")
+                return reason.contains("Session not active")
             }
         }
 
         let description = error.localizedDescription.lowercased()
-        return description.contains("not subscribed at level=full")
-            || description.contains("session not active")
+        return description.contains("session not active")
             || description.contains("timed out")
     }
 

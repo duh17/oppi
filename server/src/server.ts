@@ -22,12 +22,8 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
-import {
-  BoundSessionStreamMux,
-  SessionAudioStreamMux,
-  UserStreamMux,
-  WorkspaceStreamMux,
-} from "./stream.js";
+import { BoundSessionStreamMux, SessionAudioStreamMux, WorkspaceStreamMux } from "./stream.js";
+import { UserEventStore } from "./user-event-store.js";
 import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
@@ -351,7 +347,7 @@ export class Server {
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
   // Subset of connections that should receive user-wide control-plane broadcasts.
-  // Workspace/audio streams have their own scoped fanout and must not receive raw /stream messages.
+  // Workspace/audio streams have their own scoped fanout and must not receive user-wide broadcasts.
   private userBroadcastConnections: Set<WebSocket> = new Set();
 
   // Server resource utilization sampler (CPU, memory, sessions)
@@ -365,17 +361,17 @@ export class Server {
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
-  // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
-  private streamMux!: UserStreamMux;
+  // User-wide notification/event ring for push fallback and diagnostics.
+  private userEventStore!: UserEventStore;
   private workspaceStreamMux!: WorkspaceStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private sessionAudioStreamMux!: SessionAudioStreamMux;
   private workspaceProjectionEmitter!: WorkspaceProjectionEmitter;
   // REST route handler (dispatch + all HTTP handlers)
   private routes!: RouteHandler;
-  // WebSocket message command dispatcher (/stream full-session commands)
+  // WebSocket message command dispatcher for full-session commands
   private wsMessageHandler!: WsMessageHandler;
-  // Dictation pipeline (legacy /stream WS during migration)
+  // Dictation pipeline capability source for session audio streams
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
@@ -481,8 +477,7 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
 
-    // Dictation pipeline. Legacy /stream uses a singleton during migration;
-    // session audio streams create one DictationManager per WebSocket.
+    // Dictation pipeline. Session audio streams create one DictationManager per WebSocket.
     const asrEnabled = !!config.asr?.sttEndpoint;
     if (asrEnabled) {
       this.dictationConfig = { ...DEFAULT_DICTATION_CONFIG, ...config.asr } as DictationConfig;
@@ -510,8 +505,8 @@ export class Server {
       createDictationManager: () => this.createDictationManager(),
     };
 
-    // Create stream muxes (legacy /stream plus split workspace/session/audio streams).
-    this.streamMux = new UserStreamMux(streamContext);
+    // Create split workspace/session/audio stream muxes.
+    this.userEventStore = new UserEventStore(this.opsMetrics);
     this.workspaceStreamMux = new WorkspaceStreamMux(streamContext);
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.sessionAudioStreamMux = new SessionAudioStreamMux(streamContext);
@@ -547,7 +542,7 @@ export class Server {
           }
         }
         // User-stream event ring
-        const userRing = this.streamMux.getEventRingStats();
+        const userRing = this.userEventStore.getEventRingStats();
         if (userRing) {
           snapshots.push({
             ring: "user_stream",
@@ -603,7 +598,17 @@ export class Server {
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
       this.liveActivity.handleSessionEvent(payload);
 
-      if (!this.streamMux.isNotificationLevelMessage(payload.event)) {
+      const session = this.storage.getSession(payload.sessionId);
+      if (
+        session?.workspaceId &&
+        (payload.event.type === "message_end" ||
+          payload.event.type === "tool_start" ||
+          payload.event.type === "tool_end")
+      ) {
+        this.workspaceProjectionEmitter.scheduleSessionProjection(session, payload.event.type);
+      }
+
+      if (!this.userEventStore.isNotificationLevelMessage(payload.event)) {
         return;
       }
 
@@ -611,9 +616,8 @@ export class Server {
       // Do NOT mutate payload.event — it's the same object reference stored in
       // the per-session EventRing. The streamSeq is only relevant for the
       // user-level stream ring, not per-session catch-up.
-      this.streamMux.recordUserStreamEvent(payload.sessionId, payload.event);
+      this.userEventStore.recordEvent(payload.sessionId, payload.event);
 
-      const session = this.storage.getSession(payload.sessionId);
       if (!session?.workspaceId) {
         return;
       }
@@ -654,7 +658,7 @@ export class Server {
       gate: this.gate,
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
-      streamMux: this.streamMux,
+      userEventStore: this.userEventStore,
       workspaceStreamMux: this.workspaceStreamMux,
       workspaceProjectionEmitter: this.workspaceProjectionEmitter,
       providerAuth: this.providerAuth,
@@ -1101,10 +1105,10 @@ export class Server {
     let outbound = msg;
     if (
       msg.sessionId &&
-      this.streamMux.isNotificationLevelMessage(msg) &&
+      this.userEventStore.isNotificationLevelMessage(msg) &&
       msg.streamSeq === undefined
     ) {
-      const streamSeq = this.streamMux.recordUserStreamEvent(msg.sessionId, msg);
+      const streamSeq = this.userEventStore.recordEvent(msg.sessionId, msg);
       outbound = {
         ...msg,
         streamSeq,
@@ -1420,13 +1424,7 @@ export class Server {
     const sessionAudioStreamMatch = url.pathname.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/audio\/stream$/,
     );
-    const isLegacyStream = url.pathname === "/stream";
-    if (
-      !isLegacyStream &&
-      !workspaceStreamMatch &&
-      !sessionStreamMatch &&
-      !sessionAudioStreamMatch
-    ) {
+    if (!workspaceStreamMatch && !sessionStreamMatch && !sessionAudioStreamMatch) {
       // Unknown WebSocket endpoint.
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1477,7 +1475,7 @@ export class Server {
         );
         return;
       }
-      this.streamMux.handleWebSocket(ws, upgradeReceivedAt);
+      ws.close(1008, "Unsupported WebSocket endpoint");
     });
   }
 }

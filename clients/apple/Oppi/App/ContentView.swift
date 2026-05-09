@@ -316,37 +316,28 @@ private struct E2EWebSocketDiagnosticsView: View {
     }
 
     private var desiredSubscriptionsLabel: String {
-        let desired = connection.subscriptionRegistry.desiredSessions()
-        guard !desired.isEmpty else { return "none" }
-        return desired.keys.sorted()
-            .map { sessionId in "\(sessionId):\(label(for: desired[sessionId] ?? .none))" }
-            .joined(separator: ",")
+        guard let focusedSessionId = connection.focusedSessionId else { return "none" }
+        return "\(focusedSessionId):full"
     }
 
     private var ackedSubscriptionsLabel: String {
-        let desiredIds = Set(connection.subscriptionRegistry.desiredSessions().keys)
-        let sessionIds = Set(connection.sessionStore.sessions.map(\.id)).union(desiredIds)
-        let entries = sessionIds.sorted().compactMap { sessionId -> String? in
-            switch connection.subscriptionRegistry.ackState(for: sessionId) {
-            case .acked(_, let level):
-                return "\(sessionId):\(label(for: level))"
-            case .inFlight(_, _, let level):
-                return "\(sessionId):inFlight:\(label(for: level))"
-            case .failed(_, let level, _):
-                return "\(sessionId):failed:\(label(for: level))"
-            case .idle:
-                return nil
-            }
+        guard let focusedSessionId = connection.focusedSessionId else { return "none" }
+        if connection.sessionStreamCoordinator.hasFullSubscription(sessionId: focusedSessionId) {
+            return "\(focusedSessionId):full"
         }
-        return entries.isEmpty ? "none" : entries.joined(separator: ",")
-    }
-
-    private func label(for level: DesiredSubscriptionLevel) -> String {
-        switch level {
-        case .none: "none"
-        case .notifications: "notifications"
-        case .full: "full"
+        let state: String = switch connection.sessionStreamCoordinator.state {
+        case .idle:
+            "idle"
+        case .connectingTransport:
+            "connecting"
+        case .queueSync:
+            "queueSync"
+        case .streaming:
+            "streaming"
+        case .resubscribing:
+            "resubscribing"
         }
+        return "\(focusedSessionId):\(state)"
     }
 }
 #endif

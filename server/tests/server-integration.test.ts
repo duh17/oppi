@@ -695,14 +695,14 @@ function waitForUpgradeRejection(
 
 describe("WebSocket", () => {
   it("rejects unauthenticated WS upgrade with Bearer challenge", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/stream`);
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/stream`);
     const rejection = await waitForUpgradeRejection(ws);
     expect(rejection.statusCode).toBe(401);
     expect(rejection.headers["www-authenticate"]).toBe('Bearer realm="oppi"');
   });
 
   it("rejects WS upgrade with malformed Authorization header", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/stream`, {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/stream`, {
       headers: { Authorization: "bearer malformed" },
     });
 
@@ -720,7 +720,7 @@ describe("WebSocket", () => {
   });
 
   it("rejects WS upgrade with mismatched Origin header", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/stream`, {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/workspaces/test/stream`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Origin: "http://evil.example.com",
@@ -730,13 +730,26 @@ describe("WebSocket", () => {
     expect(rejection.statusCode).toBe(403);
   });
 
-  it("accepts authenticated WS to /stream and receives stream_connected", async () => {
-    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/stream`, {
+  it("accepts authenticated WS to workspace stream and receives stream_connected", async () => {
+    const createRes = await fetch(`${baseUrl}/workspaces`, {
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        Origin: baseUrl,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({ name: "ws-test", skills: [] }),
     });
+    const createBody = (await createRes.json()) as { workspace: { id: string } };
+
+    const ws = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/workspaces/${createBody.workspace.id}/stream`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: baseUrl,
+        },
+      },
+    );
 
     const msg = await new Promise<Record<string, unknown> | null>((resolve) => {
       ws.on("message", (data) => {

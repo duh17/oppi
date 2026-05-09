@@ -88,29 +88,10 @@ enum ClientMessage: Sendable {
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
-    // ── Dictation (multiplexed over /stream) ──
+    // ── Dictation (session audio stream) ──
     case dictationStart
     case dictationStop
     case dictationCancel
-
-    // ── Stream multiplexing (/stream protocol) ──
-    case subscribe(
-        sessionId: String,
-        level: StreamSubscriptionLevel = .full,
-        sinceSeq: Int? = nil,
-        requestId: String? = nil,
-        subscriptionGeneration: Int? = nil
-    )
-    case unsubscribe(sessionId: String, requestId: String? = nil, subscriptionGeneration: Int? = nil)
-}
-
-/// Subscription level for the `/stream` multiplexed WebSocket.
-enum StreamSubscriptionLevel: String, Codable, Sendable {
-    /// Full event streaming (text deltas, tool output, etc.). Multiple sessions can be
-    /// subscribed at this level concurrently on the same `/stream` connection.
-    case full
-    /// Notification-level events only (permissions, state, agent start/end).
-    case notifications
 }
 
 // MARK: - Supporting Types
@@ -455,21 +436,6 @@ extension ClientMessage: Encodable {
             try c.encode("dictation_stop", forKey: .type)
         case .dictationCancel:
             try c.encode("dictation_cancel", forKey: .type)
-
-        // ── Stream multiplexing ──
-        case .subscribe(let sessionId, let level, let sinceSeq, let reqId, let subscriptionGeneration):
-            try c.encode("subscribe", forKey: .type)
-            try c.encode(sessionId, forKey: .sessionId)
-            try c.encode(level, forKey: .level)
-            try c.encodeIfPresent(sinceSeq, forKey: .sinceSeq)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-            try c.encodeIfPresent(subscriptionGeneration, forKey: .subscriptionGeneration)
-
-        case .unsubscribe(let sessionId, let reqId, let subscriptionGeneration):
-            try c.encode("unsubscribe", forKey: .type)
-            try c.encode(sessionId, forKey: .sessionId)
-            try c.encodeIfPresent(reqId, forKey: .requestId)
-            try c.encodeIfPresent(subscriptionGeneration, forKey: .subscriptionGeneration)
         }
     }
 
@@ -480,42 +446,6 @@ extension ClientMessage: Encodable {
         case customInstructions, entryId, sessionPath, command, query, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp
-        case sessionId, sinceSeq, subscriptionGeneration
-    }
-}
-
-// MARK: - Stream Envelope
-
-/// Wraps a `ClientMessage` with a `sessionId` for the `/stream` multiplexed protocol.
-///
-/// Oppi now uses only the shared `/stream` WebSocket. Session-scoped commands
-/// include `sessionId` at the top level so one connection can target many sessions.
-struct SessionScopedMessage: Encodable, Sendable {
-    let sessionId: String
-    let message: ClientMessage
-
-    func encode(to encoder: Encoder) throws {
-        // Encode the inner message first (creates the keyed container)
-        try message.encode(to: encoder)
-        // Then add sessionId to the same container
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(sessionId, forKey: .sessionId)
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case sessionId
-    }
-
-    func jsonData() throws -> Data {
-        try JSONEncoder().encode(self)
-    }
-
-    func jsonString() throws -> String {
-        let data = try jsonData()
-        guard let string = String(data: data, encoding: .utf8) else {
-            throw EncodingError.invalidValue(data, .init(codingPath: [], debugDescription: "JSON data is not valid UTF-8"))
-        }
-        return string
     }
 }
 
@@ -564,8 +494,6 @@ extension ClientMessage {
         case .dictationStart: return "dictation_start"
         case .dictationStop: return "dictation_stop"
         case .dictationCancel: return "dictation_cancel"
-        case .subscribe: return "subscribe"
-        case .unsubscribe: return "unsubscribe"
         }
     }
 

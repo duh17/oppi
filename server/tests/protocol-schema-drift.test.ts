@@ -322,16 +322,6 @@ describe("RQ-PROTO-002: ClientMessage schema drift", () => {
     expect(parsed.approvedBy).toBe("user");
   });
 
-  it("subscribe with future level values preserved as string", () => {
-    const parsed = roundTrip({
-      type: "subscribe" as const,
-      sessionId: "s1",
-      level: "background" as "full" | "notifications",
-    });
-
-    expect(parsed.level).toBe("background");
-  });
-
   it("set_queue with extra item fields", () => {
     const msg: ClientMessage = {
       type: "set_queue",

@@ -76,7 +76,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         playingItemID != nil || loadingItemID != nil || streamID != nil
     }
 
-    /// Session whose current PCM stream still depends on live `/stream` delivery.
+    /// Session whose current PCM stream still depends on live focused-session delivery.
     /// Buffered/local playback stays active after this becomes nil.
     var activeLiveTransportSessionID: String? {
         guard streamID != nil, !streamReceivedDone else { return nil }

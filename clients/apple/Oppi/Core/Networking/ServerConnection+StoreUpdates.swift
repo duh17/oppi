@@ -161,7 +161,6 @@ extension ServerConnection {
 
         case .sessionDeleted(let deletedId):
             sessionStore.remove(id: deletedId)
-            subscriptionRegistry.remove(sessionId: deletedId)
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             activityStore.clear(sessionId: deletedId)
             screenAwakeController.clearSessionActivity(sessionId: deletedId)

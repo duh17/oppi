@@ -112,9 +112,9 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
     gate: {} as RouteContext["gate"],
     skillRegistry: {} as RouteContext["skillRegistry"],
     userSkillStore: {} as RouteContext["userSkillStore"],
-    streamMux: {
-      recordAndFanOutUserStreamEvent: vi.fn(),
-    } as unknown as RouteContext["streamMux"],
+    userEventStore: {
+      recordEvent: vi.fn(),
+    } as unknown as RouteContext["userEventStore"],
     workspaceStreamMux: {
       recordAndFanOutWorkspaceEvent: vi.fn(),
     } as unknown as RouteContext["workspaceStreamMux"],
@@ -629,9 +629,9 @@ describe("workspace-scoped session route ownership", () => {
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
       };
-      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
         recordUserStreamEvent: vi.fn(),
-        recordAndFanOutUserStreamEvent: vi.fn(),
+        recordEvent: vi.fn(),
       };
 
       const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
@@ -701,9 +701,9 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
       };
-      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
         recordUserStreamEvent: vi.fn(),
-        recordAndFanOutUserStreamEvent: vi.fn(),
+        recordEvent: vi.fn(),
       };
 
       await dispatchDelete(mock);
@@ -747,9 +747,9 @@ describe("DELETE /workspaces/:id/sessions/:sessionId", () => {
       (mock.ctx as unknown as Record<string, unknown>).searchIndex = {
         deleteSession: vi.fn(),
       };
-      (mock.ctx as unknown as Record<string, unknown>).streamMux = {
+      (mock.ctx as unknown as Record<string, unknown>).userEventStore = {
         recordUserStreamEvent: vi.fn(),
-        recordAndFanOutUserStreamEvent: vi.fn(),
+        recordEvent: vi.fn(),
       };
 
       await dispatchDelete(mock);

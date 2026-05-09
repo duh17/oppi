@@ -422,10 +422,6 @@ extension ServerConnection {
             return true
         }
 
-        if command == "subscribe" || command == "unsubscribe" {
-            return true
-        }
-
         if command == "get_commands" {
             handleSlashCommandsResult(
                 requestId: requestId,

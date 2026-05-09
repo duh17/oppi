@@ -107,39 +107,6 @@ struct ServerConnectionReconnectTests {
         }
     }
 
-    @Test func reconnectMarksFocusedSessionFullWithoutLegacySubscribe() async {
-        let (conn, _) = makeTestConnection()
-        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
-        conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
-        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .busy))
-        conn.focusSession("s2")
-        conn.subscriptionRegistry.setDesired(.full, for: "s1")
-        conn.subscriptionRegistry.setDesired(.full, for: "s2")
-
-        var sentTypes: [String] = []
-        conn._sendMessageForTesting = { message in
-            sentTypes.append(message.typeLabel)
-            if case .getQueue(let requestId) = message {
-                conn.routeStreamMessage(StreamMessage(
-                    sessionId: "s2",
-                    streamSeq: nil, seq: nil, currentSeq: nil,
-                    message: .commandResult(
-                        command: "get_queue", requestId: requestId,
-                        success: true, data: nil, error: nil
-                    )
-                ))
-            }
-        }
-
-        conn.routeStreamMessage(StreamMessage(
-            sessionId: nil, streamSeq: nil, seq: nil, currentSeq: nil,
-            message: .streamConnected(userName: "test", asrAvailable: false)
-        ))
-
-        #expect(await conn.waitForFocusedFullSubscription(sessionId: "s2", timeout: .milliseconds(100)))
-        #expect(!sentTypes.contains("subscribe"))
-        #expect(conn.subscriptionRegistry.sessionIds(acked: .full) == ["s2"])
-    }
 
     // MARK: - Stale queue sync doesn't race after reconnect
 

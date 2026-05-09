@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceProjectionEmitter } from "./workspace-projection-emitter.js";
 import type { WorkspaceStreamMux } from "./stream.js";
 import type { ServerMessage, Session } from "./types.js";
@@ -17,7 +17,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeEmitter(): {
+function makeEmitter(options?: { minIntervalMs?: number }): {
   emitter: WorkspaceProjectionEmitter;
   record: ReturnType<typeof vi.fn>;
 } {
@@ -25,8 +25,12 @@ function makeEmitter(): {
   const mux = {
     recordAndFanOutWorkspaceEvent: record,
   } as unknown as WorkspaceStreamMux;
-  return { emitter: new WorkspaceProjectionEmitter(mux), record };
+  return { emitter: new WorkspaceProjectionEmitter(mux, options), record };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("WorkspaceProjectionEmitter", () => {
   it("emits a session_projection with the cold SessionSummary shape", () => {
@@ -58,6 +62,31 @@ describe("WorkspaceProjectionEmitter", () => {
       emitter.emitSessionProjection({ ...session, status: "busy", lastActivity: 2 }, "changed"),
     ).toBe(true);
     expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces noisy projection updates per session", async () => {
+    vi.useFakeTimers();
+    const { emitter, record } = makeEmitter({ minIntervalMs: 100 });
+    const session = makeSession({ status: "busy", contextTokens: 1_000, contextWindow: 10_000 });
+
+    expect(emitter.emitSessionProjection(session, "agent_start")).toBe(true);
+    expect(record).toHaveBeenCalledTimes(1);
+
+    session.contextTokens = 1_500;
+    expect(emitter.scheduleSessionProjection(session, "message_end")).toBe(true);
+    session.contextTokens = 2_000;
+    expect(emitter.scheduleSessionProjection(session, "tool_end")).toBe(true);
+    expect(record).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(record).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(record).toHaveBeenCalledTimes(2);
+    const [, message] = record.mock.calls[1] as [string, ServerMessage];
+    expect(message.type).toBe("session_projection");
+    if (message.type !== "session_projection") return;
+    expect(message.summary.contextTokens).toBe(2_000);
   });
 
   it("clears dedupe state when a session is deleted", () => {

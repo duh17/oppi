@@ -390,7 +390,7 @@ struct ServerConnectionRoutingTests {
                 requestId: "req-fail",
                 success: false,
                 data: nil,
-                error: "Session s1 is not subscribed at level=full"
+                error: "Server refused queue sync"
             ),
             sessionId: "s1"
         )
@@ -423,50 +423,6 @@ struct ServerConnectionRoutingTests {
             return false
         }
         #expect(errors.isEmpty, "Failed set_queue command_result should not leak to timeline")
-    }
-
-    @Test func routeSubscribeFailureDoesNotProduceTimelineError() {
-        let (conn, pipe) = makeTestConnection()
-
-        pipe.handle(
-            .commandResult(
-                command: "subscribe",
-                requestId: "req-sub",
-                success: false,
-                data: nil,
-                error: "Subscribe rate limit exceeded — try again later"
-            ),
-            sessionId: "s1"
-        )
-
-        pipe.flushNow()
-        let errors = pipe.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.isEmpty, "Failed subscribe command_result should not leak to timeline")
-    }
-
-    @Test func routeUnsubscribeFailureDoesNotProduceTimelineError() {
-        let (conn, pipe) = makeTestConnection()
-
-        pipe.handle(
-            .commandResult(
-                command: "unsubscribe",
-                requestId: "req-unsub",
-                success: false,
-                data: nil,
-                error: "Session not found"
-            ),
-            sessionId: "s1"
-        )
-
-        pipe.flushNow()
-        let errors = pipe.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.isEmpty, "Failed unsubscribe command_result should not leak to timeline")
     }
 
     @Test func routeStopRequestedMarksStopping() {

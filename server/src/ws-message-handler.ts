@@ -123,15 +123,6 @@ export class WsMessageHandler {
     meta: WsCommandMeta = {},
   ): Promise<void> {
     switch (msg.type) {
-      case "subscribe":
-      case "unsubscribe": {
-        send({
-          type: "error",
-          error: `Stream subscriptions are only supported on /stream (received ${msg.type})`,
-        });
-        return;
-      }
-
       case "prompt":
         await this.handleTurnCommand(
           session,
@@ -300,9 +291,7 @@ export class WsMessageHandler {
         }
       }
 
-      // Dictation messages are handled at the stream level (UserStreamMux),
-      // before reaching the per-session WsMessageHandler. List them here
-      // to satisfy the exhaustive switch check.
+      // Dictation messages are handled on the dedicated session audio stream.
       case "dictation_start":
       case "dictation_stop":
       case "dictation_cancel":

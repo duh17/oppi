@@ -874,7 +874,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     // Notify connected clients before deleting from storage so workspace-scoped
     // streams still have the authoritative workspace id available.
-    ctx.streamMux.recordAndFanOutUserStreamEvent(sessionId, deletedMessage);
+    ctx.userEventStore.recordEvent(sessionId, deletedMessage);
     ctx.workspaceProjectionEmitter.emitSessionDeleted(workspaceId, sessionId);
 
     ctx.storage.deleteSession(sessionId);

@@ -1,21 +1,13 @@
-/**
- * Tests for UserStreamMux — specifically the removal of the single-full-subscription
- * constraint. Multiple sessions can now be subscribed at level=full concurrently.
- */
-
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
 import { WebSocket } from "ws";
 import {
   BoundSessionStreamMux,
   SessionAudioStreamMux,
-  UserStreamMux,
   WorkspaceStreamMux,
   type StreamContext,
 } from "./stream.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
-
-// ─── Helpers ───
 
 function makeSession(id: string, workspaceId?: string): Session {
   return {
@@ -30,12 +22,6 @@ function makeSession(id: string, workspaceId?: string): Session {
   };
 }
 
-/**
- * Minimal WebSocket stub that behaves like a real WS for the mux:
- * - emits "message", "close", "error", "pong"
- * - tracks sent messages via ws.send()
- * - readyState defaults to OPEN
- */
 class FakeWebSocket extends EventEmitter {
   readyState: number = WebSocket.OPEN;
   sent: ServerMessage[] = [];
@@ -44,15 +30,12 @@ class FakeWebSocket extends EventEmitter {
     this.sent.push(JSON.parse(data) as ServerMessage);
   }
 
-  ping(): void {
-    /* no-op */
-  }
+  ping(): void {}
 
   terminate(): void {
     this.readyState = WebSocket.CLOSED;
   }
 
-  /** Simulate receiving a client message. */
   receive(msg: ClientMessage): void {
     this.emit("message", Buffer.from(JSON.stringify(msg)), false);
   }
@@ -61,7 +44,6 @@ class FakeWebSocket extends EventEmitter {
     this.emit("message", data, true);
   }
 
-  /** Get sent messages of a specific type, optionally filtered by sessionId. */
   sentOfType(type: string, sessionId?: string): ServerMessage[] {
     return this.sent.filter(
       (m) => m.type === type && (sessionId === undefined || m.sessionId === sessionId),
@@ -74,10 +56,6 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
-/**
- * Build a mock StreamContext. Sessions are pre-populated; subscribe callbacks
- * are stored so we can simulate server-side broadcasts.
- */
 function createMockContext(sessions: Session[]): {
   ctx: StreamContext;
   sessionMap: Map<string, Session>;
@@ -99,7 +77,6 @@ function createMockContext(sessions: Session[]): {
       getOwnerName: () => "test-user",
       getSession: (id: string) => sessionMap.get(id) ?? null,
     } as StreamContext["storage"],
-
     sessions: {
       startSession: vi.fn(async (id: string) => sessionMap.get(id)!),
       subscribe: (id: string, cb: (msg: ServerMessage) => void) => {
@@ -113,11 +90,10 @@ function createMockContext(sessions: Session[]): {
       getPendingAskMessage: () => undefined,
       getPendingUIRequestMessages: () => [],
     } as unknown as StreamContext["sessions"],
-
     gate: {
       getPendingForUser: () => [],
+      resolveDecision: vi.fn(() => true),
     } as unknown as StreamContext["gate"],
-
     ensureSessionContextWindow: (s: Session) => s,
     resolveWorkspaceForSession: () => undefined as Workspace | undefined,
     handleClientMessage: vi.fn(async () => {}),
@@ -129,271 +105,10 @@ function createMockContext(sessions: Session[]): {
   return { ctx, sessionMap, subscribers, broadcastTo };
 }
 
-/** Drain microtask queue so the mux's serialized message handler runs. */
 async function drain(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
-
-// ─── Tests ───
-
-describe("UserStreamMux — multiple full subscriptions", () => {
-  it("routes reload commands through the full subscription harness", async () => {
-    const session = makeSession("sess-reload");
-    const { ctx } = createMockContext([session]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    expect(ctx.trackConnection).toHaveBeenCalledWith(ws, { userBroadcast: true });
-
-    ws.receive({ type: "subscribe", sessionId: session.id, level: "full", requestId: "sub-1" });
-    await drain();
-
-    ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-1" } as ClientMessage);
-    await drain();
-
-    expect(ctx.handleClientMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: session.id }),
-      expect.objectContaining({ type: "reload", requestId: "reload-1" }),
-      expect.any(Function),
-      expect.any(Object),
-    );
-  });
-
-  it("allows two sessions to be subscribed at full level simultaneously", async () => {
-    const sessA = makeSession("sess-a");
-    const sessB = makeSession("sess-b");
-    const { ctx } = createMockContext([sessA, sessB]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    // Subscribe session A at full
-    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full", requestId: "r1" });
-    await drain();
-
-    const subResultA = ws
-      .sentOfType("command_result")
-      .find((m) => (m as Record<string, unknown>).requestId === "r1");
-    expect((subResultA as Record<string, unknown>)?.success).toBe(true);
-
-    // Subscribe session B at full — session A should NOT be downgraded
-    ws.receive({ type: "subscribe", sessionId: "sess-b", level: "full", requestId: "r2" });
-    await drain();
-
-    const subResultB = ws
-      .sentOfType("command_result")
-      .find((m) => (m as Record<string, unknown>).requestId === "r2");
-    expect((subResultB as Record<string, unknown>)?.success).toBe(true);
-
-    // Verify session A is still full by sending a command to it — should NOT get
-    // a STREAM_ERROR_NOT_SUBSCRIBED_FULL error
-    ws.receive({
-      type: "get_state",
-      sessionId: "sess-a",
-      requestId: "r3",
-    } as ClientMessage);
-    await drain();
-
-    const errors = ws.sent.filter(
-      (m) => m.type === "error" && m.sessionId === "sess-a" && m.code !== undefined,
-    );
-    expect(errors).toHaveLength(0);
-  });
-
-  it("delivers events independently for each full subscription", async () => {
-    const sessA = makeSession("sess-a");
-    const sessB = makeSession("sess-b");
-    const { ctx, broadcastTo } = createMockContext([sessA, sessB]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full", requestId: "r1" });
-    await drain();
-    ws.receive({ type: "subscribe", sessionId: "sess-b", level: "full", requestId: "r2" });
-    await drain();
-
-    // Clear sent messages to isolate broadcast events
-    ws.sent.length = 0;
-
-    // Broadcast a text_delta to session A
-    broadcastTo("sess-a", { type: "text_delta", delta: "hello from A" } as ServerMessage);
-    // Broadcast a text_delta to session B
-    broadcastTo("sess-b", { type: "text_delta", delta: "hello from B" } as ServerMessage);
-
-    const deltasA = ws.sentOfType("text_delta", "sess-a");
-    const deltasB = ws.sentOfType("text_delta", "sess-b");
-
-    expect(deltasA).toHaveLength(1);
-    expect((deltasA[0] as Record<string, unknown>).delta).toBe("hello from A");
-    expect(deltasB).toHaveLength(1);
-    expect((deltasB[0] as Record<string, unknown>).delta).toBe("hello from B");
-  });
-
-  it("unsubscribing one session does not affect the other", async () => {
-    const sessA = makeSession("sess-a");
-    const sessB = makeSession("sess-b");
-    const { ctx, broadcastTo } = createMockContext([sessA, sessB]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full", requestId: "r1" });
-    await drain();
-    ws.receive({ type: "subscribe", sessionId: "sess-b", level: "full", requestId: "r2" });
-    await drain();
-
-    // Unsubscribe session A
-    ws.receive({ type: "unsubscribe", sessionId: "sess-a", requestId: "r3" });
-    await drain();
-
-    ws.sent.length = 0;
-
-    // Session B should still receive events
-    broadcastTo("sess-b", { type: "text_delta", delta: "still alive" } as ServerMessage);
-
-    const deltasB = ws.sentOfType("text_delta", "sess-b");
-    expect(deltasB).toHaveLength(1);
-    expect((deltasB[0] as Record<string, unknown>).delta).toBe("still alive");
-
-    // Session A should NOT receive events (unsubscribed)
-    broadcastTo("sess-a", { type: "text_delta", delta: "ghost" } as ServerMessage);
-    const deltasA = ws.sentOfType("text_delta", "sess-a");
-    expect(deltasA).toHaveLength(0);
-  });
-
-  it("commands to a full-subscribed session succeed while another is also full", async () => {
-    const sessA = makeSession("sess-a");
-    const sessB = makeSession("sess-b");
-    const { ctx } = createMockContext([sessA, sessB]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full" });
-    await drain();
-    ws.receive({ type: "subscribe", sessionId: "sess-b", level: "full" });
-    await drain();
-
-    // Send commands to both sessions — neither should get NOT_SUBSCRIBED_FULL
-    ws.receive({ type: "get_state", sessionId: "sess-a", requestId: "cmd-a" } as ClientMessage);
-    await drain();
-    ws.receive({ type: "get_state", sessionId: "sess-b", requestId: "cmd-b" } as ClientMessage);
-    await drain();
-
-    const notSubscribedErrors = ws.sent.filter(
-      (m) => m.type === "error" && m.code === "stream_not_subscribed_full",
-    );
-    expect(notSubscribedErrors).toHaveLength(0);
-
-    // handleClientMessage should have been called for both
-    expect(ctx.handleClientMessage).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not downgrade a full subscription when a stale notification subscribe arrives", async () => {
-    const sessA = makeSession("sess-a");
-    const { ctx } = createMockContext([sessA]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({ type: "subscribe", sessionId: "sess-a", level: "full", requestId: "full" });
-    await drain();
-    ws.receive({
-      type: "subscribe",
-      sessionId: "sess-a",
-      level: "notifications",
-      requestId: "stale-notification",
-    });
-    await drain();
-
-    const notificationResult = ws
-      .sentOfType("command_result")
-      .find((m) => (m as Record<string, unknown>).requestId === "stale-notification") as
-      | (ServerMessage & { data?: Record<string, unknown> })
-      | undefined;
-    expect(notificationResult?.success).toBe(true);
-    expect(notificationResult?.data?.level).toBe("full");
-    expect(notificationResult?.data?.retainedFullSubscription).toBe(true);
-
-    ws.receive({ type: "get_state", sessionId: "sess-a", requestId: "cmd-a" } as ClientMessage);
-    await drain();
-
-    const notSubscribedErrors = ws.sent.filter(
-      (m) => m.type === "error" && m.code === "stream_not_subscribed_full",
-    );
-    expect(notSubscribedErrors).toHaveLength(0);
-    expect(ctx.handleClientMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("notification-level subscriptions still filter non-notification events", async () => {
-    const sessA = makeSession("sess-a");
-    const { ctx, broadcastTo } = createMockContext([sessA]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({
-      type: "subscribe",
-      sessionId: "sess-a",
-      level: "notifications",
-      requestId: "r1",
-    });
-    await drain();
-
-    ws.sent.length = 0;
-
-    // text_delta is NOT a notification-level message — should be filtered
-    broadcastTo("sess-a", { type: "text_delta", delta: "filtered" } as ServerMessage);
-    expect(ws.sentOfType("text_delta")).toHaveLength(0);
-
-    // agent_start IS a notification-level message — should be delivered
-    broadcastTo("sess-a", { type: "agent_start" } as ServerMessage);
-    expect(ws.sentOfType("agent_start")).toHaveLength(1);
-  });
-
-  it("commands to a notifications-only session are rejected", async () => {
-    const sessA = makeSession("sess-a");
-    const { ctx } = createMockContext([sessA]);
-
-    const mux = new UserStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    mux.handleWebSocket(ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({
-      type: "subscribe",
-      sessionId: "sess-a",
-      level: "notifications",
-      requestId: "r1",
-    });
-    await drain();
-
-    ws.receive({ type: "get_state", sessionId: "sess-a", requestId: "cmd-a" } as ClientMessage);
-    await drain();
-
-    const errors = ws.sent.filter(
-      (m) => m.type === "error" && m.code === "stream_not_subscribed_full",
-    );
-    expect(errors).toHaveLength(1);
-  });
-});
 
 describe("BoundSessionStreamMux", () => {
   it("starts the bound session and accepts commands without subscribe", async () => {
@@ -434,9 +149,6 @@ describe("BoundSessionStreamMux", () => {
       expect.objectContaining({ type: "reload", sessionId: "sess-bound", requestId: "reload-1" }),
       expect.any(Function),
       expect.any(Object),
-    );
-    expect(ws.sentOfType("command_result").filter((m) => m.command === "subscribe")).toHaveLength(
-      0,
     );
   });
 
@@ -520,25 +232,6 @@ describe("BoundSessionStreamMux", () => {
     await connect;
 
     expect(ws.sentOfType("connected", "sess-bound")).toHaveLength(0);
-  });
-
-  it("rejects subscribe messages because the URL is the subscription", async () => {
-    const session = makeSession("sess-bound", "w1");
-    const { ctx } = createMockContext([session]);
-
-    const mux = new BoundSessionStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    await mux.handleWebSocket("w1", "sess-bound", ws as unknown as WebSocket);
-    await drain();
-
-    ws.receive({ type: "subscribe", sessionId: "sess-bound", level: "full", requestId: "sub-1" });
-    await drain();
-
-    const result = ws
-      .sentOfType("command_result")
-      .find((m) => (m as Record<string, unknown>).requestId === "sub-1");
-    expect(result?.success).toBe(false);
-    expect((result as { error?: string } | undefined)?.error).toContain("not supported");
   });
 
   it("rejects commands targeting a different session", async () => {

@@ -1491,8 +1491,8 @@ struct ChatSessionManagerTests {
 
     /// Reproduces the ~8s `session_loop_dispatch` lag observed in production.
     ///
-    /// Root cause: `streamSession()` blocks on subscribe + get_queue round-trips
-    /// while `.connected` sits buffered in the per-session AsyncStream. The session
+    /// Root cause: `streamSession()` used to block on connection setup + queue sync
+    /// while `.connected` sat buffered in the per-session AsyncStream. The session
     /// loop in `ChatSessionManager.connect()` can't consume until `streamSession()`
     /// returns.
     ///
@@ -1538,7 +1538,6 @@ struct ChatSessionManagerTests {
         #expect(reachedStreaming, "Should reach .streaming state")
 
         // The dispatch lag from connected-yield to streaming-state should be well under 1s.
-        // In production, this is ~8s because streamSession() blocks on subscribe.
         // With test seams (no real WS), it should be near-instant.
         #expect(dispatchLagMs < 500, "Dispatch lag was \(dispatchLagMs)ms — connected message should be processed promptly")
         #expect(totalMs < 2_000, "Total connect time was \(totalMs)ms — should be fast with scripted stream")
@@ -1552,8 +1551,8 @@ struct ChatSessionManagerTests {
 
     /// Regression test for the blank timeline bug.
     ///
-    /// When the subscription metadata race drops `currentSeq` (now fixed via
-    /// pre-tracking), catch-up is skipped. The safety net is that the pending
+    /// When the stream metadata race drops `currentSeq`, catch-up is skipped.
+    /// The safety net is that the pending
     /// history reload stays alive. This test ensures that safety net holds:
     /// nil `currentSeq` → history reload preserved → timeline populated.
     @Test func nilCurrentSeqPreservesHistoryReloadAsSafetyNet() async {

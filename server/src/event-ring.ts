@@ -1,7 +1,7 @@
 /**
  * Bounded ring buffer of sequenced durable events.
  *
- * Used by SessionManager (per-session) and UserStreamMux (per-user)
+ * Used by SessionManager (per-session), WorkspaceStreamMux, and user event rings.
  * to support reconnect catch-up without unbounded memory growth.
  *
  * Implementation uses a circular buffer with head/tail pointers

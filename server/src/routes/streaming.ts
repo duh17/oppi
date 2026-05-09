@@ -19,19 +19,6 @@ export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return sinceSeq;
   }
 
-  function handleGetUserStreamEvents(url: URL, res: ServerResponse): void {
-    const sinceSeq = parseSinceSeq(url, res);
-    if (sinceSeq === null) return;
-
-    const catchUp = ctx.streamMux.getUserStreamCatchUp(sinceSeq);
-
-    helpers.json(res, {
-      events: catchUp.events,
-      currentSeq: catchUp.currentSeq,
-      catchUpComplete: catchUp.catchUpComplete,
-    });
-  }
-
   function handleGetWorkspaceStreamEvents(
     workspaceId: string,
     url: URL,
@@ -152,11 +139,6 @@ export function createStreamingRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    if (path === "/stream/events" && method === "GET") {
-      handleGetUserStreamEvents(url, res);
-      return true;
-    }
-
     const workspaceEventsMatch = path.match(/^\/workspaces\/([^/]+)\/stream\/events$/);
     if (workspaceEventsMatch && method === "GET") {
       handleGetWorkspaceStreamEvents(decodeURIComponent(workspaceEventsMatch[1]), url, res);

@@ -1,6 +1,6 @@
 # Protocol Snapshots
 
-Canonical JSON fixtures for the Oppi client-server protocol and pi SDK events.
+Canonical JSON fixtures and transport notes for the Oppi client-server protocol and pi SDK events.
 
 ## Files
 
@@ -13,6 +13,19 @@ Canonical JSON fixtures for the Oppi client-server protocol and pi SDK events.
 
 - **`server-messages.json`** is generated from test code and validated against `server/src/types.ts`. The iOS app's `ServerMessage.swift` decoder is tested against these fixtures to ensure both sides agree on the wire format.
 - **`pi-events.json`** documents the upstream pi SDK event shapes that the server translates into `ServerMessage` types.
+
+## WebSocket stream topology
+
+Oppi now splits live transport by use case when the server advertises the required capabilities in `GET /server/info`.
+
+| Endpoint | Direction | Server owner | Client owner | Use case |
+|----------|-----------|--------------|--------------|----------|
+| `/workspaces/:workspaceId/stream` | Server → client | `WorkspaceStreamMux` | `WorkspaceStreamClient` | Workspace attention and projections: permission requests/resolution, stop/session lifecycle, extension UI requests, session summaries/projections. |
+| `/workspaces/:workspaceId/sessions/:sessionId/stream` | Bidirectional JSON | `BoundSessionStreamMux` | `WebSocketClient` via `SessionStreamCoordinator` | Focused session timeline and commands. The URL binds the session; session commands are sent directly on this stream. |
+| `/workspaces/:workspaceId/sessions/:sessionId/audio/stream` | Bidirectional JSON + binary | `SessionAudioStreamMux` | `DictationStreamClient` | Server dictation control messages and PCM audio frames. |
+| `/workspaces/:workspaceId/stream/events` | HTTP GET | `WorkspaceStreamMux` | `APIClient` | Catch-up for the workspace stream ring. |
+
+`stream_connected` is still the first message on the workspace and focused-session WebSocket streams. The session audio stream emits dictation protocol frames after `dictation_start` or an immediate `dictation_error` if ASR is unavailable. Session-scoped frames carry `sessionId`; split session streams add it server-side from the URL so the client can route all stream frame shapes through the same decoder.
 
 ## Updating
 

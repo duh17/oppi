@@ -94,7 +94,7 @@ enum ServerMessage: Sendable, Equatable {
     // Git status (workspace-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, status: GitStatus)
 
-    // Dictation (multiplexed over /stream)
+    // Dictation (session audio stream)
     case dictationReady(provider: DictationProviderInfo?)
     case dictationResult(text: String, snap: Bool, split: DictationTranscriptSplit? = nil)
     case dictationFinal(text: String, split: DictationTranscriptSplit? = nil)
@@ -544,10 +544,10 @@ extension ServerMessage: Decodable {
 
 // MARK: - Stream Message Wrapper
 
-/// Wraps a `ServerMessage` with the `sessionId` from the multiplexed `/stream` endpoint.
+/// Wraps a `ServerMessage` with stream routing metadata.
 ///
-/// Oppi now uses only the shared `/stream` WebSocket, so every session-scoped
-/// inbound message carries `sessionId` at the top level.
+/// Split session streams bind the session in the URL, and the server may still
+/// emit `sessionId` so the client can use the same decoder and router.
 struct StreamMessage: Sendable, Equatable {
     let sessionId: String?
     let streamSeq: Int?
@@ -578,7 +578,7 @@ struct InboundStreamMeta: Sendable, Equatable {
     }
 }
 
-/// A decoded `/stream` WebSocket frame with its metadata kept in-band.
+/// A decoded JSON WebSocket stream frame with its metadata kept in-band.
 struct StreamFrameEvent: Sendable, Equatable {
     let sessionId: String?
     let message: ServerMessage

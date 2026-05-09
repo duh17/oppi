@@ -112,21 +112,6 @@ struct ServerConnectionNetworkPathChangeTests {
                 "Focused session must survive network path change")
     }
 
-    @Test func pathChangePreservesFocusedFullSubscriptionState() {
-        let (conn, _) = makeConnectionOnLAN()
-        conn._setActiveSessionIdForTesting("s1")
-        conn.subscriptionRegistry.setDesired(.full, for: "s1")
-        conn.subscriptionRegistry.markSubscribeSent(sessionId: "s1", requestId: "r1", level: .full)
-        conn.subscriptionRegistry.markSubscribeAck(sessionId: "s1", requestId: "r1")
-        conn.wsClient?._setStatusForTesting(.connected)
-
-        conn.handleNetworkPathChange()
-
-        #expect(conn.subscriptionRegistry.sessionIds(desired: .full) == ["s1"],
-                "Desired focused subscription state must survive network path change")
-        #expect(conn.subscriptionRegistry.sessionIds(acked: .full) == ["s1"],
-                "Acked focused subscription state must survive network path change")
-    }
 
     @Test func pathChangePreservesReducerTimeline() {
         let (conn, pipe) = makeConnectionOnLAN()

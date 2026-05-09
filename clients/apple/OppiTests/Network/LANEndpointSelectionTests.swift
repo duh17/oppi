@@ -17,7 +17,6 @@ struct LANEndpointSelectionTests {
 
         #expect(result?.transportPath == .paired)
         #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
-        #expect(result?.streamURL.absoluteString == "wss://my-server.tail00000.ts.net:7749/stream")
     }
 
     @Test func stillReturnsPairedSelectionForEdgeHostValues() {
@@ -53,7 +52,6 @@ struct LANEndpointSelectionTests {
         // so the TLS cert CN/SAN matches. Tailscale routes over LAN when on same network.
         #expect(result?.transportPath == .lan)
         #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:7749")
-        #expect(result?.streamURL.absoluteString == "wss://my-server.tail00000.ts.net:7749/stream")
     }
 
     @Test func fallsBackToPairedWhenServerFingerprintPrefixDoesNotMatch() {
@@ -138,7 +136,6 @@ struct LANEndpointSelectionTests {
         // HTTP: no TLS cert matching concern, use discovered LAN IP directly
         #expect(result?.transportPath == .lan)
         #expect(result?.baseURL.absoluteString == "http://192.168.1.42:7749")
-        #expect(result?.streamURL.absoluteString == "ws://192.168.1.42:7749/stream")
     }
 
     @Test func selectsLANWithDiscoveredIPWhenPairedHostIsIPAddress() {
@@ -161,7 +158,6 @@ struct LANEndpointSelectionTests {
         // HTTPS + IP-based paired host: no hostname to preserve, use discovered IP
         #expect(result?.transportPath == .lan)
         #expect(result?.baseURL.absoluteString == "https://192.168.1.42:7749")
-        #expect(result?.streamURL.absoluteString == "wss://192.168.1.42:7749/stream")
     }
 
     @Test func usesDiscoveredPortWithPairedHostname() {
@@ -184,7 +180,6 @@ struct LANEndpointSelectionTests {
         // Hostname from paired creds, but port from discovery
         #expect(result?.transportPath == .lan)
         #expect(result?.baseURL.absoluteString == "https://my-server.tail00000.ts.net:8443")
-        #expect(result?.streamURL.absoluteString == "wss://my-server.tail00000.ts.net:8443/stream")
     }
 
     @Test func allowsLANWhenDiscoveredTLSPrefixIsMissingButServerMatches() {

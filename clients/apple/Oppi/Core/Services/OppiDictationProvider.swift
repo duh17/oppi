@@ -6,8 +6,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Dict
 
 /// Voice transcription provider that streams audio to the Oppi server.
 ///
-/// New servers use the session-bound audio stream. Legacy servers fall back to dictation
-/// over the main session WebSocket during migration.
+/// Dictation uses the session-bound audio stream.
 @MainActor
 final class OppiDictationProvider: VoiceTranscriptionProvider {
     nonisolated let id: VoiceProviderID = .oppiServer
@@ -23,6 +22,10 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
     /// Task consuming the active dictation transport.
     private var dictationRouteTask: Task<Void, Never>?
     private var activeTransport: (any DictationTransport)?
+
+#if DEBUG
+    var _makeDictationTransportForTesting: (() -> (transport: any DictationTransport, messages: AsyncStream<ServerMessage>))?
+#endif
 
     func invalidateCache() {
         activeReadinessTask?.cancel()
@@ -52,16 +55,26 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
 
         let transport: any DictationTransport
         let messageStream: AsyncStream<ServerMessage>
-        let transportTag: String
-        if let client = connection.makeDictationStreamClientForFocusedSession() {
+#if DEBUG
+        if let makeDictationTransport = _makeDictationTransportForTesting {
+            let prepared = makeDictationTransport()
+            transport = prepared.transport
+            messageStream = prepared.messages
+        } else {
+            guard let client = connection.makeDictationStreamClientForFocusedSession() else {
+                throw VoiceInputError.serverNotConnected
+            }
             transport = client
             messageStream = client.connect()
-            transportTag = "session_audio_stream"
-        } else {
-            transport = connection
-            messageStream = connection.subscribeDictation()
-            transportTag = "legacy_stream"
         }
+#else
+        guard let client = connection.makeDictationStreamClientForFocusedSession() else {
+            throw VoiceInputError.serverNotConnected
+        }
+        transport = client
+        messageStream = client.connect()
+#endif
+        let transportTag = "session_audio_stream"
         stopDictationRouting()
         activeTransport = transport
 
@@ -91,7 +104,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
 
         return VoiceProviderPreparation(
             audioFormat: nil,
-            pathTag: transportTag == "session_audio_stream" ? "dictation_audio_ws" : "dictation_ws",
+            pathTag: "dictation_audio_ws",
             setupMetricTags: Self.metricTags(
                 host: credentials.host,
                 serverInfo: nil,

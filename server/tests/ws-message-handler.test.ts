@@ -87,23 +87,6 @@ function dispatch(harness: HandlerHarness, msg: ClientMessage): Promise<void> {
 }
 
 describe("WsMessageHandler", () => {
-  it("rejects subscribe/unsubscribe on per-session socket", async () => {
-    const harness = makeHarness();
-
-    await dispatch(harness, {
-      type: "subscribe",
-      sessionId: "s1",
-      requestId: "req-1",
-    });
-
-    expect(harness.sent).toEqual([
-      {
-        type: "error",
-        error: "Stream subscriptions are only supported on /stream (received subscribe)",
-      },
-    ]);
-  });
-
   it("forwards prompt with mapped images and emits command_result success", async () => {
     const harness = makeHarness();
 

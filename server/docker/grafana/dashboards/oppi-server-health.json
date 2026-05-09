@@ -1878,7 +1878,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'legacy_stream') = 'legacy_stream' THEN value END), 1) AS legacy_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'workspace_stream' THEN value END), 1) AS workspace_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value END), 1) AS untagged_ws,\n  ROUND(AVG(CASE WHEN tag_path = 'workspace_stream' THEN value END), 1) AS workspace_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -1895,7 +1895,7 @@
     },
     {
       "title": "Split WS Messages by Path",
-      "description": "Per-interval sent and received WebSocket messages by stream lane. Legacy samples use legacy_stream when old rows have no path tag.",
+      "description": "Per-interval sent and received WebSocket messages by split stream lane. Untagged samples indicate old or malformed rows with no path tag.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1928,7 +1928,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'legacy_stream') = 'legacy_stream' THEN value ELSE 0 END) AS legacy_stream,\n  SUM(CASE WHEN tag_path = 'workspace_stream' THEN value ELSE 0 END) AS workspace_stream,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value ELSE 0 END) AS untagged_ws,\n  SUM(CASE WHEN tag_path = 'workspace_stream' THEN value ELSE 0 END) AS workspace_stream,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -1945,7 +1945,7 @@
     },
     {
       "title": "Session Subscribe by Lane",
-      "description": "Bound session stream setup should show lane=bound_session. Legacy /stream subscribe traffic shows full/notifications.",
+      "description": "Bound session stream setup should show lane=bound_session; untagged samples indicate old or malformed stream setup traffic.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1970,7 +1970,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_level, 'legacy') AS lane,\n  COALESCE(tag_outcome, 'unknown') AS outcome,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MIN(value), 1) AS min_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_subscribe_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY lane, outcome\nORDER BY samples DESC, lane, outcome",
+          "rawQueryText": "SELECT\n  COALESCE(tag_level, 'untagged') AS lane,\n  COALESCE(tag_outcome, 'unknown') AS outcome,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MIN(value), 1) AS min_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_subscribe_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY lane, outcome\nORDER BY samples DESC, lane, outcome",
           "queryType": "table",
           "timeColumns": []
         }
@@ -1982,7 +1982,7 @@
     },
     {
       "title": "Catch-up by Ring",
-      "description": "Catch-up replay and misses split by workspace, session, and legacy user-stream rings.",
+      "description": "Catch-up replay and misses split by workspace, session, and user event rings.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -2057,7 +2057,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'legacy_stream') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
           "queryType": "table",
           "timeColumns": []
         }

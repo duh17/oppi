@@ -1,11 +1,5 @@
-import { WebSocket, type RawData } from "ws";
+import type { RawData, WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../../src/types.js";
-
-export function connectStream(baseWsUrl: string, token: string): WebSocket {
-  return new WebSocket(`${baseWsUrl}/stream`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-}
 
 export function waitForOpen(ws: WebSocket, timeoutMs = 5_000): Promise<void> {
   return new Promise((resolve, reject) => {

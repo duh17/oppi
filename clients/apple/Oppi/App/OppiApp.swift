@@ -342,7 +342,7 @@ struct OppiApp: App {
                 return await BiometricService.shared.authenticate(reason: reason)
             }
 
-            // Add to ServerStore via coordinator (creates connection + opens /stream)
+            // Add to ServerStore via coordinator (creates connection state for split streams)
             guard let pairedServer = PairedServer(
                 from: bootstrap.effectiveCredentials,
                 sortOrder: serverStore.servers.count
@@ -431,7 +431,7 @@ struct OppiApp: App {
                 backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
             } else if coordinator.hasActiveAudioTransportPlayback {
                 // Let live streamed playback continue under the audio background mode.
-                // Local clips can finish without keeping `/stream` open; only
+                // Local clips can finish without keeping the focused session stream open; only
                 // active audio_stream delivery needs the transport to drain.
                 backgroundKeepAlive.end()
             } else {

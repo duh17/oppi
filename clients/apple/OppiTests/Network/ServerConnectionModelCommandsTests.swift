@@ -7,6 +7,8 @@ import Testing
 struct ServerConnectionModelCommandsTests {
     @Test func setModelSendsCorrectClientMessage() async throws {
         let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer { connection.streamConsumptionTask?.cancel() }
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)
@@ -15,17 +17,20 @@ struct ServerConnectionModelCommandsTests {
         try await connection.setModel(provider: "anthropic", modelId: "claude-sonnet-4")
 
         let messages = await sink.messages
-        #expect(messages.count == 1)
-        guard case .setModel(let provider, let modelId, _) = messages[0] else {
-            Issue.record("Expected setModel client message")
-            return
+        let modelMessages = messages.compactMap { message -> (String, String)? in
+            guard case .setModel(let provider, let modelId, _) = message else { return nil }
+            return (provider, modelId)
         }
+        #expect(modelMessages.count == 1)
+        let (provider, modelId) = try #require(modelMessages.first)
         #expect(provider == "anthropic")
         #expect(modelId == "claude-sonnet-4")
     }
 
     @Test func thinkingCommandsSendCorrectClientMessages() async throws {
         let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer { connection.streamConsumptionTask?.cancel() }
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)
@@ -35,15 +40,23 @@ struct ServerConnectionModelCommandsTests {
         try await connection.cycleThinkingLevel()
 
         let messages = await sink.messages
-        #expect(messages.count == 2)
+        let thinkingMessages = messages.filter { message in
+            switch message {
+            case .setThinkingLevel, .cycleThinkingLevel:
+                return true
+            default:
+                return false
+            }
+        }
+        #expect(thinkingMessages.count == 2)
 
-        guard case .setThinkingLevel(let level, _) = messages[0] else {
+        guard case .setThinkingLevel(let level, _) = thinkingMessages[0] else {
             Issue.record("Expected setThinkingLevel client message")
             return
         }
         #expect(level == .high)
 
-        guard case .cycleThinkingLevel = messages[1] else {
+        guard case .cycleThinkingLevel = thinkingMessages[1] else {
             Issue.record("Expected cycleThinkingLevel client message")
             return
         }
@@ -540,6 +553,19 @@ struct ServerConnectionModelCommandsTests {
         #expect(stats?.tokens.total == 10)
         #expect(stats?.cost == 0.5)
     }
+}
+
+@MainActor
+private func markFocusedSessionFullySubscribed(_ connection: ServerConnection, sessionId: String = "s1") async {
+    connection.wsClient?._setStatusForTesting(.connected)
+    connection.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+    connection._setActiveSessionIdForTesting(sessionId)
+    connection.setFocusedSessionStreamEndpointKindForTesting("split_session")
+    _ = await connection.sessionStreamCoordinator.streamSession(
+        connection: connection,
+        sessionId: sessionId,
+        workspaceId: "w1"
+    )
 }
 
 private actor CapturedClientMessages {

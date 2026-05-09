@@ -33,6 +33,22 @@ struct RenderableDocumentWrapper: View {
     @Environment(\.selectedTextActionScope) private var selectedTextActionScope
     @State private var showFullScreen = false
 
+    init(
+        config: RenderableDocumentView.Config,
+        content: String,
+        filePath: String?,
+        presentation: FileContentPresentation,
+        fullScreenContent: FullScreenCodeContent,
+        renderedViewFactory: @escaping @MainActor () -> UIView
+    ) {
+        self.config = config
+        self.content = content
+        self.filePath = filePath
+        self.presentation = presentation
+        self.fullScreenContent = fullScreenContent
+        self.renderedViewFactory = renderedViewFactory
+    }
+
     private var effectiveActionContext: SelectedTextActionContext? {
         selectedTextActionScope?.makeActionContext()
     }

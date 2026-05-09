@@ -3,12 +3,11 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebSocket")
 
-/// WebSocket client for the active session stream endpoint.
+/// WebSocket client for the active focused-session stream endpoint.
 ///
 /// Returns an `AsyncStream<StreamFrameEvent>` from `connect()`.
-/// Handles keepalive pings, reconnection, and cleanup. New servers use a
-/// URL-bound session endpoint; old `/stream` subscribe/unsubscribe support is
-/// retained only at the protocol layer.
+/// Handles keepalive pings, reconnection, and cleanup for the URL-bound
+/// session stream prepared by `ServerConnection`.
 @MainActor @Observable
 final class WebSocketClient {
     enum Status: Equatable {
@@ -41,6 +40,7 @@ final class WebSocketClient {
 
     let credentials: ServerCredentials
     private var preferredEndpoint: EndpointSelection?
+    private var streamURL: URL?
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
@@ -86,8 +86,8 @@ final class WebSocketClient {
     /// until disconnect.
     ///
     /// The first message will be `streamConnected(userName:)`.
-    /// After reconnection, `streamConnected` is yielded again — ServerConnection
-    /// uses this as the signal to re-subscribe to sessions.
+    /// After reconnection, `streamConnected` is yielded again so the focused
+    /// session coordinator can refresh queue/catch-up state.
     func connect() -> AsyncStream<StreamFrameEvent> {
         // Disconnect previous connection
         let oldConn = connectionID
@@ -100,7 +100,7 @@ final class WebSocketClient {
         wsLogInfo(
             "Connect requested to session stream (old=\(oldConn) new=\(thisConnection))",
             metadata: [
-                "url": (preferredEndpoint?.streamURL ?? credentials.streamURL)?.absoluteString ?? "invalid",
+                "url": streamURL?.absoluteString ?? "invalid",
             ]
         )
 
@@ -126,17 +126,19 @@ final class WebSocketClient {
         preferredEndpoint = endpoint
     }
 
+    func setStreamURL(_ url: URL?) {
+        streamURL = url
+    }
+
     // MARK: - Send
 
-    /// Send a client message over the WebSocket.
+    /// Send a client message over the active focused-session stream.
     ///
-    /// For session-scoped commands on legacy `/stream`, provide `sessionId` to wrap
-    /// the message in a `SessionScopedMessage` envelope.
-    /// Commands like `subscribe`, `unsubscribe`, and `permission_response` don't
-    /// need a sessionId wrapper (they include it in their own encoding).
+    /// `sessionId` is ignored for split streams because the target session is bound
+    /// in the WebSocket URL prepared by `ServerConnection`.
     ///
     /// If the connection is reconnecting, waits briefly before failing.
-    func send(_ message: ClientMessage, sessionId: String? = nil) async throws {
+    func send(_ message: ClientMessage, sessionId _: String? = nil) async throws {
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
             let waited = try await waitForConnection()
@@ -159,13 +161,7 @@ final class WebSocketClient {
             throw WebSocketError.notConnected
         }
 
-        // Encode with session scope if needed
-        let payload: String
-        if let sessionId, !Self.isStreamLevelCommand(message) {
-            payload = try SessionScopedMessage(sessionId: sessionId, message: message).jsonString()
-        } else {
-            payload = try message.jsonString()
-        }
+        let payload = try message.jsonString()
 
         let sendTimeout = self.sendTimeout
 
@@ -187,16 +183,6 @@ final class WebSocketClient {
             throw error
         }
 
-    }
-
-    /// Commands that include their own sessionId and don't need the envelope.
-    nonisolated private static func isStreamLevelCommand(_ message: ClientMessage) -> Bool {
-        switch message {
-        case .subscribe, .unsubscribe, .permissionResponse:
-            return true
-        default:
-            return false
-        }
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
@@ -321,9 +307,8 @@ final class WebSocketClient {
     /// errors. Resetting here lets `connectStream()` start a fresh connection
     /// without waiting for the stale backoff timer.
     ///
-    /// Unlike `disconnect()`, this preserves diagnostic subscription state and
-    /// the continuation. Durable reconnect intent is owned by
-    /// `StreamSubscriptionRegistry` on `ServerConnection`.
+    /// Unlike `disconnect()`, this preserves the focused-session reconnect intent
+    /// and the continuation so `ServerConnection` can reopen the same endpoint.
     func cancelReconnectBackoff() {
         guard case .reconnecting(let attempt) = status else { return }
         wsLogInfo("Cancelling reconnect backoff (was attempt \(attempt))")
@@ -428,10 +413,8 @@ final class WebSocketClient {
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamFrameEvent>.Continuation) {
-        let url = preferredEndpoint?.streamURL ?? credentials.streamURL
-
-        guard let url else {
-            logger.error("Invalid /stream URL — disconnecting")
+        guard let url = streamURL else {
+            logger.error("Invalid stream URL — disconnecting")
             disconnect()
             return
         }

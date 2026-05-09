@@ -375,12 +375,6 @@ struct ServerCredentialsTests {
         #expect(url?.absoluteString == "http://my-server.ts.net:7749")
     }
 
-    @Test func streamURLValid() {
-        let creds = ServerCredentials(host: "192.168.1.10", port: 7749, token: "sk_test", name: "Test")
-        let url = creds.streamURL
-        #expect(url != nil)
-        #expect(url?.absoluteString == "ws://192.168.1.10:7749/stream")
-    }
 
     @Test func httpsSchemeProducesHttpsAndWssURLs() {
         let creds = ServerCredentials(
@@ -393,7 +387,6 @@ struct ServerCredentialsTests {
         )
 
         #expect(creds.baseURL?.absoluteString == "https://tls.local:7749")
-        #expect(creds.streamURL?.absoluteString == "wss://tls.local:7749/stream")
         #expect(creds.normalizedTLSCertFingerprint == "sha256:testleaf")
     }
 
