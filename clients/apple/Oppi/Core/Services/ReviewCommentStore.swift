@@ -61,22 +61,33 @@ final class ReviewCommentStore {
         status: ReviewCommentStatus? = nil,
         severity: ReviewCommentSeverity? = nil
     ) async throws -> ReviewComment {
-        let comment = try await api.updateReviewComment(
-            workspaceId: workspaceId,
-            commentId: commentId,
-            body: body,
-            status: status,
-            severity: severity
-        )
-        upsert(comment)
-        lastError = nil
-        return comment
+        do {
+            let comment = try await api.updateReviewComment(
+                workspaceId: workspaceId,
+                commentId: commentId,
+                body: body,
+                status: status,
+                severity: severity
+            )
+            upsert(comment)
+            lastError = nil
+            return comment
+        } catch let APIError.server(status, _) where status == 404 {
+            removeLocalComment(id: commentId)
+            lastError = "Review comment no longer exists"
+            throw APIError.server(status: status, message: "Review comment no longer exists")
+        }
     }
 
     func delete(api: APIClient, workspaceId: String, commentId: String) async throws {
-        try await api.deleteReviewComment(workspaceId: workspaceId, commentId: commentId)
-        comments.removeAll { $0.id == commentId }
-        lastError = nil
+        do {
+            try await api.deleteReviewComment(workspaceId: workspaceId, commentId: commentId)
+            removeLocalComment(id: commentId)
+            lastError = nil
+        } catch let APIError.server(status, _) where status == 404 {
+            removeLocalComment(id: commentId)
+            lastError = nil
+        }
     }
 
     @discardableResult
@@ -123,6 +134,10 @@ final class ReviewCommentStore {
         } else {
             comments.append(comment)
         }
+    }
+
+    private func removeLocalComment(id: String) {
+        comments.removeAll { $0.id == id }
     }
 
     static func reviewBlock(for comments: [ReviewComment]) -> String {

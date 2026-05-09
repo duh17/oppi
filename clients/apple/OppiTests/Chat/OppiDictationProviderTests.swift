@@ -535,6 +535,25 @@ struct OppiDictationProviderLifecycleTests {
 
     // MARK: - prepareSession + makeSession happy path
 
+    @Test func prepareSessionRequiresSessionAudioStream() async {
+        let connection = ServerConnection()
+        let credentials = Self.makeCredentials()
+        _ = connection.configure(credentials: credentials)
+        connection.setSplitStreamCapabilitiesForTesting(sessionAudioStream: false)
+        connection.focusedSessionStore.focus(sessionId: "s1", workspaceId: "w1")
+        let context = VoiceProviderContext(
+            locale: Locale(identifier: "en-US"),
+            source: "test",
+            serverCredentials: credentials,
+            serverConnection: connection
+        )
+        let provider = OppiDictationProvider()
+
+        await #expect(throws: VoiceInputError.self) {
+            try await provider.prepareSession(context: context)
+        }
+    }
+
     @Test func prepareSessionReturnsPreparationWithCorrectPathTag() async throws {
         let (context, _) = Self.makeContextWithConnection()
         let provider = OppiDictationProvider()

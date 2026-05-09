@@ -63,25 +63,28 @@ final class ChatReviewCommentsController {
     }
 
     func update(_ comment: ReviewComment, body: String? = nil, status: ReviewCommentStatus? = nil, api: APIClient?, workspaceId: String?) async -> String? {
-        guard let api, let workspaceId else { return nil }
+        guard let api else { return nil }
+        let targetWorkspaceId = comment.workspaceId
         do {
             _ = try await store.update(
                 api: api,
-                workspaceId: workspaceId,
+                workspaceId: targetWorkspaceId,
                 commentId: comment.id,
                 body: body,
                 status: status
             )
             return nil
+        } catch let APIError.server(status, _) where status == 404 {
+            return "Review comment was already deleted. Refreshing the list removed the stale item."
         } catch {
             return "Failed to update review comment: \(error.localizedDescription)"
         }
     }
 
     func delete(_ comment: ReviewComment, api: APIClient?, workspaceId: String?) async -> String? {
-        guard let api, let workspaceId else { return nil }
+        guard let api else { return nil }
         do {
-            try await store.delete(api: api, workspaceId: workspaceId, commentId: comment.id)
+            try await store.delete(api: api, workspaceId: comment.workspaceId, commentId: comment.id)
             return nil
         } catch {
             return "Failed to delete review comment: \(error.localizedDescription)"
