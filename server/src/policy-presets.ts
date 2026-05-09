@@ -715,49 +715,6 @@ export function defaultPolicy(): PolicyConfig {
           commandMatches: '*application "Mail"*send*',
         },
       },
-      {
-        id: "ask-imessage-script",
-        decision: "ask",
-        label: "Send iMessage",
-        reason: "Sending messages on your behalf is irreversible",
-        match: { tool: "bash", commandMatches: "*imessage.sh*" },
-      },
-      {
-        id: "ask-email-script",
-        decision: "ask",
-        label: "Send email",
-        reason: "Sending email on your behalf is irreversible",
-        match: { tool: "bash", commandMatches: "*send-email.sh*" },
-      },
-      // ── Local machine control → ask ──
-      {
-        id: "ask-apple-install",
-        decision: "ask",
-        label: "Install app on device",
-        match: { tool: "bash", commandMatches: "*scripts/install.sh*" },
-      },
-      {
-        id: "ask-xcrun-install",
-        decision: "ask",
-        label: "Install app on physical device",
-        match: {
-          tool: "bash",
-          executable: "xcrun",
-          commandMatches: "xcrun devicectl device install app*",
-        },
-      },
-      {
-        id: "ask-launchctl-oppi",
-        decision: "ask",
-        label: "Manage oppi server service",
-        match: { tool: "bash", executable: "launchctl", commandMatches: "*dev.chaosdonkey.oppi*" },
-      },
-      {
-        id: "ask-launchctl-oppi-legacy",
-        decision: "ask",
-        label: "Manage legacy oppi server service",
-        match: { tool: "bash", executable: "launchctl", commandMatches: "*dev.chenda.oppi*" },
-      },
     ],
     heuristics: {
       pipeToShell: "ask",
@@ -1329,60 +1286,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: '*application "Mail"*send*',
     action: "ask",
     label: "Send email",
-  },
-  {
-    tool: "bash",
-    pattern: "*imessage.sh*",
-    action: "ask",
-    label: "Send iMessage",
-  },
-  {
-    tool: "bash",
-    pattern: "*send-email.sh*",
-    action: "ask",
-    label: "Send email",
-  },
-  // Local machine control flows (explicit approval required)
-  {
-    tool: "bash",
-    pattern: "*scripts/install.sh*",
-    action: "ask",
-    label: "Install iOS app on device",
-  },
-  {
-    tool: "bash",
-    exec: "xcrun",
-    pattern: "xcrun devicectl device install app*",
-    action: "ask",
-    label: "Install app on physical device",
-  },
-  {
-    tool: "bash",
-    exec: "launchctl",
-    pattern: "*dev.chaosdonkey.oppi*",
-    action: "ask",
-    label: "Manage oppi server service",
-  },
-  {
-    tool: "bash",
-    exec: "launchctl",
-    pattern: "*dev.chenda.oppi*",
-    action: "ask",
-    label: "Manage legacy oppi server service",
-  },
-  {
-    tool: "bash",
-    exec: "npx",
-    pattern: "npx tsx src/cli.ts serve*",
-    action: "ask",
-    label: "Start/restart oppi-server server",
-  },
-  {
-    tool: "bash",
-    exec: "tsx",
-    pattern: "tsx src/cli.ts serve*",
-    action: "ask",
-    label: "Start/restart oppi-server server",
   },
 ];
 

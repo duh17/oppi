@@ -5,7 +5,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import {
   PolicyEngine,
@@ -322,6 +322,53 @@ describe("evaluateWithRules", () => {
 
     expect(decision.action).toBe("ask");
     expect(decision.reason).toContain("Git commit");
+  });
+
+  it("matches exact bash path rules with shell-expanded home in chained commands", () => {
+    const { store } = makeStore();
+    const installScript = `${homedir()}/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh`;
+
+    store.add({
+      tool: "bash",
+      decision: "allow",
+      executable: "git",
+      scope: "workspace",
+      workspaceId: "ws1",
+      source: "manual",
+      label: "Allow git operations",
+    });
+
+    store.add({
+      tool: "bash",
+      decision: "ask",
+      pattern: `bash ${installScript} install`,
+      scope: "workspace",
+      workspaceId: "ws1",
+      source: "manual",
+      label: "Ask before install workflow",
+    });
+
+    const decision = engine.evaluateWithRules(
+      bash(
+        "git status --short && bash ~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh install",
+      ),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("Ask before install workflow");
+
+    const quotedDecision = engine.evaluateWithRules(
+      bash(
+        'git status --short && bash "~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh" install',
+      ),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+    expect(quotedDecision.action).toBe("allow");
   });
 
   it("uses literal-prefix specificity for file rules", () => {

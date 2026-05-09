@@ -91,6 +91,79 @@ function executableName(raw: string): string {
   return raw.includes("/") ? raw.split("/").pop() || raw : raw;
 }
 
+function expandHomeInShellWords(value: string): string {
+  const home = homedir();
+  let result = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  let atWordStart = true;
+
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    const next = value[i + 1];
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      atWordStart = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      result += ch;
+      atWordStart = false;
+      continue;
+    }
+
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      result += ch;
+      atWordStart = false;
+      continue;
+    }
+
+    if (
+      !inSingle &&
+      !inDouble &&
+      ch === "~" &&
+      atWordStart &&
+      (next === "/" || next === undefined)
+    ) {
+      result += home;
+      atWordStart = false;
+      continue;
+    }
+
+    result += ch;
+
+    if (!inSingle && !inDouble && /[\s;&|()]/.test(ch)) {
+      atWordStart = true;
+    } else {
+      atWordStart = false;
+    }
+  }
+
+  return result;
+}
+
+function matchBashRulePattern(command: string, pattern: string): boolean {
+  if (matchBashPattern(command, pattern)) return true;
+
+  const expandedCommand = expandHomeInShellWords(command);
+  const expandedPattern = expandHomeInShellWords(pattern);
+  if (expandedCommand === command && expandedPattern === pattern) return false;
+
+  return matchBashPattern(expandedCommand, expandedPattern);
+}
+
 function argsContainConfigSet(args: string[], startIndex: number): boolean {
   return args[startIndex] === "config" && args[startIndex + 1] === "set";
 }
@@ -843,7 +916,7 @@ export class PolicyEngine {
     }
 
     if (rule.pattern) {
-      return matchBashPattern(segment, rule.pattern);
+      return matchBashRulePattern(segment, rule.pattern);
     }
 
     return true;
@@ -930,7 +1003,7 @@ export class PolicyEngine {
   private matchesExactFullBashCommandRule(rule: Rule, req: GateRequest, command: string): boolean {
     const pattern = rule.pattern;
     if (!pattern || pattern.includes("*")) return false;
-    if (!matchBashPattern(command, pattern)) return false;
+    if (!matchBashRulePattern(command, pattern)) return false;
 
     if (rule.executable) {
       const parsed = this.parseRequestContext(req);
@@ -977,7 +1050,7 @@ export class PolicyEngine {
       // Match bash glob patterns per chain segment so helper prefixes like
       // `cd repo && git commit ...` still match `git commit*` rules.
       const segments = splitBashCommandChain(command);
-      return segments.some((segment) => matchBashPattern(segment, pattern));
+      return segments.some((segment) => matchBashRulePattern(segment, pattern));
     }
 
     if (FILE_PATH_TOOLS.has(tool)) {
@@ -1119,7 +1192,7 @@ export class PolicyEngine {
       // Bash commands are strings, not file paths. minimatch treats '/' as
       // a path separator so '*' won't cross it — 'rm *-*r*' fails to match
       // 'rm -rf /tmp/foo'. Use flat string glob matching.
-      if (!matchBashPattern(segment, rule.pattern)) {
+      if (!matchBashRulePattern(segment, rule.pattern)) {
         return false;
       }
     }

@@ -4,7 +4,7 @@
  * Philosophy: allow by default. Only gate:
  * 1. Credential exfiltration (auth.json, printenv secrets) → deny
  * 2. External actions (git push, npm publish, ssh/scp) → ask
- * 3. High-impact host-control flows (app reinstall / server restart) → ask
+ * 3. Config mutations and policy self-protection → ask
  * 4. Data egress heuristics (curl -d, pipe to shell) → ask
  * Everything else → allow (user trusts the agent like they trust pi).
  *
@@ -239,55 +239,27 @@ describe("host preset: Oppi config changes gated", () => {
   });
 });
 
-describe("host preset: host-control flows gated", () => {
-  it("asks for apple install script", () => {
-    expect(policy.evaluate(bash("./clients/apple/scripts/install.sh --launch")).action).toBe("ask");
-  });
+describe("host preset: project-specific host control is configured by rules", () => {
+  const projectSpecificCommands = [
+    "./clients/apple/scripts/install.sh --launch",
+    "cd clients/apple && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "xcrun devicectl device install app --device 0000 /tmp/Oppi.app",
+    "launchctl stop dev.chaosdonkey.oppi",
+    "launchctl stop dev.chenda.oppi",
+    "launchctl kickstart -kp gui/501/dev.chaosdonkey.oppi",
+    "npx tsx src/cli.ts serve",
+    "cd /repo/server && launchctl stop dev.chaosdonkey.oppi",
+  ];
 
-  it("asks for install script after cd clients/apple", () => {
-    expect(
-      policy.evaluate(
-        bash(
-          "cd clients/apple && scripts/install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
-        ),
-      ).action,
-    ).toBe("ask");
-  });
+  for (const command of projectSpecificCommands) {
+    it(`does not bake project-specific rule into preset: ${command}`, () => {
+      expect(policy.evaluate(bash(command)).action).toBe("allow");
+    });
+  }
 
-  it("asks for direct device install via devicectl", () => {
-    expect(
-      policy.evaluate(bash("xcrun devicectl device install app --device 0000 /tmp/Oppi.app"))
-        .action,
-    ).toBe("ask");
-  });
-
-  it("asks for launchctl stop oppi service", () => {
-    expect(policy.evaluate(bash("launchctl stop dev.chaosdonkey.oppi")).action).toBe("ask");
-  });
-
-  it("asks for launchctl stop legacy oppi service", () => {
-    expect(policy.evaluate(bash("launchctl stop dev.chenda.oppi")).action).toBe("ask");
-  });
-
-  it("asks for launchctl kickstart oppi service", () => {
-    expect(
-      policy.evaluate(bash("launchctl kickstart -kp gui/501/dev.chaosdonkey.oppi")).action,
-    ).toBe("ask");
-  });
-
-  it("asks for oppi-server serve command", () => {
-    expect(policy.evaluate(bash("npx tsx src/cli.ts serve")).action).toBe("ask");
-  });
-
-  it("asks for Oppi config changes", () => {
+  it("still asks for Oppi config changes via the config guard", () => {
     expect(
       policy.evaluate(bash("oppi config set asr.sttEndpoint http://127.0.0.1:7936")).action,
-    ).toBe("ask");
-  });
-
-  it("asks for chained launchctl restart", () => {
-    expect(
-      policy.evaluate(bash("cd /repo/server && launchctl stop dev.chaosdonkey.oppi")).action,
     ).toBe("ask");
   });
 });
