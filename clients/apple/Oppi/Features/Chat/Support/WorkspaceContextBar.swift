@@ -73,6 +73,7 @@ struct WorkspaceContextBar: View {
     let sessionId: String?
     let childSessions: [Session]
     var onSelectChild: ((String) -> Void)?
+    var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
     var fileDetailActionScope: SelectedTextActionScope?
     /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
     var collapseToken: Int = 0
@@ -109,6 +110,7 @@ struct WorkspaceContextBar: View {
         sessionId: String? = nil,
         childSessions: [Session] = [],
         onSelectChild: ((String) -> Void)? = nil,
+        onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
         fileDetailActionScope: SelectedTextActionScope? = nil,
         collapseToken: Int = 0,
         onExpandedChanged: ((Bool) -> Void)? = nil
@@ -120,6 +122,7 @@ struct WorkspaceContextBar: View {
         self.sessionId = sessionId
         self.childSessions = childSessions
         self.onSelectChild = onSelectChild
+        self.onReviewInCurrentSession = onReviewInCurrentSession
         self.fileDetailActionScope = fileDetailActionScope
         self.collapseToken = collapseToken
         self.onExpandedChanged = onExpandedChanged
@@ -665,14 +668,23 @@ struct WorkspaceContextBar: View {
 
                     Spacer()
 
-                    Button("Review") {
-                        Task { await launchSelection(.review) }
+                    Menu {
+                        if onReviewInCurrentSession != nil {
+                            Button("Review in this session") {
+                                Task { await reviewSelectionInCurrentSession() }
+                            }
+                        }
+                        Button("Review in new session") {
+                            Task { await launchSelection(.review) }
+                        }
+                    } label: {
+                        Text("Review")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.themePurple, in: Capsule())
                     }
-                    .font(.caption2.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.themePurple, in: Capsule())
                     .disabled(!canLaunch)
                     .opacity(canLaunch ? 1 : 0.4)
 
@@ -728,6 +740,40 @@ struct WorkspaceContextBar: View {
             selectedPaths.remove(file.path)
         } else {
             selectedPaths.insert(file.path)
+        }
+    }
+
+    private func reviewSelectionInCurrentSession() async {
+        guard let workspaceId, !selectedPaths.isEmpty else { return }
+        guard let api = apiClient else {
+            launchError = "Server is offline."
+            return
+        }
+        guard let onReviewInCurrentSession else { return }
+        guard launchActionInFlight == nil else { return }
+
+        let paths = displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+        guard !paths.isEmpty else { return }
+
+        launchActionInFlight = .review
+        defer { launchActionInFlight = nil }
+
+        do {
+            let response = try await api.prepareWorkspaceReviewSelection(
+                workspaceId: workspaceId,
+                action: .review,
+                paths: paths,
+                selectedSessionId: sessionId
+            )
+            selectedPaths.removeAll()
+            isSelecting = false
+            collapseBar()
+            onReviewInCurrentSession(
+                response.visiblePrompt,
+                response.filePaths.map { PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile) }
+            )
+        } catch {
+            launchError = error.localizedDescription
         }
     }
 

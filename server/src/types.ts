@@ -541,12 +541,15 @@ export interface CreateWorkspaceReviewSessionRequest {
   selectedSessionId?: string;
 }
 
-export interface WorkspaceReviewSessionResponse {
+export interface WorkspaceReviewSelectionResponse {
   action: WorkspaceReviewSessionAction;
   selectedPathCount: number;
-  session: Session;
   visiblePrompt: string;
   filePaths: string[];
+}
+
+export interface WorkspaceReviewSessionResponse extends WorkspaceReviewSelectionResponse {
+  session: Session;
 }
 
 export type ReviewCommentAuthor = "human" | "agent";

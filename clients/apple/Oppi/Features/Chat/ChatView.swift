@@ -247,6 +247,9 @@ struct ChatView: View {
                     onSelectChild: { childId in
                         childSessionToOpen = ChildSessionRoute(id: childId)
                     },
+                    onReviewInCurrentSession: { prompt, files in
+                        stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
+                    },
                     fileDetailActionScope: .activeSession(selectedTextPiRouter),
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: handleContextBarExpandedChanged
@@ -788,6 +791,29 @@ struct ChatView: View {
 
     private func presentComposer() {
         showComposer = true
+    }
+
+    @MainActor
+    private func stageWorkspaceReviewInCurrentSession(prompt: String, files: [PendingFileReference]) {
+        if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            inputText = prompt
+        } else if inputText.hasSuffix("\n\n") {
+            inputText += prompt
+        } else if inputText.hasSuffix("\n") {
+            inputText += "\n" + prompt
+        } else {
+            inputText += "\n\n" + prompt
+        }
+
+        for file in files where !pendingRepoPointers.contains(where: { $0.id == file.id }) {
+            pendingRepoPointers.append(file)
+        }
+
+        if isStopped {
+            showComposer = true
+        } else if !showComposer {
+            composerExternalFocusRequestID &+= 1
+        }
     }
 
     @MainActor

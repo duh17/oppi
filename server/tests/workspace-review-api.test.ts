@@ -10,6 +10,7 @@ import type {
   Session,
   Workspace,
   WorkspaceReviewDiffResponse,
+  WorkspaceReviewSelectionResponse,
   WorkspaceReviewSessionResponse,
 } from "../src/types.js";
 
@@ -184,6 +185,58 @@ describe("GET /workspaces/:wid/review/diff", () => {
 });
 
 describe("POST /workspaces/:wid/review/session", () => {
+  it("prepares a review selection without creating a session", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-selection-"));
+
+    try {
+      gitIn(repoDir, "init -b main");
+      gitIn(repoDir, 'config user.email "test@test.com"');
+      gitIn(repoDir, 'config user.name "Test"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = oldName\n", "utf8");
+      gitIn(repoDir, "add review.swift");
+      gitIn(repoDir, 'commit -m "initial commit"');
+
+      writeFileSync(join(repoDir, "review.swift"), "let value = newName\n", "utf8");
+
+      const createSession = vi.fn();
+      const startSession = vi.fn();
+      const ctx = {
+        storage: {
+          getWorkspace: (workspaceId: string) =>
+            workspaceId === "w1" ? makeWorkspace(repoDir) : undefined,
+          getSession: () => undefined,
+          createSession,
+        },
+        sessions: { startSession },
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext;
+
+      const routes = new RouteHandler(ctx);
+      const res = makeResponse();
+
+      await routes.dispatch(
+        "POST",
+        "/workspaces/w1/review/selection",
+        new URL("http://localhost/workspaces/w1/review/selection"),
+        makeRequest({ action: "review", paths: ["review.swift"] }) as never,
+        res as never,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as WorkspaceReviewSelectionResponse;
+
+      expect(body.action).toBe("review");
+      expect(body.selectedPathCount).toBe(1);
+      expect(body.visiblePrompt).toContain("# Review Guidelines");
+      expect(body.filePaths).toEqual(["review.swift"]);
+      expect(createSession).not.toHaveBeenCalled();
+      expect(startSession).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates a seeded review session from selected files", async () => {
     const repoDir = mkdtempSync(join(tmpdir(), "oppi-workspace-review-session-"));
 

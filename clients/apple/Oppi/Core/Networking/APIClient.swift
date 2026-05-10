@@ -581,6 +581,25 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
+    func prepareWorkspaceReviewSelection(
+        workspaceId: String,
+        action: WorkspaceReviewSessionAction,
+        paths: [String],
+        selectedSessionId: String? = nil
+    ) async throws -> WorkspaceReviewSelectionResponse {
+        struct Body: Encodable {
+            let action: WorkspaceReviewSessionAction
+            let paths: [String]
+            let selectedSessionId: String?
+        }
+
+        let data = try await post(
+            "/workspaces/\(workspaceId)/review/selection",
+            body: Body(action: action, paths: paths, selectedSessionId: selectedSessionId)
+        )
+        return try JSONDecoder().decode(WorkspaceReviewSelectionResponse.self, from: data)
+    }
+
     /// Create and seed a focused follow-up session from the workspace review selection.
     func createWorkspaceReviewSession(
         workspaceId: String,

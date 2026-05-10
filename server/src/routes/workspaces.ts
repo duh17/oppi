@@ -29,6 +29,7 @@ import type {
   UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
+  WorkspaceReviewSelectionResponse,
   WorkspaceReviewSessionResponse,
 } from "../types.js";
 import { buildWorkspaceReviewDiff, WorkspaceReviewDiffError } from "../workspace-review-diff.js";
@@ -574,15 +575,19 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  async function handleCreateWorkspaceReviewSession(
+  async function parseWorkspaceReviewSelection(
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
-  ): Promise<void> {
+  ): Promise<{
+    workspace: Workspace;
+    body: CreateWorkspaceReviewSessionRequest;
+    selectedSession: Session | undefined;
+  } | null> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
-      return;
+      return null;
     }
 
     const body = await helpers.parseBody<CreateWorkspaceReviewSessionRequest>(req);
@@ -593,17 +598,66 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     if (selectedSessionId && !sessionWithinWorkspace(selectedSession, wsId)) {
       helpers.error(res, 404, "Session not found");
-      return;
+      return null;
     }
 
     const validActions = ["review", "reflect", "prepare_commit"] as const;
     if (!validActions.includes(body.action as (typeof validActions)[number])) {
       helpers.error(res, 400, `action must be one of: ${validActions.join(", ")}`);
+      return null;
+    }
+
+    return { workspace, body, selectedSession };
+  }
+
+  async function handlePrepareWorkspaceReviewSelection(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const parsed = await parseWorkspaceReviewSelection(wsId, req, res);
+    if (!parsed) {
       return;
     }
 
     try {
-      await handleReviewAction(wsId, workspace, body, selectedSession, res);
+      const selection = await prepareWorkspaceReviewSession({
+        workspaceId: wsId,
+        workspace: parsed.workspace,
+        action: parsed.body.action,
+        paths: Array.isArray(parsed.body.paths) ? parsed.body.paths : [],
+        selectedSession: parsed.selectedSession,
+      });
+      const response: WorkspaceReviewSelectionResponse = {
+        action: parsed.body.action,
+        selectedPathCount: selection.files.length,
+        visiblePrompt: selection.visiblePrompt,
+        filePaths: selection.files.map((f) => f.path),
+      };
+      helpers.json(res, response);
+    } catch (error) {
+      if (error instanceof WorkspaceReviewSessionError) {
+        helpers.error(res, error.status, error.message);
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : "Failed to prepare review selection";
+      helpers.error(res, 500, message);
+    }
+  }
+
+  async function handleCreateWorkspaceReviewSession(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const parsed = await parseWorkspaceReviewSelection(wsId, req, res);
+    if (!parsed) {
+      return;
+    }
+
+    try {
+      await handleReviewAction(wsId, parsed.workspace, parsed.body, parsed.selectedSession, res);
     } catch (error) {
       if (error instanceof WorkspaceReviewSessionError) {
         helpers.error(res, error.status, error.message);
@@ -764,6 +818,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsReviewDiffMatch = path.match(/^\/workspaces\/([^/]+)\/review\/diff$/);
     if (wsReviewDiffMatch && method === "GET") {
       await handleGetWorkspaceReviewDiff(wsReviewDiffMatch[1], url, req, res);
+      return true;
+    }
+
+    const wsReviewSelectionMatch = path.match(/^\/workspaces\/([^/]+)\/review\/selection$/);
+    if (wsReviewSelectionMatch && method === "POST") {
+      await handlePrepareWorkspaceReviewSelection(wsReviewSelectionMatch[1], req, res);
       return true;
     }
 

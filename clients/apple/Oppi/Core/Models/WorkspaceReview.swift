@@ -106,6 +106,13 @@ enum WorkspaceReviewSessionAction: String, Codable, Sendable, Equatable, CaseIte
     }
 }
 
+struct WorkspaceReviewSelectionResponse: Codable, Sendable, Equatable {
+    let action: WorkspaceReviewSessionAction
+    let selectedPathCount: Int
+    let visiblePrompt: String
+    let filePaths: [String]
+}
+
 struct WorkspaceReviewSessionResponse: Codable, Sendable, Equatable {
     let action: WorkspaceReviewSessionAction
     let selectedPathCount: Int
