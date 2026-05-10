@@ -349,6 +349,26 @@ describe("updateSessionChangeStats", () => {
     expect(session.changeStats!.addedLines).toBe(4); // 1 + 3
   });
 
+  it("batched edit args accumulate added and removed lines", () => {
+    const session = makeSession();
+
+    updateSessionChangeStats(session, "edit", {
+      path: "/src/existing.ts",
+      edits: [
+        { oldText: "a\nb", newText: "a\nb\nc\nd" },
+        { oldText: "x\ny\nz", newText: "x" },
+      ],
+    });
+
+    expect(session.changeStats).toMatchObject({
+      mutatingToolCalls: 1,
+      filesChanged: 1,
+      changedFiles: ["/src/existing.ts"],
+      addedLines: 2,
+      removedLines: 2,
+    });
+  });
+
   it("_fileLineCounts survives session round-trip through JSON", () => {
     const session = makeSession();
     updateSessionChangeStats(session, "write", { path: "/a.ts", content: "x\ny\nz" });

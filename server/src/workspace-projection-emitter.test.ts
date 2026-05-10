@@ -64,6 +64,31 @@ describe("WorkspaceProjectionEmitter", () => {
     expect(record).toHaveBeenCalledTimes(2);
   });
 
+  it("streams added and removed line counts in workspace session projections", () => {
+    const { emitter, record } = makeEmitter();
+    const session = makeSession({
+      changeStats: {
+        mutatingToolCalls: 1,
+        filesChanged: 1,
+        changedFiles: ["src/existing.ts"],
+        addedLines: 2,
+        removedLines: 2,
+      },
+    });
+
+    expect(emitter.emitSessionProjection(session, "tool_start")).toBe(true);
+
+    expect(record).toHaveBeenCalledOnce();
+    const [, message] = record.mock.calls[0] as [string, ServerMessage];
+    expect(message.type).toBe("session_projection");
+    if (message.type !== "session_projection") return;
+    expect(message.summary.changeStats).toMatchObject({
+      filesChanged: 1,
+      addedLines: 2,
+      removedLines: 2,
+    });
+  });
+
   it("coalesces noisy projection updates per session", async () => {
     vi.useFakeTimers();
     const { emitter, record } = makeEmitter({ minIntervalMs: 100 });

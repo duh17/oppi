@@ -986,27 +986,62 @@ function estimateLineDelta(
     };
   }
 
-  // edit tool
-  const oldText = typeof args.oldText === "string" ? args.oldText : "";
-  const newText = typeof args.newText === "string" ? args.newText : "";
-  if (oldText.length === 0 && newText.length === 0) {
+  // edit tool. Newer pi edit calls use a batched `edits` array; older
+  // calls used top-level `oldText` / `newText`. Count each replacement
+  // independently so a single tool call that adds in one block and removes
+  // in another streams both numbers through the session summary.
+  const editDeltas = extractEditLineDeltas(args);
+  if (editDeltas.length === 0) {
     return { added: 0, removed: 0, isNewFile: false };
   }
 
-  const oldLines = countLines(oldText);
-  const newLines = countLines(newText);
-  const lineDelta = newLines - oldLines;
-
-  // Update tracked count so subsequent writes to this file are accurate
-  if (filePath !== null && filePath in fileLineCounts) {
-    fileLineCounts[filePath] = Math.max(0, fileLineCounts[filePath] + lineDelta);
+  let added = 0;
+  let removed = 0;
+  let netLineDelta = 0;
+  for (const delta of editDeltas) {
+    netLineDelta += delta;
+    if (delta > 0) {
+      added += delta;
+    } else if (delta < 0) {
+      removed += -delta;
+    }
   }
 
-  return {
-    added: Math.max(0, lineDelta),
-    removed: Math.max(0, -lineDelta),
-    isNewFile: false,
-  };
+  // Update tracked count so subsequent writes to this file are accurate.
+  if (filePath !== null && filePath in fileLineCounts) {
+    fileLineCounts[filePath] = Math.max(0, fileLineCounts[filePath] + netLineDelta);
+  }
+
+  return { added, removed, isNewFile: false };
+}
+
+function extractEditLineDeltas(args: Record<string, unknown>): number[] {
+  const batched = Array.isArray(args.edits)
+    ? args.edits
+        .map((entry) => editLineDelta(entry))
+        .filter((delta): delta is number => delta !== null)
+    : [];
+  if (batched.length > 0) {
+    return batched;
+  }
+
+  const legacy = editLineDelta(args);
+  return legacy === null ? [] : [legacy];
+}
+
+function editLineDelta(rawEdit: unknown): number | null {
+  if (!rawEdit || typeof rawEdit !== "object") {
+    return null;
+  }
+
+  const edit = rawEdit as Record<string, unknown>;
+  const oldText = typeof edit.oldText === "string" ? edit.oldText : "";
+  const newText = typeof edit.newText === "string" ? edit.newText : "";
+  if (oldText.length === 0 && newText.length === 0) {
+    return null;
+  }
+
+  return countLines(newText) - countLines(oldText);
 }
 
 function countLines(text: string): number {
