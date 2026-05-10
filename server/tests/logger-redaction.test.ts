@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger } from "../src/logger.js";
 import { redactLogString, redactLogValue } from "../src/log-redact.js";
 
 describe("logger", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("redacts secret-looking keys and values before writing logs", () => {
     const lines: string[] = [];
     const logger = createLogger({
@@ -57,6 +61,21 @@ describe("logger", () => {
     logger.debug("debug.event", { value: 1 });
 
     expect(lines).toHaveLength(0);
+  });
+
+  it("writes default log output to stderr so CLI stdout stays machine-readable", () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const logger = createLogger({
+      level: "info",
+      now: () => "2026-04-22T00:00:00.000Z",
+    });
+
+    logger.info("cli.noise", { value: 1 });
+
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain('"event":"cli.noise"');
   });
 });
 

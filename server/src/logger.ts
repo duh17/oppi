@@ -49,9 +49,8 @@ function resolveDefaultLevel(): LogLevel {
   return parseLevel(process.env.OPPI_LOG_LEVEL) ?? "info";
 }
 
-function defaultSink(level: LogLevel, line: string): void {
-  const stream = level === "warn" || level === "error" ? process.stderr : process.stdout;
-  stream.write(`${line}\n`);
+function defaultSink(_level: LogLevel, line: string): void {
+  process.stderr.write(`${line}\n`);
 }
 
 function sanitizeContext(
