@@ -23,11 +23,12 @@ describe("storage file permissions", () => {
     expect(configMode).toBe(0o600);
   });
 
-  it("writes session and workspace records as owner-only", () => {
+  it("writes session sqlite database and workspace records as owner-only", () => {
     const storage = new Storage(dir);
     storage.ensurePaired();
 
     const session = storage.createSession("security-check", "anthropic/claude-sonnet-4-0");
+    const sessionDbPath = join(dir, "session-state.db");
     const sessionPath = join(dir, "sessions", `${session.id}.json`);
 
     const workspace = storage.createWorkspace({ name: "default", skills: [] });
@@ -35,7 +36,8 @@ describe("storage file permissions", () => {
 
     expect(statSync(join(dir, "sessions")).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "workspaces")).mode & 0o777).toBe(0o700);
-    expect(statSync(sessionPath).mode & 0o777).toBe(0o600);
+    expect(statSync(sessionDbPath).mode & 0o777).toBe(0o600);
+    expect(() => statSync(sessionPath)).toThrow();
     expect(statSync(workspacePath).mode & 0o777).toBe(0o600);
   });
 });

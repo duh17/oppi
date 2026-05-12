@@ -1123,6 +1123,9 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
   // Only persist assistant messages — user messages are already stored on prompt receipt
   if (role === "user") return;
 
+  const timestamp = Date.now();
+  session.lastAgentReplyAt = timestamp;
+
   const usage = extractUsage(message, session.model);
   const assistantText = extractAssistantText(message);
 
@@ -1139,7 +1142,7 @@ export function applyMessageEndToSession(session: Session, message: PiMessage): 
     appendSessionMessage(session, {
       role: "assistant",
       content: assistantText,
-      timestamp: Date.now(),
+      timestamp,
       model: session.model,
       tokens,
       cost: usage?.cost,

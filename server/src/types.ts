@@ -94,6 +94,8 @@ export interface Session {
   status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
   createdAt: number;
   lastActivity: number;
+  /** Timestamp (ms) of the latest live assistant message_end observed by this server. */
+  lastAgentReplyAt?: number;
   /** Timestamp (ms) when the currently active agent turn began. */
   currentTurnStartedAt?: number;
   model?: string;
@@ -147,6 +149,7 @@ export interface SessionSummary {
   status: Session["status"];
   createdAt: number;
   lastActivity: number;
+  lastAgentReplyAt?: number;
   currentTurnStartedAt?: number;
   model?: string;
   messageCount: number;

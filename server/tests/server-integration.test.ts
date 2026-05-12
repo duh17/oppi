@@ -1315,12 +1315,9 @@ describe("error handling", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns all sessions via bulk GET /sessions", async () => {
+  it("does not expose the retired bulk GET /sessions endpoint", async () => {
     const res = await get("/sessions");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.sessions).toBeDefined();
-    expect(Array.isArray(body.sessions)).toBe(true);
+    expect(res.status).toBe(404);
   });
 
   it("GET /sessions/search returns empty results for unmatched query", async () => {

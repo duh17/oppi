@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
@@ -16,26 +16,16 @@ describe("storage flat layout", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("stores sessions and workspaces in flat top-level directories", () => {
-    const owner = {
-      id: "owner-1",
-      name: "Bob",
-      token: "sk_existing_owner_token",
-      createdAt: Date.now() - 10_000,
-    };
-
-    writeFileSync(join(dir, "users.json"), JSON.stringify(owner, null, 2));
-
+  it("stores sessions in sqlite and workspaces in flat top-level directories", () => {
     const storage = new Storage(dir);
 
     const session: Session = {
       id: "sess-1",
-      userId: owner.id,
       status: "busy",
       createdAt: Date.now() - 5_000,
       lastActivity: Date.now() - 3_000,
       messageCount: 1,
-      tokens: { input: 10, output: 20 },
+      tokens: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
       model: "anthropic/claude-sonnet-4-0",
       name: "Test Session",
@@ -43,7 +33,6 @@ describe("storage flat layout", () => {
 
     const workspace: Workspace = {
       id: "ws-1",
-      userId: owner.id,
       name: "Test Workspace",
       skills: ["fetch"],
       systemPromptMode: "append",
@@ -54,7 +43,8 @@ describe("storage flat layout", () => {
     storage.saveSession(session);
     storage.saveWorkspace(workspace);
 
-    expect(existsSync(join(dir, "sessions", `${session.id}.json`))).toBe(true);
+    expect(existsSync(join(dir, "session-state.db"))).toBe(true);
+    expect(existsSync(join(dir, "sessions", `${session.id}.json`))).toBe(false);
     expect(existsSync(join(dir, "workspaces", `${workspace.id}.json`))).toBe(true);
 
     const loaded = storage.getSession(session.id);

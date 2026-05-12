@@ -1633,6 +1633,20 @@ describe("translatePiEvent", () => {
   });
 
   describe("applyMessageEndToSession", () => {
+    it("records lastAgentReplyAt from live assistant message_end without trace backfill", () => {
+      const session = makeSession();
+      const before = Date.now();
+
+      applyMessageEndToSession(session, {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      });
+
+      expect(session.lastAgentReplyAt).toBeTypeOf("number");
+      expect(session.lastAgentReplyAt).toBeGreaterThanOrEqual(before);
+      expect(session.lastActivity).toBe(session.lastAgentReplyAt);
+    });
+
     it("preserves the last non-zero context snapshot on aborted zero-usage messages", () => {
       const session = makeSession({
         contextTokens: 42_000,

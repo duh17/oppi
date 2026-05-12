@@ -17,6 +17,10 @@ import { safeErrorMessage } from "../log-utils.js";
 import { estimateUsageCostFromModel, normalizePiUsage } from "../token-usage.js";
 import type { Session, SessionChangeStats } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
+import type {
+  WorkspaceSessionSnapshotListOptions,
+  WorkspaceSessionSnapshotListResult,
+} from "./session-dao.js";
 
 const log = createLogger({ base: { component: "session_store" } });
 
@@ -235,6 +239,95 @@ function restoreInternalFields(session: Session, sessionPath: string): Session {
   }
 }
 
+function compareSessionsByActivity(a: Session, b: Session): number {
+  if (b.lastActivity !== a.lastActivity) {
+    return b.lastActivity - a.lastActivity;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function normalizePositiveInteger(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function normalizeLimit(value: number | undefined, maxLimit: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 0;
+  }
+  const normalized = Math.floor(value);
+  if (normalized <= 0) {
+    return 0;
+  }
+  return Math.min(normalized, maxLimit);
+}
+
+function sessionMatchesSnapshotFilters(
+  session: Session,
+  filters: {
+    cutoffMs?: number;
+    status?: Session["status"];
+    beforeLastActivity?: number;
+    beforeSessionId?: string;
+  },
+): boolean {
+  if (filters.cutoffMs !== undefined && session.status === "stopped") {
+    if (session.lastActivity < filters.cutoffMs) {
+      return false;
+    }
+  }
+
+  if (filters.status && session.status !== filters.status) {
+    return false;
+  }
+
+  if (filters.beforeLastActivity !== undefined && Number.isFinite(filters.beforeLastActivity)) {
+    return (
+      session.lastActivity < filters.beforeLastActivity ||
+      (filters.beforeSessionId !== undefined &&
+        session.lastActivity === filters.beforeLastActivity &&
+        session.id > filters.beforeSessionId)
+    );
+  }
+
+  return true;
+}
+
+function includeWorkspaceAncestors(
+  workspaceId: string,
+  sessions: Session[],
+  byId: Map<string, Session>,
+): Session[] {
+  const resultById = new Map(sessions.map((session) => [session.id, session]));
+  const pending = sessions.flatMap((session) =>
+    session.parentSessionId ? [session.parentSessionId] : [],
+  );
+  let remainingLookups = 256;
+
+  while (pending.length > 0 && remainingLookups > 0) {
+    remainingLookups -= 1;
+    const parentId = pending.pop();
+    if (!parentId || resultById.has(parentId)) {
+      continue;
+    }
+
+    const parent = byId.get(parentId);
+    if (!parent || parent.workspaceId !== workspaceId) {
+      continue;
+    }
+
+    resultById.set(parent.id, parent);
+    if (parent.parentSessionId) {
+      pending.push(parent.parentSessionId);
+    }
+  }
+
+  return Array.from(resultById.values()).sort(compareSessionsByActivity);
+}
+
 export class SessionStore {
   /**
    * In-memory session cache. Populated lazily on first read, updated on
@@ -242,6 +335,7 @@ export class SessionStore {
    * stripped from cached entries to bound per-session memory to ~2 KB.
    */
   private cache: Map<string, Session> | null = null;
+  private loadFailures: string[] = [];
 
   constructor(private readonly configStore: ConfigStore) {}
 
@@ -254,6 +348,7 @@ export class SessionStore {
     if (this.cache) return this.cache;
 
     this.cache = new Map();
+    this.loadFailures = [];
     const baseDir = this.configStore.getSessionsDir();
     if (!existsSync(baseDir)) return this.cache;
 
@@ -270,6 +365,7 @@ export class SessionStore {
             sessionFilePath: path,
             reason: "top_level_not_object",
           });
+          this.loadFailures.push(path);
           continue;
         }
 
@@ -279,6 +375,7 @@ export class SessionStore {
             sessionFilePath: path,
             reason: "missing_session_payload",
           });
+          this.loadFailures.push(path);
           continue;
         }
 
@@ -291,10 +388,16 @@ export class SessionStore {
           sessionFilePath: path,
           error: safeErrorMessage(err),
         });
+        this.loadFailures.push(path);
       }
     }
 
     return this.cache;
+  }
+
+  getLoadFailures(): string[] {
+    this.ensureCache();
+    return [...this.loadFailures];
   }
 
   createSession(name?: string, model?: string): Session {
@@ -363,8 +466,7 @@ export class SessionStore {
   listSessions(): Session[] {
     const cache = this.ensureCache();
     const sessions = Array.from(cache.values());
-    // Sort by last activity (most recent first)
-    return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
+    return sessions.sort(compareSessionsByActivity);
   }
 
   listSessionsByWorkspace(workspaceId: string): Session[] {
@@ -375,7 +477,43 @@ export class SessionStore {
         sessions.push(session);
       }
     }
-    return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
+    return sessions.sort(compareSessionsByActivity);
+  }
+
+  listWorkspaceSessionSnapshots(
+    workspaceId: string,
+    options: WorkspaceSessionSnapshotListOptions = {},
+  ): WorkspaceSessionSnapshotListResult {
+    const nowMs = options.nowMs ?? Date.now();
+    const recentDays = normalizePositiveInteger(options.recentDays);
+    const cutoffMs = recentDays ? nowMs - recentDays * 86_400_000 : undefined;
+    const appliedLimit = normalizeLimit(options.limit, options.maxLimit ?? 500);
+    const beforeLastActivity = Number.isFinite(options.beforeLastActivity)
+      ? options.beforeLastActivity
+      : undefined;
+
+    const allSessions = this.listSessionsByWorkspace(workspaceId);
+    const totalCount = allSessions.length;
+    const byId = new Map(allSessions.map((session) => [session.id, session]));
+    const filtered = allSessions.filter((session) =>
+      sessionMatchesSnapshotFilters(session, {
+        cutoffMs,
+        status: options.status,
+        beforeLastActivity,
+        beforeSessionId: options.beforeSessionId,
+      }),
+    );
+    const page = appliedLimit > 0 ? filtered.slice(0, appliedLimit) : filtered;
+    const sessions = includeWorkspaceAncestors(workspaceId, page, byId);
+
+    return {
+      sessions,
+      totalCount,
+      filteredCount: filtered.length,
+      remainingCount: appliedLimit > 0 ? Math.max(0, filtered.length - page.length) : 0,
+      ...(cutoffMs !== undefined ? { cutoffMs } : {}),
+      appliedLimit,
+    };
   }
 
   deleteSession(sessionId: string): boolean {

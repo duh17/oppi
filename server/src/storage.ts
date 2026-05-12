@@ -5,8 +5,8 @@
  * ~/.config/oppi/
  * ├── config.json       # Server config
  * ├── users.json        # Owner identity & token (single-user)
- * ├── sessions/
- * │   └── <sessionId>.json      # Flat owner layout (single-user mode)
+ * ├── session-state.db # Runtime session state
+ * ├── sessions/        # Legacy JSON session sidecars imported once on startup
  * └── workspaces/
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
@@ -21,7 +21,11 @@ import {
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "./storage/config-store.js";
-import { SessionStore } from "./storage/session-store.js";
+import type {
+  WorkspaceSessionSnapshotListOptions,
+  WorkspaceSessionSnapshotListResult,
+} from "./storage/session-dao.js";
+import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
   CreateWorkspaceRequest,
@@ -74,13 +78,13 @@ function readJsonlSessionCwd(filePath: string | undefined): string | null {
 export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
-  private readonly sessionStore: SessionStore;
+  private readonly sessionStore: SessionSqliteStore;
   private readonly workspaceStore: WorkspaceStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
-    this.sessionStore = new SessionStore(this.configStore);
+    this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
     this.workspaceStore = new WorkspaceStore(this.configStore);
     this.migrateLegacyWorkspaceSessions();
   }
@@ -93,7 +97,7 @@ export class Storage {
    * existing hostMount. This avoids inventing workspaces or guessing wrong.
    */
   private migrateLegacyWorkspaceSessions(): void {
-    const sessions = this.sessionStore.listSessions().filter((session) => !session.workspaceId);
+    const sessions = this.sessionStore.listSessionsWithoutWorkspace();
     if (sessions.length === 0) return;
 
     const workspaces = this.workspaceStore.listWorkspaces();
@@ -255,6 +259,13 @@ export class Storage {
 
   listSessionsByWorkspace(workspaceId: string): Session[] {
     return this.sessionStore.listSessionsByWorkspace(workspaceId);
+  }
+
+  listWorkspaceSessionSnapshots(
+    workspaceId: string,
+    options?: WorkspaceSessionSnapshotListOptions,
+  ): WorkspaceSessionSnapshotListResult {
+    return this.sessionStore.listWorkspaceSessionSnapshots(workspaceId, options);
   }
 
   deleteSession(sessionId: string): boolean {

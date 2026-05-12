@@ -41,15 +41,61 @@ const MAX_SESSION_FILE_BYTES = 10 * 1024 * 1024;
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
-export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
-  const sessionFileHandlers = createSessionFileHandlers(ctx, helpers);
-  /** Bulk list: all sessions across all workspaces in one response. */
-  function handleListAllSessions(req: IncomingMessage, res: ServerResponse): void {
-    const sessions = ctx.storage.listSessions().map((s) => ctx.ensureSessionContextWindow(s));
+const SESSION_STATUSES = new Set<Session["status"]>([
+  "starting",
+  "ready",
+  "busy",
+  "stopping",
+  "stopped",
+  "error",
+]);
 
-    helpers.compressedJson(req, res, { sessions });
+function parseSessionStatus(value: string | null): Session["status"] | undefined {
+  return value && SESSION_STATUSES.has(value as Session["status"])
+    ? (value as Session["status"])
+    : undefined;
+}
+
+function compareWorkspaceListSessions(a: Session, b: Session): number {
+  if (b.lastActivity !== a.lastActivity) {
+    return b.lastActivity - a.lastActivity;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function sessionMatchesWorkspaceListFilters(
+  session: Session,
+  filters: {
+    cutoffMs?: number;
+    status?: Session["status"];
+    beforeLastActivity?: number;
+    beforeSessionId?: string;
+  },
+): boolean {
+  if (filters.cutoffMs !== undefined && session.status === "stopped") {
+    if (session.lastActivity < filters.cutoffMs) {
+      return false;
+    }
   }
 
+  if (filters.status && session.status !== filters.status) {
+    return false;
+  }
+
+  if (filters.beforeLastActivity !== undefined && Number.isFinite(filters.beforeLastActivity)) {
+    return (
+      session.lastActivity < filters.beforeLastActivity ||
+      (filters.beforeSessionId !== undefined &&
+        session.lastActivity === filters.beforeLastActivity &&
+        session.id > filters.beforeSessionId)
+    );
+  }
+
+  return true;
+}
+
+export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
+  const sessionFileHandlers = createSessionFileHandlers(ctx, helpers);
   /** Full-text search across session content. */
   function handleSearchSessions(url: URL, res: ServerResponse): void {
     if (!ctx.searchIndex) {
@@ -84,6 +130,30 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     });
   }
 
+  function mergeActiveWorkspaceSessions(
+    projectedSessions: Session[],
+    workspaceId: string,
+    filters: {
+      cutoffMs?: number;
+      status?: Session["status"];
+      beforeLastActivity?: number;
+      beforeSessionId?: string;
+    },
+  ): Session[] {
+    const byId = new Map(projectedSessions.map((session) => [session.id, session]));
+    for (const activeSessionId of ctx.sessions.getActiveSessionIds()) {
+      const active = ctx.sessions.getActiveSession(activeSessionId);
+      if (!active || active.workspaceId !== workspaceId) {
+        continue;
+      }
+      if (!sessionMatchesWorkspaceListFilters(active, filters)) {
+        continue;
+      }
+      byId.set(active.id, active);
+    }
+    return Array.from(byId.values()).sort(compareWorkspaceListSessions);
+  }
+
   function handleListWorkspaceSessions(
     workspaceId: string,
     req: IncomingMessage,
@@ -95,24 +165,62 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const allSessions = ctx.storage.listSessionsByWorkspace(workspaceId);
-    const totalCount = allSessions.length;
-
+    const serverNow = Date.now();
     const url = new URL(req.url ?? "/", "http://localhost");
     const recentDaysParam = url.searchParams.get("recentDays");
     const recentDays = recentDaysParam ? Number.parseInt(recentDaysParam, 10) : 0;
+    const beforeLastActivityParam = url.searchParams.get("beforeLastActivity");
+    const beforeLastActivity = beforeLastActivityParam
+      ? Number.parseFloat(beforeLastActivityParam)
+      : undefined;
+    const beforeSessionId = url.searchParams.get("beforeSessionId") ?? undefined;
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.max(0, Number.parseInt(limitParam, 10) || 0) : 0;
+    const status = parseSessionStatus(url.searchParams.get("status"));
 
-    let filtered: typeof allSessions;
-    if (recentDays > 0) {
-      const cutoffMs = Date.now() - recentDays * 86_400_000;
-      filtered = allSessions.filter((s) => s.status !== "stopped" || s.lastActivity >= cutoffMs);
-    } else {
-      filtered = allSessions;
-    }
+    const snapshot = ctx.storage.listWorkspaceSessionSnapshots(workspaceId, {
+      recentDays,
+      ...(status ? { status } : {}),
+      beforeLastActivity,
+      beforeSessionId,
+      limit,
+      nowMs: serverNow,
+    });
+    const mergedSessions = mergeActiveWorkspaceSessions(snapshot.sessions, workspaceId, {
+      cutoffMs: snapshot.cutoffMs,
+      ...(status ? { status } : {}),
+      beforeLastActivity,
+      beforeSessionId,
+    });
+    const sessions = mergedSessions.map((s) => ctx.ensureSessionContextWindow(s));
+    const scope =
+      recentDays > 0
+        ? {
+            kind: "recent",
+            workspaceId,
+            recentDays,
+            cutoffMs: snapshot.cutoffMs,
+            serverNow,
+          }
+        : status === "stopped"
+          ? {
+              kind: "stoppedPage",
+              workspaceId,
+              status,
+              beforeLastActivity,
+              beforeSessionId,
+              limit: snapshot.appliedLimit,
+              serverNow,
+            }
+          : { kind: "all", workspaceId, serverNow };
 
-    const sessions = filtered.map((s) => ctx.ensureSessionContextWindow(s));
-
-    helpers.compressedJson(req, res, { sessions, workspace, totalCount });
+    helpers.compressedJson(req, res, {
+      sessions,
+      workspace,
+      totalCount: snapshot.totalCount,
+      remainingCount: snapshot.remainingCount,
+      scope,
+    });
   }
 
   function requireWorkspaceSession(
@@ -888,12 +996,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     // ── Session search ──
     if (path === "/sessions/search" && method === "GET") {
       handleSearchSessions(url, res);
-      return true;
-    }
-
-    // ── Bulk session list (all workspaces) ──
-    if (path === "/sessions" && method === "GET") {
-      handleListAllSessions(req, res);
       return true;
     }
 

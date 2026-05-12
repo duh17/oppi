@@ -778,10 +778,17 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listSessions: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
-          listSessionsByWorkspace: vi.fn(() => [
-            { id: "s1", workspaceId: "ws-1", name: "Session 1" },
-          ]),
+          listWorkspaceSessionSnapshots: vi.fn(() => ({
+            sessions: [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }],
+            totalCount: 1,
+            filteredCount: 1,
+            remainingCount: 0,
+            appliedLimit: 0,
+          })),
+        },
+        sessions: {
+          getActiveSessionIds: vi.fn(() => new Set()),
+          getActiveSession: vi.fn(() => undefined),
         },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;
@@ -808,6 +815,48 @@ describe("routes modules", () => {
       expect(body.sessions).toHaveLength(1);
       expect(body.workspace).toBeDefined();
       expect(body.totalCount).toBe(1);
+    });
+
+    it("merges active in-memory sessions into workspace snapshots", async () => {
+      const activeSession = {
+        id: "active-1",
+        workspaceId: "ws-1",
+        status: "busy",
+        lastActivity: 20,
+      };
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          listWorkspaceSessionSnapshots: vi.fn(() => ({
+            sessions: [],
+            totalCount: 0,
+            filteredCount: 0,
+            remainingCount: 0,
+            appliedLimit: 0,
+          })),
+        },
+        sessions: {
+          getActiveSessionIds: vi.fn(() => new Set(["active-1"])),
+          getActiveSession: vi.fn(() => activeSession),
+        },
+        ensureSessionContextWindow: vi.fn((s: unknown) => s),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/sessions",
+        url: new URL("http://localhost/workspaces/ws-1/sessions"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { sessions: Array<{ id: string }> };
+      expect(body.sessions.map((session) => session.id)).toEqual(["active-1"]);
     });
 
     it("returns 404 for sessions in nonexistent workspace", async () => {

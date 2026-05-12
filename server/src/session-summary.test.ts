@@ -18,6 +18,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("buildSessionSummary", () => {
+  it("includes live assistant reply timestamp when present", () => {
+    const summary = buildSessionSummary(makeSession({ lastAgentReplyAt: 1_700_000_123_000 }));
+    expect(summary.lastAgentReplyAt).toBe(1_700_000_123_000);
+  });
+
   it("filters absolute changed file paths from summaries", () => {
     const summary = buildSessionSummary(
       makeSession({

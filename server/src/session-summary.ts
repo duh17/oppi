@@ -18,6 +18,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
     status: session.status,
     createdAt: session.createdAt,
     lastActivity: session.lastActivity,
+    lastAgentReplyAt: session.lastAgentReplyAt,
     currentTurnStartedAt: session.currentTurnStartedAt,
     model: session.model,
     messageCount: session.messageCount,

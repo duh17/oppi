@@ -20,6 +20,7 @@ struct SessionCodableTests {
             "status": "busy",
             "createdAt": 1700000000000,
             "lastActivity": 1700003600000,
+            "lastAgentReplyAt": 1700003500000,
             "model": "claude-sonnet-4-20250514",
             "messageCount": 5,
             "tokens": {"input": 100, "output": 50},
@@ -48,6 +49,7 @@ struct SessionCodableTests {
         // Unix milliseconds → Date
         #expect(session.createdAt.timeIntervalSince1970 == 1700000000)
         #expect(session.lastActivity.timeIntervalSince1970 == 1700003600)
+        #expect(session.lastAgentReplyAt?.timeIntervalSince1970 == 1700003500)
     }
 
     @Test func decodeMinimalSession() throws {
@@ -111,6 +113,7 @@ struct SessionCodableTests {
             "status": "stopped",
             "createdAt": 1700000000000,
             "lastActivity": 1700001000000,
+            "lastAgentReplyAt": 1700000900000,
             "model": "claude-sonnet-4-20250514",
             "messageCount": 10,
             "tokens": {"input": 200, "output": 100},
