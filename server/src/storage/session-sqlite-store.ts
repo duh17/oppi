@@ -24,7 +24,7 @@ import type {
 import { SessionStore } from "./session-store.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 
 interface SessionJsonRow {
   session_json: string;

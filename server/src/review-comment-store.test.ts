@@ -1,25 +1,37 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { openDatabase } from "./sqlite-compat.js";
+import { Storage } from "./storage.js";
 import { ReviewCommentStore, ReviewCommentStoreError } from "./review-comment-store.js";
 
 let root: string;
-let store: ReviewCommentStore;
+let stores: ReviewCommentStore[];
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "oppi-review-comments-"));
-  store = new ReviewCommentStore(root, "w1");
+  stores = [];
 });
 
 afterEach(async () => {
+  for (const store of stores) {
+    store.close();
+  }
   await rm(root, { recursive: true, force: true });
 });
 
+function track(store: ReviewCommentStore): ReviewCommentStore {
+  stores.push(store);
+  return store;
+}
+
 describe("ReviewCommentStore", () => {
-  it("creates and lists staged comments", async () => {
+  it("creates and lists staged comments from SQLite", async () => {
+    const store = track(new ReviewCommentStore(root, "w1"));
+
     const comment = await store.create({
       sessionId: "s1",
       body: "Please check this response shape.",
@@ -40,16 +52,24 @@ describe("ReviewCommentStore", () => {
     expect(comments).toHaveLength(1);
     expect(comments[0]?.reference.path).toBe("server/src/foo.ts");
 
-    const persistedPath = join(root, "review-comments", "w1.json");
-    expect(existsSync(persistedPath)).toBe(true);
+    expect(existsSync(join(root, "session-state.db"))).toBe(true);
+    expect(existsSync(join(root, "review-comments", "w1.json"))).toBe(false);
     expect(existsSync(join(root, ".oppi", "review-comments.json"))).toBe(false);
-    const persisted = JSON.parse(await readFile(persistedPath, "utf8")) as {
-      comments: Array<{ body: string }>;
-    };
-    expect(persisted.comments[0]?.body).toBe("Please check this response shape.");
+
+    const db = openDatabase(join(root, "session-state.db"));
+    try {
+      const row = db
+        .prepare("SELECT comment_json FROM review_comments WHERE id = ?")
+        .get(comment.id) as { comment_json: string } | undefined;
+      const persisted = JSON.parse(row?.comment_json ?? "{}") as { body?: string };
+      expect(persisted.body).toBe("Please check this response shape.");
+    } finally {
+      db.close();
+    }
   });
 
   it("marks comments sent", async () => {
+    const store = track(new ReviewCommentStore(root, "w1"));
     const comment = await store.create({
       sessionId: "s1",
       body: "Comment body",
@@ -65,8 +85,9 @@ describe("ReviewCommentStore", () => {
   });
 
   it("serializes writes across store instances for the same workspace", async () => {
-    const firstStore = new ReviewCommentStore(root, "w1");
-    const secondStore = new ReviewCommentStore(root, "w1");
+    const firstStore = track(new ReviewCommentStore(root, "w1"));
+    const secondStore = track(new ReviewCommentStore(root, "w1"));
+    const listStore = track(new ReviewCommentStore(root, "w1"));
 
     await Promise.all([
       firstStore.create({
@@ -81,14 +102,61 @@ describe("ReviewCommentStore", () => {
       }),
     ]);
 
-    const comments = await store.list({ sessionId: "s1" });
+    const comments = await listStore.list({ sessionId: "s1" });
     expect(comments.map((comment) => comment.body).sort()).toEqual([
       "First comment",
       "Second comment",
     ]);
   });
 
+  it("is exposed through the main Storage DAO seam", () => {
+    const storage = new Storage(root);
+    const comment = storage.createReviewComment("w1", {
+      sessionId: "s1",
+      body: "DAO comment",
+      reference: { source: "file", path: "README.md" },
+    });
+
+    expect(storage.listReviewComments("w1", { path: "README.md" })).toEqual([comment]);
+    expect(new Storage(root).listReviewComments("w1", { sessionId: "s1" })[0]?.body).toBe(
+      "DAO comment",
+    );
+  });
+
+  it("imports legacy workspace JSON into SQLite", async () => {
+    await mkdir(join(root, "review-comments"), { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(root, "review-comments", "w1.json"),
+      JSON.stringify({
+        version: 1,
+        comments: [
+          {
+            id: "legacy-1",
+            workspaceId: "w1",
+            sessionId: "s1",
+            author: "human",
+            status: "staged",
+            body: "Legacy body",
+            reference: { source: "file", path: "README.md" },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+
+    const store = track(new ReviewCommentStore(root, "w1"));
+    const comments = await store.list({ sessionId: "s1" });
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.id).toBe("legacy-1");
+    expect(comments[0]?.body).toBe("Legacy body");
+  });
+
   it("rejects empty comment bodies", async () => {
+    const store = track(new ReviewCommentStore(root, "w1"));
+
     await expect(
       store.create({
         body: "   ",
@@ -97,10 +165,11 @@ describe("ReviewCommentStore", () => {
     ).rejects.toMatchObject(new ReviewCommentStoreError(400, "body required"));
   });
 
-  it("fails loudly when the persisted store is corrupted", async () => {
+  it("fails loudly when the legacy store is corrupted", async () => {
     await mkdir(join(root, "review-comments"), { recursive: true, mode: 0o700 });
     await writeFile(join(root, "review-comments", "w1.json"), "{not-json", { mode: 0o600 });
 
+    const store = track(new ReviewCommentStore(root, "w1"));
     await expect(store.list()).rejects.toMatchObject(
       new ReviewCommentStoreError(500, "Review comment store is corrupted"),
     );

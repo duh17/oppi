@@ -21,6 +21,8 @@ import {
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "./storage/config-store.js";
+import type { ReviewCommentListFilters } from "./storage/review-comment-dao.js";
+import { ReviewCommentSqliteStore } from "./storage/review-comment-sqlite-store.js";
 import type {
   WorkspaceSessionSnapshotListOptions,
   WorkspaceSessionSnapshotListResult,
@@ -28,9 +30,13 @@ import type {
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
+  AttachReviewCommentsToTurnRequest,
+  CreateReviewCommentRequest,
   CreateWorkspaceRequest,
+  ReviewComment,
   ServerConfig,
   Session,
+  UpdateReviewCommentRequest,
   UpdateWorkspaceRequest,
   Workspace,
 } from "./types.js";
@@ -79,12 +85,14 @@ export class Storage {
   private readonly configStore: ConfigStore;
   private readonly authStore: AuthStore;
   private readonly sessionStore: SessionSqliteStore;
+  private readonly reviewCommentStore: ReviewCommentSqliteStore;
   private readonly workspaceStore: WorkspaceStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
+    this.reviewCommentStore = new ReviewCommentSqliteStore(this.configStore.getDataDir());
     this.workspaceStore = new WorkspaceStore(this.configStore);
     this.migrateLegacyWorkspaceSessions();
   }
@@ -270,6 +278,35 @@ export class Storage {
 
   deleteSession(sessionId: string): boolean {
     return this.sessionStore.deleteSession(sessionId);
+  }
+
+  // ─── Review comments ───
+
+  listReviewComments(workspaceId: string, filters?: ReviewCommentListFilters): ReviewComment[] {
+    return this.reviewCommentStore.list(workspaceId, filters);
+  }
+
+  createReviewComment(workspaceId: string, input: CreateReviewCommentRequest): ReviewComment {
+    return this.reviewCommentStore.create(workspaceId, input);
+  }
+
+  updateReviewComment(
+    workspaceId: string,
+    commentId: string,
+    patch: UpdateReviewCommentRequest,
+  ): ReviewComment {
+    return this.reviewCommentStore.update(workspaceId, commentId, patch);
+  }
+
+  deleteReviewComment(workspaceId: string, commentId: string): void {
+    this.reviewCommentStore.delete(workspaceId, commentId);
+  }
+
+  attachReviewCommentsToTurn(
+    workspaceId: string,
+    input: AttachReviewCommentsToTurnRequest,
+  ): ReviewComment[] {
+    return this.reviewCommentStore.attachToTurn(workspaceId, input);
   }
 
   // ─── Workspaces ───

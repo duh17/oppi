@@ -18,7 +18,7 @@ import {
 } from "../git-commits.js";
 import { getGitStatus } from "../git-status.js";
 import { discoverLocalSessions } from "../local-sessions.js";
-import { ReviewCommentStore, ReviewCommentStoreError } from "../review-comment-store.js";
+import { ReviewCommentStoreError } from "../storage/review-comment-dao.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
   AttachReviewCommentsToTurnRequest,
@@ -453,10 +453,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  function reviewCommentStoreForWorkspace(wsId: string): ReviewCommentStore {
-    return new ReviewCommentStore(ctx.storage.getDataDir(), wsId);
-  }
-
   async function handleListReviewComments(
     wsId: string,
     url: URL,
@@ -468,8 +464,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const store = reviewCommentStoreForWorkspace(wsId);
-    const comments = await store.list({
+    const comments = ctx.storage.listReviewComments(wsId, {
       sessionId: url.searchParams.get("sessionId") ?? undefined,
       status: url.searchParams.get("status") ?? undefined,
       path: url.searchParams.get("path") ?? undefined,
@@ -488,10 +483,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const store = reviewCommentStoreForWorkspace(wsId);
     try {
       const body = await helpers.parseBody<CreateReviewCommentRequest>(req);
-      const comment = await store.create(body);
+      const comment = ctx.storage.createReviewComment(wsId, body);
       helpers.json(res, { comment }, 201);
     } catch (error) {
       if (error instanceof ReviewCommentStoreError) {
@@ -514,10 +508,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const store = reviewCommentStoreForWorkspace(wsId);
     try {
       const body = await helpers.parseBody<UpdateReviewCommentRequest>(req);
-      const comment = await store.update(commentId, body);
+      const comment = ctx.storage.updateReviewComment(wsId, commentId, body);
       helpers.json(res, { comment });
     } catch (error) {
       if (error instanceof ReviewCommentStoreError) {
@@ -539,9 +532,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const store = reviewCommentStoreForWorkspace(wsId);
     try {
-      await store.delete(commentId);
+      ctx.storage.deleteReviewComment(wsId, commentId);
       helpers.json(res, { ok: true });
     } catch (error) {
       if (error instanceof ReviewCommentStoreError) {
@@ -563,10 +555,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const store = reviewCommentStoreForWorkspace(wsId);
     try {
       const body = await helpers.parseBody<AttachReviewCommentsToTurnRequest>(req);
-      const comments = await store.attachToTurn(body);
+      const comments = ctx.storage.attachReviewCommentsToTurn(wsId, body);
       helpers.json(res, { comments });
     } catch (error) {
       if (error instanceof ReviewCommentStoreError) {
