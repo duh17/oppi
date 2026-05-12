@@ -28,6 +28,15 @@ function track(store: ReviewCommentStore): ReviewCommentStore {
   return store;
 }
 
+async function writeLegacyComments(workspaceId: string, comments: unknown[]): Promise<void> {
+  await mkdir(join(root, "review-comments"), { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(root, "review-comments", `${workspaceId}.json`),
+    JSON.stringify({ version: 1, comments }),
+    { mode: 0o600 },
+  );
+}
+
 describe("ReviewCommentStore", () => {
   it("creates and lists staged comments from SQLite", async () => {
     const store = track(new ReviewCommentStore(root, "w1"));
@@ -59,8 +68,8 @@ describe("ReviewCommentStore", () => {
     const db = openDatabase(join(root, "session-state.db"));
     try {
       const row = db
-        .prepare("SELECT comment_json FROM review_comments WHERE id = ?")
-        .get(comment.id) as { comment_json: string } | undefined;
+        .prepare("SELECT comment_json FROM review_comments WHERE workspace_id = ? AND id = ?")
+        .get("w1", comment.id) as { comment_json: string } | undefined;
       const persisted = JSON.parse(row?.comment_json ?? "{}") as { body?: string };
       expect(persisted.body).toBe("Please check this response shape.");
     } finally {
@@ -124,27 +133,19 @@ describe("ReviewCommentStore", () => {
   });
 
   it("imports legacy workspace JSON into SQLite", async () => {
-    await mkdir(join(root, "review-comments"), { recursive: true, mode: 0o700 });
-    await writeFile(
-      join(root, "review-comments", "w1.json"),
-      JSON.stringify({
-        version: 1,
-        comments: [
-          {
-            id: "legacy-1",
-            workspaceId: "w1",
-            sessionId: "s1",
-            author: "human",
-            status: "staged",
-            body: "Legacy body",
-            reference: { source: "file", path: "README.md" },
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ],
-      }),
-      { mode: 0o600 },
-    );
+    await writeLegacyComments("w1", [
+      {
+        id: "legacy-1",
+        workspaceId: "w1",
+        sessionId: "s1",
+        author: "human",
+        status: "staged",
+        body: "Legacy body",
+        reference: { source: "file", path: "README.md" },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
 
     const store = track(new ReviewCommentStore(root, "w1"));
     const comments = await store.list({ sessionId: "s1" });
@@ -152,6 +153,95 @@ describe("ReviewCommentStore", () => {
     expect(comments).toHaveLength(1);
     expect(comments[0]?.id).toBe("legacy-1");
     expect(comments[0]?.body).toBe("Legacy body");
+  });
+
+  it("does not reimport successful workspaces after another legacy file fails", async () => {
+    await writeLegacyComments("w1", [
+      {
+        id: "legacy-1",
+        workspaceId: "w1",
+        sessionId: "s1",
+        author: "human",
+        status: "staged",
+        body: "Legacy body",
+        reference: { source: "file", path: "README.md" },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    await writeFile(join(root, "review-comments", "w2.json"), "{not-json", { mode: 0o600 });
+
+    const firstStore = track(new ReviewCommentStore(root, "w1"));
+    expect((await firstStore.list({ sessionId: "s1" }))[0]?.status).toBe("staged");
+    await firstStore.update("legacy-1", { status: "resolved" });
+
+    const restartedStore = track(new ReviewCommentStore(root, "w1"));
+    const comments = await restartedStore.list({ sessionId: "s1" });
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.status).toBe("resolved");
+  });
+
+  it("retries a workspace legacy import after its corrupt JSON is fixed", async () => {
+    await mkdir(join(root, "review-comments"), { recursive: true, mode: 0o700 });
+    await writeFile(join(root, "review-comments", "w1.json"), "{not-json", { mode: 0o600 });
+
+    const corruptStore = track(new ReviewCommentStore(root, "w1"));
+    await expect(corruptStore.list()).rejects.toMatchObject(
+      new ReviewCommentStoreError(500, "Review comment store is corrupted"),
+    );
+
+    await writeLegacyComments("w1", [
+      {
+        id: "legacy-1",
+        workspaceId: "w1",
+        author: "human",
+        status: "staged",
+        body: "Fixed body",
+        reference: { source: "file", path: "README.md" },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+
+    const fixedStore = track(new ReviewCommentStore(root, "w1"));
+    const comments = await fixedStore.list();
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toBe("Fixed body");
+  });
+
+  it("keeps duplicate legacy comment ids isolated by workspace", async () => {
+    await writeLegacyComments("w1", [
+      {
+        id: "same-id",
+        workspaceId: "w1",
+        author: "human",
+        status: "staged",
+        body: "Workspace one",
+        reference: { source: "file", path: "one.md" },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    await writeLegacyComments("w2", [
+      {
+        id: "same-id",
+        workspaceId: "w2",
+        author: "human",
+        status: "open",
+        body: "Workspace two",
+        reference: { source: "file", path: "two.md" },
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ]);
+
+    const w1Store = track(new ReviewCommentStore(root, "w1"));
+    const w2Store = track(new ReviewCommentStore(root, "w2"));
+
+    expect((await w1Store.list())[0]?.body).toBe("Workspace one");
+    expect((await w2Store.list())[0]?.body).toBe("Workspace two");
   });
 
   it("rejects empty comment bodies", async () => {

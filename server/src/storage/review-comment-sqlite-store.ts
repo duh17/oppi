@@ -24,7 +24,7 @@ import {
 } from "./review-comment-dao.js";
 
 const log = createLogger({ base: { component: "review_comment_sqlite_store" } });
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 
 const VALID_AUTHORS = new Set<ReviewCommentAuthor>(["human", "agent"]);
 const VALID_STATUSES = new Set<ReviewCommentStatus>([
@@ -81,6 +81,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   private readonly legacyImportFailures = new Set<string>();
 
   private stmtUpsert!: SqliteStatement;
+  private stmtInsertLegacy!: SqliteStatement;
   private stmtGet!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
 
@@ -228,8 +229,16 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   }
 
   private upsertComment(comment: ReviewComment): void {
+    this.writeComment(this.stmtUpsert, comment);
+  }
+
+  private insertLegacyComment(comment: ReviewComment): void {
+    this.writeComment(this.stmtInsertLegacy, comment);
+  }
+
+  private writeComment(statement: SqliteStatement, comment: ReviewComment): void {
     const normalized = normalizeStoredReviewComment(comment, comment.workspaceId);
-    this.stmtUpsert.run(
+    statement.run(
       normalized.id,
       normalized.workspaceId,
       normalized.sessionId ?? null,
@@ -268,7 +277,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   private ensureSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS review_comments (
-        id TEXT PRIMARY KEY,
+        id TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
         session_id TEXT,
         turn_id TEXT,
@@ -282,11 +291,13 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         sent_at INTEGER,
-        comment_json TEXT NOT NULL
+        comment_json TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, id)
       );
     `);
 
     this.ensureReviewCommentColumns();
+    this.ensureReviewCommentPrimaryKey();
     this.ensureIndexesAndSchemaVersion();
   }
 
@@ -304,6 +315,76 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         this.db.exec(`ALTER TABLE review_comments ADD COLUMN ${name} ${definition}`);
       }
     }
+  }
+
+  private ensureReviewCommentPrimaryKey(): void {
+    const rows = this.db.prepare("PRAGMA table_info(review_comments)").all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    const primaryKey = new Map(rows.map((row) => [row.name, row.pk]));
+    if (primaryKey.get("workspace_id") === 1 && primaryKey.get("id") === 2) {
+      return;
+    }
+
+    this.db.exec(`
+      CREATE TABLE review_comments_next (
+        id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT,
+        turn_id TEXT,
+        author TEXT NOT NULL,
+        status TEXT NOT NULL,
+        severity TEXT,
+        body TEXT NOT NULL,
+        reference_source TEXT NOT NULL,
+        reference_path TEXT,
+        reference_timeline_item_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        sent_at INTEGER,
+        comment_json TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, id)
+      );
+
+      INSERT OR REPLACE INTO review_comments_next (
+        id,
+        workspace_id,
+        session_id,
+        turn_id,
+        author,
+        status,
+        severity,
+        body,
+        reference_source,
+        reference_path,
+        reference_timeline_item_id,
+        created_at,
+        updated_at,
+        sent_at,
+        comment_json
+      )
+      SELECT
+        id,
+        workspace_id,
+        session_id,
+        turn_id,
+        author,
+        status,
+        severity,
+        body,
+        reference_source,
+        reference_path,
+        reference_timeline_item_id,
+        created_at,
+        updated_at,
+        sent_at,
+        comment_json
+      FROM review_comments;
+
+      DROP TABLE review_comments;
+      ALTER TABLE review_comments_next RENAME TO review_comments;
+    `);
   }
 
   private ensureIndexesAndSchemaVersion(): void {
@@ -355,8 +436,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         comment_json
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        workspace_id = excluded.workspace_id,
+      ON CONFLICT(workspace_id, id) DO UPDATE SET
         session_id = excluded.session_id,
         turn_id = excluded.turn_id,
         author = excluded.author,
@@ -372,6 +452,28 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         comment_json = excluded.comment_json
     `);
 
+    this.stmtInsertLegacy = this.db.prepare(`
+      INSERT INTO review_comments (
+        id,
+        workspace_id,
+        session_id,
+        turn_id,
+        author,
+        status,
+        severity,
+        body,
+        reference_source,
+        reference_path,
+        reference_timeline_item_id,
+        created_at,
+        updated_at,
+        sent_at,
+        comment_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, id) DO NOTHING
+    `);
+
     this.stmtGet = this.db.prepare(
       "SELECT comment_json FROM review_comments WHERE workspace_id = ? AND id = ?",
     );
@@ -381,14 +483,8 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
   }
 
   private importLegacyJsonOnce(dataDir: string): void {
-    const migrationKey = "review_comments_json_import_sqlite_backend_v1";
-    if (this.hasMigration(migrationKey)) {
-      return;
-    }
-
     const legacyDir = join(dataDir, "review-comments");
     if (!existsSync(legacyDir)) {
-      this.markMigration(migrationKey);
       return;
     }
 
@@ -405,6 +501,11 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         continue;
       }
 
+      const migrationKey = legacyWorkspaceImportMigrationKey(workspaceId);
+      if (this.hasMigration(migrationKey)) {
+        continue;
+      }
+
       try {
         const raw = readFileSync(join(legacyDir, entry.name), "utf8");
         let parsed: unknown;
@@ -418,12 +519,15 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
           throw new ReviewCommentStoreError(500, "Review comment store is corrupted");
         }
 
+        let workspaceImported = 0;
         this.db.transaction(() => {
           for (const comment of parsed.comments) {
-            this.upsertComment(normalizeStoredReviewComment(comment, workspaceId));
-            imported += 1;
+            this.insertLegacyComment(normalizeStoredReviewComment(comment, workspaceId));
+            workspaceImported += 1;
           }
         })();
+        imported += workspaceImported;
+        this.markMigration(migrationKey);
       } catch (error) {
         failures += 1;
         this.legacyImportFailures.add(workspaceId);
@@ -440,10 +544,7 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
         importedComments: imported,
         failedFiles: failures,
       });
-      return;
     }
-
-    this.markMigration(migrationKey);
   }
 
   private hasMigration(key: string): boolean {
@@ -459,6 +560,10 @@ export class ReviewCommentSqliteStore implements ReviewCommentDao {
       )
       .run(key, Date.now());
   }
+}
+
+function legacyWorkspaceImportMigrationKey(workspaceId: string): string {
+  return `review_comments_json_import_sqlite_backend_v2:${workspaceId}`;
 }
 
 function normalizeNewReviewComment(
