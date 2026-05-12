@@ -50,6 +50,9 @@ function buildSessionSummaryChangeStats(
 
   return {
     mutatingToolCalls: stats.mutatingToolCalls,
+    ...(stats.compactionCount && stats.compactionCount > 0
+      ? { compactionCount: stats.compactionCount }
+      : {}),
     filesChanged: stats.filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),

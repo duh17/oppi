@@ -163,7 +163,7 @@ struct SessionActivitySummaryTests {
             pendingPermissions: [],
             activity: nil
         )
-        #expect(result == "turn ended")
+        #expect(result == nil)
     }
 
     @Test func blankDraftReady_returnsNil() {

@@ -679,33 +679,18 @@ struct OppiApp: App {
         // cached content immediately instead of a blank screen.
         navigation.launchPhase = .ready
 
-        // 4. Refresh session list from server
-        connection.sessionStore.markSyncStarted()
-        do {
-            let sessions = try await api.listSessions()
-            launchOutcome = "online_refresh_ok"
+        // 4. Refresh workspaces + recent workspace-scoped sessions from server.
+        // Avoid the legacy global `/sessions` endpoint on launch; it returns every
+        // stopped session and can be multi-megabyte on long-lived installs.
+        await coordinator.refreshAllServers()
+        launchOutcome = connection.workspaceStore.lastSyncFailed && connection.sessionStore.lastSyncFailed
+            ? "offline_cache_only"
+            : "online_refresh_ok"
 
-            connection.sessionStore.applyServerSnapshot(sessions)
-            connection.sessionStore.markSyncSucceeded()
-            connection.syncLiveActivityPermissions()
-            Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
-
-            // 5. Evict trace caches for deleted sessions
-            let activeIds = Set(sessions.map(\.id))
-            Task.detached { await TimelineCache.shared.evictStaleTraces(keepIds: activeIds) }
-
-            // 6. Load workspaces + skills — coordinator handles multi-server
-            await coordinator.refreshAllServers()
-
-            // 7. Register for push notifications with all paired servers
-            if ReleaseFeatures.pushNotificationsEnabled {
-                await PushRegistration.shared.requestAndRegister()
-                await coordinator.registerPushWithAllServers()
-            }
-        } catch {
-            connection.sessionStore.markSyncFailed()
-            launchOutcome = "offline_cache_only"
-            // Offline — cached data already shown above
+        // 5. Register for push notifications with all paired servers
+        if ReleaseFeatures.pushNotificationsEnabled {
+            await PushRegistration.shared.requestAndRegister()
+            await coordinator.registerPushWithAllServers()
         }
     }
 }

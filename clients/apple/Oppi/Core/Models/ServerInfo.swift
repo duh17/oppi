@@ -68,6 +68,63 @@ struct ServerInfo: Codable, Sendable, Equatable {
     }
 }
 
+struct CodexUsageInfo: Codable, Sendable, Equatable {
+    let providerId: String
+    let authenticated: Bool
+    let planType: String?
+    let rateLimitReachedType: String?
+    let fiveHour: Window?
+    let weekly: Window?
+    let credits: Credits?
+    let additionalRateLimits: [AdditionalRateLimit]
+    let fetchedAt: Int
+    let error: String?
+
+    struct Window: Codable, Sendable, Equatable {
+        let usedPercent: Double
+        let remainingPercent: Double
+        let limitWindowSeconds: Int
+        let resetAt: Int
+
+        var resetDate: Date { Date(timeIntervalSince1970: TimeInterval(resetAt)) }
+    }
+
+    struct Credits: Codable, Sendable, Equatable {
+        let hasCredits: Bool
+        let unlimited: Bool
+        let balance: String?
+    }
+
+    struct AdditionalRateLimit: Codable, Sendable, Equatable {
+        let meteredFeature: String?
+        let limitName: String?
+        let fiveHour: Window?
+        let weekly: Window?
+    }
+
+    var hasAnyUsageWindow: Bool {
+        fiveHour != nil || weekly != nil
+    }
+
+    var planLabel: String? {
+        guard let planType else { return nil }
+        let normalized = planType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        switch normalized.lowercased() {
+        case "prolite": return "Pro Lite"
+        case "free_workspace": return "Free Workspace"
+        default:
+            return normalized
+                .split(separator: "_")
+                .map { part in
+                    let lower = part.lowercased()
+                    return lower.prefix(1).uppercased() + lower.dropFirst()
+                }
+                .joined(separator: " ")
+        }
+    }
+}
+
 // MARK: - Presentation Helpers
 
 extension ServerInfo.Capabilities {

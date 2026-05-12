@@ -7,6 +7,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Conn
 
 extension ServerConnection {
 
+    private static let globalSessionRefreshRecentDays = 3
+
     static func elapsedMs(since startedAt: Date) -> Int {
         max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
     }
@@ -107,11 +109,20 @@ extension ServerConnection {
 
             self.sessionStore.markSyncStarted()
             do {
-                let sessions = try await apiClient.listSessions()
-                self.sessionStore.applyServerSnapshot(sessions)
+                if !self.workspaceStore.isLoaded || self.workspaceStore.workspaces.isEmpty {
+                    await self.workspaceStore.load(api: apiClient)
+                }
+
+                let workspaces = self.workspaceStore.workspaces
+                let sessions = try await apiClient.listWorkspaceSessions(
+                    workspaces: workspaces,
+                    recentDays: Self.globalSessionRefreshRecentDays
+                )
+                self.sessionStore.upsertMany(sessions)
                 self.sessionStore.markSyncSucceeded()
                 self.syncLiveActivityPermissions()
-                Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
+                let cachedSessions = self.sessionStore.sessions
+                Task.detached { await TimelineCache.shared.saveSessionList(cachedSessions) }
 
                 self.recordRefreshBreadcrumb(
                     "session_list.end",
@@ -120,7 +131,8 @@ extension ServerConnection {
                         "result": "success",
                         "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
                         "sessionCount": String(sessions.count),
-                        "workspaceCount": String(Self.workspaceCount(from: sessions)),
+                        "workspaceCount": String(workspaces.count),
+                        "source": "workspace_scoped",
                     ]
                 )
             } catch {
@@ -212,8 +224,8 @@ extension ServerConnection {
     /// Refresh both global lists. Each branch has its own single-flight task,
     /// so overlapping callers don't trigger duplicate network fan-out.
     func refreshWorkspaceAndSessionLists(force: Bool = false) async {
-        await refreshSessionList(force: force)
         await refreshWorkspaceCatalog(force: force)
+        await refreshSessionList(force: force)
     }
 
     /// Called when app returns to foreground.

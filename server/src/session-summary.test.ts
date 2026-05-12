@@ -23,6 +23,7 @@ describe("buildSessionSummary", () => {
       makeSession({
         changeStats: {
           mutatingToolCalls: 4,
+          compactionCount: 2,
           filesChanged: 4,
           changedFiles: ["src/app.ts", "/tmp/secret.txt", "~/Library/private.txt", "  "],
           addedLines: 10,
@@ -32,6 +33,7 @@ describe("buildSessionSummary", () => {
     );
 
     expect(summary.changeStats?.changedFiles).toEqual(["src/app.ts"]);
+    expect(summary.changeStats?.compactionCount).toBe(2);
     expect(summary.changeStats?.filesChanged).toBe(4);
     expect(summary.changeStats?.changedFilesOverflow).toBe(3);
   });

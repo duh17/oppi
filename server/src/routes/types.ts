@@ -12,6 +12,7 @@ import type { RuntimeUpdateResult, RuntimeUpdateStatus } from "../runtime-update
 import type { SearchIndex } from "../search-index.js";
 import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager.js";
 import type { WorkspaceProjectionEmitter } from "../workspace-projection-emitter.js";
+import type { CodexUsageStatus } from "../codex-usage.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -30,6 +31,7 @@ export interface RouteContext {
   getModelCatalog: () => ModelInfo[];
   getRuntimeUpdateStatus: (options?: { force?: boolean }) => Promise<RuntimeUpdateStatus>;
   runRuntimeUpdate: () => Promise<RuntimeUpdateResult>;
+  getCodexUsageStatus?: () => Promise<CodexUsageStatus>;
   searchIndex?: SearchIndex;
   serverStartedAt: number;
   serverVersion: string;

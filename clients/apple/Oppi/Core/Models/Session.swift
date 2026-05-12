@@ -100,6 +100,7 @@ struct TokenUsage: Codable, Sendable, Equatable {
 
 struct SessionChangeStats: Codable, Sendable, Equatable {
     var mutatingToolCalls: Int
+    var compactionCount: Int? = nil
     var filesChanged: Int
     var changedFiles: [String]
     var changedFilesOverflow: Int?

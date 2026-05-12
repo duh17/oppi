@@ -106,17 +106,33 @@ struct APIClientTests {
 
     // MARK: - Sessions
 
-    @Test func listSessions() async throws {
+    @Test func listSessionsFromWorkspacesUsesScopedEndpoints() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
             switch request.url?.path {
-            case "/sessions":
+            case "/workspaces":
+                return self.mockResponse(json: """
+                {"workspaces":[
+                    {"id":"w1","name":"One","skills":[],"createdAt":0,"updatedAt":0},
+                    {"id":"w2","name":"Two","skills":[],"createdAt":0,"updatedAt":0}
+                ]}
+                """)
+
+            case "/workspaces/w1/sessions":
+                #expect(request.url?.query == "recentDays=3")
                 return self.mockResponse(json: """
                 {"sessions":[
-                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01},
                     {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+                ]}
+                """)
+
+            case "/workspaces/w2/sessions":
+                #expect(request.url?.query == "recentDays=3")
+                return self.mockResponse(json: """
+                {"sessions":[
+                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"currentTurnStartedAt":1500,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
                 ]}
                 """)
 
@@ -126,7 +142,7 @@ struct APIClientTests {
             }
         }
 
-        let sessions = try await client.listSessions()
+        let sessions = try await client.listSessionsFromWorkspaces()
         #expect(sessions.count == 2)
         #expect(sessions[0].id == "s2")
         #expect(sessions[1].id == "s1")

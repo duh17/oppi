@@ -453,12 +453,8 @@ final class ConnectionCoordinator {
             guard serverStore.server(for: serverId) != nil else { continue }
             await conn.workspaceStore.loadServer(serverId: serverId, api: api)
 
-            // Sessions
-            if serverId == activeServerId {
-                await conn.refreshSessionList(force: true)
-            } else {
-                await refreshServerSessions(serverId: serverId, conn: conn, api: api)
-            }
+            // Sessions: use workspace-scoped snapshots instead of the legacy global `/sessions` endpoint.
+            await conn.refreshSessionList(force: true)
         }
     }
 
@@ -468,18 +464,7 @@ final class ConnectionCoordinator {
         for (serverId, conn) in connections where serverId != activeServerId {
             guard let api = conn.apiClient else { continue }
             await conn.workspaceStore.loadServer(serverId: serverId, api: api)
-            await refreshServerSessions(serverId: serverId, conn: conn, api: api)
-        }
-    }
-
-    /// Refresh sessions for a specific server connection.
-    private func refreshServerSessions(serverId: String, conn: ServerConnection, api: APIClient) async {
-        do {
-            let sessions = try await api.listSessions()
-            conn.sessionStore.applyServerSnapshot(sessions)
-            conn.syncLiveActivityPermissions()
-        } catch {
-            logger.error("Failed to refresh sessions from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+            await conn.refreshSessionList(force: true)
         }
     }
 

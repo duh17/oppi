@@ -276,7 +276,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
 
         case .completed:
             return Style(
-                icon: "tray.full",
+                icon: "arrow.triangle.2.circlepath",
                 title: "Context compacted",
                 color: UIColor(palette.comment),
                 backgroundAlpha: 0.18

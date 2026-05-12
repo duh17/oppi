@@ -849,6 +849,28 @@ export function translatePiEvent(
 
 const MAX_TRACKED_CHANGED_FILES = 100;
 
+function ensureSessionChangeStats(session: Session): NonNullable<Session["changeStats"]> {
+  const existing = session.changeStats;
+  if (existing) {
+    return existing;
+  }
+
+  const stats: NonNullable<Session["changeStats"]> = {
+    mutatingToolCalls: 0,
+    filesChanged: 0,
+    changedFiles: [],
+    addedLines: 0,
+    removedLines: 0,
+  };
+  session.changeStats = stats;
+  return stats;
+}
+
+export function incrementSessionCompactionCount(session: Session): void {
+  const stats = ensureSessionChangeStats(session);
+  stats.compactionCount = (stats.compactionCount ?? 0) + 1;
+}
+
 export function updateSessionChangeStats(
   session: Session,
   rawToolName: unknown,
@@ -872,6 +894,7 @@ export function updateSessionChangeStats(
 
   const stats = {
     mutatingToolCalls: existing?.mutatingToolCalls ?? 0,
+    compactionCount: existing?.compactionCount,
     filesChanged,
     changedFiles: dedupedChangedFiles,
     changedFilesOverflow,
@@ -920,6 +943,9 @@ export function updateSessionChangeStats(
 
   session.changeStats = {
     mutatingToolCalls: stats.mutatingToolCalls,
+    ...(stats.compactionCount && stats.compactionCount > 0
+      ? { compactionCount: stats.compactionCount }
+      : {}),
     filesChanged: stats.filesChanged,
     changedFiles: stats.changedFiles,
     ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),

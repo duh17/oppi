@@ -55,6 +55,8 @@ export interface Workspace {
 export interface SessionSummaryChangeStats {
   /** Count of mutating file tool calls (edit/write) observed in this session. */
   mutatingToolCalls: number;
+  /** Number of successful compaction cycles observed in this session. */
+  compactionCount?: number;
   /** Unique file count mutated by edit/write tools. */
   filesChanged: number;
   /** Deduplicated file paths changed in this session (bounded sample). */

@@ -226,6 +226,21 @@ describe("discoverLocalSessions", () => {
     expect(found).toBeUndefined();
   });
 
+  it("filters out first-party subagent child sessions", async () => {
+    writeFileSync(
+      join(testDir, "2026-02-20T00-00-00-000Z_uuid-subagent.jsonl"),
+      makeSessionJsonl({
+        id: "uuid-subagent",
+        userMessage: "[Subagent profile: review]\nCareful code review.\n\nAudit this repo.",
+      }),
+    );
+
+    const sessions = await discoverLocalSessions();
+    const found = sessions.find((s) => s.piSessionId === "uuid-subagent");
+
+    expect(found).toBeUndefined();
+  });
+
   it("skips files with invalid headers", async () => {
     writeFileSync(join(testDir, "bad-file.jsonl"), "not json\n");
 

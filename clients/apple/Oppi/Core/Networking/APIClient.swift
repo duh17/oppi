@@ -99,6 +99,12 @@ actor APIClient {
         return try JSONDecoder().decode(DailyDetail.self, from: data)
     }
 
+    /// Fetch normalized Codex subscription usage windows from the server.
+    func fetchCodexUsage() async throws -> CodexUsageInfo {
+        let data = try await get("/server/codex-usage")
+        return try JSONDecoder().decode(CodexUsageInfo.self, from: data)
+    }
+
     struct RuntimeUpdateResult: Decodable, Sendable, Equatable {
         let ok: Bool
         let message: String
@@ -136,14 +142,6 @@ actor APIClient {
     }
 
     // MARK: - Sessions
-
-    /// List all sessions for the authenticated user by aggregating
-    /// workspace-scoped session lists.
-    func listSessions() async throws -> [Session] {
-        let data = try await get("/sessions")
-        struct Response: Decodable { let sessions: [Session] }
-        return try JSONDecoder().decode(Response.self, from: data).sessions
-    }
 
     /// Full-text search across session content.
     func searchSessions(
@@ -870,6 +868,30 @@ actor APIClient {
         }
         let data = try await get(path)
         return try JSONDecoder().decode(WorkspaceSessionsResponse.self, from: data)
+    }
+
+    /// List recent sessions across known workspaces without using the legacy global `/sessions` endpoint.
+    func listWorkspaceSessions(workspaces: [Workspace], recentDays: Int? = 3) async throws -> [Session] {
+        let workspaceIds = workspaces.map(\.id)
+        return try await withThrowingTaskGroup(of: [Session].self) { group in
+            for workspaceId in workspaceIds {
+                group.addTask {
+                    try await self.listWorkspaceSessions(workspaceId: workspaceId, recentDays: recentDays).sessions
+                }
+            }
+
+            var sessions: [Session] = []
+            for try await batch in group {
+                sessions.append(contentsOf: batch)
+            }
+            return sessions.sorted { $0.lastActivity > $1.lastActivity }
+        }
+    }
+
+    /// Bootstrap helper for flows that have an API client but no populated workspace store yet.
+    func listSessionsFromWorkspaces(recentDays: Int? = 3) async throws -> [Session] {
+        let workspaces = try await listWorkspaces()
+        return try await listWorkspaceSessions(workspaces: workspaces, recentDays: recentDays)
     }
 
     /// Discover local pi TUI sessions not yet managed by oppi.

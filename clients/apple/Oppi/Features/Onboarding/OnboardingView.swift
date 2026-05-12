@@ -332,7 +332,7 @@ enum InviteBootstrapService {
         _ = try await api.me()
 
         let effectiveCredentials = credentials.withAuthToken(effectiveToken)
-        let sessions = try await api.listSessions()
+        let sessions = try await api.listSessionsFromWorkspaces()
 
         return InviteBootstrapResult(
             effectiveCredentials: effectiveCredentials,

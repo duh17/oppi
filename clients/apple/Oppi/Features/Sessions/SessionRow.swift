@@ -60,7 +60,7 @@ enum SessionModelSummaryBuilder {
 /// ```
 /// Title (bold if needs attention)                [time]
 /// model summary activity
-/// 3 files · ▬ 25% · $27.45  [status pill] [child badge if any]
+/// ▬ 25% · $27.45 · [doc] 4 · +20 −151  [status pill] [child badge if any]
 /// ```
 ///
 /// Activity summary is passed in by the caller (computed from
@@ -81,6 +81,10 @@ struct SessionRow: View {
         let childCount: Int
         let statusCounts: SessionTreeHelper.StatusCounts
         let aggregateCost: Double
+        let aggregateCompactionCount: Int
+        let aggregateFilesChanged: Int
+        let aggregateAddedLines: Int
+        let aggregateRemovedLines: Int
     }
 
     init(
@@ -125,6 +129,22 @@ struct SessionRow: View {
         return SessionModelSummaryBuilder.summaries(primaryModel: session.model)
     }
 
+    private var displayCompactionCount: Int {
+        children?.aggregateCompactionCount ?? session.changeStats?.compactionCount ?? 0
+    }
+
+    private var displayFilesChanged: Int {
+        children?.aggregateFilesChanged ?? session.changeStats?.filesChanged ?? 0
+    }
+
+    private var displayAddedLines: Int {
+        children?.aggregateAddedLines ?? session.changeStats?.addedLines ?? 0
+    }
+
+    private var displayRemovedLines: Int {
+        children?.aggregateRemovedLines ?? session.changeStats?.removedLines ?? 0
+    }
+
     private var currentTurnStartedAt: Date? {
         switch session.status {
         case .starting, .busy, .stopping:
@@ -166,11 +186,19 @@ struct SessionRow: View {
                     .lineLimit(2)
             }
 
-            // Row 2: model + activity summary
+            // Row 2: model + child badge + activity summary
             HStack(spacing: 6) {
                 if let firstModel = visibleModelSummaries.first {
                     modelSummaryView(firstModel)
                         .layoutPriority(1)
+                }
+
+                if displayCompactionCount > 0 {
+                    compactionBadgeView(displayCompactionCount)
+                }
+
+                if let children {
+                    childBadge(children: children)
                 }
 
                 if let activitySummary, !activitySummary.isEmpty {
@@ -182,24 +210,27 @@ struct SessionRow: View {
                 }
             }
 
-            // Row 3: metrics on the left, optional adornments inside, status pinned right.
+            // Row 3: compact metrics on the left, status pinned right.
             HStack(spacing: 6) {
                 if let pct = contextPercent {
                     NativeContextGauge(percent: pct)
                 }
 
-                if let stats = session.changeStats, stats.filesChanged > 0 {
-                    Text(filesTouchedSummary(stats.filesChanged))
-                        .foregroundStyle(changeSummaryColor(stats))
-                }
-
                 let displayCost = children?.aggregateCost ?? session.cost
                 if displayCost > 0 {
                     Text(costString(displayCost))
+                        .monospacedDigit()
                 }
 
-                if let children {
-                    childBadge(children: children)
+                if displayFilesChanged > 0 {
+                    fileCountView(displayFilesChanged)
+                }
+
+                if let lineDelta = SessionRowMetricsFormatting.lineDelta(
+                    addedLines: displayAddedLines,
+                    removedLines: displayRemovedLines
+                ) {
+                    lineDeltaView(lineDelta)
                 }
 
                 Spacer(minLength: 8)
@@ -296,18 +327,108 @@ struct SessionRow: View {
         SessionFormatting.costString(cost)
     }
 
-    private func filesTouchedSummary(_ filesChanged: Int) -> String {
-        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
+    @ViewBuilder
+    private func lineDeltaView(_ lineDelta: SessionRowMetricsFormatting.LineDelta) -> some View {
+        HStack(spacing: 4) {
+            if let added = lineDelta.addedText {
+                Text(added)
+                    .foregroundStyle(.themeGreen)
+            }
+            if let removed = lineDelta.removedText {
+                Text(removed)
+                    .foregroundStyle(.themeRed)
+            }
+        }
+        .monospacedDigit()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(lineDelta.accessibilityLabel)
     }
 
-    private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
-        if stats.filesChanged >= 25 {
+    @ViewBuilder
+    private func fileCountView(_ filesChanged: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "doc")
+                .font(.caption2.weight(.semibold))
+            Text("\(filesChanged)")
+                .monospacedDigit()
+        }
+        .foregroundStyle(changeSummaryColor(filesChanged: filesChanged))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SessionRowMetricsFormatting.filesTouchedAccessibilityLabel(filesChanged))
+    }
+
+    @ViewBuilder
+    private func compactionBadgeView(_ compactionCount: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.caption2.weight(.semibold))
+            Text("\(compactionCount)")
+                .monospacedDigit()
+        }
+        .font(.caption2)
+        .foregroundStyle(.themeComment)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SessionRowMetricsFormatting.compactionAccessibilityLabel(compactionCount))
+    }
+
+    private func changeSummaryColor(filesChanged: Int) -> Color {
+        if filesChanged >= 25 {
             return .themeRed
         }
-        if stats.filesChanged >= 10 {
+        if filesChanged >= 10 {
             return .themeOrange
         }
         return .themeGreen
+    }
+}
+
+// MARK: - Row Metrics Formatting
+
+enum SessionRowMetricsFormatting {
+    struct LineDelta: Equatable {
+        let addedText: String?
+        let removedText: String?
+        let accessibilityLabel: String
+    }
+
+    static func lineDelta(_ stats: SessionChangeStats) -> LineDelta? {
+        lineDelta(addedLines: stats.addedLines, removedLines: stats.removedLines)
+    }
+
+    static func lineDelta(addedLines: Int, removedLines: Int) -> LineDelta? {
+        let added = max(0, addedLines)
+        let removed = max(0, removedLines)
+        guard added > 0 || removed > 0 else { return nil }
+
+        let addedText = added > 0 ? "+\(added)" : nil
+        let removedText = removed > 0 ? "-\(removed)" : nil
+
+        return LineDelta(
+            addedText: addedText,
+            removedText: removedText,
+            accessibilityLabel: lineDeltaAccessibilityLabel(added: added, removed: removed)
+        )
+    }
+
+    static func filesTouchedAccessibilityLabel(_ filesChanged: Int) -> String {
+        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
+    }
+
+    static func compactionAccessibilityLabel(_ compactionCount: Int) -> String {
+        compactionCount == 1 ? "1 compaction" : "\(compactionCount) compactions"
+    }
+
+    private static func lineDeltaAccessibilityLabel(added: Int, removed: Int) -> String {
+        switch (added, removed) {
+        case let (a, r) where a > 0 && r > 0:
+            return "\(a) lines added, \(r) lines removed"
+        case let (a, _) where a > 0:
+            return "\(a) lines added"
+        case let (_, r) where r > 0:
+            return "\(r) lines removed"
+        default:
+            return "No line changes"
+        }
     }
 }
 
@@ -348,9 +469,9 @@ enum SessionActivitySummary {
             return nil
         }
 
-        // Ready: turn ended
+        // Ready: keep row quiet unless something more specific is happening.
         if session.status == .ready {
-            return "turn ended"
+            return nil
         }
 
         // Stopped: show file summary if available

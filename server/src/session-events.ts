@@ -5,6 +5,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   applyMessageEndToSession,
+  incrementSessionCompactionCount,
   updateSessionChangeStats,
   type TranslationContext,
 } from "./session-protocol.js";
@@ -290,6 +291,13 @@ export class SessionEventProcessor {
         break;
 
       case "compaction_end": {
+        const aborted = event.aborted === true;
+        const willRetry = event.willRetry === true;
+
+        if (!aborted) {
+          incrementSessionCompactionCount(session);
+        }
+
         if (metrics) {
           // Duration
           if (active.compactionStartedAt) {
@@ -298,8 +306,6 @@ export class SessionEventProcessor {
             });
           }
           // Result
-          const aborted = event.aborted === true;
-          const willRetry = event.willRetry === true;
           const result = aborted ? "aborted" : willRetry ? "will_retry" : "success";
           metrics.record("server.compaction_result", 1, { sessionId, result });
         }

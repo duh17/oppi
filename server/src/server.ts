@@ -74,6 +74,7 @@ import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
+import { fetchCodexUsageStatus } from "./codex-usage.js";
 import { isQueryTokenAllowed } from "./http-auth.js";
 import { WorkspaceProjectionEmitter } from "./workspace-projection-emitter.js";
 import {
@@ -673,6 +674,7 @@ export class Server {
       getModelCatalog: () => this.models.getAll(),
       getRuntimeUpdateStatus: (options) => this.runtimeUpdates.getStatus(options),
       runRuntimeUpdate: () => this.runtimeUpdates.updateRuntime(),
+      getCodexUsageStatus: () => fetchCodexUsageStatus(),
       searchIndex: this.searchIndex ?? undefined,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,

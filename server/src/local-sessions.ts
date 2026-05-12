@@ -232,6 +232,14 @@ async function extractSessionMetadata(
 
 const metadataCache = new Map<string, { mtimeMs: number; session: LocalSession }>();
 
+function isSubagentPrompt(text: string | undefined): boolean {
+  return /^\[Subagent profile: [^\]]+\]\s*\n/.test(text?.trimStart() ?? "");
+}
+
+function isSubagentLocalSession(session: LocalSession): boolean {
+  return isSubagentPrompt(session.firstMessage) || isSubagentPrompt(session.name);
+}
+
 /** Invalidate the cache (call after importing a session). */
 export function invalidateLocalSessionsCache(): void {
   metadataCache.clear();
@@ -347,6 +355,7 @@ export async function discoverLocalSessions(
   const results: LocalSession[] = [];
   for (const { session } of metadataCache.values()) {
     if (knownPiSessionFiles?.has(session.path)) continue;
+    if (isSubagentLocalSession(session)) continue;
     results.push(session);
   }
 
