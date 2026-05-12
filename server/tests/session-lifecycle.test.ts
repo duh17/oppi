@@ -6,7 +6,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
@@ -118,6 +118,10 @@ function feedEvent(manager: SessionManager, key: string, data: unknown): void {
     data,
   );
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // ─── State Queries ───
 
@@ -732,6 +736,69 @@ describe("SessionManager message queue", () => {
     expect(sdkBackend.session.followUp).toHaveBeenCalledWith("new follow", undefined);
     expect(after.steering.map((item) => item.message)).toEqual(["new steer"]);
     expect(after.followUp.map((item) => item.message)).toEqual(["new follow"]);
+  });
+
+  it("flushes stale follow-up queue after compaction leaves the SDK idle", async () => {
+    vi.useFakeTimers();
+    const { manager, sdkBackend, sdkPrompt, events } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendFollowUp("s1", "continue 1", { clientTurnId: "turn-follow-1" });
+    await manager.sendFollowUp("s1", "continue 2", { clientTurnId: "turn-follow-2" });
+    await manager.sendFollowUp("s1", "continue 3", { clientTurnId: "turn-follow-3" });
+    sdkPrompt.mockClear();
+    (sdkBackend.session.clearQueue as ReturnType<typeof vi.fn>).mockClear();
+
+    feedEvent(manager, "s1", {
+      type: "compaction_end",
+      reason: "threshold",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(sdkBackend.session.clearQueue).toHaveBeenCalledTimes(1);
+    expect(sdkPrompt).toHaveBeenCalledTimes(1);
+    expect(sdkPrompt.mock.calls[0]?.[0]).toBe("continue 1");
+    expect(sdkPrompt.mock.calls[0]?.[1]?.streamingBehavior).toBeUndefined();
+    expect(sdkBackend.session.getFollowUpMessages()).toEqual(["continue 2", "continue 3"]);
+
+    const after = manager.getMessageQueue("s1");
+    expect(after.followUp.map((item) => item.message)).toEqual(["continue 2", "continue 3"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "queue_item_started",
+        kind: "follow_up",
+        item: expect.objectContaining({ message: "continue 1" }),
+      }),
+    );
+  });
+
+  it("saves and flushes an edited stale queue while idle", async () => {
+    const { manager, session, sdkBackend, sdkPrompt } = makeManagerHarness({ status: "busy" });
+
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+    await manager.sendFollowUp("s1", "old follow", { clientTurnId: "turn-old-follow" });
+    const before = manager.getMessageQueue("s1");
+
+    (sdkBackend as { isStreaming: boolean }).isStreaming = false;
+    session.status = "ready";
+    sdkPrompt.mockClear();
+
+    const after = await manager.setMessageQueue("s1", {
+      baseVersion: before.version,
+      steering: [],
+      followUp: [
+        { id: "new-follow-1", message: "new follow 1" },
+        { id: "new-follow-2", message: "new follow 2" },
+      ],
+    });
+
+    expect(sdkPrompt).toHaveBeenCalledTimes(1);
+    expect(sdkPrompt.mock.calls[0]?.[0]).toBe("new follow 1");
+    expect(after.followUp.map((item) => item.message)).toEqual(["new follow 2"]);
+    expect(sdkBackend.session.getFollowUpMessages()).toEqual(["new follow 2"]);
   });
 
   it("keeps queued attachment state raw after busy send and unchanged queue save", async () => {

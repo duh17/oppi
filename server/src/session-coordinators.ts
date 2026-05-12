@@ -299,6 +299,8 @@ export function createSessionCoordinatorBundle(
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
+    schedulePostCompactionQueueFlush: (key) =>
+      queueCoordinator.schedulePostCompactionQueueFlush(key),
     dataDir: deps.storage.getDataDir(),
   });
 

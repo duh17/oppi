@@ -1,6 +1,8 @@
 import type { PiMessage } from "./pi-events.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import { materializeChatAttachments } from "./chat-attachments.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import type { UploadStoreConfigResolved } from "./uploads/local-upload-store.js";
 import {
   cloneQueueItem,
@@ -30,6 +32,9 @@ interface QueueStoreItem extends MessageQueueItem {
   /** SDK-only image inputs. Queue UI/state keeps `images` as display metadata. */
   sdkImages?: ImageAttachment[];
 }
+
+const log = createLogger({ base: { component: "session_queue" } });
+const POST_COMPACTION_QUEUE_FLUSH_DELAY_MS = 250;
 
 export interface SessionMessageQueueStore {
   version: number;
@@ -174,6 +179,20 @@ export class SessionMessageQueueCoordinator {
 
   private syncFromSdk(active: SessionMessageQueueState): SessionMessageQueueStore {
     return this.syncFromSdkWithDiff(active).queue;
+  }
+
+  private queueItemsInDeliveryOrder(
+    queue: SessionMessageQueueStore,
+  ): Array<{ kind: MessageQueueKind; item: QueueStoreItem; index: number; order: number }> {
+    return [
+      ...queue.steering.map((item, index) => ({ kind: "steer" as const, item, index, order: 0 })),
+      ...queue.followUp.map((item, index) => ({
+        kind: "follow_up" as const,
+        item,
+        index,
+        order: 1,
+      })),
+    ].sort((a, b) => a.item.createdAt - b.item.createdAt || a.order - b.order || a.index - b.index);
   }
 
   private broadcastQueueState(key: string, queue: SessionMessageQueueStore): void {
@@ -378,6 +397,79 @@ export class SessionMessageQueueCoordinator {
     reconcileFromSdkIfNeeded();
   }
 
+  schedulePostCompactionQueueFlush(key: string): void {
+    const timer = setTimeout(() => {
+      void this.flushIdleQueuedMessages(key).catch((error: unknown) => {
+        log.error("session_queue.post_compaction_flush.failed", {
+          sessionId: key,
+          error: safeErrorMessage(error),
+        });
+      });
+    }, POST_COMPACTION_QUEUE_FLUSH_DELAY_MS);
+    timer.unref?.();
+  }
+
+  async flushIdleQueuedMessages(key: string): Promise<boolean> {
+    const active = this.deps.getActiveSession(key);
+    if (!active || active.sdkBackend.isStreaming) {
+      return false;
+    }
+
+    const synced = this.syncFromSdkWithDiff(active);
+    const queue = synced.queue;
+    if (synced.changed) {
+      this.broadcastQueueState(key, queue);
+    }
+
+    const ordered = this.queueItemsInDeliveryOrder(queue);
+    const first = ordered[0];
+    if (!first) {
+      return false;
+    }
+
+    const firstItem = this.cloneStoreItem(first.item);
+    const remainingSteering = queue.steering
+      .filter((_, index) => first.kind !== "steer" || index !== first.index)
+      .map((item) => this.cloneStoreItem(item));
+    const remainingFollowUp = queue.followUp
+      .filter((_, index) => first.kind !== "follow_up" || index !== first.index)
+      .map((item) => this.cloneStoreItem(item));
+
+    active.sdkBackend.session.clearQueue();
+
+    queue.steering = remainingSteering;
+    queue.followUp = remainingFollowUp;
+    queue.version += 1;
+
+    this.deps.broadcast(key, {
+      type: "queue_item_started",
+      kind: first.kind,
+      item: cloneQueueItem(firstItem),
+      queueVersion: queue.version,
+    });
+
+    active.sdkBackend.prompt(firstItem.sdkMessage ?? firstItem.message, {
+      images: promptImagesFromQueue(firstItem.sdkImages ?? firstItem.images),
+    });
+
+    for (const item of remainingSteering) {
+      await active.sdkBackend.session.steer(
+        item.sdkMessage ?? item.message,
+        promptImagesFromQueue(item.sdkImages ?? item.images),
+      );
+    }
+
+    for (const item of remainingFollowUp) {
+      await active.sdkBackend.session.followUp(
+        item.sdkMessage ?? item.message,
+        promptImagesFromQueue(item.sdkImages ?? item.images),
+      );
+    }
+
+    this.broadcastQueueState(key, queue);
+    return true;
+  }
+
   async setQueue(
     key: string,
     payload: {
@@ -400,8 +492,11 @@ export class SessionMessageQueueCoordinator {
 
     const steeringItems = normalizeDraftItems(payload.steering);
     const followUpItems = normalizeDraftItems(payload.followUp);
+    const hasNextItems = steeringItems.length > 0 || followUpItems.length > 0;
+    const hasExistingItems = queue.steering.length > 0 || queue.followUp.length > 0;
+    const shouldFlushAfterSave = !active.sdkBackend.isStreaming && hasNextItems && hasExistingItems;
 
-    if (!active.sdkBackend.isStreaming && (steeringItems.length > 0 || followUpItems.length > 0)) {
+    if (!active.sdkBackend.isStreaming && hasNextItems && !hasExistingItems) {
       throw new Error("Message queue can only contain items while a turn is streaming");
     }
 
@@ -433,6 +528,11 @@ export class SessionMessageQueueCoordinator {
     queue.version += 1;
 
     this.broadcastQueueState(key, queue);
+
+    if (shouldFlushAfterSave) {
+      await this.flushIdleQueuedMessages(key);
+    }
+
     return cloneQueueState(queue);
   }
 }

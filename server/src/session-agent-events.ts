@@ -47,6 +47,7 @@ export interface SessionAgentEventCoordinatorDeps {
   broadcast: (key: string, message: ServerMessage) => void;
   resetIdleTimer: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
+  schedulePostCompactionQueueFlush?: (key: string) => void;
   dataDir?: string;
 }
 
@@ -200,6 +201,10 @@ export class SessionAgentEventCoordinator {
 
     if (event.type === "agent_end") {
       this.deps.stopCoordinator.finishPendingStopOnAgentEnd(key, active);
+    }
+
+    if (event.type === "compaction_end" && !event.aborted && !event.willRetry) {
+      this.deps.schedulePostCompactionQueueFlush?.(key);
     }
 
     if (event.type === "message_end") {
